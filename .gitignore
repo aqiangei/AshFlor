@@ -58,6 +58,12 @@ server-*.log
 *.out.log
 *.err.log
 
+# Local migration databases and verification logs must never be published.
+/migrate/
+/dist/inventory.*.json
+/build-*.log
+/map-import-check.log
+
 # Local planning, handoffs, and operational documentation.
 /todo/
 /docs/
