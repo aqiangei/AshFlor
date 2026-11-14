@@ -623,10 +623,10 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
             " x" + std::to_string((summonUsesDuplicator(config)
                 ? petalCopies(config.petCount,&skills,slot,petalTier(rarity),config.stackable)
                 : config.petCount)*(apex && !config.petSummonTiers ? 3 : 1)),12.0};lines.push_back(pet);
-        special("召唤物生命：", "Summon health: ",summon.health*summonScale*summon.petHealthScale*kSummonedMobHealthScale*skills.healthScale(SkillId::Summoner)*eggSummonHealthScale(config));
+        special("召唤物生命：", "Summon health: ",summon.health*summonScale*summon.petHealthScale*kSummonedMobHealthScale*skills.healthScale(SkillId::Summoner)*eggSummonHealthScale(config)*ascendantSummonHealthScale(rarity));
         lines.push_back({std::string(chinese ? "召唤物稀有度：" : "Summon rarity: ") + rarityTr(summonRarity), 12.0});
         special("召唤物伤害：", "Summon damage: ",
-                summon.damage * summonScale * summon.petDamageScale * summonDamageScale(config, rarity) *
+                summon.damage * summonScale * summon.petDamageScale * summonDamageScale(config, rarity) * ascendantSummonDamageScale(rarity) *
                 skills.effectScale(SkillId::PetDamage));
         if(apex && petalIsEgg(config))lines.push_back({chinese?"H护甲：己方召唤物受到不高于蛋稀有度的野怪体伤时，单次最多损失35%最大生命；不抵挡玩家、毒素或技能。":"H escort armour: wild body hits up to the egg tier deal at most 35% of summon max health per hit; no protection from players, poison or abilities.",12.0});
         if(config.id=="egg"||config.id=="beetle_egg")lines.push_back({chinese?"蛋壳不造成接触伤害；蛋壳破碎不会收回已孵化召唤物。":"The shell deals no contact damage; breaking it does not recall hatched pets.",12.0});
@@ -643,8 +643,8 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         lines.push_back({std::string(chinese ? "召唤物稀有度：" : "Summon rarity: ") +
                          rarityTr(petalGameplayRarity(rarity)), 12.0});
         special("每人召唤上限：", "Summon cap per player: ", config.projectile.summonMax);
-        special("召唤物生命：", "Summon health: ", summon.health * scale * summon.petHealthScale * kSummonedMobHealthScale * skills.healthScale(SkillId::Summoner));
-        special("召唤物伤害：", "Summon damage: ", summon.damage * scale * summon.petDamageScale * skills.effectScale(SkillId::PetDamage));
+        special("召唤物生命：", "Summon health: ", summon.health * scale * summon.petHealthScale * kSummonedMobHealthScale * skills.healthScale(SkillId::Summoner) * ascendantSummonHealthScale(rarity));
+        special("召唤物伤害：", "Summon damage: ", summon.damage * scale * summon.petDamageScale * skills.effectScale(SkillId::PetDamage) * ascendantSummonDamageScale(rarity));
     }
     if(computerWeapon(config.id)) {
         lines.push_back({chinese?"电脑联动（只计算主槽、同阶或更高阶配件）：程序/内存/芯片/电容/光标/几何体为6种部件，重复不计。":"Computer synergy: active parts at this tier or higher; software/memory/chip/capacitor/cursor/geometry are six distinct roles.",12.0});

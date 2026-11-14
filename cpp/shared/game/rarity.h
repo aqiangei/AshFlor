@@ -245,6 +245,10 @@ inline double strengthBoost(Rarity r) {
 /// Petal HEALTH and DAMAGE per tier -- petalStatScale, with universal at
 /// sqrt(2) times apex and Admin another 25 times that.
 inline double petalStrengthScale(Rarity r) {
+    // Apex is Permanent Hyper's petal with +25% damage (buildPetalStats), and
+    // what is scaled straight off here -- burns, blasts, lightning, spills --
+    // is damage.
+    if (r == Rarity::Ascendant) return petalStrengthScale(Rarity::PermanentHyper) * 1.25;
     return petalStatScale(r) * strengthBoost(r);
 }
 

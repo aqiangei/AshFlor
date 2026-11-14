@@ -4301,7 +4301,7 @@ TEST(a_universal_egg_hatches_the_apex_squad_with_sqrt2_its_strength) {
         rig.tick(5);
         CHECK_EQ(rig.petCount(), std::size_t(6));
         const auto& source = content.petal(content.petalIndex("summoner"));
-        const double strength = petalStrengthScale(rarity) * hyperSummonScale(source, rarity) *
+        const double strength = petalStatScale(rarity) * strengthBoost(rarity) * hyperSummonScale(source, rarity) *
                                 hyperSummonPromotionScale(source, rarity);
         Query<Pet> pets{rig.world};
         for (const Entity pet : pets.collect()) {
@@ -6775,12 +6775,12 @@ TEST(ant_and_beetle_egg_summons_gain_health_and_damage_at_every_rarity){
         CHECK(rig.tickUntil([&]{return rig.petCount()>0;},2500));
         const auto& source = fixture().registry.petal(fixture().registry.petalIndex(id));
         const auto petRarity = rarity;
-        const double scale = petalStrengthScale(rarity) * hyperSummonScale(source, rarity);
+        const double scale = petalStatScale(rarity) * strengthBoost(rarity) * hyperSummonScale(source, rarity);
         int count=0;Query<Pet,Health,ContactDamage> pets{rig.world};
         pets.each([&](Entity entity,Pet& tag,Health& hp,ContactDamage& hit){
             if(tag.owner!=rig.player)return;++count;
-            CHECK_NEAR(hp.max,config.health*scale*25.0,std::max(1e-7,hp.max*1e-10));
-            CHECK_NEAR(hit.amount,config.damage*scale*2.0,std::max(1e-7,hit.amount*1e-10));
+            CHECK_NEAR(hp.max,config.health*scale*25.0*ascendantSummonHealthScale(rarity),std::max(1e-7,hp.max*1e-10));
+            CHECK_NEAR(hit.amount,config.damage*scale*2.0*ascendantSummonDamageScale(rarity),std::max(1e-7,hit.amount*1e-10));
             CHECK_NEAR(rig.world.get<MobAi>(entity).aggroRange,std::max(kEnemyChaseRange,fixture().registry.mobStats(fixture().registry.mobIndex("critter"),petRarity).aggroRange) + petalTier(petRarity) * kPetAggroRangePerRarity,1e-9);
         });CHECK(count>0);
     }

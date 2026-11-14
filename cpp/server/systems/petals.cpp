@@ -5114,8 +5114,10 @@ void PetalSystem::maintainPets(World& world, const ContentRegistry& registry, En
     const int hatchTier = rarityIndex(petRarity);
     // DNA applies to eggs at its own tier or below. Mutate the actual
     // hatchling, including eggs whose normal summon is one tier lower.
-    if (modifiers && petalIsEgg(config) && eggTier <= rarityIndex(Rarity::Unique) &&
-        hatchTier < rarityIndex(Rarity::Unique) && modifiers->eggMutationSources[eggTier] > 0) {
+    // Hyper is the top pet tier (the reference's Unique), so it is the
+    // ceiling: an Eternal hatchling can still mutate.
+    if (modifiers && petalIsEgg(config) && eggTier <= rarityIndex(Rarity::Apex) &&
+        hatchTier < rarityIndex(Rarity::Apex) && modifiers->eggMutationSources[eggTier] > 0) {
         const double chance = std::min(.05, .005 * modifiers->eggMutationSources[eggTier] *
                                               std::max(1.0, modifiers->luck));
         for (int i = 0; i < missing; ++i) {
@@ -5302,18 +5304,22 @@ Entity PetalSystem::hatchPetBody(World& world, const ContentRegistry& registry, 
     // out of a dying ant hole, and as a permanent escort it outclassed every
     // other egg at the same tier. Every other mob's scales are 1.
     const PetalConfig* source = nullptr;
+    Rarity sourceRarity = rarity;
     if (const auto* state = world.tryGet<PetalSlotState>(player)) {
         if (slot < state->slots.size()) {
             const auto index = state->slots[slot].configIndex;
-            if (index < registry.petalCount()) source = &registry.petal(index);
+            if (index < registry.petalCount()) {
+                source = &registry.petal(index);
+                sourceRarity = state->slots[slot].rarity;
+            }
         }
     }
     if (source) strength *= eggSummonCombatScale(*source) * hyperSummonPromotionScale(*source, rarity);
     mob.health = config.health * ladder * config.petHealthScale * strength * kSummonedMobHealthScale;
     mob.damage = config.damage * ladder * config.petDamageScale * strength;
     if (source) {
-        mob.health *= eggSummonHealthScale(*source);
-        mob.damage *= summonDamageScale(*source, rarity);
+        mob.health *= eggSummonHealthScale(*source) * ascendantSummonHealthScale(sourceRarity);
+        mob.damage *= summonDamageScale(*source, rarity) * ascendantSummonDamageScale(sourceRarity);
     }
     // The Pet Health talent is the Petal Health talent for the squad: the same
     // curve, and on this pool alone. Read at the hatch, as the petal talent is

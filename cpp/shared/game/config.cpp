@@ -2043,12 +2043,22 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
         stats.critDamage *= 1.25;
         stats.poisonPerSecond *= 1.25;
         stats.lightningDamagePerHit *= 1.25;
+        stats.armorReduction *= 1.25;
+        stats.armorPerStack *= 1.25;
         stats.health *= 1.30;
+        stats.petalArmor *= 1.30;
+        stats.flowerHealthBonus *= 1.30;
         stats.heal *= 1.15;
         stats.passiveHealPerSecond *= 1.15;
         stats.conditionalHealPerSecond *= 1.15;
         stats.totemHealPerSecond *= 1.15;
         stats.shield *= 1.15;
+        stats.overhealShield *= 1.15;
+        stats.healBonus *= 1.15;
+        stats.lifesteal *= 1.15;
+        stats.maxMana *= 1.15;
+        stats.mana *= 1.15;
+        stats.passiveManaPerSecond *= 1.15;
         return stats;
     }
     const Rarity graded = petalGameplayRarity(clampRarity(rarityIndex(r)));

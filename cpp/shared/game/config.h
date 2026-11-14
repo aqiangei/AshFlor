@@ -1561,6 +1561,16 @@ inline double hyperSummonPromotionScale(const PetalConfig& config, Rarity rarity
     return 1.1 / 1.5;
 }
 
+/// Apex's petals are Permanent Hyper's with +25% damage and +30% health
+/// (buildPetalStats). Its summons take the same step over Permanent Hyper's,
+/// which the Hyper rung of petalStatScale would otherwise flatten away.
+inline double ascendantSummonHealthScale(Rarity petalRarity) {
+    return petalRarity == Rarity::Ascendant ? 1.30 : 1.0;
+}
+inline double ascendantSummonDamageScale(Rarity petalRarity) {
+    return petalRarity == Rarity::Ascendant ? 1.25 : 1.0;
+}
+
 /// The sacrifice: florr's "On death, summons a mob to fight again". Worn on
 /// the active bar, it is spent when its flower dies on ground rough enough to
 /// answer it, and a mob of that ground is summoned where the flower fell, at

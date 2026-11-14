@@ -3628,7 +3628,9 @@ TEST(zorr_dna_hatches_bio_and_other_eggs_at_the_actual_tier) {
     trial("arctic_spider_egg", Rarity::Mythic, Rarity::Mythic, Rarity::Legendary, true, true);
     trial("arctic_spider_egg", Rarity::Mythic, Rarity::Legendary, Rarity::Legendary, true, false);
     trial("arctic_spider_egg", Rarity::Mythic, Rarity::Mythic, Rarity::Legendary, false, false);
-    trial("bio_bacteria_egg", Rarity::Unique, Rarity::Unique, Rarity::Unique, true, false);
+    trial("bio_bacteria_egg", Rarity::Unique, Rarity::Unique, Rarity::Unique, true, true);
+    trial("bio_bacteria_egg", Rarity::Unique, Rarity::PermanentHyper, Rarity::Unique, true, true);
+    trial("bio_bacteria_egg", Rarity::Apex, Rarity::Apex, Rarity::Apex, true, false);
 }
 
 TEST(zorr_bio_blood_cells_fire_their_own_ammo) {
