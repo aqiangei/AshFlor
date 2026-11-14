@@ -2355,8 +2355,14 @@ void MobAiSystem::steerPet(World& world, const Terrain& terrain, const SpatialGr
     const auto* ownerMotion = world.tryGet<Motion>(owner);
     const double followSpeed = std::max(kPlayerMaxSpeed,
         ownerMotion ? ownerMotion->velocity.length() : 0.0) * kPetFollowSpeedFactor * slow;
+    // A pet that cannot move -- a black or a white hole -- holds its ground
+    // as the wild one does. Left behind, it makes no progress home, so the
+    // trapped clock hands it to the petal pass to set down by its owner.
+    const double homeSpeed = anchoredAgainstKnockback(world, content(), self)
+                                 ? 0.0
+                                 : std::max({chaseSpeed, speed, followSpeed});
     bool driven = walkToOwner(world, terrain, self, transform, ai, ownerPosition,
-                              std::max({chaseSpeed, speed, followSpeed}), nowMillis, desired);
+                              homeSpeed, nowMillis, desired);
     if (!driven) {
         if (attacks) {
             ai.target = acquire(true);
@@ -2629,8 +2635,27 @@ void MobAiSystem::placeFollower(World& world, const Terrain& terrain, Entity sel
 
     // A segment lives in its leader's space, whatever it was born into.
     transform->realm = leader->realm;
-    const Vec2 placed = terrain.resolveCircle(leader->position + direction * spacing,
-                                              kMobWallRadius, leader->realm);
+    Vec2 placed = terrain.resolveCircle(leader->position + direction * spacing,
+                                        kMobWallRadius, leader->realm);
+    // A link can be longer than a wall is thick, and then the trailing
+    // direction points clean through it. The segment is drawn back along the
+    // link to the furthest point its leader can see instead of being hung on
+    // the far side.
+    if (terrain.segmentBlocked(leader->position, placed, leader->realm)) {
+        double clear = 0.0;
+        double blocked = spacing;
+        for (int i = 0; i < 12; ++i) {
+            const double mid = (clear + blocked) * 0.5;
+            if (terrain.segmentBlocked(leader->position, leader->position + direction * mid,
+                                       leader->realm))
+                blocked = mid;
+            else
+                clear = mid;
+        }
+        placed = terrain.resolveCircle(leader->position + direction * clear, kMobWallRadius,
+                                       leader->realm);
+        if (terrain.segmentBlocked(leader->position, placed, leader->realm)) placed = leader->position;
+    }
     transform->position = placed;
     // The follower is carried, not driven. Leaving a velocity on it would have
     // the movement phase integrate it a second time this tick.

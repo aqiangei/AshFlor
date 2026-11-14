@@ -1339,6 +1339,37 @@ TEST(segments_trail_the_one_ahead_at_their_spacing) {
     CHECK_NEAR(sim.gap(second, first), 40.0, 6.0);
 }
 
+TEST(a_segment_is_never_placed_across_a_wall_from_the_one_ahead) {
+    CHECK(contentReady());
+    Sim sim;
+    const int wallTx = Terrain::toTileCoord(kOrigin.x) + 1;
+    for (int ty = 0; ty < kTilesPerAxis; ++ty) sim.terrain.setTile(wallTx, ty, Tile::Solid);
+    const double west = wallTx * kTileSize;
+    const double east = west + kTileSize;
+    // A big centipede's link is longer than a wall is thick, so with the head
+    // hugging one face the trailing direction can point clean through it.
+    const double spacing = kTileSize + 60.0;
+    const Entity head = sim.spawnMob("centipede", Vec2{east + 20.0, kOrigin.y});
+    const Entity first = sim.spawnMob("centipede_body", Vec2{west - 40.0, kOrigin.y});
+    const Entity second = sim.spawnMob("centipede_body", Vec2{west - 40.0, kOrigin.y + 80.0});
+    link(sim, head, NULL_ENTITY, spacing);
+    link(sim, first, head, spacing);
+    link(sim, second, first, spacing);
+    sim.spawnPlayer(Vec2{east + 400.0, kOrigin.y});
+
+    sim.tickIntent();
+    CHECK(!sim.terrain.segmentBlocked(sim.positionOf(head), sim.positionOf(first), Realm::Overworld));
+    CHECK(!sim.terrain.segmentBlocked(sim.positionOf(first), sim.positionOf(second), Realm::Overworld));
+    CHECK(sim.positionOf(first).x > east);
+    CHECK(sim.positionOf(second).x > east);
+
+    // In open ground the link keeps its full length.
+    sim.world.get<Transform>(head).position = kOrigin + Vec2{-2000.0, 0.0};
+    sim.world.get<Transform>(first).position = kOrigin + Vec2{-2100.0, 0.0};
+    sim.tickIntent();
+    CHECK_NEAR(sim.gap(first, head), spacing, 1e-6);
+}
+
 TEST(a_segment_on_top_of_its_leader_unfolds_instead_of_producing_nan) {
     CHECK(contentReady());
     Sim sim;
@@ -1652,6 +1683,38 @@ TEST(a_sandstorm_pet_past_its_leash_comes_home_rather_than_vanishing) {
     sim.tick();
     CHECK(!sim.brainOf(storm).petReturning);
     CHECK_NEAR(sim.velocityOf(storm).length(), 0.0, 1e-9);
+}
+
+TEST(a_hole_pet_left_behind_holds_its_ground_until_it_is_recalled) {
+    if (!contentReady()) return;
+    for (const char* hole : {"void_black_hole", "void_white_hole"}) {
+        Sim sim;
+        const Entity owner = sim.spawnPlayer(kOrigin);
+        const Vec2 planted = kOrigin + Vec2{kPetFollowDistance + 200.0, 0};
+        const Entity pet = sim.spawnMob(hole, planted, Rarity::Legendary);
+        sim.world.add<Pet>(pet, Pet{owner, 0});
+
+        // Its owner is off its screen: an ordinary pet would set off home at
+        // the owner's pace, and a hole is not to be walked anywhere.
+        sim.tick();
+        CHECK(sim.brainOf(pet).petReturning);
+        CHECK_NEAR(sim.velocityOf(pet).length(), 0.0, 1e-9);
+        CHECK(!sim.brainOf(pet).petRecall);
+
+        sim.tick(static_cast<int>(kPetTrappedMillis / net::kTickMillis) + 2);
+        CHECK(distance(sim.positionOf(pet), planted) < 1e-9);
+        // Left behind for the trapped spell, the petal pass sets it down by
+        // its owner.
+        CHECK(sim.brainOf(pet).petRecall);
+    }
+
+    // An ordinary pet still walks home.
+    Sim sim;
+    const Entity owner = sim.spawnPlayer(kOrigin);
+    const Entity ant = sim.spawnMob("soldier_ant", kOrigin + Vec2{kPetFollowDistance + 200.0, 0});
+    sim.world.add<Pet>(ant, Pet{owner, 0});
+    sim.tick();
+    CHECK(sim.velocityOf(ant).x < 0.0);
 }
 
 TEST(a_sandstorm_pet_pulls_ahead_of_a_running_owner_but_stays_on_its_leash) {

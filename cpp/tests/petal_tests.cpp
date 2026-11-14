@@ -5160,6 +5160,43 @@ TEST(a_mirror_turns_a_missile_back_on_its_shooter_up_to_one_tier_above_it) {
     }
 }
 
+TEST(a_hatched_black_or_white_hole_does_not_give_to_a_shove) {
+    if (!contentLoaded()) return;
+    // Movement reads what anchors a mob off the process-wide registry.
+    std::string error;
+    CHECK(loadContent(testsupport::dataDir(), error));
+    for (const char* egg : {"void_black_hole_egg", "void_white_hole_egg"}) {
+        Rig rig(testsupport::shippedContent());
+        rig.equip(0, egg, Rarity::Legendary);
+        CHECK(rig.tickUntil([&] { return rig.petCount() == 1; }));
+        Query<Pet> pets{rig.world};
+        const std::vector<Entity> hatched = pets.collect();
+        CHECK_EQ(hatched.size(), std::size_t(1));
+        if (hatched.size() != 1) continue;
+        const Entity hole = hatched.front();
+        const Vec2 at = rig.world.get<Transform>(hole).position;
+        const double radius = rig.world.get<Body>(hole).radius;
+
+        // A hard hit, its owner standing on it and a heavy mob leaning on it.
+        rig.world.get<Knockback>(hole).impulse = Vec2{5000.0, 0.0};
+        rig.world.get<Transform>(rig.player).position = at + Vec2{radius * 0.5, 0.0};
+        const Entity mob = rig.world.create();
+        rig.world.add<MobTag>(mob);
+        rig.world.add<Transform>(mob, Transform{at - Vec2{radius * 0.5, 0.0}, 0.0});
+        rig.world.add<Motion>(mob);
+        rig.world.add<Body>(mob, Body{40.0, 50.0});
+        rig.world.add<Knockback>(mob);
+        rig.world.add<Afflictions>(mob);
+        rig.world.add<Health>(mob, Health{100, 100, 0, 0});
+        rig.world.add<Faction>(mob, Faction{Team::Hostiles, false});
+        for (int i = 0; i < 30; ++i) {
+            rig.movement.run(rig.world, rig.terrain, rig.now, net::kTickSeconds);
+            rig.now += net::kTickSeconds * 1000.0;
+        }
+        CHECK(distance(rig.world.get<Transform>(hole).position, at) < 1.0);
+    }
+}
+
 TEST(wax_is_thirty_units_across_at_common_and_thirty_more_every_tier) {
     if (!contentLoaded()) return;
     const std::uint16_t wax = petalId("wax");
