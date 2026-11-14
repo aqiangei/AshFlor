@@ -290,8 +290,8 @@ inline double petalManaScale(Rarity r) {
 /// the Eternal conversion rate, with Hyper's defence technique handled in combat.
 inline constexpr double magicCottonDamagePerMana(Rarity rarity) {
     constexpr std::array<double, kLadderRarityCount> rates{
-        0.5, 0.75, 1.125, 1.6875, 2.53125, 3.796875, 5.6953125, 8.54296875,
-        12.814453125, 12.814453125
+        0.625, 0.9375, 1.40625, 2.109375, 3.1640625, 4.74609375, 7.119140625, 10.6787109375,
+        16.01806640625, 16.01806640625
     };
     return rates[ladderIndex(rarity)];
 }
