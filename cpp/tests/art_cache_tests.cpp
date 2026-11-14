@@ -131,6 +131,32 @@ TEST(silverfish_antennae_point_along_the_in_game_facing) {
     }
 }
 
+TEST(zorr_drawn_dinosaurs_face_the_in_game_heading) {
+    // These are zorr's own drawings, which put the head at +x, the same way the
+    // simulation's heading zero points, so they turn by the heading alone.
+    const auto& content = testsupport::shippedContent();
+    SpriteCache sprites;
+    CHECK(sprites.build(content, testsupport::dataDir()));
+    for (const char* name : {"jurassic_dodo", "jurassic_stegosaurus", "jurassic_raptor",
+                             "jurassic_tyrannosaurus", "jurassic_ankylosaurus",
+                             "jurassic_diplodocus", "jurassic_nigersaurus"}) {
+        const auto id = content.mobIndex(name);
+        CHECK(id != kInvalidIndex);
+        if (id == kInvalidIndex) continue;
+        CHECK(sprites.mobDrawable(id));
+        const auto art = SvgDocument::fromString(content.mob(id).image);
+        for (const double heading : {0.0, kPi / 2.0}) {
+            Canvas actual = Canvas::createVirtual(128, 128);
+            sprites.drawMob(actual, id, Rarity::Common, 64, 64, 112, heading, 0.0);
+            Canvas turned = Canvas::createVirtual(128, 128);
+            turned.translate(64.0f, 64.0f);
+            turned.rotate(static_cast<float>(heading));
+            art.renderFitted(turned, -56.0f, -56.0f, 112.0f, 112.0f, 0.0f);
+            CHECK(actual.getImageData(0, 0, 128, 128) == turned.getImageData(0, 0, 128, 128));
+        }
+    }
+}
+
 TEST(silverfish_legs_move_with_distance_and_hold_when_still) {
     const auto& content = testsupport::shippedContent();
     const auto id = content.mobIndex("silverfish");

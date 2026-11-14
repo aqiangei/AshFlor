@@ -650,13 +650,6 @@ bool SpriteCache::build(const ContentRegistry& content, const std::string& dataD
         if (walkingLegs || config.id == "hel_wasp" || config.id == "nazar_beetle") {
             mobs_[i].facingOffset = 3.0 * kPi / 4.0;
         }
-        // These directional Jurassic sprites were exported with the head facing up-right.
-        if (config.id == "jurassic_dodo" || config.id == "jurassic_stegosaurus" ||
-            config.id == "jurassic_raptor" || config.id == "jurassic_tyrannosaurus" ||
-            config.id == "jurassic_ankylosaurus" || config.id == "jurassic_diplodocus" ||
-            config.id == "jurassic_nigersaurus") {
-            mobs_[i].facingOffset = kPi / 4.0;
-        }
         mobs_[i].articulatedEyes = config.id == "mecha_flower" || config.id == "gambler";
         if (!mobs_[i].document) continue;
         const std::string petArt = petArtwork(config.image);
