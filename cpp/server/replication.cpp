@@ -782,7 +782,8 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         const Health* spawnHealth = world.tryGet<Health>(candidate.entity);
         const double spawnFraction = spawnHealth ? spawnHealth->fraction() : 1.0;
         const double spawnSent = net::writeHealthFraction(out, spawnFraction, spawnWide);
-        out.u8(computeEntityState(world, candidate.entity, frame.nowMillis));
+        out.u8(computeEntityState(world, candidate.entity, frame.nowMillis) &
+               net::kReplicatedStateBits);
         if (info.kind == net::EntityKind::Drop)
             out.u32(world.get<DropItem>(candidate.entity).quantity);
         const PlayerVisualState visuals =
@@ -838,7 +839,8 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         if (const auto* drop = world.tryGet<DropItem>(candidate.entity)) tracked.dropQuantity = drop->quantity;
         tracked.seenThisTick = true;
         tracked.healthFraction = spawnSent;
-        tracked.state = computeEntityState(world, candidate.entity, frame.nowMillis);
+        tracked.state = computeEntityState(world, candidate.entity, frame.nowMillis) &
+                        net::kReplicatedStateBits;
         tracked.faceFlags = visuals.faceFlags;
         tracked.equipFlags = visuals.equipFlags;
         tracked.renderFlags = visuals.renderFlags;
@@ -888,7 +890,9 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         }
         const Health* health = world.tryGet<Health>(candidate.entity);
         const Body* body = world.tryGet<Body>(candidate.entity);
-        const std::uint8_t state = computeEntityState(world, candidate.entity, frame.nowMillis);
+        const std::uint8_t state =
+            computeEntityState(world, candidate.entity, frame.nowMillis) &
+            net::kReplicatedStateBits;
         const PlayerVisualState visuals =
             computePlayerVisuals(world, candidate.entity, frame.nowMillis);
 
@@ -940,17 +944,37 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
             std::round((transform.position.x - tracked.position.x) * net::kPositionDeltaScale);
         const double deltaY =
             std::round((transform.position.y - tracked.position.y) * net::kPositionDeltaScale);
-        if ((mask & net::FieldPosition) && std::fabs(deltaX) <= 32767.0 &&
-            std::fabs(deltaY) <= 32767.0) {
-            mask |= net::FieldPositionDelta;
+        // The same move in the short form's coarser step. Taken when it fits
+        // and moves the entity at all: a move that rounds to nothing here is
+        // either a crawl or the remainder of the last short move, and both
+        // want the full-resolution delta, which closes the gap.
+        const double shortX = std::round((transform.position.x - tracked.position.x) *
+                                         net::kPositionShortDeltaScale);
+        const double shortY = std::round((transform.position.y - tracked.position.y) *
+                                         net::kPositionShortDeltaScale);
+        bool shortMove = false;
+        if (mask & net::FieldPosition) {
+            if ((shortX != 0.0 || shortY != 0.0) && std::fabs(shortX) <= 127.0 &&
+                std::fabs(shortY) <= 127.0) {
+                shortMove = true;
+                mask = static_cast<std::uint16_t>((mask & ~net::FieldPosition) |
+                                                  net::FieldPositionDelta);
+            } else if (std::fabs(deltaX) <= 32767.0 && std::fabs(deltaY) <= 32767.0) {
+                mask |= net::FieldPositionDelta;
+            }
         }
         if (mask == 0) continue;
 
         const std::size_t recordAt = out.size();
         out.varU32(candidate.netId - previousUpdateId);
         previousUpdateId = candidate.netId;
-        out.u16(mask);
-        if (mask & net::FieldPositionDelta) {
+        out.varU32(mask);
+        if (shortMove) {
+            out.i8(static_cast<std::int8_t>(shortX));
+            out.i8(static_cast<std::int8_t>(shortY));
+            tracked.position.x += shortX / net::kPositionShortDeltaScale;
+            tracked.position.y += shortY / net::kPositionShortDeltaScale;
+        } else if (mask & net::FieldPositionDelta) {
             out.i16(static_cast<std::int16_t>(deltaX));
             out.i16(static_cast<std::int16_t>(deltaY));
             tracked.position.x += deltaX / net::kPositionDeltaScale;
