@@ -1884,6 +1884,37 @@ TEST(a_squad_forms_talks_and_disbands) {
     CHECK(mate.squad().members.size() == 1);
 }
 
+TEST(the_florr_squad_shorthands_are_the_long_commands) {
+    Harness h("cmd-squad-short", [](const std::string& path) {
+        seedUser(path, "lead", "password7");
+        seedUser(path, "mate", "password7");
+    });
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient lead;
+    NetClient mate;
+    CHECK(loginAs(h, lead, "lead", "password7"));
+    CHECK(loginAs(h, mate, "mate", "password7"));
+
+    // No create step: the invitation opens the squad, as /squad-invite does.
+    CHECK(say(h, lead, "/sqi mate"));
+    // NetClient localises every line it receives, so these read as a player sees them.
+    CHECK(sawText(lead, "已向 mate 发送邀请"));
+    h.step(3, {&lead, &mate});
+    CHECK(sawText(mate, "@lead 邀请你加入小队。输入 /sqa 接受，/sqd 拒绝。"));
+
+    CHECK(say(h, mate, "/SQA"));
+    h.step(3, {&lead, &mate});
+    CHECK(sawText(lead, "mate 加入了小队。"));
+    CHECK(lead.squad().members.size() == 2);
+
+    CHECK(say(h, mate, "/sql"));
+    h.step(3, {&lead, &mate});
+    CHECK(sawText(mate, "你已离开小队。"));
+    CHECK(!mate.squad().inSquad);
+    CHECK(lead.squad().members.size() == 1);
+}
+
 TEST(a_squad_invite_is_refused_when_it_should_be) {
     Harness h("cmd-squad-refuse", [](const std::string& path) {
         seedUser(path, "one", "password7");

@@ -545,10 +545,10 @@ std::string localizeMarkupAware(std::string text) {
         return true;
     };
     if (rewriteInvite(inviteGuild,
-                      "（公会）邀请你加入小队。使用 /squad-accept 或 /squad-decline。")) {
+                      "（公会）邀请你加入小队。输入 /sqa 接受，/sqd 拒绝。")) {
         return text;
     }
-    if (rewriteInvite(invitePlain, " 邀请你加入小队。使用 /squad-accept 或 /squad-decline。")) {
+    if (rewriteInvite(invitePlain, " 邀请你加入小队。输入 /sqa 接受，/sqd 拒绝。")) {
         return text;
     }
 

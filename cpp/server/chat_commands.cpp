@@ -295,7 +295,8 @@ constexpr const char* kUnknownCommand =
 constexpr const char* kSquadCommands =
     "Squad commands: /squad-create [public|private], /squad-invite &lt;username&gt;, "
     "/squad-find-public, /squad-join &lt;squadId&gt;, /squad-code [code], /squad-public, /squad-private, "
-    "/squad-accept, /squad-decline, /squad-leave, /squad-info";
+    "/squad-accept, /squad-decline, /squad-leave, /squad-info "
+    "(short: /sqi &lt;username&gt;, /sqa, /sqd, /sqc [code], /sql)";
 
 } // namespace
 
@@ -726,6 +727,18 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
 
     // -- squads ------------------------------------------------------------
     //
+    // The short spellings players bring from florr: /sqi bob, /sqa, /sqd,
+    // /sqc 007, /sql -- each is exactly its long form.
+    static constexpr std::pair<const char*, const char*> kSquadShorthands[] = {
+        {"/sqi", "invite"}, {"/sqa", "accept"}, {"/sqd", "decline"},
+        {"/sqc", "code"}, {"/sql", "leave"},
+    };
+    for (const auto& [shorthand, sub] : kSquadShorthands) {
+        if (verb != shorthand) continue;
+        const std::vector<std::string> words = splitWords(message);
+        runSquadCommand(session, connection, sub, words.size() > 1 ? words[1] : std::string());
+        return true;
+    }
     // The reference accepts both spellings of every one of these -- `/squad
     // invite bob` and `/squad-invite bob` -- by rewriting the hyphen form into
     // the space form before it parses. Same here, so there is ONE parser and
@@ -1053,6 +1066,7 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
         help += "/squad-accept / /squad-decline - Respond to an invite<br/>";
         help += "/squad-leave - Leave your squad<br/>";
         help += "/squad-info - Show squad members<br/>";
+        help += "/sqi &lt;username&gt; /sqa /sqd /sqc [code] /sql - 组队简写：邀请 / 接受 / 拒绝 / 组队码 / 退出<br/>";
         help += "/s &lt;message&gt; - Send a message to your squad<br/>";
         help += "<br/><b>Guild commands (up to " + std::to_string(kMaxGuildSize) +
                 " members, persistent):</b><br/>";
