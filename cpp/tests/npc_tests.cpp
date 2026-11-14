@@ -1479,6 +1479,62 @@ TEST(the_trader_refuses_what_it_does_not_take_and_a_refusal_starts_no_wait) {
     removeDataDir(dir);
 }
 
+TEST(the_trader_takes_ascendant_for_an_ascendant_coin_that_can_be_worn) {
+    const std::string dir = traderWorld("trader-ascendant");
+    Harness h("trader-ascendant", [](const std::string& path) {
+        seedAccount(path, "merchant");
+        seedStack(path, "merchant", "petal_rose", Rarity::Ascendant, 1);
+        seedStack(path, "merchant", "petal_rose", Rarity::PermanentHyper, 1);
+        seedStack(path, "merchant", "petal_rose", Rarity::Admin, 1);
+    }, dir, 0);
+    if (!h.ready) { CHECK(false); removeDataDir(dir); return; }
+    const std::uint16_t rose = content().petalIndex("rose");
+    const std::uint16_t coin = content().petalIndex(kTraderCoinPetal);
+    if (rose == kInvalidIndex || coin == kInvalidIndex) { CHECK(false); removeDataDir(dir); return; }
+
+    NetClient client;
+    CHECK(joinAs(h, client, "merchant"));
+    h.step(3, {&client});
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stackCount(rose, Rarity::Ascendant) == 1u &&
+               p.stackCount(rose, Rarity::PermanentHyper) == 1u;
+    }));
+
+    // Above the ladder only Ascendant trades: a permanent hyper or an admin
+    // coin would be one nobody gave, and a refusal starts no wait.
+    TradeOutcome outcome;
+    for (const Rarity refused : {Rarity::PermanentHyper, Rarity::Admin}) {
+        standBeside(h, client, "trader");
+        client.requestTrade(rose, refused);
+        CHECK(awaitTrade(h, client, outcome));
+        CHECK(!outcome.success);
+        CHECK_EQ(outcome.receivedIndex, kNoPetal);
+    }
+    CHECK_EQ(client.traderCooldownRemainingMillis(), 0.0);
+
+    standBeside(h, client, "trader");
+    client.requestTrade(rose, Rarity::Ascendant);
+    CHECK(awaitTrade(h, client, outcome));
+    CHECK(outcome.success);
+    CHECK(outcome.rarity == Rarity::Ascendant);
+    CHECK_EQ(outcome.receivedIndex, coin);
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stackCount(rose, Rarity::Ascendant) == 0u &&
+               p.stackCount(coin, Rarity::Ascendant) == 1u;
+    }));
+    CHECK_EQ(client.profile().stackCount(rose, Rarity::PermanentHyper), 1u);
+    CHECK(client.traderCooldownRemainingMillis() > 0.0);
+
+    // The coin is a petal like any other at its tier: it goes on the bar.
+    client.setLoadoutSlot(0, coin, Rarity::Ascendant);
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return !p.loadout.empty() && p.loadout[0].petalIndex == coin &&
+               p.loadout[0].rarity == Rarity::Ascendant &&
+               p.stackCount(coin, Rarity::Ascendant) == 0u;
+    }));
+    removeDataDir(dir);
+}
+
 TEST(the_trader_serves_only_a_flower_standing_at_it) {
     const std::string dir = traderWorld("trader-far");
     Harness h("trader-far", [](const std::string& path) {

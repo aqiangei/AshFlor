@@ -157,7 +157,8 @@ enum class ClientMessage : std::uint8_t {
                         ///< trader NPC for one kTraderCoinPetal of the same
                         ///< tier. One trade per kTraderCooldownMillis, per
                         ///< account, and only a petal petals.json does not
-                        ///< mark `"tradable": false`. Found and reached exactly
+                        ///< mark `"tradable": false`, at a tier traderTakes
+                        ///< (the ladder and Ascendant). Found and reached exactly
                         ///< as OracleCraft's oracle is: the server looks for
                         ///< the trader itself. (Version 41.)
     AdminDb,            ///< u8 AdminDbOp, then that op's payload -- the admin

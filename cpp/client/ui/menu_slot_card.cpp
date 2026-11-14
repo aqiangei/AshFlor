@@ -139,19 +139,30 @@ double listWidth(std::size_t columns) {
 constexpr int kUpgradeBaseColumns = rarityIndex(Rarity::Unique) + 1;
 
 std::size_t tierColumns(SlotGridTiers tiers) {
-    return tiers == SlotGridTiers::PermanentHyper ? kUpgradeBaseColumns + 1 : kLadderRarityCount;
+    switch (tiers) {
+        case SlotGridTiers::PermanentHyper: return kUpgradeBaseColumns + 1;
+        case SlotGridTiers::Ascendant: return kLadderRarityCount + 1;
+        case SlotGridTiers::Hyper: break;
+    }
+    return kLadderRarityCount;
 }
 
 Rarity slotGridRarity(SlotGridTiers tiers, std::size_t column) {
     if (tiers == SlotGridTiers::PermanentHyper && column == kUpgradeBaseColumns)
         return Rarity::PermanentHyper;
+    if (tiers == SlotGridTiers::Ascendant && column == kLadderRarityCount) return Rarity::Ascendant;
     return static_cast<Rarity>(column);
 }
 
 bool slotGridShows(SlotGridTiers tiers, Rarity rarity) {
-    return tiers == SlotGridTiers::PermanentHyper
-        ? rarityIndex(rarity) < kUpgradeBaseColumns || rarity == Rarity::PermanentHyper
-        : rarityIndex(rarity) < kLadderRarityCount;
+    switch (tiers) {
+        case SlotGridTiers::PermanentHyper:
+            return rarityIndex(rarity) < kUpgradeBaseColumns || rarity == Rarity::PermanentHyper;
+        case SlotGridTiers::Ascendant:
+            return rarityIndex(rarity) < kLadderRarityCount || rarity == Rarity::Ascendant;
+        case SlotGridTiers::Hyper: break;
+    }
+    return rarityIndex(rarity) < kLadderRarityCount;
 }
 
 /// Particle jitter. Not reproducible and not meant to be, exactly as the world

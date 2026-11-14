@@ -4879,12 +4879,12 @@ void GameServer::handleTrade(Session& session, net::Connection& connection, Byte
         return;
     }
 
-    // The petals.json flag is the whole rule: every LADDER tier of a tradable
-    // petal is taken, apex included, and the coin itself is marked untradable.
-    // Never universal: a universal coin would be a universal nobody gave.
+    // The petals.json flag decides the petal and traderTakes the tier: every
+    // ladder tier of a tradable petal and Ascendant, and the coin itself is
+    // marked untradable.
     const std::uint16_t coin = content().petalIndex(kTraderCoinPetal);
     if (petalIndex >= content().petalCount() || !content().petal(petalIndex).tradable ||
-        rarityIndex(rarity) >= kLadderRarityCount || coin == kInvalidIndex) {
+        !traderTakes(rarity) || coin == kInvalidIndex) {
         refuse("The trader will not take that.");
         return;
     }

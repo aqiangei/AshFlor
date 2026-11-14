@@ -6,8 +6,8 @@
 //
 // It is florr's trade window (menus.h), in the flower yellow. There is no
 // price to be short of, so a stack is counted the way the inventory counts
-// one ("x5" in the corner, nothing on a lone petal); and the grid runs on to
-// apex, because every tier trades.
+// one ("x5" in the corner, nothing on a lone petal); and the grid runs on
+// through apex to Ascendant, every tier the trader takes (traderTakes).
 //
 // One trade a day (kTraderCooldownMillis): while the account waits, the line
 // turns red and says how long, and every stack sits on grey. A petal
@@ -71,7 +71,8 @@ std::uint32_t tileKey(std::uint16_t petalIndex, Rarity rarity) {
 } // namespace
 
 Vec2 TradePanel::size(const Profile& profile) {
-    return {slotCardWidth(SlotGridTiers::Hyper), slotCardHeight(SlotGrid::rows(profile, SlotGridTiers::Hyper))};
+    return {slotCardWidth(SlotGridTiers::Ascendant),
+            slotCardHeight(SlotGrid::rows(profile, SlotGridTiers::Ascendant))};
 }
 
 void TradePanel::reset() {
@@ -191,7 +192,7 @@ bool TradePanel::render(MenuContext& ctx) {
     // On grey, and not clickable, while the trader is not taking trades and
     // for a petal it never takes. The petal and its count still show.
     const std::optional<SlotGrid::Pick> hovered = grid_.render(
-        ctx, card, kTraderSkin, SlotGridTiers::Hyper,
+        ctx, card, kTraderSkin, SlotGridTiers::Ascendant,
         [&](std::uint16_t petalIndex, Rarity rarity, std::uint32_t owned) {
             SlotCell cell;
             cell.count = owned;

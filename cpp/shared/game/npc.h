@@ -100,6 +100,13 @@ inline std::string oracleCooldownText(double remainingMillis) {
 /// The petal every trade hands back, at the tier of the petal traded for it.
 inline constexpr const char* kTraderCoinPetal = "coin";
 
+/// The tiers the trader takes, and so the tiers its coins come at: the whole
+/// ladder and Ascendant (shown as "Apex"). Never universal, admin or
+/// permanent hyper: a coin at one of those would be one nobody gave.
+inline constexpr bool traderTakes(Rarity rarity) {
+    return rarityIndex(rarity) < kLadderRarityCount || rarity == Rarity::Ascendant;
+}
+
 /// How long an account waits between two trades: one a day. Kept exactly as
 /// the oracle's wait is -- per account, in the server's memory only
 /// (GameServer::traderReadyAt_) -- so a relog keeps it and a restart clears it.

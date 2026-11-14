@@ -523,9 +523,9 @@ private:
 // button; a 500-wide body of slot, button, odds and two lines; and under it
 // a grid of everything the account owns, a row a petal and a column a tier.
 // What differs is the theme, the words, how many tier columns the grid has
-// (only the trader's runs on to apex), what a cell says, and what stands in
-// the slot -- the forge turns a ring of five about its centre where the
-// oracle, the trader and the titan hold one petal.
+// (only the trader's runs on through apex to Ascendant), what a cell says,
+// and what stands in the slot -- the forge turns a ring of five about its
+// centre where the oracle, the trader and the titan hold one petal.
 //
 // These are the pieces they share (menu_slot_card.cpp). Each panel keeps its
 // own staging, its own animation and its own input: that is what makes them
@@ -604,7 +604,10 @@ struct SlotCardLayout {
     double listInsetY = 10.0;
 };
 
-enum class SlotGridTiers { Hyper, PermanentHyper };
+/// The tiers a slot grid has columns for: the ladder (Hyper); the ladder up to
+/// unique, then permanent hyper (PermanentHyper); the ladder, then Ascendant
+/// (Ascendant, the trader's: traderTakes in shared/game/npc.h).
+enum class SlotGridTiers { Hyper, PermanentHyper, Ascendant };
 
 /// The window's width for the selected grid columns, with a minimum of 610.
 double slotCardColumnsWidth(std::size_t columns);
@@ -1071,8 +1074,8 @@ private:
 /// trader NPC.
 ///
 /// One petal in the slot, a Trade button, and a grid of every stack the
-/// account owns at every tier, apex included: any petal petals.json does not
-/// mark untradable goes for one coin of its own tier. The slot moves the way
+/// account owns at every tier the trader takes, the ladder and Ascendant: any
+/// petal petals.json does not mark untradable goes for one coin of its own tier. The slot moves the way
 /// florr's trade window moves it -- the petal grows in, a trade spins it about
 /// the slot's centre, and the coin pops in with a burst. One trade a day:
 /// while the account waits, the line counts the hours down in red and every
