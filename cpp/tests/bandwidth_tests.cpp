@@ -1,6 +1,7 @@
 #include "test.h"
 
 #include "client/net_client.h"
+#include "server/replication.h"
 #include "server_harness.h"
 #include "shared/game/config.h"
 #include "shared/net/protocol.h"
@@ -42,6 +43,41 @@ using flix::testsupport::Harness;
 /// guard is for is the two-orders-of-magnitude mistake its header describes.
 constexpr std::uint32_t kBudgetBytesPerSecond = 21000;
 
+/// Where the snapshot bytes of the measured second went, as the replicator's
+/// own meter counted them: by section, by entity kind, by field and by event.
+void printWireTotals(const ReplicationWireTotals& w) {
+    std::printf("      snapshots %llu: self %llu, spawns %llu/%llu, updates %llu/%llu, "
+                "removals %llu/%llu, events %llu/%llu (bytes/records)\n",
+                static_cast<unsigned long long>(w.snapshots),
+                static_cast<unsigned long long>(w.selfBytes),
+                static_cast<unsigned long long>(w.spawnBytes),
+                static_cast<unsigned long long>(w.spawnRecords),
+                static_cast<unsigned long long>(w.updateBytes),
+                static_cast<unsigned long long>(w.updateRecords),
+                static_cast<unsigned long long>(w.removalBytes),
+                static_cast<unsigned long long>(w.removalRecords),
+                static_cast<unsigned long long>(w.eventBytes),
+                static_cast<unsigned long long>(w.eventRecords));
+    std::printf("      updates by kind:");
+    for (std::size_t i = 0; i < ReplicationWireTotals::kEntityKinds; ++i) {
+        if (w.updateRecordsByKind[i] == 0) continue;
+        std::printf(" k%zu %llu/%llu", i, static_cast<unsigned long long>(w.updateBytesByKind[i]),
+                    static_cast<unsigned long long>(w.updateRecordsByKind[i]));
+    }
+    std::printf("\n      update fields:");
+    for (std::size_t i = 0; i < ReplicationWireTotals::kUpdateFields; ++i) {
+        if (w.updateFieldRecords[i] == 0) continue;
+        std::printf(" b%zu %llu", i, static_cast<unsigned long long>(w.updateFieldRecords[i]));
+    }
+    std::printf("\n      events by kind:");
+    for (std::size_t i = 0; i < ReplicationWireTotals::kEventKinds; ++i) {
+        if (w.eventRecordsByKind[i] == 0) continue;
+        std::printf(" e%zu %llu/%llu", i, static_cast<unsigned long long>(w.eventBytesByKind[i]),
+                    static_cast<unsigned long long>(w.eventRecordsByKind[i]));
+    }
+    std::printf("\n");
+}
+
 /// Bytes received over one simulated second of play at this window size.
 ///
 /// The window is given in the units a client reports -- WORLD units, not
@@ -70,6 +106,7 @@ std::uint32_t downloadPerSecond(int viewportWidth, int viewportHeight, const cha
     std::uint32_t out = 0;
     std::vector<NetClient::WireEvent> top;
     client.takeWireStats(in, out, top);   // discard the join burst
+    takeReplicationWireTotals();
 
     h.step(net::kTicksPerSecond, {&client});
 
@@ -79,6 +116,7 @@ std::uint32_t downloadPerSecond(int viewportWidth, int viewportHeight, const cha
     for (const NetClient::WireEvent& event : top) {
         if (event.incoming) std::printf("      %s %u\n", event.name, event.bytes);
     }
+    printWireTotals(takeReplicationWireTotals());
     return in;
 }
 
