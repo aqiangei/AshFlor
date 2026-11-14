@@ -8,8 +8,11 @@
 #include "render_rig.h"
 #include "test_data.h"
 
+#include <cstdint>
 #include <functional>
+#include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 // The web tile cache rests on one property of the artwork: that a document
@@ -333,4 +336,108 @@ TEST(a_mob_drawn_as_a_petal_that_does_not_exist_is_a_plain_disc) {
         warned = warned || w.find("mob lost: draws petal 'nope'") != std::string::npos;
     }
     CHECK(warned);
+}
+
+namespace {
+
+/// Width and height of a PNG from the first 32 characters of its base64: the
+/// IHDR chunk every PNG opens with holds them at bytes 16..23, big-endian.
+bool pngSize(const std::string& base64, std::uint32_t& width, std::uint32_t& height) {
+    static const std::string digits =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    if (base64.size() < 32) return false;
+    std::vector<std::uint8_t> bytes;
+    for (std::size_t i = 0; i < 32; i += 4) {
+        std::uint32_t quad = 0;
+        for (std::size_t j = 0; j < 4; ++j) {
+            const std::size_t at = digits.find(base64[i + j]);
+            if (at == std::string::npos) return false;
+            quad = quad << 6 | static_cast<std::uint32_t>(at);
+        }
+        bytes.push_back(static_cast<std::uint8_t>(quad >> 16));
+        bytes.push_back(static_cast<std::uint8_t>(quad >> 8));
+        bytes.push_back(static_cast<std::uint8_t>(quad));
+    }
+    const auto word = [&](std::size_t at) {
+        return std::uint32_t{bytes[at]} << 24 | std::uint32_t{bytes[at + 1]} << 16 |
+               std::uint32_t{bytes[at + 2]} << 8 | bytes[at + 3];
+    };
+    width = word(16);
+    height = word(20);
+    return true;
+}
+
+bool endsWith(const std::string& text, const std::string& tail) {
+    return text.size() >= tail.size() &&
+           text.compare(text.size() - tail.size(), tail.size(), tail) == 0;
+}
+
+} // namespace
+
+TEST(egg_petals_are_vector_ellipses_and_no_two_share_their_colours) {
+    // An egg is zorr's egg drawing -- a fill, and a band of outline just inside
+    // its edge -- written as svg ellipses: sharp at any size, a few hundred
+    // bytes. Players tell eggs apart by those two colours, and zorr paints
+    // three pairs alike (alien/angel, igloo/snowman, ghost/white hole: #2223
+    // #1293 #2232), so no two eggs may share both.
+    const ContentRegistry& content = shippedContent();
+    CHECK(content.loaded());
+    SpriteCache sprites;
+    sprites.build(content, testsupport::dataDir());
+    std::map<std::pair<std::uint32_t, std::uint32_t>, std::string> looks;
+    int eggs = 0;
+    for (std::uint16_t i = 0; i < content.petalCount(); ++i) {
+        const PetalConfig& petal = content.petal(i);
+        if (!endsWith(petal.id, "egg")) continue;
+        ++eggs;
+        CHECK(petal.image.find("<image") == std::string::npos);
+        Canvas canvas = Canvas::createVirtual(128, 128);
+        sprites.drawPetal(canvas, i, Rarity::Common, 64, 64, 128, 0, 0);
+        const std::vector<std::uint8_t> image = canvas.getImageData(0, 0, 128, 128);
+        const auto at = [](int x) { return (64u * 128u + static_cast<std::size_t>(x)) * 4u; };
+        const auto rgb = [&](int x) {
+            return std::uint32_t{image[at(x)]} << 16 | std::uint32_t{image[at(x) + 1]} << 8 |
+                   image[at(x) + 2];
+        };
+        int edge = 0;
+        while (edge < 64 && image[at(edge) + 3] == 0) ++edge;
+        CHECK(edge < 64);
+        // 3 px in from the left edge is inside the outline band, which is at
+        // least 5 px wide on a 128 px egg.
+        const auto look = std::make_pair(rgb(64), rgb(edge + 3));
+        const auto [same, fresh] = looks.emplace(look, petal.id);
+        if (!fresh) {
+            std::printf("    %s has the colours of %s\n", petal.id.c_str(), same->second.c_str());
+        }
+        CHECK(fresh);
+    }
+    CHECK(eggs >= 61);
+}
+
+TEST(petal_pictures_stay_within_the_download_budget) {
+    // petals.json is the largest file a player downloads before the first
+    // frame, over a 20 Mbit/s server link everyone joining shares: it may not
+    // grow past the 6,860,279 bytes it had before the petal art passes, and no
+    // picture embeds a bitmap over 256 px a side (2 px per frame unit, sharper
+    // than any petal is drawn).
+    std::string text;
+    CHECK(testsupport::readText(testsupport::dataFile("petals.json"), text));
+    CHECK(text.size() <= 6860279u);
+    const ContentRegistry& content = shippedContent();
+    int bitmaps = 0;
+    for (std::uint16_t i = 0; i < content.petalCount(); ++i) {
+        const std::string& image = content.petal(i).image;
+        for (std::size_t at = image.find("base64,"); at != std::string::npos;
+             at = image.find("base64,", at + 7)) {
+            std::uint32_t width = 0;
+            std::uint32_t height = 0;
+            CHECK(pngSize(image.substr(at + 7, 32), width, height));
+            ++bitmaps;
+            if (width > 256 || height > 256) {
+                std::printf("    %s embeds a %ux%u bitmap\n", content.petal(i).id.c_str(), width, height);
+            }
+            CHECK(width <= 256 && height <= 256);
+        }
+    }
+    CHECK(bitmaps > 0);
 }
