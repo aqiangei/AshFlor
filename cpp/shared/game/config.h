@@ -381,14 +381,32 @@ struct PeriodicSpawnSpec {
     int rarityOffset = 0;
 };
 
+/// One rung of a nest's brood table: `count` of `mobIndex`, at the nest's own
+/// tier. zorr writes spawnOnHurt and spawnOnDeath with one entry per mob
+/// rarity, Common first; a table shorter than the ladder repeats its last rung.
+struct NestBroodRung {
+    std::uint16_t mobIndex = kInvalidIndex;
+    int count = 0;
+};
+
+/// The rung a nest of ladder index `tier` uses, or nullptr for an empty table.
+inline const NestBroodRung* broodRungForTier(const std::vector<NestBroodRung>& table, int tier) {
+    if (table.empty()) return nullptr;
+    const int last = static_cast<int>(table.size()) - 1;
+    return &table[static_cast<std::size_t>(tier < 0 ? 0 : tier > last ? last : tier)];
+}
+
 /// What a mob may let out when it dies (`death_spawn`): `count` of `mobId`
 /// at the dead mob's tier, with probability `chance`. The tomb's mummy.
+/// With `byRarity` the brood is the dead mob's rung of that table instead --
+/// the igloo's two snowmen at Common and an ice dragon from Rare up.
 struct DeathSpawnSpec {
     bool present = false;
     std::string mobId;
     std::uint16_t mobIndex = kInvalidIndex;
     double chance = 0;
     int count = 0;
+    std::vector<NestBroodRung> byRarity;
 };
 
 /// A nest a flower walks INTO (`dungeon`): touching it carries the flower into
@@ -804,11 +822,20 @@ struct MobConfig {
     /// afterwards. Both are already resolved to mob indices.
     std::vector<std::uint16_t> initialSpawns;
     std::vector<std::vector<std::uint16_t>> spawnWaves;
+    /// zorr's spawnOnHurt (`hurt_spawn`): what the nest lets out as it is hurt,
+    /// by tier, one rung for each of `hurtSpawnBands` equal bands of its health
+    /// -- answered as a hole's waves are, never on a clock.
+    std::vector<NestBroodRung> hurtSpawn;
+    int hurtSpawnBands = 0;
 
     ProjectileSpec projectile;
     PetalRingSpec petalRing;
     PeriodicSpawnSpec periodicSpawn;
     DeathSpawnSpec deathSpawn;
+    /// zorr's Spawn Ally (`ally_spawn`): the digger a nest may leave behind
+    /// when it falls, on top of its brood -- the same one-in-ten the
+    /// gravestone's and the UFO's diggers were ported with.
+    DeathSpawnSpec allySpawn;
     /// How long what is left of this mob lies where it died (`remains_ms`):
     /// florr's opened tomb. Zero for every mob that just goes.
     double remainsMillis = 0;

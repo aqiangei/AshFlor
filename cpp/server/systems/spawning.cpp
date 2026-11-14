@@ -891,7 +891,7 @@ Entity SpawnSystem::spawnMobAt(World& world, const Terrain& terrain, const Conte
             spawner.maxAlive = config.periodicSpawn.maxAlive;
             world.add<Spawner>(e, std::move(spawner));
         }
-        if (!config.dungeon.present && !config.spawnWaves.empty()) {
+        if (!config.dungeon.present && (!config.spawnWaves.empty() || !config.hurtSpawn.empty())) {
             NestWaves waves;
             waves.mobIndex = mobIndex;
             // Seeded full: the first band fires on the first damage the hole
@@ -1021,7 +1021,9 @@ void SpawnSystem::answerDeaths(World& world, const Terrain& terrain, const Conte
         const MobConfig& config = content.mob(type->configIndex);
         const auto* subdivision = world.tryGet<CancerSubdivision>(e);
         if (subdivision && subdivision->spawnedCopy) continue;
-        if (!subdivision && !config.deathSpawn.present && !(config.remainsMillis > 0.0)) continue;
+        if (!subdivision && !config.deathSpawn.present && !config.allySpawn.present &&
+            !(config.remainsMillis > 0.0))
+            continue;
         // Copied out: everything created below may move the corpse's row.
         const Rarity rarity = type->rarity;
         const auto mobIndex = type->configIndex;
@@ -1058,11 +1060,18 @@ void SpawnSystem::answerDeaths(World& world, const Terrain& terrain, const Conte
             }
         }
         if (config.deathSpawn.present && rng.chance(config.deathSpawn.chance)) {
+            std::uint16_t broodIndex = config.deathSpawn.mobIndex;
+            int broodCount = config.deathSpawn.count;
+            if (const NestBroodRung* rung =
+                    broodRungForTier(config.deathSpawn.byRarity, rarityIndex(rarity))) {
+                broodIndex = rung->mobIndex;
+                broodCount = rung->mobIndex == kInvalidIndex ? 0 : rung->count;
+            }
             // Out of the tomb itself, as a hole's waves come out of the hole,
             // and held to the ladder an escort is held to.
-            for (int i = 0; i < config.deathSpawn.count; ++i) {
+            for (int i = 0; i < broodCount; ++i) {
                 if (config.id == "bio_stem_cell" &&
-                    content.mob(config.deathSpawn.mobIndex).id == "bio_biologist") {
+                    content.mob(broodIndex).id == "bio_biologist") {
                     if (census_.mobs >= mobCap) break;
                     std::vector<Bounty::Share> ranked;
                     if (const auto* bounty = world.tryGet<Bounty>(e)) {
@@ -1084,15 +1093,23 @@ void SpawnSystem::answerDeaths(World& world, const Terrain& terrain, const Conte
                         claims.recipients.push_back({player, account ? account->connection : 0});
                     }
                     const Entity child = spawnMobAt(world, terrain, content,
-                        config.deathSpawn.mobIndex, rarity, escortSpawnPoint(at, rng), realm,
+                        broodIndex, rarity, escortSpawnPoint(at, rng), realm,
                         nowMillis, rng, 1, kInvalidIndex);
                     if (child != NULL_ENTITY && !claims.recipients.empty())
                         world.add<InheritedLootClaims>(child, std::move(claims));
-                } else if (spawnEscort(world, terrain, content, config.deathSpawn.mobIndex, rarity,
+                } else if (spawnEscort(world, terrain, content, broodIndex, rarity,
                                        escortSpawnPoint(at, rng), realm, NULL_ENTITY, nowMillis,
                                        rng, 1) == NULL_ENTITY) {
                     break;
                 }
+            }
+        }
+        if (config.allySpawn.present && rng.chance(config.allySpawn.chance)) {
+            for (int i = 0; i < config.allySpawn.count; ++i) {
+                if (spawnEscort(world, terrain, content, config.allySpawn.mobIndex, rarity,
+                                escortSpawnPoint(at, rng), realm, NULL_ENTITY, nowMillis, rng,
+                                1) == NULL_ENTITY)
+                    break;
             }
         }
     }
@@ -1704,8 +1721,12 @@ void SpawnSystem::runNests(World& world, const Terrain& terrain, const ContentRe
         const Entity attacker = freshestAttacker(world, world.tryGet<Bounty>(nest),
                                                  transform->realm, waves->ledgerSeen);
         const MobConfig& config = content.mob(waves->mobIndex);
-        if (config.spawnWaves.empty()) continue;
-        const int lastWave=static_cast<int>(config.spawnWaves.size())-1;
+        // A zorr nest's spawnOnHurt has no authored waves: every band of its
+        // health lets out the one rung of its table for the nest's tier.
+        const bool brood = config.spawnWaves.empty();
+        if (brood && config.hurtSpawn.empty()) continue;
+        const int lastWave = brood ? std::max(1, config.hurtSpawnBands) - 1
+                                   : static_cast<int>(config.spawnWaves.size()) - 1;
         const double maxHealth=std::max(1.0,health->max);
         const Rarity nestRarity=type->rarity;
         const Vec2 anchor=transform->position;
@@ -1713,6 +1734,13 @@ void SpawnSystem::runNests(World& world, const Terrain& terrain, const ContentRe
         if(current<previous){
             const int released=clamp(1+static_cast<int>(std::floor(clamp(1.0-current/maxHealth,0.0,1.0)*lastWave)),1,lastWave+1);
             while(waves->nextWave<released){
+                if (brood) {
+                    const NestBroodRung* rung = broodRungForTier(config.hurtSpawn, rarityIndex(nestRarity));
+                    for (int k = 0; rung != nullptr && rung->mobIndex != kInvalidIndex && k < rung->count; ++k)
+                        waves->pending.emplace_back(rung->mobIndex, attacker);
+                    ++waves->nextWave;
+                    continue;
+                }
                 for(const auto member:config.spawnWaves[waves->nextWave]){
                     if(config.id=="ant_hole"&&content.mob(member).id=="queen_ant")continue;
                     waves->pending.emplace_back(member,attacker);

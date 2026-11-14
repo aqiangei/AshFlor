@@ -463,18 +463,54 @@ PeriodicSpawnSpec parsePeriodicSpawn(Ctx& ctx, const Json& owner,
     return spec;
 }
 
+/// A brood table, `[[mobType, count], ...]` one rung per tier from Common. A
+/// rung naming no known mob keeps its tier's place and lets nothing out.
+std::vector<NestBroodRung> parseBroodTable(Ctx& ctx, const Json& list, const char* what,
+                                           const std::unordered_map<std::string, std::uint16_t>& mobIds) {
+    std::vector<NestBroodRung> table;
+    if (!list.isArray()) {
+        ctx.warn(std::string(what) + " is " + typeName(list) + ", not a list; ignored");
+        return table;
+    }
+    for (const Json& entry : list.items()) {
+        const std::vector<Json>& pair = entry.items();
+        if (!entry.isArray() || pair.empty() || !pair[0].isString()) {
+            ctx.warn(std::string("a ") + what + " rung is not [mobType, count]; ignored");
+            continue;
+        }
+        NestBroodRung rung;
+        rung.mobIndex = ctx.link(mobIds, pair[0].asString(), what);
+        rung.count = pair.size() > 1 ? std::clamp(pair[1].asInt(1), 0, 100) : 1;
+        if (rung.mobIndex == kInvalidIndex) rung.count = 0;
+        table.push_back(rung);
+    }
+    return table;
+}
+
 DeathSpawnSpec parseDeathSpawn(Ctx& ctx, const Json& owner,
-                              const std::unordered_map<std::string, std::uint16_t>& mobIds) {
+                              const std::unordered_map<std::string, std::uint16_t>& mobIds,
+                              const char* key = "death_spawn") {
     DeathSpawnSpec spec;
-    if (!owner.contains("death_spawn")) return spec;
-    const Json& node = owner["death_spawn"];
+    if (!owner.contains(key)) return spec;
+    const Json& node = owner[key];
     if (!node.isObject()) {
-        ctx.warn(std::string("death_spawn is ") + typeName(node) + ", not an object; ignored");
+        ctx.warn(std::string(key) + " is " + typeName(node) + ", not an object; ignored");
+        return spec;
+    }
+    spec.chance = ctx.range(node, "chance", 1.0, 0.0, 1.0);
+    if (node.contains("byRarity")) {
+        spec.byRarity = parseBroodTable(ctx, node["byRarity"], key, mobIds);
+        bool any = false;
+        for (const NestBroodRung& rung : spec.byRarity) any = any || rung.count > 0;
+        if (!spec.byRarity.empty()) {
+            spec.mobIndex = spec.byRarity.front().mobIndex;
+            spec.count = spec.byRarity.front().count;
+        }
+        spec.present = any && spec.chance > 0.0;
         return spec;
     }
     spec.mobId = ctx.text(node, "mobType");
-    spec.mobIndex = ctx.link(mobIds, spec.mobId, "death_spawn mobType");
-    spec.chance = ctx.range(node, "chance", 1.0, 0.0, 1.0);
+    spec.mobIndex = ctx.link(mobIds, spec.mobId, (std::string(key) + " mobType").c_str());
     spec.count = ctx.integer(node, "count", 1, 0, 100);
     spec.present = spec.mobIndex != kInvalidIndex && spec.count > 0 && spec.chance > 0.0;
     return spec;
@@ -1198,6 +1234,16 @@ MobConfig parseMob(Ctx& ctx, const std::string& id, const Json& src,
     m.petalRing = parsePetalRing(ctx, src, petalIds);
     m.periodicSpawn = parsePeriodicSpawn(ctx, src, mobIds);
     m.deathSpawn = parseDeathSpawn(ctx, src, mobIds);
+    m.allySpawn = parseDeathSpawn(ctx, src, mobIds, "ally_spawn");
+    if (src.contains("hurt_spawn")) {
+        const Json& hurt = src["hurt_spawn"];
+        if (!hurt.isObject()) {
+            ctx.warn(std::string("hurt_spawn is ") + typeName(hurt) + ", not an object; ignored");
+        } else if (hurt.contains("byRarity")) {
+            m.hurtSpawn = parseBroodTable(ctx, hurt["byRarity"], "hurt_spawn byRarity", mobIds);
+            m.hurtSpawnBands = m.hurtSpawn.empty() ? 0 : ctx.integer(hurt, "bands", 8, 1, 100);
+        }
+    }
     m.remainsMillis = ctx.range(src, "remains_ms", 0.0, 0.0, kMaxDurationMillis);
     m.undeadMillis = ctx.range(src, "undead_ms", 0.0, 0.0, kMaxDurationMillis);
     m.undeadCommonMillis =

@@ -2733,6 +2733,115 @@ TEST(a_nest_sends_its_waves_as_it_is_worn_down_and_holds_at_the_last) {
     CHECK(escortCount() > 0);
 }
 
+TEST(an_igloo_and_a_spider_cave_answer_hurt_and_death_by_their_tier) {
+    // zorr's tables, one column per mob rarity from Common, the last column
+    // holding for every tier above it:
+    //   Igloo              hurt: ice cube | snowman     death: 2 snowmen | 2 ice cubes | ice dragon
+    //   Arctic Spider Cave hurt: arctic spider          death: 2 arctic spiders | spider yoba
+    // with a digger as each one's ally.
+    struct Case {
+        const char* nest;
+        Rarity tier;
+        const char* hurt;
+        const char* death;
+        int deathCount;
+        const char* ally;
+    };
+    const Case cases[] = {
+        {"arctic_igloo", Rarity::Common, "arctic_ice_cube", "arctic_snowman", 2, "arctic_frost_digger"},
+        {"arctic_igloo", Rarity::Uncommon, "arctic_snowman", "arctic_ice_cube", 2, "arctic_frost_digger"},
+        {"arctic_igloo", Rarity::Super, "arctic_snowman", "arctic_ice_dragon", 1, "arctic_frost_digger"},
+        {"arctic_spider_cave", Rarity::Common, "arctic_spider", "arctic_spider", 2, "arctic_spider_digger"},
+        {"arctic_spider_cave", Rarity::Rare, "arctic_spider", "arctic_spider_yoba", 1, "arctic_spider_digger"},
+    };
+    const std::vector<Vec2> players{kCentre};
+    for (const Case& c : cases) {
+        const std::uint16_t nestIndex = shipped().mobIndex(c.nest);
+        const std::uint16_t hurt = shipped().mobIndex(c.hurt);
+        const std::uint16_t death = shipped().mobIndex(c.death);
+        const std::uint16_t ally = shipped().mobIndex(c.ally);
+        CHECK(nestIndex != kInvalidIndex && hurt != kInvalidIndex && death != kInvalidIndex &&
+              ally != kInvalidIndex);
+        if (nestIndex == kInvalidIndex || hurt == kInvalidIndex || death == kInvalidIndex ||
+            ally == kInvalidIndex)
+            continue;
+        const MobConfig& config = shipped().mob(nestIndex);
+        CHECK_EQ(config.hurtSpawnBands, 10);
+        CHECK(config.deathSpawn.present);
+        CHECK(config.allySpawn.present);
+        CHECK_EQ(config.allySpawn.mobIndex, ally);
+        CHECK_NEAR(config.allySpawn.chance, 0.1, 1e-12);
+
+        Sim sim;
+        const Entity nest = sim.spawner.spawnMob(sim.world, sim.terrain, shipped(), nestIndex, c.tier,
+                                                 kCentre, Realm::Overworld, sim.now, sim.rng);
+        CHECK(nest != NULL_ENTITY);
+        if (nest == NULL_ENTITY) continue;
+        CHECK(sim.world.has<NestWaves>(nest));
+        const auto broodOf = [&](std::uint16_t index) {
+            int n = 0;
+            for (const Entity child : sim.world.get<NestWaves>(nest).children) {
+                if (sim.world.isAlive(child) && sim.world.get<MobType>(child).configIndex == index) ++n;
+            }
+            return n;
+        };
+        // Standing untouched, it lets nothing out.
+        sim.tick(players);
+        CHECK(sim.world.get<NestWaves>(nest).children.empty());
+
+        // The first blow lets its tier's rung out, and every further ninth of
+        // its health another: 55% off is four bands past the first.
+        const double max = sim.world.get<Health>(nest).max;
+        sim.world.get<Health>(nest).current = max * 0.99;
+        sim.tick(players);
+        CHECK_EQ(broodOf(hurt), 1);
+        sim.world.get<Health>(nest).current = max * 0.45;
+        sim.tick(players);
+        CHECK_EQ(broodOf(hurt), 5);
+        CHECK_EQ(sim.world.get<NestWaves>(nest).children.size(), std::size_t(5));
+
+        const auto everywhere = [&](std::uint16_t index) {
+            int n = 0;
+            Query<MobType> mobs{sim.world};
+            mobs.each([&](Entity, MobType& type) {
+                if (type.configIndex == index) ++n;
+            });
+            return n;
+        };
+        const int before = everywhere(death);
+        sim.world.add<Dead>(nest, Dead{NULL_ENTITY});
+        sim.spawner.answerDeaths(sim.world, sim.terrain, shipped(), {nest}, sim.rng, sim.now, 0.0,
+                                 sim.commands);
+        sim.commands.flush();
+        CHECK_EQ(everywhere(death) - before, c.deathCount);
+    }
+
+    // The ally comes out of one fall in ten.
+    Sim sim;
+    const std::uint16_t igloo = shipped().mobIndex("arctic_igloo");
+    const std::uint16_t digger = shipped().mobIndex("arctic_frost_digger");
+    if (igloo == kInvalidIndex || digger == kInvalidIndex) return;
+    constexpr int kFalls = 300;
+    for (int i = 0; i < kFalls; ++i) {
+        const Entity e = sim.spawner.spawnMob(sim.world, sim.terrain, shipped(), igloo, Rarity::Rare,
+                                              kCentre, Realm::Overworld, sim.now, sim.rng);
+        CHECK(e != NULL_ENTITY);
+        if (e == NULL_ENTITY) return;
+        sim.world.add<Dead>(e, Dead{NULL_ENTITY});
+        sim.spawner.answerDeaths(sim.world, sim.terrain, shipped(), {e}, sim.rng, sim.now, 0.0,
+                                 sim.commands);
+        sim.commands.flush();
+        sim.world.destroy(e);
+    }
+    int diggers = 0;
+    Query<MobType> mobs{sim.world};
+    mobs.each([&](Entity, MobType& type) {
+        if (type.configIndex == digger) ++diggers;
+    });
+    CHECK(diggers >= 12);
+    CHECK(diggers <= 50);
+}
+
 TEST(every_nest_sends_its_escorts_up_out_of_its_centre) {
     // A hole and a server alike: the opening guard and the waves both. The
     // fire ant hole has neither -- it is an ambush, and its brood is held to
