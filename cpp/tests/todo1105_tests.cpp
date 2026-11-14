@@ -442,7 +442,7 @@ TEST(todo1105_movement_talent_changes_authoritative_flower_speed) {
  for (int tier = 0; tier < 3; ++tier) {
   w.get<PlayerSkillTree>(p).skills.set(SkillId::MovementSpeed,tier);
   petals.foldModifiers(w,c);
-  CHECK_NEAR(w.get<PlayerModifiers>(p).speedScale,1.0+0.02*(tier+1),1e-9);
+  CHECK_NEAR(w.get<PlayerModifiers>(p).speedScale,1.0+0.05*(tier+1),1e-9);
  }
 }
 

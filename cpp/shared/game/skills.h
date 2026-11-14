@@ -95,7 +95,9 @@ inline constexpr std::array<std::array<int, 10>, kSkillCount> kSkillCosts = {{
 }};
 
 inline constexpr std::array<double, 9> kManaRegenTalentScale = {1.08, 1.16, 1.25, 1.35, 1.45, 1.56, 1.68, 1.82, 2.0};
-inline constexpr std::array<double, 3> kMovementSpeedTalentScale = {1.02, 1.04, 1.06};
+// zorr's Speed talent is +20% a level over six; our three tiers are its
+// levels 2/4/6 (+40/80/120%) at an eighth of the strength.
+inline constexpr std::array<double, 3> kMovementSpeedTalentScale = {1.05, 1.10, 1.15};
 inline constexpr std::array<double, 10> kPetDamageTalentScale = {
     1.1, 1.2, 1.3, 1.45, 1.6, 1.75, 1.9, 2.1, 2.3, 2.5,
 };
