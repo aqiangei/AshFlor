@@ -135,8 +135,8 @@ struct GardnIcon {
     /// How much of ITS OWN viewBox this game's artwork actually covers.
     ///
     /// A sprite is fitted to the box it is asked for, so a document whose
-    /// viewBox is padded -- soil covers under half of its own, bone two
-    /// thirds, dandelion four fifths because its box is kept symmetric about
+    /// viewBox is padded -- bone covers two thirds of its own, dandelion
+    /// four fifths because its box is kept symmetric about
     /// the stalk's pivot -- draws that much under the size asked for. The
     /// diameter is divided by this so what lands on the plate is `drawn`.
     /// 1 for the petals whose box already hugs their picture.
@@ -188,7 +188,7 @@ constexpr GardnIcon kGardnIcon[] = {
     {"salt",            25.75,   10,  0,       0,  0.99},   // art fills 99% of its box
     {"sand",               17,    7, 10,       0, 0.852},   // art fills 85% of its box
     {"shell",              31,   10,  0,       0, 0.973},   // art fills 97% of its box
-    {"soil",               24,   10,  0,       0, 0.488},   // art fills 49% of its box
+    {"soil",               24,   10,  0,       0, 0.984},   // art fills 98% of its box
     {"sponge",           34.5,   12,  0,       1, 0.983},   // art fills 98% of its box
     {"square",           23.5,   15,  0,  1.7854, 0.969},   // art fills 97% of its box
     {"starfish",           26,    8,  0,       -1, 0.797},   // art fills 80% of its box
@@ -487,19 +487,23 @@ void drawPetalCluster(Canvas& canvas, const SpriteCache& sprites, std::uint16_t 
             return;
         }
         if (polygon) {
-            // Fit the triangles from the centre to each outer edge of the
-            // polygon, with a slight overlap to cover antialiased seams.
+            // Each triangle keeps to its own sector of the polygon, shrunk and
+            // stepped out from the centre, so neighbours stand apart along
+            // even seams and the middle stays open instead of the points
+            // piling up there.
             const double halfSector = kPi / drawCount;
             const double apothem = polygonRadius * std::cos(halfSector);
             const double edge = 2.0 * polygonRadius * std::sin(halfSector);
+            constexpr double kGrainShare = 0.78;
+            constexpr double kGrainCentre = 0.6;
             for (int i = 0; i < drawCount; ++i) {
                 const double angle = -kPi * 0.5 + halfSector + kTau * i / drawCount;
                 into.save();
-                into.translate(ox + std::cos(angle) * apothem * .5,
-                               oy + std::sin(angle) * apothem * .5);
+                into.translate(ox + std::cos(angle) * apothem * kGrainCentre,
+                               oy + std::sin(angle) * apothem * kGrainCentre);
                 into.rotate(angle + kPi);
-                into.scale(apothem / (diameter * extent.x),
-                           edge * 1.025 / (diameter * extent.y));
+                into.scale(apothem * kGrainShare / (diameter * extent.x),
+                           edge * kGrainShare / (diameter * extent.y));
                 sprites.drawPetal(into, petalIndex, rarity, 0, 0, diameter, 0, timeSeconds);
                 into.restore();
             }
