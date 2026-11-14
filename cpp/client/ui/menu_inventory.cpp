@@ -142,7 +142,9 @@ TouchInspectDelay touchInspect;
 bool matchesSearch(std::uint16_t petalIndex, const std::string& needle) {
     if (needle.empty()) return true;
     const PetalConfig& config = content().petal(petalIndex);
-    return lowerCase(titleCase(config.name)).find(needle) != std::string::npos ||
+    const std::string name = titleCase(config.name);
+    return lowerCase(petalNameTr(config.id, name.c_str())).find(needle) != std::string::npos ||
+           lowerCase(name).find(needle) != std::string::npos ||
            lowerCase(config.id).find(needle) != std::string::npos ||
            std::string(petalNameZh(config.id)).find(needle) != std::string::npos;
 }

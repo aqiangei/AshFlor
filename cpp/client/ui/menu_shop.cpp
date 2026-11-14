@@ -935,7 +935,14 @@ bool ShopPanel::render(MenuContext& ctx) {
         if (alpha > 0) fillWindowRect(canvas, panel, kInk, alpha);
 
         const bool confirming = state.shown == ShopState::Modal::Confirm;
-        const std::string title = confirming ? trEnZh("Confirm", "确认") : trEnZh("Error", "错误");
+        std::string title = trEnZh("Error", "错误");
+        if (confirming) {
+            title = trEnZh("Confirm", "确认");
+            if (state.pendingPetal < content().petalCount()) {
+                const auto& petal = content().petal(state.pendingPetal);
+                title = petalNameTr(petal.id, petal.name.c_str());
+            }
+        }
         const std::vector<std::string> lines =
             confirming ? std::vector<std::string>{
                              trEnZh("Are you sure you want to buy this?", "确定要购买吗？"),
