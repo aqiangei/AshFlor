@@ -417,6 +417,42 @@ private:
     std::vector<std::uint32_t> removals_;
 };
 
+/// What Replicator::build has written since it was last asked, by section.
+///
+/// A meter, not a model: every figure is a difference between two writer
+/// offsets taken while a real snapshot was being built, so it cannot drift from
+/// the layout the way a sum over field widths does (see bandwidth_tests.cpp for
+/// what that drift cost the first time). Process-wide and lock-free, because
+/// snapshots are built on worker threads; a dozen relaxed adds a snapshot.
+struct ReplicationWireTotals {
+    static constexpr std::size_t kEntityKinds = 12;
+    static constexpr std::size_t kEventKinds = 16;
+    static constexpr std::size_t kUpdateFields = 16;
+
+    std::uint64_t snapshots = 0;
+    /// Message id, tick, clock, own position, self block and slot reports.
+    std::uint64_t selfBytes = 0;
+    std::uint64_t spawnBytes = 0, spawnRecords = 0;
+    std::uint64_t updateBytes = 0, updateRecords = 0;
+    std::uint64_t removalBytes = 0, removalRecords = 0;
+    std::uint64_t eventBytes = 0, eventRecords = 0;
+    /// Update records and their bytes, by net::EntityKind.
+    std::uint64_t updateBytesByKind[kEntityKinds] = {};
+    std::uint64_t updateRecordsByKind[kEntityKinds] = {};
+    /// How many update records set each net::UpdateFields bit.
+    std::uint64_t updateFieldRecords[kUpdateFields] = {};
+    /// Events and their bytes, by net::EventKind.
+    std::uint64_t eventBytesByKind[kEventKinds] = {};
+    std::uint64_t eventRecordsByKind[kEventKinds] = {};
+
+    std::uint64_t totalBytes() const {
+        return selfBytes + spawnBytes + updateBytes + removalBytes + eventBytes;
+    }
+};
+
+/// Returns the totals and starts them again from zero.
+ReplicationWireTotals takeReplicationWireTotals();
+
 /// Derives the EntityState bits the client draws from. Called once per
 /// replicated entity per tick.
 std::uint8_t computeEntityState(World& world, Entity e, double nowMillis);

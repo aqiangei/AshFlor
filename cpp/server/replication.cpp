@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 
 #include "server/systems/petals.h"
@@ -27,6 +28,78 @@ void ClientView::reset() {
 }
 
 namespace {
+
+/// ReplicationWireTotals as it is kept: one atomic per figure.
+struct WireTotalCounters {
+    using Counter = std::atomic<std::uint64_t>;
+    Counter snapshots{0}, selfBytes{0};
+    Counter spawnBytes{0}, spawnRecords{0};
+    Counter updateBytes{0}, updateRecords{0};
+    Counter removalBytes{0}, removalRecords{0};
+    Counter eventBytes{0}, eventRecords{0};
+    std::array<Counter, ReplicationWireTotals::kEntityKinds> updateBytesByKind{};
+    std::array<Counter, ReplicationWireTotals::kEntityKinds> updateRecordsByKind{};
+    std::array<Counter, ReplicationWireTotals::kUpdateFields> updateFieldRecords{};
+    std::array<Counter, ReplicationWireTotals::kEventKinds> eventBytesByKind{};
+    std::array<Counter, ReplicationWireTotals::kEventKinds> eventRecordsByKind{};
+};
+
+WireTotalCounters& wireTotalCounters() {
+    static WireTotalCounters counters;
+    return counters;
+}
+
+/// One snapshot's share of the totals, gathered in plain integers while the
+/// snapshot is written and added to the shared counters once at the end.
+struct WireMeter {
+    ReplicationWireTotals local;
+
+    void update(net::EntityKind kind, std::uint16_t mask, std::size_t bytes) {
+        const std::size_t k = std::min<std::size_t>(static_cast<std::size_t>(kind),
+                                                    ReplicationWireTotals::kEntityKinds - 1);
+        local.updateBytesByKind[k] += bytes;
+        ++local.updateRecordsByKind[k];
+        for (std::size_t bit = 0; bit < ReplicationWireTotals::kUpdateFields; ++bit) {
+            if (mask & (1u << bit)) ++local.updateFieldRecords[bit];
+        }
+    }
+
+    void event(net::EventKind kind, std::size_t bytes) {
+        const std::size_t k = std::min<std::size_t>(static_cast<std::size_t>(kind),
+                                                    ReplicationWireTotals::kEventKinds - 1);
+        local.eventBytesByKind[k] += bytes;
+        ++local.eventRecordsByKind[k];
+    }
+
+    void flush() const {
+        const auto relaxed = std::memory_order_relaxed;
+        WireTotalCounters& total = wireTotalCounters();
+        total.snapshots.fetch_add(1, relaxed);
+        total.selfBytes.fetch_add(local.selfBytes, relaxed);
+        total.spawnBytes.fetch_add(local.spawnBytes, relaxed);
+        total.spawnRecords.fetch_add(local.spawnRecords, relaxed);
+        total.updateBytes.fetch_add(local.updateBytes, relaxed);
+        total.updateRecords.fetch_add(local.updateRecords, relaxed);
+        total.removalBytes.fetch_add(local.removalBytes, relaxed);
+        total.removalRecords.fetch_add(local.removalRecords, relaxed);
+        total.eventBytes.fetch_add(local.eventBytes, relaxed);
+        total.eventRecords.fetch_add(local.eventRecords, relaxed);
+        for (std::size_t i = 0; i < ReplicationWireTotals::kEntityKinds; ++i) {
+            if (local.updateRecordsByKind[i] == 0) continue;
+            total.updateBytesByKind[i].fetch_add(local.updateBytesByKind[i], relaxed);
+            total.updateRecordsByKind[i].fetch_add(local.updateRecordsByKind[i], relaxed);
+        }
+        for (std::size_t i = 0; i < ReplicationWireTotals::kUpdateFields; ++i) {
+            if (local.updateFieldRecords[i] != 0)
+                total.updateFieldRecords[i].fetch_add(local.updateFieldRecords[i], relaxed);
+        }
+        for (std::size_t i = 0; i < ReplicationWireTotals::kEventKinds; ++i) {
+            if (local.eventRecordsByKind[i] == 0) continue;
+            total.eventBytesByKind[i].fetch_add(local.eventBytesByKind[i], relaxed);
+            total.eventRecordsByKind[i].fetch_add(local.eventRecordsByKind[i], relaxed);
+        }
+    }
+};
 
 /// A position as the client decodes it from ByteWriter::position: each axis
 /// through an f32. What Tracked holds, so that a FieldPositionDelta is
@@ -476,6 +549,9 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
 
     for (auto& tracked : view.tracked) tracked.second.seenThisTick = false;
 
+    WireMeter meter;
+    const std::size_t wireStartAt = out.size();
+
     // --- header -----------------------------------------------------------
     out.u8(static_cast<std::uint8_t>(net::ServerMessage::Snapshot));
     out.u32(frame.tick);
@@ -654,6 +730,9 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         out.u16(slotReport.counter);
     }
 
+    const std::size_t wireSpawnsAt = out.size();
+    meter.local.selfBytes = wireSpawnsAt - wireStartAt;
+
     // --- spawns and updates ----------------------------------------------
     const std::size_t spawnCountAt = out.reserveU16();
     std::uint16_t spawnCount = 0;
@@ -775,6 +854,9 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         view.tracked.emplace(candidate.netId, tracked);
     }
     out.patchU16(spawnCountAt, spawnCount);
+    const std::size_t wireUpdatesAt = out.size();
+    meter.local.spawnBytes = wireUpdatesAt - wireSpawnsAt;
+    meter.local.spawnRecords = spawnCount;
 
     const int farStride = frame.loadShedding ? 6 : std::max(1, farSnapshotStride);
     std::uint32_t previousUpdateId = 0;
@@ -864,6 +946,7 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         }
         if (mask == 0) continue;
 
+        const std::size_t recordAt = out.size();
         out.varU32(candidate.netId - previousUpdateId);
         previousUpdateId = candidate.netId;
         out.u16(mask);
@@ -918,9 +1001,13 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
             out.u8(dice->diceFace);
             tracked.petalVariant = dice->diceFace;
         }
+        meter.update(world.get<Replicated>(candidate.entity).kind, mask, out.size() - recordAt);
         ++updateCount;
     }
     out.patchU16(updateCountAt, updateCount);
+    const std::size_t wireRemovalsAt = out.size();
+    meter.local.updateBytes = wireRemovalsAt - wireUpdatesAt;
+    meter.local.updateRecords = updateCount;
 
     // --- removals ---------------------------------------------------------
     //
@@ -941,6 +1028,10 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         view.tracked.erase(netId);
     }
 
+    const std::size_t wireEventsAt = out.size();
+    meter.local.removalBytes = wireEventsAt - wireRemovalsAt;
+    meter.local.removalRecords = removals_.size();
+
     // --- events -----------------------------------------------------------
     const std::size_t eventCountAt = out.reserveU16();
     std::uint16_t eventCount = 0;
@@ -955,6 +1046,7 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
     }
     const auto writeEvent = [&](const WireEvent& event, std::uint32_t other, std::uint8_t flag,
                                 bool ownPickup) {
+        const std::size_t eventAt = out.size();
         out.u8(static_cast<std::uint8_t>(event.kind));
         out.u32(event.netId);
         out.u32(other);
@@ -968,6 +1060,7 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
             out.u8(static_cast<std::uint8_t>(count));
             for (std::size_t i = 0; i < count; ++i) out.position(event.points[i]);
         }
+        meter.event(event.kind, out.size() - eventAt);
         ++eventCount;
     };
     if (!view.deferredPickups.empty() && view.deferredPickups.front().dealtByConnection == viewerOwner) {
@@ -1045,6 +1138,37 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         }
     }
     out.patchU16(eventCountAt, eventCount);
+    meter.local.eventBytes = out.size() - wireEventsAt;
+    meter.local.eventRecords = eventCount;
+    meter.flush();
+}
+
+ReplicationWireTotals takeReplicationWireTotals() {
+    const auto relaxed = std::memory_order_relaxed;
+    WireTotalCounters& total = wireTotalCounters();
+    ReplicationWireTotals out;
+    out.snapshots = total.snapshots.exchange(0, relaxed);
+    out.selfBytes = total.selfBytes.exchange(0, relaxed);
+    out.spawnBytes = total.spawnBytes.exchange(0, relaxed);
+    out.spawnRecords = total.spawnRecords.exchange(0, relaxed);
+    out.updateBytes = total.updateBytes.exchange(0, relaxed);
+    out.updateRecords = total.updateRecords.exchange(0, relaxed);
+    out.removalBytes = total.removalBytes.exchange(0, relaxed);
+    out.removalRecords = total.removalRecords.exchange(0, relaxed);
+    out.eventBytes = total.eventBytes.exchange(0, relaxed);
+    out.eventRecords = total.eventRecords.exchange(0, relaxed);
+    for (std::size_t i = 0; i < ReplicationWireTotals::kEntityKinds; ++i) {
+        out.updateBytesByKind[i] = total.updateBytesByKind[i].exchange(0, relaxed);
+        out.updateRecordsByKind[i] = total.updateRecordsByKind[i].exchange(0, relaxed);
+    }
+    for (std::size_t i = 0; i < ReplicationWireTotals::kUpdateFields; ++i) {
+        out.updateFieldRecords[i] = total.updateFieldRecords[i].exchange(0, relaxed);
+    }
+    for (std::size_t i = 0; i < ReplicationWireTotals::kEventKinds; ++i) {
+        out.eventBytesByKind[i] = total.eventBytesByKind[i].exchange(0, relaxed);
+        out.eventRecordsByKind[i] = total.eventRecordsByKind[i].exchange(0, relaxed);
+    }
+    return out;
 }
 
 } // namespace flix
