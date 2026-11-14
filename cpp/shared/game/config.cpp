@@ -1903,6 +1903,21 @@ bool ContentRegistry::loadFiles(const std::string& mobsPath, const std::string& 
             magicSource_[i] = found->second;
         }
     }
+    // Magic Bone's armour is Bone's at every tier. Bone's data writes its tiers
+    // out by hand, so Magic Bone reads those rows rather than keeping copies
+    // that could drift from them. Hyper is still capped like every petal's
+    // (see buildPetalStats), so both bones stop at 1.5x their Eternal there.
+    {
+        const auto bone = petalIds_.find("bone");
+        const auto magic = petalIds_.find("magic_bone");
+        if (bone != petalIds_.end() && magic != petalIds_.end()) {
+            const auto& from = petals_[bone->second].rarityOverrides;
+            auto& into = petals_[magic->second].rarityOverrides;
+            for (std::size_t t = 0; t < into.size(); ++t) {
+                if (!into[t].petalArmor) into[t].petalArmor = from[t].petalArmor;
+            }
+        }
+    }
     // Likewise every petal's stats at every tier: see petalStats().
     petalStats_.resize(petals_.size());
     for (std::size_t i = 0; i < petals_.size(); ++i) {

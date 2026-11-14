@@ -31,6 +31,25 @@ TEST(magic_bone_armour_follows_bone_at_every_tier) {
     }
 }
 
+TEST(magic_bone_takes_the_armour_bones_data_writes_for_a_tier) {
+    // Bone's armour is written out per tier in the data. Edit one of those
+    // rows and Magic Bone has to move with it, not keep a copy of the old one.
+    Json petals = shippedJson("petals.json");
+    CHECK(petals["bone"]["rarityStats"]["7"]["petalArmor"].isNumber());
+    petals["bone"]["rarityStats"]["7"]["petalArmor"] = Json(123456.0);
+    const std::string path = tempUnique("magic_bone_petals", ".json");
+    CHECK(writeText(path, petals.dump()));
+    ContentRegistry edited;
+    std::string error;
+    CHECK(edited.loadFiles(dataFile("mobs.json"), path, error));
+    const auto bone = edited.petalIndex("bone");
+    const auto magic = edited.petalIndex("magic_bone");
+    CHECK_NEAR(edited.petalStats(bone, Rarity::Super).petalArmor, 123456.0, 1e-6);
+    CHECK_NEAR(edited.petalStats(magic, Rarity::Super).petalArmor, 123456.0, 1e-6);
+    CHECK_NEAR(edited.petalStats(magic, Rarity::Unique).petalArmor,
+               shippedContent().petalStats(magic, Rarity::Unique).petalArmor, 1e-6);
+}
+
 namespace {
 
 struct MagicBoneRing {
