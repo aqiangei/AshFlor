@@ -391,6 +391,7 @@ MobAiSystem::Drive MobAiSystem::driveFor(std::uint16_t configIndex, Rarity rarit
         drive.healthScaledSpeed = config.id == "roach";
         drive.speed = stats.speed;
         drive.chaseSpeed = stats.chaseSpeed > 0.0 ? stats.chaseSpeed : stats.speed;
+        drive.wildPace = config.wildSpeedScale;
         drive.attackCooldownMillis = stats.attackCooldownMillis;
         drive.ai = stats.ai;
         drive.hideRotation = config.hideRotation;
@@ -440,6 +441,18 @@ MobAiSystem::Drive MobAiSystem::driveFor(std::uint16_t configIndex, Rarity rarit
         drive.recoverBelow = config.recover.belowFraction;
         drive.recoverMillis = config.recover.durationMillis;
         drive.valid = true;
+    }
+    return drive;
+}
+
+MobAiSystem::Drive MobAiSystem::wildDriveFor(std::uint16_t configIndex, Rarity rarity) {
+    Drive drive = driveFor(configIndex, rarity);
+    if (drive.wildPace != 1.0) {
+        drive.speed *= drive.wildPace;
+        drive.chaseSpeed *= drive.wildPace;
+        // The spawner gave it a stationary brain; the idle machines read the
+        // drive instead, and must agree that there is nothing to drift with.
+        if (drive.wildPace == 0.0) drive.ai = AiKind::Stationary;
     }
     return drive;
 }
@@ -1862,7 +1875,7 @@ void MobAiSystem::driftUnwatched(World& world, const Terrain& terrain, Entity se
 
     // A mob that has never thought has never been handed the drift machine
     // either; driftPassive() holds it still until its first step equips it.
-    const Drive drive = driveFor(type->configIndex, type->rarity);
+    const Drive drive = wildDriveFor(type->configIndex, type->rarity);
     // A jumper has no drift, and turning it to the drift's heading would be
     // the one rotation it never makes.
     if (drive.jumps) {
@@ -3016,7 +3029,7 @@ void MobAiSystem::run(World& world, const Terrain& terrain, const SpatialGrid& g
         const Transform* at = world.tryGet<Transform>(self);
         const MobType* type = world.tryGet<MobType>(self);
         if (at == nullptr || type == nullptr) continue;
-        const Drive drive = driveFor(type->configIndex, type->rarity);
+        const Drive drive = wildDriveFor(type->configIndex, type->rarity);
         auto& brain = world.get<MobAi>(self);
         const bool wasSleeping = brain.sleeping;
         brain.sleeping = false;

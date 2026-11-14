@@ -1159,6 +1159,7 @@ MobConfig parseMob(Ctx& ctx, const std::string& id, const Json& src,
     m.neverAmbient = id == "target_dummy" || id == "test_dummy";
     m.glitchInfecting = id == "glitch" || id == "glitch_flower";
     m.petDamageScale = ctx.range(src, "petDamageScale", 1.0, 0.0, 100.0);
+    m.wildSpeedScale = ctx.range(src, "wild_speed_scale", 1.0, 0.0, 10.0);
     if (id == "digger") {
         m.petHealthScale = 0.5;
         m.petDamageScale = 0.5;

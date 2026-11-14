@@ -842,7 +842,8 @@ Entity SpawnSystem::spawnMobAt(World& world, const Terrain& terrain, const Conte
     world.add<Bounty>(e, std::move(bounty));
 
     MobAi ai;
-    ai.kind = config.id == "ghost" ? AiKind::Neutral : stats.ai;
+    ai.kind = config.id == "ghost" ? AiKind::Neutral :
+        config.wildSpeedScale == 0.0 ? AiKind::Stationary : stats.ai;
     ai.aggroRange = stats.aggroRange;
     ai.wanderAngle = rng.angle();
     world.add<MobAi>(e, std::move(ai));
