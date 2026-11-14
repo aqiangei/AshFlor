@@ -301,10 +301,19 @@ const char* rollWaveMob(Rng& rng, std::uint64_t wave) {
     return roster.first->id;
 }
 
-double waveRadiusLimit(Rarity rarity) {
-    if (rarity == Rarity::Apex) return 185.0;
-    if (rarity == Rarity::Unique) return 145.0;
-    if (rarity == Rarity::Super) return 110.0;
+// Footprint caps for the 4096-wide room. Ordinary rounds stay close to the
+// wild size of their tier (a size-1 Ultra is 261 in the open) so each tier
+// reads bigger than the last; the solo bosses stop where they still fit a
+// ring around a party pressed into a corner. Swarm rounds keep the compact
+// caps so a 26-strong surge fits around the party.
+double waveRadiusLimit(Rarity rarity, bool swarm) {
+    if (swarm) return rarity == Rarity::Super ? 110.0 : 92.0;
+    if (rarity == Rarity::Apex) return 600.0;
+    if (rarity == Rarity::Unique) return 480.0;
+    if (rarity == Rarity::Super) return 300.0;
+    if (rarity == Rarity::Ultra) return 240.0;
+    if (rarity == Rarity::Mythic) return 170.0;
+    if (rarity == Rarity::Legendary) return 120.0;
     return 92.0;
 }
 }
@@ -605,12 +614,15 @@ void DungeonSystem::runWave(World& world, const Terrain& terrain, const ContentR
         const auto type = content.mobIndex(mob);
         if (type == kInvalidIndex) break;
         const auto& config = content.mob(type);
-        const double radiusLimit = waveRadiusLimit(rarity);
+        const double radiusLimit = waveRadiusLimit(rarity, rewardMob != nullptr);
         const double radius = std::min(radiusLimit,
                                        content.mobStats(type, rarity).radius * config.maxRandomSize());
         // Rotate through survivors and approach from different bearings.
         // At a wall or corner the search moves to the next usable bearing.
         constexpr int lanes = 3, sectors = 32, positions = lanes * sectors;
+        // Big bodies start further out; the outer lane stays 960 from the party.
+        const double inner = std::max(520.0, radius + 200.0);
+        const double step = std::max(0.0, (960.0 - inner) / (lanes - 1));
         const Vec2 anchor = anchors[slot % standing];
         const int firstSector = (slot * 7 + round.number % sectors) % sectors;
         const double heading = kTau * (round.number % sectors) / (sectors * sectors);
@@ -619,7 +631,7 @@ void DungeonSystem::runWave(World& world, const Terrain& terrain, const ContentR
             const int index = (firstSector * lanes + attempt) % positions;
             const int lane = index % lanes;
             const double angle = heading + kTau * (index / lanes + lane * 0.5) / sectors;
-            const Vec2 at = anchor + Vec2::fromAngle(angle, 520.0 + lane * 220.0);
+            const Vec2 at = anchor + Vec2::fromAngle(angle, inner + lane * step);
             const auto wall = terrain.resolveWall(at, radius, wave_.realm);
             if (wall.collided || wall.unresolved) continue;
             if (std::any_of(meteors.begin(), meteors.end(), [&](const auto& meteor) {
