@@ -2279,7 +2279,10 @@ void GameServer::announceMob(std::uint16_t mobIndex, Rarity rarity,
     char color[16];
     std::snprintf(color, sizeof color, "#%06x", rarityColor(rarity));
     const auto& mob = content().mob(mobIndex);
-    if (rarity == Rarity::Unique || (mob.id == "ghost" && !isAnnouncedGhost(rarity))) return;
+    // An eternal that spawns is not news; one a ritual summoned is, as a
+    // summon of any tier is.
+    if ((rarity == Rarity::Unique && !summoned) || (mob.id == "ghost" && !isAnnouncedGhost(rarity)))
+        return;
     // A hyper or better that spawned names its map to the players on another
     // one -- which map, never where on it. A ritual's summon stays "somewhere":
     // its summoner paid for that fight.

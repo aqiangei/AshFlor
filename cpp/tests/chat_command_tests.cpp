@@ -516,6 +516,34 @@ TEST(a_hyper_spawn_names_its_map_to_the_players_on_another_and_no_more) {
     }));
 }
 
+TEST(an_eternal_is_announced_when_a_ritual_summons_it_and_not_when_it_spawns) {
+    const EnglishChat english;
+    Harness h("eternal-summon-announce", {});
+    if (!h.ready) { CHECK(false); return; }
+    const std::uint16_t bee = content().mobIndex("bee");
+    if (bee == kInvalidIndex) { CHECK(false); return; }
+
+    NetClient alice;
+    NetClient bob;
+    CHECK(loginNew(h, alice, "alice", "hunter2!"));
+    CHECK(loginNew(h, bob, "bob", "hunter2!"));
+    alice.joinGame(1280, 720, {}, "alice");
+    bob.joinGame(1280, 720, kMazeSpawnChoice, "bob");
+    CHECK(h.stepUntil({&alice, &bob}, [&] {
+        return alice.status() == NetClient::Status::Playing &&
+               bob.status() == NetClient::Status::Playing;
+    }));
+
+    GameServerPeer::announceMob(h.server, bee, Rarity::Unique, Realm::Overworld, false);
+    GameServerPeer::announceMob(h.server, bee, Rarity::Unique, Realm::Overworld, true);
+    CHECK(h.stepUntil({&alice, &bob}, [&] {
+        return sawText(alice, "A Eternal Bee has been summoned!") &&
+               sawText(bob, "A Eternal Bee has been summoned somewhere!");
+    }));
+    CHECK(!sawText(alice, "Eternal Bee has spawned"));
+    CHECK(!sawText(bob, "Eternal Bee has spawned"));
+}
+
 TEST(the_console_cannot_spawn_a_unique_while_its_biome_clock_cools_down) {
     // A server that has just started has every boss clock cooling down (they
     // are dealt out over one cooldown, none ready at boot), so a unique or an
