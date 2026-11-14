@@ -393,7 +393,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "ladybug": {
     "referenceMob": "Ladybug",
@@ -680,7 +680,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "soldier_ant": {
     "referenceMob": "Soldier Ant",
@@ -966,7 +966,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "worker_ant": {
     "referenceMob": "Worker Ant",
@@ -1249,7 +1249,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "baby_ant": {
     "referenceMob": "Baby Ant",
@@ -1671,7 +1671,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "ant_hole": {
     "referenceMob": "Ant Hole",
@@ -1957,7 +1957,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "fire_ant_hole": {
     "referenceMob": "Fire Ant Burrow",
@@ -2217,7 +2217,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "rock": {
     "referenceMob": "Rock",
@@ -2571,7 +2571,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "dandelion": {
     "referenceMob": "Dandelion",
@@ -2714,7 +2714,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "soldier_fire_ant": {
     "referenceMob": "Soldier Fire Ant",
@@ -2996,7 +2996,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "shiny_ladybug": {
     "guaranteed": true,
@@ -3429,7 +3429,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "cactus": {
     "referenceMob": "Cactus",
@@ -3573,7 +3573,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "scorpion": {
     "referenceMob": "Scorpion",
@@ -3851,7 +3851,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "beetle": {
     "referenceMob": "Beetle",
@@ -4133,7 +4133,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "hel_beetle": {
     "referenceMob": "Hel Beetle",
@@ -4598,7 +4598,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "jellyfish": {
     "referenceMob": "Jellyfish",
@@ -4880,7 +4880,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "bubble": {
     "referenceMob": "Bubble",
@@ -5234,7 +5234,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "starfish": {
     "referenceMob": "Starfish",
@@ -5659,7 +5659,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "sponge": {
     "referenceMob": "Sponge",
@@ -5941,7 +5941,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "hornet": {
     "referenceMob": "Hornet",
@@ -6333,7 +6333,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "leafbug": {
     "referenceMob": "Leafbug",
@@ -6616,7 +6616,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "golden_leafbug": {
     "referenceMob": "Golden Leafbug",
@@ -6649,8 +6649,12 @@
           ],
           [
             [
+              5,
+              35.7
+            ],
+            [
               6,
-              99.6785
+              63.9785
             ],
             [
               7,
@@ -6659,8 +6663,12 @@
           ],
           [
             [
+              5,
+              35.7
+            ],
+            [
               6,
-              99.0355
+              63.3355
             ],
             [
               7,
@@ -6935,7 +6943,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "bush": {
     "referenceMob": "Bush",
@@ -7216,7 +7224,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "mantis": {
     "referenceMob": "Mantis",
@@ -7503,7 +7511,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "firefly": {
     "referenceMob": "Firefly",
@@ -7932,7 +7940,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "magic_firefly": {
     "referenceMob": "Magic Firefly",
@@ -8214,7 +8222,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "wasp": {
     "referenceMob": "Wasp",
@@ -8754,7 +8762,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "fly": {
     "referenceMob": "Fly",
@@ -9175,7 +9183,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "moth": {
     "referenceMob": "Moth",
@@ -9461,7 +9469,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "target_dummy": {
     "guaranteed": true,
@@ -9752,7 +9760,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "roach": {
     "referenceMob": "Roach",
@@ -10016,7 +10024,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "spider": {
     "referenceMob": "Spider",
@@ -10512,7 +10520,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "javascript": {
     "guaranteed": true,
@@ -10699,8 +10707,12 @@
           ],
           [
             [
+              5,
+              50.0
+            ],
+            [
               6,
-              99.75
+              49.75
             ],
             [
               7,
@@ -10709,8 +10721,12 @@
           ],
           [
             [
+              5,
+              50.0
+            ],
+            [
               6,
-              99.25
+              49.25
             ],
             [
               7,
@@ -10719,8 +10735,12 @@
           ],
           [
             [
+              5,
+              50.0
+            ],
+            [
               6,
-              99.25
+              49.25
             ],
             [
               7,
@@ -10731,7 +10751,7 @@
       }
     ],
     "highTierPolicy": "computer-standard-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "c++": {
     "guaranteed": true,
@@ -10812,8 +10832,12 @@
           ],
           [
             [
+              5,
+              95.0
+            ],
+            [
               6,
-              99.975
+              4.9750000000000005
             ],
             [
               7,
@@ -10822,8 +10846,12 @@
           ],
           [
             [
+              5,
+              95.0
+            ],
+            [
               6,
-              99.925
+              4.925000000000001
             ],
             [
               7,
@@ -10832,8 +10860,12 @@
           ],
           [
             [
+              5,
+              95.0
+            ],
+            [
               6,
-              99.925
+              4.925000000000001
             ],
             [
               7,
@@ -10918,8 +10950,12 @@
           ],
           [
             [
+              5,
+              50.0
+            ],
+            [
               6,
-              99.75
+              49.75
             ],
             [
               7,
@@ -10928,8 +10964,12 @@
           ],
           [
             [
+              5,
+              50.0
+            ],
+            [
               6,
-              99.25
+              49.25
             ],
             [
               7,
@@ -10938,8 +10978,12 @@
           ],
           [
             [
+              5,
+              50.0
+            ],
+            [
               6,
-              99.25
+              49.25
             ],
             [
               7,
@@ -10950,7 +10994,7 @@
       }
     ],
     "highTierPolicy": "computer-standard-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "glitch": {
     "guaranteed": true,
@@ -11265,8 +11309,12 @@
           ],
           [
             [
+              5,
+              60.0
+            ],
+            [
               6,
-              99.8
+              39.800000000000004
             ],
             [
               7,
@@ -11275,8 +11323,12 @@
           ],
           [
             [
+              5,
+              60.0
+            ],
+            [
               6,
-              99.4
+              39.400000000000006
             ],
             [
               7,
@@ -11285,8 +11337,12 @@
           ],
           [
             [
+              5,
+              60.0
+            ],
+            [
               6,
-              99.4
+              39.400000000000006
             ],
             [
               7,
@@ -11371,8 +11427,12 @@
           ],
           [
             [
+              5,
+              60.0
+            ],
+            [
               6,
-              99.8
+              39.800000000000004
             ],
             [
               7,
@@ -11381,8 +11441,12 @@
           ],
           [
             [
+              5,
+              60.0
+            ],
+            [
               6,
-              99.4
+              39.400000000000006
             ],
             [
               7,
@@ -11391,8 +11455,12 @@
           ],
           [
             [
+              5,
+              60.0
+            ],
+            [
               6,
-              99.4
+              39.400000000000006
             ],
             [
               7,
@@ -11477,8 +11545,12 @@
           ],
           [
             [
+              5,
+              20.0
+            ],
+            [
               6,
-              99.6
+              79.60000000000001
             ],
             [
               7,
@@ -11487,8 +11559,12 @@
           ],
           [
             [
+              5,
+              20.0
+            ],
+            [
               6,
-              98.8
+              78.80000000000001
             ],
             [
               7,
@@ -11497,8 +11573,12 @@
           ],
           [
             [
+              5,
+              20.0
+            ],
+            [
               6,
-              98.8
+              78.80000000000001
             ],
             [
               7,
@@ -11509,7 +11589,7 @@
       }
     ],
     "highTierPolicy": "computer-standard-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "server": {
     "guaranteed": true,
@@ -11704,8 +11784,12 @@
           ],
           [
             [
+              5,
+              96.0
+            ],
+            [
               6,
-              99.98
+              3.98
             ],
             [
               7,
@@ -11714,8 +11798,12 @@
           ],
           [
             [
+              5,
+              96.0
+            ],
+            [
               6,
-              99.94
+              3.94
             ],
             [
               7,
@@ -11724,8 +11812,12 @@
           ],
           [
             [
+              5,
+              96.0
+            ],
+            [
               6,
-              99.94
+              3.94
             ],
             [
               7,
@@ -11810,8 +11902,12 @@
           ],
           [
             [
+              5,
+              5.0
+            ],
+            [
               6,
-              99.525
+              94.52499999999999
             ],
             [
               7,
@@ -11820,8 +11916,12 @@
           ],
           [
             [
+              5,
+              5.0
+            ],
+            [
               6,
-              98.575
+              93.57499999999999
             ],
             [
               7,
@@ -11830,8 +11930,12 @@
           ],
           [
             [
+              5,
+              5.0
+            ],
+            [
               6,
-              98.575
+              93.57499999999999
             ],
             [
               7,
@@ -11916,8 +12020,12 @@
           ],
           [
             [
+              5,
+              53.0
+            ],
+            [
               6,
-              99.765
+              46.765
             ],
             [
               7,
@@ -11926,8 +12034,12 @@
           ],
           [
             [
+              5,
+              53.0
+            ],
+            [
               6,
-              99.295
+              46.295
             ],
             [
               7,
@@ -11936,8 +12048,12 @@
           ],
           [
             [
+              5,
+              53.0
+            ],
+            [
               6,
-              99.295
+              46.295
             ],
             [
               7,
@@ -12022,8 +12138,12 @@
           ],
           [
             [
+              5,
+              90.0
+            ],
+            [
               6,
-              99.95
+              9.950000000000001
             ],
             [
               7,
@@ -12032,8 +12152,12 @@
           ],
           [
             [
+              5,
+              90.0
+            ],
+            [
               6,
-              99.85
+              9.850000000000001
             ],
             [
               7,
@@ -12042,8 +12166,12 @@
           ],
           [
             [
+              5,
+              90.0
+            ],
+            [
               6,
-              99.85
+              9.850000000000001
             ],
             [
               7,
@@ -12128,8 +12256,12 @@
           ],
           [
             [
+              5,
+              20.0
+            ],
+            [
               6,
-              99.6
+              79.60000000000001
             ],
             [
               7,
@@ -12138,8 +12270,12 @@
           ],
           [
             [
+              5,
+              20.0
+            ],
+            [
               6,
-              98.8
+              78.80000000000001
             ],
             [
               7,
@@ -12148,8 +12284,12 @@
           ],
           [
             [
+              5,
+              20.0
+            ],
+            [
               6,
-              98.8
+              78.80000000000001
             ],
             [
               7,
@@ -12160,7 +12300,7 @@
       }
     ],
     "highTierPolicy": "computer-standard-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "desert_centipede": {
     "referenceMob": "Desert Centipede",
@@ -12412,7 +12552,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "desert_centipede_body": {
     "referenceMob": "Desert Centipede",
@@ -12664,7 +12804,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "centipede": {
     "referenceMob": "Centipede",
@@ -12956,7 +13096,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "centipede_body": {
     "referenceMob": "Centipede",
@@ -13248,7 +13388,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "sun": {
     "guaranteed": true,
@@ -13701,7 +13841,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "evil_centipede": {
     "guaranteed": true,
@@ -13960,7 +14100,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "digger": {
     "referenceMob": "Digger",
@@ -14220,7 +14360,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "leech": {
     "referenceMob": "Leech",
@@ -14502,7 +14642,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "crab": {
     "referenceMob": "Crab",
@@ -14935,7 +15075,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "bumble_bee": {
     "referenceMob": "Bumble Bee",
@@ -15304,7 +15444,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "termite_mound": {
     "referenceMob": "Termite Mound",
@@ -15725,7 +15865,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "baby_termite": {
     "referenceMob": "Baby Termite",
@@ -16011,7 +16151,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "worker_termite": {
     "referenceMob": "Worker Termite",
@@ -16297,7 +16437,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "soldier_termite": {
     "referenceMob": "Soldier Termite",
@@ -16583,7 +16723,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "termite_overmind": {
     "referenceMob": "Termite Overmind",
@@ -16886,8 +17026,12 @@
           ],
           [
             [
+              5,
+              1.6
+            ],
+            [
               6,
-              99.508
+              97.908
             ],
             [
               7,
@@ -16896,8 +17040,12 @@
           ],
           [
             [
+              5,
+              1.6
+            ],
+            [
               6,
-              98.524
+              96.924
             ],
             [
               7,
@@ -16959,7 +17107,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "cube": {
     "guaranteed": true,
@@ -17040,8 +17188,12 @@
           ],
           [
             [
+              5,
+              90.0
+            ],
+            [
               6,
-              99.95
+              9.950000000000001
             ],
             [
               7,
@@ -17050,8 +17202,12 @@
           ],
           [
             [
+              5,
+              90.0
+            ],
+            [
               6,
-              99.85
+              9.850000000000001
             ],
             [
               7,
@@ -17060,8 +17216,12 @@
           ],
           [
             [
+              5,
+              90.0
+            ],
+            [
               6,
-              99.85
+              9.850000000000001
             ],
             [
               7,
@@ -17146,8 +17306,12 @@
           ],
           [
             [
+              5,
+              20.0
+            ],
+            [
               6,
-              99.6
+              79.60000000000001
             ],
             [
               7,
@@ -17156,8 +17320,12 @@
           ],
           [
             [
+              5,
+              20.0
+            ],
+            [
               6,
-              98.8
+              78.80000000000001
             ],
             [
               7,
@@ -17166,8 +17334,12 @@
           ],
           [
             [
+              5,
+              20.0
+            ],
+            [
               6,
-              98.8
+              78.80000000000001
             ],
             [
               7,
@@ -17284,7 +17456,7 @@
       }
     ],
     "highTierPolicy": "computer-standard-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "dust": {
     "guaranteed": true,
@@ -17445,7 +17617,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "fire_ant_egg": {
     "referenceMob": "Fire Ant Egg",
@@ -17592,7 +17764,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "termite_egg": {
     "referenceMob": "Termite Egg",
@@ -17882,7 +18054,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "mummy_beetle": {
     "referenceMob": "Mummy Beetle",
@@ -18246,7 +18418,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "pharaoh_beetle": {
     "referenceMob": "Pharaoh Beetle",
@@ -18279,8 +18451,12 @@
           ],
           [
             [
+              5,
+              1.6
+            ],
+            [
               6,
-              99.508
+              97.908
             ],
             [
               7,
@@ -18289,8 +18465,12 @@
           ],
           [
             [
+              5,
+              1.6
+            ],
+            [
               6,
-              98.524
+              96.924
             ],
             [
               7,
@@ -18336,8 +18516,12 @@
           ],
           [
             [
+              5,
+              1.6
+            ],
+            [
               6,
-              99.508
+              97.908
             ],
             [
               7,
@@ -18346,8 +18530,12 @@
           ],
           [
             [
+              5,
+              1.6
+            ],
+            [
               6,
-              98.524
+              96.924
             ],
             [
               7,
@@ -18404,7 +18592,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "square": {
     "referenceMob": "Square",
@@ -18847,7 +19035,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "fire_ant_burrow": {
     "referenceMob": "Fire Ant Burrow",
@@ -19107,7 +19295,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "nazar_beetle": {
     "referenceMob": "Nazar Beetle",
@@ -19643,7 +19831,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "soldier_diver_ant": {
     "referenceMob": "Soldier Diver Ant",
@@ -19862,7 +20050,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "jungle_centipede": {
     "referenceMob": "Jungle Centipede",
@@ -20153,7 +20341,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "jungle_ladybug": {
     "referenceMob": "Jungle Ladybug",
@@ -20410,7 +20598,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "hel_spider": {
     "referenceMob": "Hel Spider",
@@ -20765,7 +20953,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "hel_centipede": {
     "referenceMob": "Hel Centipede",
@@ -21156,7 +21344,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "hel_wasp": {
     "referenceMob": "Hel Wasp",
@@ -21606,7 +21794,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "gambler": {
     "referenceMob": "Gambler",
@@ -22189,7 +22377,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "queen_fire_ant": {
     "referenceMob": "Queen Fire Ant",
@@ -22406,7 +22594,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "worm": {
     "referenceMob": "Worm",
@@ -22692,7 +22880,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "silverfish": {
     "referenceMob": "Silverfish",
@@ -22974,7 +23162,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "mecha_flower": {
     "referenceMob": "Mecha Flower",
@@ -23383,7 +23571,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "mecha_wasp": {
     "referenceMob": "Mecha Wasp",
@@ -23796,7 +23984,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "mecha_spider": {
     "referenceMob": "Mecha Spider",
@@ -24269,7 +24457,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "mecha_crab": {
     "referenceMob": "Mecha Crab",
@@ -24746,7 +24934,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "barrel": {
     "referenceMob": "Barrel",
@@ -24941,7 +25129,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "ghost": {
     "referenceMob": "Ghost",
@@ -25084,7 +25272,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "baby_fire_ant": {
     "referenceMob": "Baby Fire Ant",
@@ -25501,7 +25689,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "worker_fire_ant": {
     "referenceMob": "Worker Fire Ant",
@@ -25783,7 +25971,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "tomb": {
     "referenceMob": "Tomb",
@@ -26200,7 +26388,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "test_dummy": {
     "referenceMob": "Test Dummy",
@@ -26568,7 +26756,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "hel_centipede_body": {
     "referenceMob": "Hel Centipede",
@@ -26959,7 +27147,7 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct",
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "jurassic_dodo": {
     "referenceMob": "Dodo",
@@ -27042,8 +27230,12 @@
           ],
           [
             [
+              5,
+              22.514595
+            ],
+            [
               6,
-              44.744595
+              22.23
             ],
             [
               7,
@@ -27052,8 +27244,12 @@
           ],
           [
             [
+              5,
+              22.135135
+            ],
+            [
               6,
-              44.170135
+              22.035
             ],
             [
               7,
@@ -27236,8 +27432,12 @@
           ],
           [
             [
+              5,
+              7.504865
+            ],
+            [
               6,
-              14.914865
+              7.41
             ],
             [
               7,
@@ -27246,8 +27446,12 @@
           ],
           [
             [
+              5,
+              7.378378
+            ],
+            [
               6,
-              14.723378
+              7.345
             ],
             [
               7,
@@ -27333,8 +27537,12 @@
           ],
           [
             [
+              5,
+              7.504865
+            ],
+            [
               6,
-              14.914865
+              7.41
             ],
             [
               7,
@@ -27343,8 +27551,12 @@
           ],
           [
             [
+              5,
+              7.378378
+            ],
+            [
               6,
-              14.723378
+              7.345
             ],
             [
               7,
@@ -27430,8 +27642,12 @@
           ],
           [
             [
+              5,
+              5.195676
+            ],
+            [
               6,
-              10.325676
+              5.13
             ],
             [
               7,
@@ -27440,8 +27656,12 @@
           ],
           [
             [
+              5,
+              5.108108
+            ],
+            [
               6,
-              10.193108
+              5.085
             ],
             [
               7,
@@ -27451,7 +27671,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "jurassic_stegosaurus": {
     "referenceMob": "Stegosaurus",
@@ -27534,8 +27754,12 @@
           ],
           [
             [
+              5,
+              15.55008
+            ],
+            [
               6,
-              36.29808
+              20.748
             ],
             [
               7,
@@ -27544,8 +27768,12 @@
           ],
           [
             [
+              5,
+              15.288
+            ],
+            [
               6,
-              35.854
+              20.566
             ],
             [
               7,
@@ -27631,8 +27859,12 @@
           ],
           [
             [
+              5,
+              10.36672
+            ],
+            [
               6,
-              24.19872
+              13.832
             ],
             [
               7,
@@ -27641,8 +27873,12 @@
           ],
           [
             [
+              5,
+              10.192
+            ],
+            [
               6,
-              23.902666
+              13.710666
             ],
             [
               7,
@@ -27728,8 +27964,12 @@
           ],
           [
             [
+              5,
+              5.18336
+            ],
+            [
               6,
-              12.09936
+              6.916
             ],
             [
               7,
@@ -27738,8 +27978,12 @@
           ],
           [
             [
+              5,
+              5.096
+            ],
+            [
               6,
-              11.951334
+              6.855334
             ],
             [
               7,
@@ -27825,8 +28069,12 @@
           ],
           [
             [
+              5,
+              7.77504
+            ],
+            [
               6,
-              18.14904
+              10.374
             ],
             [
               7,
@@ -27835,8 +28083,12 @@
           ],
           [
             [
+              5,
+              7.644
+            ],
+            [
               6,
-              17.927
+              10.283
             ],
             [
               7,
@@ -27922,8 +28174,12 @@
           ],
           [
             [
+              5,
+              3.8448
+            ],
+            [
               6,
-              8.9748
+              5.13
             ],
             [
               7,
@@ -27932,8 +28188,12 @@
           ],
           [
             [
+              5,
+              3.78
+            ],
+            [
               6,
-              8.865
+              5.085
             ],
             [
               7,
@@ -27943,7 +28203,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "jurassic_raptor": {
     "referenceMob": "Velociraptor",
@@ -28026,8 +28286,12 @@
           ],
           [
             [
+              5,
+              12.830099
+            ],
+            [
               6,
-              28.391099
+              15.561
             ],
             [
               7,
@@ -28036,8 +28300,12 @@
           ],
           [
             [
+              5,
+              12.613861
+            ],
+            [
               6,
-              28.038361
+              15.4245
             ],
             [
               7,
@@ -28123,8 +28391,12 @@
           ],
           [
             [
+              5,
+              8.553399
+            ],
+            [
               6,
-              18.927399
+              10.374
             ],
             [
               7,
@@ -28133,8 +28405,12 @@
           ],
           [
             [
+              5,
+              8.409241
+            ],
+            [
               6,
-              18.692241
+              10.283
             ],
             [
               7,
@@ -28220,8 +28496,12 @@
           ],
           [
             [
+              5,
+              4.2767
+            ],
+            [
               6,
-              9.4637
+              5.187
             ],
             [
               7,
@@ -28230,8 +28510,12 @@
           ],
           [
             [
+              5,
+              4.20462
+            ],
+            [
               6,
-              9.34612
+              5.1415
             ],
             [
               7,
@@ -28414,8 +28698,12 @@
           ],
           [
             [
+              5,
+              4.2767
+            ],
+            [
               6,
-              9.4637
+              5.187
             ],
             [
               7,
@@ -28424,8 +28712,12 @@
           ],
           [
             [
+              5,
+              4.20462
+            ],
+            [
               6,
-              9.34612
+              5.1415
             ],
             [
               7,
@@ -28511,8 +28803,12 @@
           ],
           [
             [
+              5,
+              8.553399
+            ],
+            [
               6,
-              18.927399
+              10.374
             ],
             [
               7,
@@ -28521,8 +28817,12 @@
           ],
           [
             [
+              5,
+              8.409241
+            ],
+            [
               6,
-              18.692241
+              10.283
             ],
             [
               7,
@@ -28608,8 +28908,12 @@
           ],
           [
             [
+              5,
+              4.229703
+            ],
+            [
               6,
-              9.359703
+              5.13
             ],
             [
               7,
@@ -28618,8 +28922,12 @@
           ],
           [
             [
+              5,
+              4.158416
+            ],
+            [
               6,
-              9.243416
+              5.085
             ],
             [
               7,
@@ -28629,7 +28937,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "jurassic_pteranodon": {
     "referenceMob": "Pterodactyl",
@@ -28712,8 +29020,12 @@
           ],
           [
             [
+              5,
+              14.416021
+            ],
+            [
               6,
-              31.706021
+              17.29
             ],
             [
               7,
@@ -28722,8 +29034,12 @@
           ],
           [
             [
+              5,
+              14.173052
+            ],
+            [
               6,
-              31.311385
+              17.138333
             ],
             [
               7,
@@ -28809,8 +29125,12 @@
           ],
           [
             [
+              5,
+              9.610681
+            ],
+            [
               6,
-              21.137348
+              11.526667
             ],
             [
               7,
@@ -28819,8 +29139,12 @@
           ],
           [
             [
+              5,
+              9.448701
+            ],
+            [
               6,
-              20.874257
+              11.425556
             ],
             [
               7,
@@ -28906,8 +29230,12 @@
           ],
           [
             [
+              5,
+              4.80534
+            ],
+            [
               6,
-              10.568673
+              5.763333
             ],
             [
               7,
@@ -28916,8 +29244,12 @@
           ],
           [
             [
+              5,
+              4.724351
+            ],
+            [
               6,
-              10.437129
+              5.712778
             ],
             [
               7,
@@ -29003,8 +29335,12 @@
           ],
           [
             [
+              5,
+              4.80534
+            ],
+            [
               6,
-              10.568673
+              5.763333
             ],
             [
               7,
@@ -29013,8 +29349,12 @@
           ],
           [
             [
+              5,
+              4.724351
+            ],
+            [
               6,
-              10.437129
+              5.712778
             ],
             [
               7,
@@ -29197,8 +29537,12 @@
           ],
           [
             [
+              5,
+              4.80534
+            ],
+            [
               6,
-              10.568673
+              5.763333
             ],
             [
               7,
@@ -29207,8 +29551,12 @@
           ],
           [
             [
+              5,
+              4.724351
+            ],
+            [
               6,
-              10.437129
+              5.712778
             ],
             [
               7,
@@ -29294,8 +29642,12 @@
           ],
           [
             [
+              5,
+              4.277281
+            ],
+            [
               6,
-              9.407281
+              5.13
             ],
             [
               7,
@@ -29304,8 +29656,12 @@
           ],
           [
             [
+              5,
+              4.205191
+            ],
+            [
               6,
-              9.290191
+              5.085
             ],
             [
               7,
@@ -29315,7 +29671,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "jurassic_tyrannosaurus": {
     "referenceMob": "Tyrannosaurus",
@@ -29398,8 +29754,12 @@
           ],
           [
             [
+              5,
+              12.958401
+            ],
+            [
               6,
-              30.248401
+              17.29
             ],
             [
               7,
@@ -29408,8 +29768,12 @@
           ],
           [
             [
+              5,
+              12.739999
+            ],
+            [
               6,
-              29.878332
+              17.138333
             ],
             [
               7,
@@ -29495,8 +29859,12 @@
           ],
           [
             [
+              5,
+              8.638934
+            ],
+            [
               6,
-              20.165601
+              11.526667
             ],
             [
               7,
@@ -29505,8 +29873,12 @@
           ],
           [
             [
+              5,
+              8.493333
+            ],
+            [
               6,
-              19.918889
+              11.425556
             ],
             [
               7,
@@ -29592,8 +29964,12 @@
           ],
           [
             [
+              5,
+              4.319467
+            ],
+            [
               6,
-              10.0828
+              5.763333
             ],
             [
               7,
@@ -29602,8 +29978,12 @@
           ],
           [
             [
+              5,
+              4.246667
+            ],
+            [
               6,
-              9.959445
+              5.712778
             ],
             [
               7,
@@ -29689,8 +30069,12 @@
           ],
           [
             [
+              5,
+              4.319467
+            ],
+            [
               6,
-              10.0828
+              5.763333
             ],
             [
               7,
@@ -29699,8 +30083,12 @@
           ],
           [
             [
+              5,
+              4.246667
+            ],
+            [
               6,
-              9.959445
+              5.712778
             ],
             [
               7,
@@ -29786,8 +30174,12 @@
           ],
           [
             [
+              5,
+              4.319467
+            ],
+            [
               6,
-              10.0828
+              5.763333
             ],
             [
               7,
@@ -29796,8 +30188,12 @@
           ],
           [
             [
+              5,
+              4.246667
+            ],
+            [
               6,
-              9.959445
+              5.712778
             ],
             [
               7,
@@ -29883,8 +30279,12 @@
           ],
           [
             [
+              5,
+              4.319467
+            ],
+            [
               6,
-              10.0828
+              5.763333
             ],
             [
               7,
@@ -29893,8 +30293,12 @@
           ],
           [
             [
+              5,
+              4.246667
+            ],
+            [
               6,
-              9.959445
+              5.712778
             ],
             [
               7,
@@ -29980,8 +30384,12 @@
           ],
           [
             [
+              5,
+              3.8448
+            ],
+            [
               6,
-              8.9748
+              5.13
             ],
             [
               7,
@@ -29990,8 +30398,12 @@
           ],
           [
             [
+              5,
+              3.78
+            ],
+            [
               6,
-              8.865
+              5.085
             ],
             [
               7,
@@ -30001,7 +30413,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "jurassic_fossil": {
     "referenceMob": "Fossil",
@@ -30084,8 +30496,12 @@
           ],
           [
             [
+              5,
+              16.6608
+            ],
+            [
               6,
-              38.8908
+              22.23
             ],
             [
               7,
@@ -30094,8 +30510,12 @@
           ],
           [
             [
+              5,
+              16.38
+            ],
+            [
               6,
-              38.415
+              22.035
             ],
             [
               7,
@@ -30181,8 +30601,12 @@
           ],
           [
             [
+              5,
+              11.1072
+            ],
+            [
               6,
-              25.9272
+              14.82
             ],
             [
               7,
@@ -30191,8 +30615,12 @@
           ],
           [
             [
+              5,
+              10.92
+            ],
+            [
               6,
-              25.61
+              14.69
             ],
             [
               7,
@@ -30278,8 +30706,12 @@
           ],
           [
             [
+              5,
+              5.5536
+            ],
+            [
               6,
-              12.9636
+              7.41
             ],
             [
               7,
@@ -30288,8 +30720,12 @@
           ],
           [
             [
+              5,
+              5.46
+            ],
+            [
               6,
-              12.805
+              7.345
             ],
             [
               7,
@@ -30375,8 +30811,12 @@
           ],
           [
             [
+              5,
+              5.5536
+            ],
+            [
               6,
-              12.9636
+              7.41
             ],
             [
               7,
@@ -30385,8 +30825,12 @@
           ],
           [
             [
+              5,
+              5.46
+            ],
+            [
               6,
-              12.805
+              7.345
             ],
             [
               7,
@@ -30472,8 +30916,12 @@
           ],
           [
             [
+              5,
+              3.8448
+            ],
+            [
               6,
-              8.9748
+              5.13
             ],
             [
               7,
@@ -30482,8 +30930,12 @@
           ],
           [
             [
+              5,
+              3.78
+            ],
+            [
               6,
-              8.865
+              5.085
             ],
             [
               7,
@@ -30493,7 +30945,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "void_alien": {
     "autoEggDrops": false,
@@ -30578,7 +31030,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -30588,7 +31040,7 @@
           ],
           [
             [
-              6,
+              5,
               98.82
             ],
             [
@@ -30598,7 +31050,7 @@
           ],
           [
             [
-              6,
+              5,
               93.32
             ],
             [
@@ -30698,7 +31150,7 @@
           ],
           [
             [
-              6,
+              5,
               99.7
             ],
             [
@@ -30708,7 +31160,7 @@
           ],
           [
             [
-              6,
+              5,
               98.28
             ],
             [
@@ -30808,7 +31260,7 @@
           ],
           [
             [
-              6,
+              5,
               99.85
             ],
             [
@@ -30818,7 +31270,7 @@
           ],
           [
             [
-              6,
+              5,
               99.14
             ],
             [
@@ -30918,7 +31370,7 @@
           ],
           [
             [
-              6,
+              5,
               99.97
             ],
             [
@@ -30928,7 +31380,7 @@
           ],
           [
             [
-              6,
+              5,
               99.83
             ],
             [
@@ -31098,7 +31550,7 @@
           ],
           [
             [
-              6,
+              5,
               99.84
             ],
             [
@@ -31108,7 +31560,7 @@
           ],
           [
             [
-              6,
+              5,
               99.06
             ],
             [
@@ -31119,7 +31571,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "void_alien_digger": {
     "autoEggDrops": false,
@@ -31204,7 +31656,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -31214,7 +31666,7 @@
           ],
           [
             [
-              6,
+              5,
               99.56
             ],
             [
@@ -31224,7 +31676,7 @@
           ],
           [
             [
-              6,
+              5,
               97.44
             ],
             [
@@ -31314,7 +31766,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -31324,7 +31776,7 @@
           ],
           [
             [
-              6,
+              5,
               99.12
             ],
             [
@@ -31334,7 +31786,7 @@
           ],
           [
             [
-              6,
+              5,
               94.95
             ],
             [
@@ -31434,7 +31886,7 @@
           ],
           [
             [
-              6,
+              5,
               99.7
             ],
             [
@@ -31444,7 +31896,7 @@
           ],
           [
             [
-              6,
+              5,
               98.28
             ],
             [
@@ -31534,7 +31986,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -31544,7 +31996,7 @@
           ],
           [
             [
-              6,
+              5,
               98.89
             ],
             [
@@ -31554,7 +32006,7 @@
           ],
           [
             [
-              6,
+              5,
               93.72
             ],
             [
@@ -31644,7 +32096,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -31654,7 +32106,7 @@
           ],
           [
             [
-              6,
+              5,
               99.26
             ],
             [
@@ -31664,7 +32116,7 @@
           ],
           [
             [
-              6,
+              5,
               95.77
             ],
             [
@@ -31754,7 +32206,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -31764,7 +32216,7 @@
           ],
           [
             [
-              6,
+              5,
               99.35
             ],
             [
@@ -31774,7 +32226,7 @@
           ],
           [
             [
-              6,
+              5,
               96.27
             ],
             [
@@ -31785,7 +32237,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "void_angel": {
     "autoEggDrops": false,
@@ -31870,7 +32322,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -31880,7 +32332,7 @@
           ],
           [
             [
-              6,
+              5,
               99.41
             ],
             [
@@ -31890,7 +32342,7 @@
           ],
           [
             [
-              6,
+              5,
               96.61
             ],
             [
@@ -31990,7 +32442,7 @@
           ],
           [
             [
-              6,
+              5,
               99.93
             ],
             [
@@ -32000,7 +32452,7 @@
           ],
           [
             [
-              6,
+              5,
               99.57
             ],
             [
@@ -32110,7 +32562,7 @@
           ],
           [
             [
-              6,
+              5,
               99.98
             ],
             [
@@ -32280,7 +32732,7 @@
           ],
           [
             [
-              6,
+              5,
               99.84
             ],
             [
@@ -32290,7 +32742,7 @@
           ],
           [
             [
-              6,
+              5,
               99.06
             ],
             [
@@ -32301,7 +32753,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "void_black_hole": {
     "autoEggDrops": false,
@@ -32466,7 +32918,7 @@
           ],
           [
             [
-              6,
+              5,
               99.63
             ],
             [
@@ -32476,7 +32928,7 @@
           ],
           [
             [
-              6,
+              5,
               97.86
             ],
             [
@@ -32576,7 +33028,7 @@
           ],
           [
             [
-              6,
+              5,
               99.7
             ],
             [
@@ -32586,7 +33038,7 @@
           ],
           [
             [
-              6,
+              5,
               98.28
             ],
             [
@@ -32826,7 +33278,7 @@
           ],
           [
             [
-              6,
+              5,
               99.7
             ],
             [
@@ -32836,7 +33288,7 @@
           ],
           [
             [
-              6,
+              5,
               98.28
             ],
             [
@@ -32936,7 +33388,7 @@
           ],
           [
             [
-              6,
+              5,
               99.96
             ],
             [
@@ -32946,7 +33398,7 @@
           ],
           [
             [
-              6,
+              5,
               99.78
             ],
             [
@@ -33046,7 +33498,7 @@
           ],
           [
             [
-              6,
+              5,
               99.84
             ],
             [
@@ -33056,7 +33508,7 @@
           ],
           [
             [
-              6,
+              5,
               99.06
             ],
             [
@@ -33067,7 +33519,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "void_cicada_3301": {
     "autoEggDrops": false,
@@ -33152,7 +33604,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -33162,7 +33614,7 @@
           ],
           [
             [
-              6,
+              5,
               99.41
             ],
             [
@@ -33172,7 +33624,7 @@
           ],
           [
             [
-              6,
+              5,
               96.61
             ],
             [
@@ -33262,7 +33714,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -33272,7 +33724,7 @@
           ],
           [
             [
-              6,
+              5,
               98.89
             ],
             [
@@ -33282,7 +33734,7 @@
           ],
           [
             [
-              6,
+              5,
               93.72
             ],
             [
@@ -33372,7 +33824,7 @@
           ],
           [
             [
-              6,
+              5,
               99.98
             ],
             [
@@ -33382,7 +33834,7 @@
           ],
           [
             [
-              6,
+              5,
               98.53
             ],
             [
@@ -33392,7 +33844,7 @@
           ],
           [
             [
-              6,
+              5,
               91.72
             ],
             [
@@ -33482,7 +33934,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -33492,7 +33944,7 @@
           ],
           [
             [
-              6,
+              5,
               99.26
             ],
             [
@@ -33502,7 +33954,7 @@
           ],
           [
             [
-              6,
+              5,
               95.77
             ],
             [
@@ -33602,7 +34054,7 @@
           ],
           [
             [
-              6,
+              5,
               99.84
             ],
             [
@@ -33612,7 +34064,7 @@
           ],
           [
             [
-              6,
+              5,
               99.06
             ],
             [
@@ -33623,7 +34075,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "void_eye": {
     "autoEggDrops": false,
@@ -33718,7 +34170,7 @@
           ],
           [
             [
-              6,
+              5,
               99.7
             ],
             [
@@ -33728,7 +34180,7 @@
           ],
           [
             [
-              6,
+              5,
               98.28
             ],
             [
@@ -33828,7 +34280,7 @@
           ],
           [
             [
-              6,
+              5,
               99.7
             ],
             [
@@ -33838,7 +34290,7 @@
           ],
           [
             [
-              6,
+              5,
               98.28
             ],
             [
@@ -33938,7 +34390,7 @@
           ],
           [
             [
-              6,
+              5,
               99.96
             ],
             [
@@ -33948,7 +34400,7 @@
           ],
           [
             [
-              6,
+              5,
               99.78
             ],
             [
@@ -34118,7 +34570,7 @@
           ],
           [
             [
-              6,
+              5,
               99.84
             ],
             [
@@ -34128,7 +34580,7 @@
           ],
           [
             [
-              6,
+              5,
               99.06
             ],
             [
@@ -34139,7 +34591,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "void_ghost": {
     "autoEggDrops": false,
@@ -34224,7 +34676,7 @@
           ],
           [
             [
-              6,
+              5,
               99.98
             ],
             [
@@ -34234,7 +34686,7 @@
           ],
           [
             [
-              6,
+              5,
               98.53
             ],
             [
@@ -34244,7 +34696,7 @@
           ],
           [
             [
-              6,
+              5,
               91.72
             ],
             [
@@ -34344,7 +34796,7 @@
           ],
           [
             [
-              6,
+              5,
               99.7
             ],
             [
@@ -34354,7 +34806,7 @@
           ],
           [
             [
-              6,
+              5,
               98.28
             ],
             [
@@ -34444,7 +34896,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -34454,7 +34906,7 @@
           ],
           [
             [
-              6,
+              5,
               99.56
             ],
             [
@@ -34464,7 +34916,7 @@
           ],
           [
             [
-              6,
+              5,
               97.44
             ],
             [
@@ -34624,7 +35076,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -34634,7 +35086,7 @@
           ],
           [
             [
-              6,
+              5,
               99.35
             ],
             [
@@ -34644,7 +35096,7 @@
           ],
           [
             [
-              6,
+              5,
               96.27
             ],
             [
@@ -34655,7 +35107,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "void_grave_digger": {
     "autoEggDrops": false,
@@ -34740,7 +35192,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -34750,7 +35202,7 @@
           ],
           [
             [
-              6,
+              5,
               99.03
             ],
             [
@@ -34760,7 +35212,7 @@
           ],
           [
             [
-              6,
+              5,
               94.45
             ],
             [
@@ -34850,7 +35302,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -34860,7 +35312,7 @@
           ],
           [
             [
-              6,
+              5,
               99.26
             ],
             [
@@ -34870,7 +35322,7 @@
           ],
           [
             [
-              6,
+              5,
               95.77
             ],
             [
@@ -34960,7 +35412,7 @@
           ],
           [
             [
-              6,
+              5,
               99.98
             ],
             [
@@ -34970,7 +35422,7 @@
           ],
           [
             [
-              6,
+              5,
               98.53
             ],
             [
@@ -34980,7 +35432,7 @@
           ],
           [
             [
-              6,
+              5,
               91.72
             ],
             [
@@ -35080,7 +35532,7 @@
           ],
           [
             [
-              6,
+              5,
               99.63
             ],
             [
@@ -35090,7 +35542,7 @@
           ],
           [
             [
-              6,
+              5,
               97.86
             ],
             [
@@ -35190,7 +35642,7 @@
           ],
           [
             [
-              6,
+              5,
               99.93
             ],
             [
@@ -35200,7 +35652,7 @@
           ],
           [
             [
-              6,
+              5,
               99.57
             ],
             [
@@ -35290,7 +35742,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -35300,7 +35752,7 @@
           ],
           [
             [
-              6,
+              5,
               99.35
             ],
             [
@@ -35310,7 +35762,7 @@
           ],
           [
             [
-              6,
+              5,
               96.27
             ],
             [
@@ -35321,7 +35773,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "void_gravestone": {
     "autoEggDrops": false,
@@ -35406,7 +35858,7 @@
           ],
           [
             [
-              6,
+              5,
               99.98
             ],
             [
@@ -35416,7 +35868,7 @@
           ],
           [
             [
-              6,
+              5,
               98.53
             ],
             [
@@ -35426,7 +35878,7 @@
           ],
           [
             [
-              6,
+              5,
               91.72
             ],
             [
@@ -35516,7 +35968,7 @@
           ],
           [
             [
-              6,
+              5,
               99.98
             ],
             [
@@ -35526,7 +35978,7 @@
           ],
           [
             [
-              6,
+              5,
               98.53
             ],
             [
@@ -35536,7 +35988,7 @@
           ],
           [
             [
-              6,
+              5,
               91.72
             ],
             [
@@ -35706,7 +36158,7 @@
           ],
           [
             [
-              6,
+              5,
               99.96
             ],
             [
@@ -35716,7 +36168,7 @@
           ],
           [
             [
-              6,
+              5,
               99.78
             ],
             [
@@ -35806,7 +36258,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -35816,7 +36268,7 @@
           ],
           [
             [
-              6,
+              5,
               99.35
             ],
             [
@@ -35826,7 +36278,7 @@
           ],
           [
             [
-              6,
+              5,
               96.27
             ],
             [
@@ -35837,7 +36289,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "void_illuminati": {
     "autoEggDrops": false,
@@ -35922,7 +36374,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -35932,7 +36384,7 @@
           ],
           [
             [
-              6,
+              5,
               99.26
             ],
             [
@@ -35942,7 +36394,7 @@
           ],
           [
             [
-              6,
+              5,
               95.77
             ],
             [
@@ -36112,7 +36564,7 @@
           ],
           [
             [
-              6,
+              5,
               99.7
             ],
             [
@@ -36122,7 +36574,7 @@
           ],
           [
             [
-              6,
+              5,
               98.28
             ],
             [
@@ -36222,7 +36674,7 @@
           ],
           [
             [
-              6,
+              5,
               99.89
             ],
             [
@@ -36232,7 +36684,7 @@
           ],
           [
             [
-              6,
+              5,
               99.35
             ],
             [
@@ -36402,7 +36854,7 @@
           ],
           [
             [
-              6,
+              5,
               99.84
             ],
             [
@@ -36412,7 +36864,7 @@
           ],
           [
             [
-              6,
+              5,
               99.06
             ],
             [
@@ -36423,7 +36875,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "void_momy": {
     "autoEggDrops": false,
@@ -36508,7 +36960,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -36518,7 +36970,7 @@
           ],
           [
             [
-              6,
+              5,
               99.41
             ],
             [
@@ -36528,7 +36980,7 @@
           ],
           [
             [
-              6,
+              5,
               96.61
             ],
             [
@@ -36628,7 +37080,7 @@
           ],
           [
             [
-              6,
+              5,
               99.7
             ],
             [
@@ -36638,7 +37090,7 @@
           ],
           [
             [
-              6,
+              5,
               98.28
             ],
             [
@@ -36738,7 +37190,7 @@
           ],
           [
             [
-              6,
+              5,
               99.85
             ],
             [
@@ -36748,7 +37200,7 @@
           ],
           [
             [
-              6,
+              5,
               99.14
             ],
             [
@@ -36848,7 +37300,7 @@
           ],
           [
             [
-              6,
+              5,
               99.85
             ],
             [
@@ -36858,7 +37310,7 @@
           ],
           [
             [
-              6,
+              5,
               99.14
             ],
             [
@@ -36948,7 +37400,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -36958,7 +37410,7 @@
           ],
           [
             [
-              6,
+              5,
               98.89
             ],
             [
@@ -36968,7 +37420,7 @@
           ],
           [
             [
-              6,
+              5,
               93.72
             ],
             [
@@ -37138,7 +37590,7 @@
           ],
           [
             [
-              6,
+              5,
               99.84
             ],
             [
@@ -37148,7 +37600,7 @@
           ],
           [
             [
-              6,
+              5,
               99.06
             ],
             [
@@ -37159,7 +37611,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "void_rain_frog": {
     "autoEggDrops": false,
@@ -37254,7 +37706,7 @@
           ],
           [
             [
-              6,
+              5,
               99.97
             ],
             [
@@ -37264,7 +37716,7 @@
           ],
           [
             [
-              6,
+              5,
               99.83
             ],
             [
@@ -37354,7 +37806,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -37364,7 +37816,7 @@
           ],
           [
             [
-              6,
+              5,
               99.26
             ],
             [
@@ -37374,7 +37826,7 @@
           ],
           [
             [
-              6,
+              5,
               95.77
             ],
             [
@@ -37464,7 +37916,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -37474,7 +37926,7 @@
           ],
           [
             [
-              6,
+              5,
               99.56
             ],
             [
@@ -37484,7 +37936,7 @@
           ],
           [
             [
-              6,
+              5,
               97.44
             ],
             [
@@ -37574,7 +38026,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -37584,7 +38036,7 @@
           ],
           [
             [
-              6,
+              5,
               99.35
             ],
             [
@@ -37594,7 +38046,7 @@
           ],
           [
             [
-              6,
+              5,
               96.27
             ],
             [
@@ -37605,7 +38057,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "void_tesla_coil": {
     "autoEggDrops": false,
@@ -37690,7 +38142,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -37700,7 +38152,7 @@
           ],
           [
             [
-              6,
+              5,
               99.12
             ],
             [
@@ -37710,7 +38162,7 @@
           ],
           [
             [
-              6,
+              5,
               94.95
             ],
             [
@@ -37810,7 +38262,7 @@
           ],
           [
             [
-              6,
+              5,
               99.93
             ],
             [
@@ -37820,7 +38272,7 @@
           ],
           [
             [
-              6,
+              5,
               99.57
             ],
             [
@@ -37910,7 +38362,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -37920,7 +38372,7 @@
           ],
           [
             [
-              6,
+              5,
               99.56
             ],
             [
@@ -37930,7 +38382,7 @@
           ],
           [
             [
-              6,
+              5,
               97.44
             ],
             [
@@ -38030,7 +38482,7 @@
           ],
           [
             [
-              6,
+              5,
               99.89
             ],
             [
@@ -38040,7 +38492,7 @@
           ],
           [
             [
-              6,
+              5,
               99.35
             ],
             [
@@ -38140,7 +38592,7 @@
           ],
           [
             [
-              6,
+              5,
               99.7
             ],
             [
@@ -38150,7 +38602,7 @@
           ],
           [
             [
-              6,
+              5,
               98.28
             ],
             [
@@ -38250,7 +38702,7 @@
           ],
           [
             [
-              6,
+              5,
               99.84
             ],
             [
@@ -38260,7 +38712,7 @@
           ],
           [
             [
-              6,
+              5,
               99.06
             ],
             [
@@ -38271,7 +38723,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "void_troll": {
     "autoEggDrops": false,
@@ -38426,7 +38878,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -38436,7 +38888,7 @@
           ],
           [
             [
-              6,
+              5,
               99.26
             ],
             [
@@ -38446,7 +38898,7 @@
           ],
           [
             [
-              6,
+              5,
               95.77
             ],
             [
@@ -38616,7 +39068,7 @@
           ],
           [
             [
-              6,
+              5,
               99.93
             ],
             [
@@ -38626,7 +39078,7 @@
           ],
           [
             [
-              6,
+              5,
               99.57
             ],
             [
@@ -38716,7 +39168,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -38726,7 +39178,7 @@
           ],
           [
             [
-              6,
+              5,
               99.48
             ],
             [
@@ -38736,7 +39188,7 @@
           ],
           [
             [
-              6,
+              5,
               97.02
             ],
             [
@@ -38836,7 +39288,7 @@
           ],
           [
             [
-              6,
+              5,
               99.89
             ],
             [
@@ -38846,7 +39298,7 @@
           ],
           [
             [
-              6,
+              5,
               99.35
             ],
             [
@@ -39016,7 +39468,7 @@
           ],
           [
             [
-              6,
+              5,
               99.84
             ],
             [
@@ -39026,7 +39478,7 @@
           ],
           [
             [
-              6,
+              5,
               99.06
             ],
             [
@@ -39037,7 +39489,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "void_ufo": {
     "autoEggDrops": false,
@@ -39132,7 +39584,7 @@
           ],
           [
             [
-              6,
+              5,
               99.63
             ],
             [
@@ -39142,7 +39594,7 @@
           ],
           [
             [
-              6,
+              5,
               97.86
             ],
             [
@@ -39302,7 +39754,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -39312,7 +39764,7 @@
           ],
           [
             [
-              6,
+              5,
               98.89
             ],
             [
@@ -39322,7 +39774,7 @@
           ],
           [
             [
-              6,
+              5,
               93.72
             ],
             [
@@ -39422,7 +39874,7 @@
           ],
           [
             [
-              6,
+              5,
               99.85
             ],
             [
@@ -39432,7 +39884,7 @@
           ],
           [
             [
-              6,
+              5,
               99.14
             ],
             [
@@ -39532,7 +39984,7 @@
           ],
           [
             [
-              6,
+              5,
               99.93
             ],
             [
@@ -39542,7 +39994,7 @@
           ],
           [
             [
-              6,
+              5,
               99.57
             ],
             [
@@ -39642,7 +40094,7 @@
           ],
           [
             [
-              6,
+              5,
               99.78
             ],
             [
@@ -39652,7 +40104,7 @@
           ],
           [
             [
-              6,
+              5,
               98.71
             ],
             [
@@ -39822,7 +40274,7 @@
           ],
           [
             [
-              6,
+              5,
               99.93
             ],
             [
@@ -39832,7 +40284,7 @@
           ],
           [
             [
-              6,
+              5,
               99.62
             ],
             [
@@ -39843,7 +40295,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "void_unabomber": {
     "autoEggDrops": false,
@@ -39938,7 +40390,7 @@
           ],
           [
             [
-              6,
+              5,
               99.7
             ],
             [
@@ -39948,7 +40400,7 @@
           ],
           [
             [
-              6,
+              5,
               98.28
             ],
             [
@@ -40048,7 +40500,7 @@
           ],
           [
             [
-              6,
+              5,
               99.85
             ],
             [
@@ -40058,7 +40510,7 @@
           ],
           [
             [
-              6,
+              5,
               99.14
             ],
             [
@@ -40158,7 +40610,7 @@
           ],
           [
             [
-              6,
+              5,
               99.7
             ],
             [
@@ -40168,7 +40620,7 @@
           ],
           [
             [
-              6,
+              5,
               98.28
             ],
             [
@@ -40268,7 +40720,7 @@
           ],
           [
             [
-              6,
+              5,
               99.7
             ],
             [
@@ -40278,7 +40730,7 @@
           ],
           [
             [
-              6,
+              5,
               98.28
             ],
             [
@@ -40368,7 +40820,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -40378,7 +40830,7 @@
           ],
           [
             [
-              6,
+              5,
               99.48
             ],
             [
@@ -40388,7 +40840,7 @@
           ],
           [
             [
-              6,
+              5,
               97.02
             ],
             [
@@ -40488,7 +40940,7 @@
           ],
           [
             [
-              6,
+              5,
               99.78
             ],
             [
@@ -40498,7 +40950,7 @@
           ],
           [
             [
-              6,
+              5,
               98.71
             ],
             [
@@ -40588,7 +41040,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -40598,7 +41050,7 @@
           ],
           [
             [
-              6,
+              5,
               99.26
             ],
             [
@@ -40608,7 +41060,7 @@
           ],
           [
             [
-              6,
+              5,
               95.77
             ],
             [
@@ -40708,7 +41160,7 @@
           ],
           [
             [
-              6,
+              5,
               99.84
             ],
             [
@@ -40718,7 +41170,7 @@
           ],
           [
             [
-              6,
+              5,
               99.06
             ],
             [
@@ -40729,7 +41181,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "void_white_hole": {
     "autoEggDrops": false,
@@ -40894,7 +41346,7 @@
           ],
           [
             [
-              6,
+              5,
               99.63
             ],
             [
@@ -40904,7 +41356,7 @@
           ],
           [
             [
-              6,
+              5,
               97.86
             ],
             [
@@ -41004,7 +41456,7 @@
           ],
           [
             [
-              6,
+              5,
               99.7
             ],
             [
@@ -41014,7 +41466,7 @@
           ],
           [
             [
-              6,
+              5,
               98.28
             ],
             [
@@ -41184,7 +41636,7 @@
           ],
           [
             [
-              6,
+              5,
               99.78
             ],
             [
@@ -41194,7 +41646,7 @@
           ],
           [
             [
-              6,
+              5,
               98.71
             ],
             [
@@ -41294,7 +41746,7 @@
           ],
           [
             [
-              6,
+              5,
               99.7
             ],
             [
@@ -41304,7 +41756,7 @@
           ],
           [
             [
-              6,
+              5,
               98.28
             ],
             [
@@ -41404,7 +41856,7 @@
           ],
           [
             [
-              6,
+              5,
               99.96
             ],
             [
@@ -41414,7 +41866,7 @@
           ],
           [
             [
-              6,
+              5,
               99.78
             ],
             [
@@ -41514,7 +41966,7 @@
           ],
           [
             [
-              6,
+              5,
               99.84
             ],
             [
@@ -41524,7 +41976,7 @@
           ],
           [
             [
-              6,
+              5,
               99.06
             ],
             [
@@ -41535,7 +41987,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "void_zatan": {
     "autoEggDrops": false,
@@ -41630,7 +42082,7 @@
           ],
           [
             [
-              6,
+              5,
               99.96
             ],
             [
@@ -41640,7 +42092,7 @@
           ],
           [
             [
-              6,
+              5,
               99.78
             ],
             [
@@ -41730,7 +42182,7 @@
           ],
           [
             [
-              6,
+              5,
               99.98
             ],
             [
@@ -41740,7 +42192,7 @@
           ],
           [
             [
-              6,
+              5,
               98.53
             ],
             [
@@ -41750,7 +42202,7 @@
           ],
           [
             [
-              6,
+              5,
               91.72
             ],
             [
@@ -41850,7 +42302,7 @@
           ],
           [
             [
-              6,
+              5,
               99.7
             ],
             [
@@ -41860,7 +42312,7 @@
           ],
           [
             [
-              6,
+              5,
               98.28
             ],
             [
@@ -41960,7 +42412,7 @@
           ],
           [
             [
-              6,
+              5,
               99.81
             ],
             [
@@ -41970,7 +42422,7 @@
           ],
           [
             [
-              6,
+              5,
               98.92
             ],
             [
@@ -42070,7 +42522,7 @@
           ],
           [
             [
-              6,
+              5,
               99.85
             ],
             [
@@ -42080,7 +42532,7 @@
           ],
           [
             [
-              6,
+              5,
               99.14
             ],
             [
@@ -42180,7 +42632,7 @@
           ],
           [
             [
-              6,
+              5,
               99.7
             ],
             [
@@ -42190,7 +42642,7 @@
           ],
           [
             [
-              6,
+              5,
               98.28
             ],
             [
@@ -42290,7 +42742,7 @@
           ],
           [
             [
-              6,
+              5,
               99.84
             ],
             [
@@ -42300,7 +42752,7 @@
           ],
           [
             [
-              6,
+              5,
               99.06
             ],
             [
@@ -42311,7 +42763,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "jurassic_acid_bubble": {
     "referenceMob": "Acid Bubble",
@@ -42394,8 +42846,12 @@
           ],
           [
             [
+              5,
+              18.660096
+            ],
+            [
               6,
-              43.557696
+              24.8976
             ],
             [
               7,
@@ -42404,8 +42860,12 @@
           ],
           [
             [
+              5,
+              18.3456
+            ],
+            [
               6,
-              43.0248
+              24.6792
             ],
             [
               7,
@@ -42491,8 +42951,12 @@
           ],
           [
             [
+              5,
+              12.440064
+            ],
+            [
               6,
-              29.038464
+              16.5984
             ],
             [
               7,
@@ -42501,8 +42965,12 @@
           ],
           [
             [
+              5,
+              12.2304
+            ],
+            [
               6,
-              28.6832
+              16.4528
             ],
             [
               7,
@@ -42588,8 +43056,12 @@
           ],
           [
             [
+              5,
+              7.77504
+            ],
+            [
               6,
-              18.14904
+              10.374
             ],
             [
               7,
@@ -42598,8 +43070,12 @@
           ],
           [
             [
+              5,
+              7.644
+            ],
+            [
               6,
-              17.927
+              10.283
             ],
             [
               7,
@@ -42685,8 +43161,12 @@
           ],
           [
             [
+              5,
+              3.8448
+            ],
+            [
               6,
-              8.9748
+              5.13
             ],
             [
               7,
@@ -42695,8 +43175,12 @@
           ],
           [
             [
+              5,
+              3.78
+            ],
+            [
               6,
-              8.865
+              5.085
             ],
             [
               7,
@@ -42706,7 +43190,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "jurassic_ankylosaurus": {
     "referenceMob": "Ankylosaurus",
@@ -42789,8 +43273,12 @@
           ],
           [
             [
+              5,
+              12.830099
+            ],
+            [
               6,
-              28.391099
+              15.561
             ],
             [
               7,
@@ -42799,8 +43287,12 @@
           ],
           [
             [
+              5,
+              12.613861
+            ],
+            [
               6,
-              28.038361
+              15.4245
             ],
             [
               7,
@@ -42886,8 +43378,12 @@
           ],
           [
             [
+              5,
+              8.553399
+            ],
+            [
               6,
-              18.927399
+              10.374
             ],
             [
               7,
@@ -42896,8 +43392,12 @@
           ],
           [
             [
+              5,
+              8.409241
+            ],
+            [
               6,
-              18.692241
+              10.283
             ],
             [
               7,
@@ -42983,8 +43483,12 @@
           ],
           [
             [
+              5,
+              4.2767
+            ],
+            [
               6,
-              9.4637
+              5.187
             ],
             [
               7,
@@ -42993,8 +43497,12 @@
           ],
           [
             [
+              5,
+              4.20462
+            ],
+            [
               6,
-              9.34612
+              5.1415
             ],
             [
               7,
@@ -43080,8 +43588,12 @@
           ],
           [
             [
+              5,
+              4.2767
+            ],
+            [
               6,
-              9.4637
+              5.187
             ],
             [
               7,
@@ -43090,8 +43602,12 @@
           ],
           [
             [
+              5,
+              4.20462
+            ],
+            [
               6,
-              9.34612
+              5.1415
             ],
             [
               7,
@@ -43274,8 +43790,12 @@
           ],
           [
             [
+              5,
+              8.553399
+            ],
+            [
               6,
-              18.927399
+              10.374
             ],
             [
               7,
@@ -43284,8 +43804,12 @@
           ],
           [
             [
+              5,
+              8.409241
+            ],
+            [
               6,
-              18.692241
+              10.283
             ],
             [
               7,
@@ -43371,8 +43895,12 @@
           ],
           [
             [
+              5,
+              4.229703
+            ],
+            [
               6,
-              9.359703
+              5.13
             ],
             [
               7,
@@ -43381,8 +43909,12 @@
           ],
           [
             [
+              5,
+              4.158416
+            ],
+            [
               6,
-              9.243416
+              5.085
             ],
             [
               7,
@@ -43392,7 +43924,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "jurassic_bush": {
     "referenceMob": "Bush",
@@ -43475,8 +44007,12 @@
           ],
           [
             [
+              5,
+              13.32864
+            ],
+            [
               6,
-              31.11264
+              17.784
             ],
             [
               7,
@@ -43485,8 +44021,12 @@
           ],
           [
             [
+              5,
+              13.104
+            ],
+            [
               6,
-              30.732
+              17.628
             ],
             [
               7,
@@ -43572,8 +44112,12 @@
           ],
           [
             [
+              5,
+              8.88576
+            ],
+            [
               6,
-              20.74176
+              11.856
             ],
             [
               7,
@@ -43582,8 +44126,12 @@
           ],
           [
             [
+              5,
+              8.736
+            ],
+            [
               6,
-              20.488
+              11.752
             ],
             [
               7,
@@ -43669,8 +44217,12 @@
           ],
           [
             [
+              5,
+              4.44288
+            ],
+            [
               6,
-              10.37088
+              5.928
             ],
             [
               7,
@@ -43679,8 +44231,12 @@
           ],
           [
             [
+              5,
+              4.368
+            ],
+            [
               6,
-              10.244
+              5.876
             ],
             [
               7,
@@ -43766,8 +44322,12 @@
           ],
           [
             [
+              5,
+              4.44288
+            ],
+            [
               6,
-              10.37088
+              5.928
             ],
             [
               7,
@@ -43776,8 +44336,12 @@
           ],
           [
             [
+              5,
+              4.368
+            ],
+            [
               6,
-              10.244
+              5.876
             ],
             [
               7,
@@ -43863,8 +44427,12 @@
           ],
           [
             [
+              5,
+              7.77504
+            ],
+            [
               6,
-              18.14904
+              10.374
             ],
             [
               7,
@@ -43873,8 +44441,12 @@
           ],
           [
             [
+              5,
+              7.644
+            ],
+            [
               6,
-              17.927
+              10.283
             ],
             [
               7,
@@ -43960,8 +44532,12 @@
           ],
           [
             [
+              5,
+              3.8448
+            ],
+            [
               6,
-              8.9748
+              5.13
             ],
             [
               7,
@@ -43970,8 +44546,12 @@
           ],
           [
             [
+              5,
+              3.78
+            ],
+            [
               6,
-              8.865
+              5.085
             ],
             [
               7,
@@ -43981,7 +44561,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "jurassic_elasmosaurus": {
     "referenceMob": "Elasmosaurus",
@@ -44064,8 +44644,12 @@
           ],
           [
             [
+              5,
+              13.32864
+            ],
+            [
               6,
-              31.11264
+              17.784
             ],
             [
               7,
@@ -44074,8 +44658,12 @@
           ],
           [
             [
+              5,
+              13.104
+            ],
+            [
               6,
-              30.732
+              17.628
             ],
             [
               7,
@@ -44161,8 +44749,12 @@
           ],
           [
             [
+              5,
+              8.88576
+            ],
+            [
               6,
-              20.74176
+              11.856
             ],
             [
               7,
@@ -44171,8 +44763,12 @@
           ],
           [
             [
+              5,
+              8.736
+            ],
+            [
               6,
-              20.488
+              11.752
             ],
             [
               7,
@@ -44258,8 +44854,12 @@
           ],
           [
             [
+              5,
+              4.44288
+            ],
+            [
               6,
-              10.37088
+              5.928
             ],
             [
               7,
@@ -44268,8 +44868,12 @@
           ],
           [
             [
+              5,
+              4.368
+            ],
+            [
               6,
-              10.244
+              5.876
             ],
             [
               7,
@@ -44355,8 +44959,12 @@
           ],
           [
             [
+              5,
+              4.44288
+            ],
+            [
               6,
-              10.37088
+              5.928
             ],
             [
               7,
@@ -44365,8 +44973,12 @@
           ],
           [
             [
+              5,
+              4.368
+            ],
+            [
               6,
-              10.244
+              5.876
             ],
             [
               7,
@@ -44452,8 +45064,12 @@
           ],
           [
             [
+              5,
+              3.88752
+            ],
+            [
               6,
-              9.07452
+              5.187
             ],
             [
               7,
@@ -44462,8 +45078,12 @@
           ],
           [
             [
+              5,
+              3.822
+            ],
+            [
               6,
-              8.9635
+              5.1415
             ],
             [
               7,
@@ -44549,8 +45169,12 @@
           ],
           [
             [
+              5,
+              3.88752
+            ],
+            [
               6,
-              9.07452
+              5.187
             ],
             [
               7,
@@ -44559,8 +45183,12 @@
           ],
           [
             [
+              5,
+              3.822
+            ],
+            [
               6,
-              8.9635
+              5.1415
             ],
             [
               7,
@@ -44646,8 +45274,12 @@
           ],
           [
             [
+              5,
+              3.8448
+            ],
+            [
               6,
-              8.9748
+              5.13
             ],
             [
               7,
@@ -44656,8 +45288,12 @@
           ],
           [
             [
+              5,
+              3.78
+            ],
+            [
               6,
-              8.865
+              5.085
             ],
             [
               7,
@@ -44667,7 +45303,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "jurassic_fern": {
     "referenceMob": "Fern",
@@ -44750,8 +45386,12 @@
           ],
           [
             [
+              5,
+              14.5248
+            ],
+            [
               6,
-              33.9048
+              19.38
             ],
             [
               7,
@@ -44760,8 +45400,12 @@
           ],
           [
             [
+              5,
+              14.28
+            ],
+            [
               6,
-              33.49
+              19.21
             ],
             [
               7,
@@ -44847,8 +45491,12 @@
           ],
           [
             [
+              5,
+              11.392
+            ],
+            [
               6,
-              26.592
+              15.2
             ],
             [
               7,
@@ -44857,8 +45505,12 @@
           ],
           [
             [
+              5,
+              11.2
+            ],
+            [
               6,
-              26.266666
+              15.066666
             ],
             [
               7,
@@ -44944,8 +45596,12 @@
           ],
           [
             [
+              5,
+              5.696
+            ],
+            [
               6,
-              13.296
+              7.6
             ],
             [
               7,
@@ -44954,8 +45610,12 @@
           ],
           [
             [
+              5,
+              5.6
+            ],
+            [
               6,
-              13.133334
+              7.533334
             ],
             [
               7,
@@ -45041,8 +45701,12 @@
           ],
           [
             [
+              5,
+              4.272
+            ],
+            [
               6,
-              9.972
+              5.7
             ],
             [
               7,
@@ -45051,8 +45715,12 @@
           ],
           [
             [
+              5,
+              4.2
+            ],
+            [
               6,
-              9.85
+              5.65
             ],
             [
               7,
@@ -45138,8 +45806,12 @@
           ],
           [
             [
+              5,
+              4.272
+            ],
+            [
               6,
-              9.972
+              5.7
             ],
             [
               7,
@@ -45148,8 +45820,12 @@
           ],
           [
             [
+              5,
+              4.2
+            ],
+            [
               6,
-              9.85
+              5.65
             ],
             [
               7,
@@ -45235,8 +45911,12 @@
           ],
           [
             [
+              5,
+              2.5632
+            ],
+            [
               6,
-              5.9832
+              3.42
             ],
             [
               7,
@@ -45245,8 +45925,12 @@
           ],
           [
             [
+              5,
+              2.52
+            ],
+            [
               6,
-              5.91
+              3.39
             ],
             [
               7,
@@ -45256,7 +45940,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "jurassic_diplodocus": {
     "referenceMob": "Diplodocus",
@@ -45339,8 +46023,12 @@
           ],
           [
             [
+              5,
+              10.387223
+            ],
+            [
               6,
-              23.676366
+              13.289143
             ],
             [
               7,
@@ -45349,8 +46037,12 @@
           ],
           [
             [
+              5,
+              10.212157
+            ],
+            [
               6,
-              23.384729
+              13.172572
             ],
             [
               7,
@@ -45436,8 +46128,12 @@
           ],
           [
             [
+              5,
+              10.183552
+            ],
+            [
               6,
-              23.212123
+              13.028571
             ],
             [
               7,
@@ -45446,8 +46142,12 @@
           ],
           [
             [
+              5,
+              10.011918
+            ],
+            [
               6,
-              22.926204
+              12.914286
             ],
             [
               7,
@@ -45533,8 +46233,12 @@
           ],
           [
             [
+              5,
+              5.091776
+            ],
+            [
               6,
-              11.606062
+              6.514286
             ],
             [
               7,
@@ -45543,8 +46247,12 @@
           ],
           [
             [
+              5,
+              5.005959
+            ],
+            [
               6,
-              11.463102
+              6.457143
             ],
             [
               7,
@@ -45630,8 +46338,12 @@
           ],
           [
             [
+              5,
+              5.091776
+            ],
+            [
               6,
-              11.606062
+              6.514286
             ],
             [
               7,
@@ -45640,8 +46352,12 @@
           ],
           [
             [
+              5,
+              5.005959
+            ],
+            [
               6,
-              11.463102
+              6.457143
             ],
             [
               7,
@@ -45727,8 +46443,12 @@
           ],
           [
             [
+              5,
+              4.455304
+            ],
+            [
               6,
-              10.155304
+              5.7
             ],
             [
               7,
@@ -45737,8 +46457,12 @@
           ],
           [
             [
+              5,
+              4.380214
+            ],
+            [
               6,
-              10.030214
+              5.65
             ],
             [
               7,
@@ -45824,8 +46548,12 @@
           ],
           [
             [
+              5,
+              4.455304
+            ],
+            [
               6,
-              10.155304
+              5.7
             ],
             [
               7,
@@ -45834,8 +46562,12 @@
           ],
           [
             [
+              5,
+              4.380214
+            ],
+            [
               6,
-              10.030214
+              5.65
             ],
             [
               7,
@@ -45921,8 +46653,12 @@
           ],
           [
             [
+              5,
+              3.055065
+            ],
+            [
               6,
-              6.963636
+              3.908571
             ],
             [
               7,
@@ -45931,8 +46667,12 @@
           ],
           [
             [
+              5,
+              3.003576
+            ],
+            [
               6,
-              6.877862
+              3.874286
             ],
             [
               7,
@@ -46039,7 +46779,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "jurassic_meteor": {
     "referenceMob": "Meteor",
@@ -46122,8 +46862,12 @@
           ],
           [
             [
+              5,
+              14.102246
+            ],
+            [
               6,
-              28.24861
+              14.146364
             ],
             [
               7,
@@ -46132,8 +46876,12 @@
           ],
           [
             [
+              5,
+              13.86457
+            ],
+            [
               6,
-              27.886843
+              14.022273
             ],
             [
               7,
@@ -46266,8 +47014,12 @@
           ],
           [
             [
+              5,
+              4.700749
+            ],
+            [
               6,
-              9.416204
+              4.715455
             ],
             [
               7,
@@ -46276,8 +47028,12 @@
           ],
           [
             [
+              5,
+              4.621523
+            ],
+            [
               6,
-              9.295614
+              4.674091
             ],
             [
               7,
@@ -46460,8 +47216,12 @@
           ],
           [
             [
+              5,
+              4.700749
+            ],
+            [
               6,
-              9.416204
+              4.715455
             ],
             [
               7,
@@ -46470,8 +47230,12 @@
           ],
           [
             [
+              5,
+              4.621523
+            ],
+            [
               6,
-              9.295614
+              4.674091
             ],
             [
               7,
@@ -46557,8 +47321,12 @@
           ],
           [
             [
+              5,
+              4.700749
+            ],
+            [
               6,
-              9.416204
+              4.715455
             ],
             [
               7,
@@ -46567,8 +47335,12 @@
           ],
           [
             [
+              5,
+              4.621523
+            ],
+            [
               6,
-              9.295614
+              4.674091
             ],
             [
               7,
@@ -46654,8 +47426,12 @@
           ],
           [
             [
+              5,
+              4.700749
+            ],
+            [
               6,
-              9.416204
+              4.715455
             ],
             [
               7,
@@ -46664,8 +47440,12 @@
           ],
           [
             [
+              5,
+              4.621523
+            ],
+            [
               6,
-              9.295614
+              4.674091
             ],
             [
               7,
@@ -46751,8 +47531,12 @@
           ],
           [
             [
+              5,
+              4.700749
+            ],
+            [
               6,
-              9.416204
+              4.715455
             ],
             [
               7,
@@ -46761,8 +47545,12 @@
           ],
           [
             [
+              5,
+              4.621523
+            ],
+            [
               6,
-              9.295614
+              4.674091
             ],
             [
               7,
@@ -46848,8 +47636,12 @@
           ],
           [
             [
+              5,
+              5.114001
+            ],
+            [
               6,
-              10.244001
+              5.13
             ],
             [
               7,
@@ -46858,8 +47650,12 @@
           ],
           [
             [
+              5,
+              5.027811
+            ],
+            [
               6,
-              10.112811
+              5.085
             ],
             [
               7,
@@ -46869,7 +47665,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "jurassic_nigersaurus": {
     "referenceMob": "Nigersaurus",
@@ -46952,8 +47748,12 @@
           ],
           [
             [
+              5,
+              12.958401
+            ],
+            [
               6,
-              30.248401
+              17.29
             ],
             [
               7,
@@ -46962,8 +47762,12 @@
           ],
           [
             [
+              5,
+              12.739999
+            ],
+            [
               6,
-              29.878332
+              17.138333
             ],
             [
               7,
@@ -47049,8 +47853,12 @@
           ],
           [
             [
+              5,
+              8.638934
+            ],
+            [
               6,
-              20.165601
+              11.526667
             ],
             [
               7,
@@ -47059,8 +47867,12 @@
           ],
           [
             [
+              5,
+              8.493333
+            ],
+            [
               6,
-              19.918889
+              11.425556
             ],
             [
               7,
@@ -47146,8 +47958,12 @@
           ],
           [
             [
+              5,
+              4.319467
+            ],
+            [
               6,
-              10.0828
+              5.763333
             ],
             [
               7,
@@ -47156,8 +47972,12 @@
           ],
           [
             [
+              5,
+              4.246667
+            ],
+            [
               6,
-              9.959445
+              5.712778
             ],
             [
               7,
@@ -47243,8 +48063,12 @@
           ],
           [
             [
+              5,
+              4.319467
+            ],
+            [
               6,
-              10.0828
+              5.763333
             ],
             [
               7,
@@ -47253,8 +48077,12 @@
           ],
           [
             [
+              5,
+              4.246667
+            ],
+            [
               6,
-              9.959445
+              5.712778
             ],
             [
               7,
@@ -47340,8 +48168,12 @@
           ],
           [
             [
+              5,
+              4.319467
+            ],
+            [
               6,
-              10.0828
+              5.763333
             ],
             [
               7,
@@ -47350,8 +48182,12 @@
           ],
           [
             [
+              5,
+              4.246667
+            ],
+            [
               6,
-              9.959445
+              5.712778
             ],
             [
               7,
@@ -47437,8 +48273,12 @@
           ],
           [
             [
+              5,
+              4.319467
+            ],
+            [
               6,
-              10.0828
+              5.763333
             ],
             [
               7,
@@ -47447,8 +48287,12 @@
           ],
           [
             [
+              5,
+              4.246667
+            ],
+            [
               6,
-              9.959445
+              5.712778
             ],
             [
               7,
@@ -47534,8 +48378,12 @@
           ],
           [
             [
+              5,
+              3.8448
+            ],
+            [
               6,
-              8.9748
+              5.13
             ],
             [
               7,
@@ -47544,8 +48392,12 @@
           ],
           [
             [
+              5,
+              3.78
+            ],
+            [
               6,
-              8.865
+              5.085
             ],
             [
               7,
@@ -47555,7 +48407,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "jurassic_volcano": {
     "referenceMob": "Volcano",
@@ -47638,8 +48490,12 @@
           ],
           [
             [
+              5,
+              12.958401
+            ],
+            [
               6,
-              30.248401
+              17.29
             ],
             [
               7,
@@ -47648,8 +48504,12 @@
           ],
           [
             [
+              5,
+              12.739999
+            ],
+            [
               6,
-              29.878332
+              17.138333
             ],
             [
               7,
@@ -47735,8 +48595,12 @@
           ],
           [
             [
+              5,
+              8.638934
+            ],
+            [
               6,
-              20.165601
+              11.526667
             ],
             [
               7,
@@ -47745,8 +48609,12 @@
           ],
           [
             [
+              5,
+              8.493333
+            ],
+            [
               6,
-              19.918889
+              11.425556
             ],
             [
               7,
@@ -47832,8 +48700,12 @@
           ],
           [
             [
+              5,
+              4.319467
+            ],
+            [
               6,
-              10.0828
+              5.763333
             ],
             [
               7,
@@ -47842,8 +48714,12 @@
           ],
           [
             [
+              5,
+              4.246667
+            ],
+            [
               6,
-              9.959445
+              5.712778
             ],
             [
               7,
@@ -47929,8 +48805,12 @@
           ],
           [
             [
+              5,
+              4.319467
+            ],
+            [
               6,
-              10.0828
+              5.763333
             ],
             [
               7,
@@ -47939,8 +48819,12 @@
           ],
           [
             [
+              5,
+              4.246667
+            ],
+            [
               6,
-              9.959445
+              5.712778
             ],
             [
               7,
@@ -48026,8 +48910,12 @@
           ],
           [
             [
+              5,
+              4.319467
+            ],
+            [
               6,
-              10.0828
+              5.763333
             ],
             [
               7,
@@ -48036,8 +48924,12 @@
           ],
           [
             [
+              5,
+              4.246667
+            ],
+            [
               6,
-              9.959445
+              5.712778
             ],
             [
               7,
@@ -48123,8 +49015,12 @@
           ],
           [
             [
+              5,
+              4.319467
+            ],
+            [
               6,
-              10.0828
+              5.763333
             ],
             [
               7,
@@ -48133,8 +49029,12 @@
           ],
           [
             [
+              5,
+              4.246667
+            ],
+            [
               6,
-              9.959445
+              5.712778
             ],
             [
               7,
@@ -48220,8 +49120,12 @@
           ],
           [
             [
+              5,
+              3.8448
+            ],
+            [
               6,
-              8.9748
+              5.13
             ],
             [
               7,
@@ -48230,8 +49134,12 @@
           ],
           [
             [
+              5,
+              3.78
+            ],
+            [
               6,
-              8.865
+              5.085
             ],
             [
               7,
@@ -48241,7 +49149,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "bio_atom": {
     "autoEggDrops": false,
@@ -48323,8 +49231,12 @@
           ],
           [
             [
+              5,
+              14.24
+            ],
+            [
               6,
-              33.24
+              19.0
             ],
             [
               7,
@@ -48333,8 +49245,12 @@
           ],
           [
             [
+              5,
+              14.0
+            ],
+            [
               6,
-              32.833333
+              18.833333
             ],
             [
               7,
@@ -48420,8 +49336,12 @@
           ],
           [
             [
+              5,
+              20.04992
+            ],
+            [
               6,
-              46.80192
+              26.752
             ],
             [
               7,
@@ -48430,8 +49350,12 @@
           ],
           [
             [
+              5,
+              19.712
+            ],
+            [
               6,
-              46.229334
+              26.517334
             ],
             [
               7,
@@ -48517,8 +49441,12 @@
           ],
           [
             [
+              5,
+              3.4176
+            ],
+            [
               6,
-              7.9776
+              4.56
             ],
             [
               7,
@@ -48527,8 +49455,12 @@
           ],
           [
             [
+              5,
+              3.36
+            ],
+            [
               6,
-              7.88
+              4.52
             ],
             [
               7,
@@ -48614,8 +49546,12 @@
           ],
           [
             [
+              5,
+              5.01248
+            ],
+            [
               6,
-              11.70048
+              6.688
             ],
             [
               7,
@@ -48624,8 +49560,12 @@
           ],
           [
             [
+              5,
+              4.928
+            ],
+            [
               6,
-              11.557333
+              6.629333
             ],
             [
               7,
@@ -48635,7 +49575,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "bio_bacteria": {
     "autoEggDrops": false,
@@ -48717,8 +49657,12 @@
           ],
           [
             [
+              5,
+              17.087999
+            ],
+            [
               6,
-              39.887999
+              22.8
             ],
             [
               7,
@@ -48727,8 +49671,12 @@
           ],
           [
             [
+              5,
+              16.8
+            ],
+            [
               6,
-              39.4
+              22.6
             ],
             [
               7,
@@ -48814,8 +49762,12 @@
           ],
           [
             [
+              5,
+              11.650909
+            ],
+            [
               6,
-              27.196364
+              15.545455
             ],
             [
               7,
@@ -48824,8 +49776,12 @@
           ],
           [
             [
+              5,
+              11.454546
+            ],
+            [
               6,
-              26.863637
+              15.409091
             ],
             [
               7,
@@ -48911,8 +49867,12 @@
           ],
           [
             [
+              5,
+              11.650909
+            ],
+            [
               6,
-              27.196364
+              15.545455
             ],
             [
               7,
@@ -48921,8 +49881,12 @@
           ],
           [
             [
+              5,
+              11.454546
+            ],
+            [
               6,
-              26.863637
+              15.409091
             ],
             [
               7,
@@ -49008,8 +49972,12 @@
           ],
           [
             [
+              5,
+              2.330182
+            ],
+            [
               6,
-              5.439273
+              3.109091
             ],
             [
               7,
@@ -49018,8 +49986,12 @@
           ],
           [
             [
+              5,
+              2.290909
+            ],
+            [
               6,
-              5.372727
+              3.081818
             ],
             [
               7,
@@ -49029,7 +50001,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "bio_bacteriophage": {
     "autoEggDrops": false,
@@ -49111,8 +50083,12 @@
           ],
           [
             [
+              5,
+              22.113883
+            ],
+            [
               6,
-              51.276674
+              29.162791
             ],
             [
               7,
@@ -49121,8 +50097,12 @@
           ],
           [
             [
+              5,
+              21.741176
+            ],
+            [
               6,
-              50.648153
+              28.906977
             ],
             [
               7,
@@ -49208,8 +50188,12 @@
           ],
           [
             [
+              5,
+              12.564705
+            ],
+            [
               6,
-              29.134472
+              16.569767
             ],
             [
               7,
@@ -49218,8 +50202,12 @@
           ],
           [
             [
+              5,
+              12.352941
+            ],
+            [
               6,
-              28.77736
+              16.424419
             ],
             [
               7,
@@ -49305,8 +50293,12 @@
           ],
           [
             [
+              5,
+              5.025882
+            ],
+            [
               6,
-              11.653789
+              6.627907
             ],
             [
               7,
@@ -49315,8 +50307,12 @@
           ],
           [
             [
+              5,
+              4.941176
+            ],
+            [
               6,
-              11.510943
+              6.569767
             ],
             [
               7,
@@ -49499,8 +50495,12 @@
           ],
           [
             [
+              5,
+              3.015529
+            ],
+            [
               6,
-              6.992273
+              3.976744
             ],
             [
               7,
@@ -49509,8 +50509,12 @@
           ],
           [
             [
+              5,
+              2.964705
+            ],
+            [
               6,
-              6.906565
+              3.94186
             ],
             [
               7,
@@ -49520,7 +50524,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "bio_barrel": {
     "autoEggDrops": false,
@@ -49602,8 +50606,12 @@
           ],
           [
             [
+              5,
+              13.053334
+            ],
+            [
               6,
-              29.773334
+              16.72
             ],
             [
               7,
@@ -49612,8 +50620,12 @@
           ],
           [
             [
+              5,
+              12.833334
+            ],
+            [
               6,
-              29.406667
+              16.573333
             ],
             [
               7,
@@ -49699,8 +50711,12 @@
           ],
           [
             [
+              5,
+              14.833334
+            ],
+            [
               6,
-              33.833334
+              19.0
             ],
             [
               7,
@@ -49709,8 +50725,12 @@
           ],
           [
             [
+              5,
+              14.583334
+            ],
+            [
               6,
-              33.416667
+              18.833333
             ],
             [
               7,
@@ -49796,8 +50816,12 @@
           ],
           [
             [
+              5,
+              14.833334
+            ],
+            [
               6,
-              33.833334
+              19.0
             ],
             [
               7,
@@ -49806,8 +50830,12 @@
           ],
           [
             [
+              5,
+              14.583334
+            ],
+            [
               6,
-              33.416667
+              18.833333
             ],
             [
               7,
@@ -49914,7 +50942,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "bio_biologist": {
     "autoEggDrops": false,
@@ -49996,8 +51024,12 @@
           ],
           [
             [
+              5,
+              2.738461
+            ],
+            [
               6,
-              6.172196
+              3.433735
             ],
             [
               7,
@@ -50006,8 +51038,12 @@
           ],
           [
             [
+              5,
+              2.692307
+            ],
+            [
               6,
-              6.095921
+              3.403614
             ],
             [
               7,
@@ -50093,8 +51129,12 @@
           ],
           [
             [
+              5,
+              5.476923
+            ],
+            [
               6,
-              12.344393
+              6.86747
             ],
             [
               7,
@@ -50103,8 +51143,12 @@
           ],
           [
             [
+              5,
+              5.384616
+            ],
+            [
               6,
-              12.191845
+              6.807229
             ],
             [
               7,
@@ -50287,8 +51331,12 @@
           ],
           [
             [
+              5,
+              15.904985
+            ],
+            [
               6,
-              35.848118
+              19.943133
             ],
             [
               7,
@@ -50297,8 +51345,12 @@
           ],
           [
             [
+              5,
+              15.636924
+            ],
+            [
               6,
-              35.405116
+              19.768192
             ],
             [
               7,
@@ -50384,8 +51436,12 @@
           ],
           [
             [
+              5,
+              13.692308
+            ],
+            [
               6,
-              30.860983
+              17.168675
             ],
             [
               7,
@@ -50394,8 +51450,12 @@
           ],
           [
             [
+              5,
+              13.461539
+            ],
+            [
               6,
-              30.479611
+              17.018072
             ],
             [
               7,
@@ -50481,8 +51541,12 @@
           ],
           [
             [
+              5,
+              2.738461
+            ],
+            [
               6,
-              6.172196
+              3.433735
             ],
             [
               7,
@@ -50491,8 +51555,12 @@
           ],
           [
             [
+              5,
+              2.692307
+            ],
+            [
               6,
-              6.095921
+              3.403614
             ],
             [
               7,
@@ -50675,8 +51743,12 @@
           ],
           [
             [
+              5,
+              2.168862
+            ],
+            [
               6,
-              4.88838
+              2.719518
             ],
             [
               7,
@@ -50685,8 +51757,12 @@
           ],
           [
             [
+              5,
+              2.132308
+            ],
+            [
               6,
-              4.827971
+              2.695663
             ],
             [
               7,
@@ -50696,7 +51772,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "bio_cancer": {
     "autoEggDrops": false,
@@ -50778,8 +51854,12 @@
           ],
           [
             [
+              5,
+              22.0275
+            ],
+            [
               6,
-              50.313214
+              28.285714
             ],
             [
               7,
@@ -50788,8 +51868,12 @@
           ],
           [
             [
+              5,
+              21.656251
+            ],
+            [
               6,
-              49.693845
+              28.037594
             ],
             [
               7,
@@ -50875,8 +51959,12 @@
           ],
           [
             [
+              5,
+              3.3375
+            ],
+            [
               6,
-              7.623214
+              4.285714
             ],
             [
               7,
@@ -50885,8 +51973,12 @@
           ],
           [
             [
+              5,
+              3.28125
+            ],
+            [
               6,
-              7.52937
+              4.24812
             ],
             [
               7,
@@ -50972,8 +52064,12 @@
           ],
           [
             [
+              5,
+              11.01375
+            ],
+            [
               6,
-              25.156607
+              14.142857
             ],
             [
               7,
@@ -50982,8 +52078,12 @@
           ],
           [
             [
+              5,
+              10.828125
+            ],
+            [
               6,
-              24.846922
+              14.018797
             ],
             [
               7,
@@ -51166,8 +52266,12 @@
           ],
           [
             [
+              5,
+              3.3375
+            ],
+            [
               6,
-              7.623214
+              4.285714
             ],
             [
               7,
@@ -51176,8 +52280,12 @@
           ],
           [
             [
+              5,
+              3.28125
+            ],
+            [
               6,
-              7.52937
+              4.24812
             ],
             [
               7,
@@ -51263,8 +52371,12 @@
           ],
           [
             [
+              5,
+              3.00375
+            ],
+            [
               6,
-              6.860893
+              3.857143
             ],
             [
               7,
@@ -51273,8 +52385,12 @@
           ],
           [
             [
+              5,
+              2.953125
+            ],
+            [
               6,
-              6.776433
+              3.823308
             ],
             [
               7,
@@ -51284,7 +52400,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "bio_parasite": {
     "autoEggDrops": false,
@@ -51366,8 +52482,12 @@
           ],
           [
             [
+              5,
+              26.852572
+            ],
+            [
               6,
-              62.681144
+              35.828572
             ],
             [
               7,
@@ -51376,8 +52496,12 @@
           ],
           [
             [
+              5,
+              26.399999
+            ],
+            [
               6,
-              61.914285
+              35.514286
             ],
             [
               7,
@@ -51463,8 +52587,12 @@
           ],
           [
             [
+              5,
+              6.102857
+            ],
+            [
               6,
-              14.245714
+              8.142857
             ],
             [
               7,
@@ -51473,8 +52601,12 @@
           ],
           [
             [
+              5,
+              6.0
+            ],
+            [
               6,
-              14.071429
+              8.071429
             ],
             [
               7,
@@ -51560,8 +52692,12 @@
           ],
           [
             [
+              5,
+              6.102857
+            ],
+            [
               6,
-              14.245714
+              8.142857
             ],
             [
               7,
@@ -51570,8 +52706,12 @@
           ],
           [
             [
+              5,
+              6.0
+            ],
+            [
               6,
-              14.071429
+              8.071429
             ],
             [
               7,
@@ -51657,8 +52797,12 @@
           ],
           [
             [
+              5,
+              3.661714
+            ],
+            [
               6,
-              8.547428
+              4.885714
             ],
             [
               7,
@@ -51667,8 +52811,12 @@
           ],
           [
             [
+              5,
+              3.599999
+            ],
+            [
               6,
-              8.442856
+              4.842857
             ],
             [
               7,
@@ -51678,7 +52826,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "bio_red_blood_cell": {
     "autoEggDrops": false,
@@ -51760,8 +52908,12 @@
           ],
           [
             [
+              5,
+              20.363199
+            ],
+            [
               6,
-              46.978709
+              26.61551
             ],
             [
               7,
@@ -51770,8 +52922,12 @@
           ],
           [
             [
+              5,
+              20.020001
+            ],
+            [
               6,
-              46.402042
+              26.382041
             ],
             [
               7,
@@ -51857,8 +53013,12 @@
           ],
           [
             [
+              5,
+              14.24
+            ],
+            [
               6,
-              32.852245
+              18.612245
             ],
             [
               7,
@@ -51867,8 +53027,12 @@
           ],
           [
             [
+              5,
+              14.000001
+            ],
+            [
               6,
-              32.448981
+              18.44898
             ],
             [
               7,
@@ -52051,8 +53215,12 @@
           ],
           [
             [
+              5,
+              5.34
+            ],
+            [
               6,
-              12.319592
+              6.979592
             ],
             [
               7,
@@ -52061,8 +53229,12 @@
           ],
           [
             [
+              5,
+              5.25
+            ],
+            [
               6,
-              12.168367
+              6.918367
             ],
             [
               7,
@@ -52148,8 +53320,12 @@
           ],
           [
             [
+              5,
+              2.7768
+            ],
+            [
               6,
-              6.406188
+              3.629388
             ],
             [
               7,
@@ -52158,8 +53334,12 @@
           ],
           [
             [
+              5,
+              2.73
+            ],
+            [
               6,
-              6.327551
+              3.597551
             ],
             [
               7,
@@ -52169,7 +53349,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "bio_stem_cell": {
     "autoEggDrops": false,
@@ -52251,8 +53431,12 @@
           ],
           [
             [
+              5,
+              20.885332
+            ],
+            [
               6,
-              47.998846
+              27.113514
             ],
             [
               7,
@@ -52261,8 +53445,12 @@
           ],
           [
             [
+              5,
+              20.533333
+            ],
+            [
               6,
-              47.409009
+              26.875676
             ],
             [
               7,
@@ -52348,8 +53536,12 @@
           ],
           [
             [
+              5,
+              5.933333
+            ],
+            [
               6,
-              13.636036
+              7.702703
             ],
             [
               7,
@@ -52358,8 +53550,12 @@
           ],
           [
             [
+              5,
+              5.833333
+            ],
+            [
               6,
-              13.468468
+              7.635135
             ],
             [
               7,
@@ -52445,8 +53641,12 @@
           ],
           [
             [
+              5,
+              9.493333
+            ],
+            [
               6,
-              21.817657
+              12.324324
             ],
             [
               7,
@@ -52455,8 +53655,12 @@
           ],
           [
             [
+              5,
+              9.333333
+            ],
+            [
               6,
-              21.549549
+              12.216216
             ],
             [
               7,
@@ -52639,8 +53843,12 @@
           ],
           [
             [
+              5,
+              3.56
+            ],
+            [
               6,
-              8.181622
+              4.621622
             ],
             [
               7,
@@ -52649,8 +53857,12 @@
           ],
           [
             [
+              5,
+              3.5
+            ],
+            [
               6,
-              8.081081
+              4.581081
             ],
             [
               7,
@@ -52736,8 +53948,12 @@
           ],
           [
             [
+              5,
+              2.847999
+            ],
+            [
               6,
-              6.545296
+              3.697297
             ],
             [
               7,
@@ -52746,8 +53962,12 @@
           ],
           [
             [
+              5,
+              2.8
+            ],
+            [
               6,
-              6.464865
+              3.664865
             ],
             [
               7,
@@ -52757,7 +53977,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "bio_virus": {
     "autoEggDrops": false,
@@ -52839,8 +54059,12 @@
           ],
           [
             [
+              5,
+              30.074881
+            ],
+            [
               6,
-              69.570944
+              39.496063
             ],
             [
               7,
@@ -52849,8 +54073,12 @@
           ],
           [
             [
+              5,
+              29.568
+            ],
+            [
               6,
-              68.717606
+              39.149606
             ],
             [
               7,
@@ -53033,8 +54261,12 @@
           ],
           [
             [
+              5,
+              8.544
+            ],
+            [
               6,
-              19.764472
+              11.220472
             ],
             [
               7,
@@ -53043,8 +54275,12 @@
           ],
           [
             [
+              5,
+              8.4
+            ],
+            [
               6,
-              19.522047
+              11.122047
             ],
             [
               7,
@@ -53130,8 +54366,12 @@
           ],
           [
             [
+              5,
+              4.101121
+            ],
+            [
               6,
-              9.486948
+              5.385827
             ],
             [
               7,
@@ -53140,8 +54380,12 @@
           ],
           [
             [
+              5,
+              4.032
+            ],
+            [
               6,
-              9.370583
+              5.338583
             ],
             [
               7,
@@ -53151,7 +54395,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "bio_white_blood_cell": {
     "autoEggDrops": false,
@@ -53233,8 +54477,12 @@
           ],
           [
             [
+              5,
+              19.548672
+            ],
+            [
               6,
-              45.322585
+              25.773913
             ],
             [
               7,
@@ -53243,8 +54491,12 @@
           ],
           [
             [
+              5,
+              19.2192
+            ],
+            [
               6,
-              44.767026
+              25.547826
             ],
             [
               7,
@@ -53330,8 +54582,12 @@
           ],
           [
             [
+              5,
+              17.088
+            ],
+            [
               6,
-              39.617644
+              22.529644
             ],
             [
               7,
@@ -53340,8 +54596,12 @@
           ],
           [
             [
+              5,
+              16.8
+            ],
+            [
               6,
-              39.132016
+              22.332016
             ],
             [
               7,
@@ -53427,8 +54687,12 @@
           ],
           [
             [
+              5,
+              3.4176
+            ],
+            [
               6,
-              7.923529
+              4.505929
             ],
             [
               7,
@@ -53437,8 +54701,12 @@
           ],
           [
             [
+              5,
+              3.36
+            ],
+            [
               6,
-              7.826403
+              4.466403
             ],
             [
               7,
@@ -53621,8 +54889,12 @@
           ],
           [
             [
+              5,
+              2.665728
+            ],
+            [
               6,
-              6.180353
+              3.514625
             ],
             [
               7,
@@ -53631,8 +54903,12 @@
           ],
           [
             [
+              5,
+              2.6208
+            ],
+            [
               6,
-              6.104595
+              3.483795
             ],
             [
               7,
@@ -53642,7 +54918,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "arctic_centipede": {
     "autoEggDrops": false,
@@ -53737,7 +55013,7 @@
           ],
           [
             [
-              6,
+              5,
               99.93
             ],
             [
@@ -53747,7 +55023,7 @@
           ],
           [
             [
-              6,
+              5,
               99.57
             ],
             [
@@ -53917,7 +55193,7 @@
           ],
           [
             [
-              6,
+              5,
               99.96
             ],
             [
@@ -53927,7 +55203,7 @@
           ],
           [
             [
-              6,
+              5,
               99.78
             ],
             [
@@ -54087,7 +55363,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -54097,7 +55373,7 @@
           ],
           [
             [
-              6,
+              5,
               99.35
             ],
             [
@@ -54107,7 +55383,7 @@
           ],
           [
             [
-              6,
+              5,
               96.27
             ],
             [
@@ -54118,7 +55394,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "arctic_spider_cave": {
     "autoEggDrops": false,
@@ -54203,7 +55479,7 @@
           ],
           [
             [
-              6,
+              5,
               99.98
             ],
             [
@@ -54213,7 +55489,7 @@
           ],
           [
             [
-              6,
+              5,
               98.53
             ],
             [
@@ -54223,7 +55499,7 @@
           ],
           [
             [
-              6,
+              5,
               91.72
             ],
             [
@@ -54323,7 +55599,7 @@
           ],
           [
             [
-              6,
+              5,
               99.78
             ],
             [
@@ -54333,7 +55609,7 @@
           ],
           [
             [
-              6,
+              5,
               98.71
             ],
             [
@@ -54433,7 +55709,7 @@
           ],
           [
             [
-              6,
+              5,
               99.7
             ],
             [
@@ -54443,7 +55719,7 @@
           ],
           [
             [
-              6,
+              5,
               98.28
             ],
             [
@@ -54533,7 +55809,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -54543,7 +55819,7 @@
           ],
           [
             [
-              6,
+              5,
               99.26
             ],
             [
@@ -54553,7 +55829,7 @@
           ],
           [
             [
-              6,
+              5,
               95.77
             ],
             [
@@ -54643,7 +55919,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -54653,7 +55929,7 @@
           ],
           [
             [
-              6,
+              5,
               99.35
             ],
             [
@@ -54663,7 +55939,7 @@
           ],
           [
             [
-              6,
+              5,
               96.27
             ],
             [
@@ -54674,7 +55950,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "arctic_spider": {
     "autoEggDrops": false,
@@ -54769,7 +56045,7 @@
           ],
           [
             [
-              6,
+              5,
               99.78
             ],
             [
@@ -54779,7 +56055,7 @@
           ],
           [
             [
-              6,
+              5,
               98.71
             ],
             [
@@ -54949,7 +56225,7 @@
           ],
           [
             [
-              6,
+              5,
               99.63
             ],
             [
@@ -54959,7 +56235,7 @@
           ],
           [
             [
-              6,
+              5,
               97.86
             ],
             [
@@ -55189,7 +56465,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -55199,7 +56475,7 @@
           ],
           [
             [
-              6,
+              5,
               99.35
             ],
             [
@@ -55209,7 +56485,7 @@
           ],
           [
             [
-              6,
+              5,
               96.27
             ],
             [
@@ -55220,7 +56496,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "arctic_frost_digger": {
     "autoEggDrops": false,
@@ -55305,7 +56581,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -55315,7 +56591,7 @@
           ],
           [
             [
-              6,
+              5,
               99.03
             ],
             [
@@ -55325,7 +56601,7 @@
           ],
           [
             [
-              6,
+              5,
               94.45
             ],
             [
@@ -55415,7 +56691,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -55425,7 +56701,7 @@
           ],
           [
             [
-              6,
+              5,
               99.26
             ],
             [
@@ -55435,7 +56711,7 @@
           ],
           [
             [
-              6,
+              5,
               95.77
             ],
             [
@@ -55535,7 +56811,7 @@
           ],
           [
             [
-              6,
+              5,
               99.85
             ],
             [
@@ -55545,7 +56821,7 @@
           ],
           [
             [
-              6,
+              5,
               99.14
             ],
             [
@@ -55645,7 +56921,7 @@
           ],
           [
             [
-              6,
+              5,
               99.63
             ],
             [
@@ -55655,7 +56931,7 @@
           ],
           [
             [
-              6,
+              5,
               97.86
             ],
             [
@@ -55745,7 +57021,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -55755,7 +57031,7 @@
           ],
           [
             [
-              6,
+              5,
               99.35
             ],
             [
@@ -55765,7 +57041,7 @@
           ],
           [
             [
-              6,
+              5,
               96.27
             ],
             [
@@ -55776,7 +57052,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "arctic_ice_cube": {
     "autoEggDrops": false,
@@ -55871,7 +57147,7 @@
           ],
           [
             [
-              6,
+              5,
               99.85
             ],
             [
@@ -55881,7 +57157,7 @@
           ],
           [
             [
-              6,
+              5,
               99.14
             ],
             [
@@ -55981,7 +57257,7 @@
           ],
           [
             [
-              6,
+              5,
               99.63
             ],
             [
@@ -55991,7 +57267,7 @@
           ],
           [
             [
-              6,
+              5,
               97.86
             ],
             [
@@ -56091,7 +57367,7 @@
           ],
           [
             [
-              6,
+              5,
               99.63
             ],
             [
@@ -56101,7 +57377,7 @@
           ],
           [
             [
-              6,
+              5,
               97.86
             ],
             [
@@ -56341,7 +57617,7 @@
           ],
           [
             [
-              6,
+              5,
               99.93
             ],
             [
@@ -56351,7 +57627,7 @@
           ],
           [
             [
-              6,
+              5,
               99.57
             ],
             [
@@ -56451,7 +57727,7 @@
           ],
           [
             [
-              6,
+              5,
               99.93
             ],
             [
@@ -56461,7 +57737,7 @@
           ],
           [
             [
-              6,
+              5,
               99.57
             ],
             [
@@ -56551,7 +57827,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -56561,7 +57837,7 @@
           ],
           [
             [
-              6,
+              5,
               99.35
             ],
             [
@@ -56571,7 +57847,7 @@
           ],
           [
             [
-              6,
+              5,
               96.27
             ],
             [
@@ -56582,7 +57858,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "arctic_ice_dragon": {
     "autoEggDrops": false,
@@ -56667,7 +57943,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -56677,7 +57953,7 @@
           ],
           [
             [
-              6,
+              5,
               99.51
             ],
             [
@@ -56687,7 +57963,7 @@
           ],
           [
             [
-              6,
+              5,
               97.19
             ],
             [
@@ -56787,7 +58063,7 @@
           ],
           [
             [
-              6,
+              5,
               99.7
             ],
             [
@@ -56797,7 +58073,7 @@
           ],
           [
             [
-              6,
+              5,
               98.28
             ],
             [
@@ -56897,7 +58173,7 @@
           ],
           [
             [
-              6,
+              5,
               99.78
             ],
             [
@@ -56907,7 +58183,7 @@
           ],
           [
             [
-              6,
+              5,
               98.71
             ],
             [
@@ -57007,7 +58283,7 @@
           ],
           [
             [
-              6,
+              5,
               99.85
             ],
             [
@@ -57017,7 +58293,7 @@
           ],
           [
             [
-              6,
+              5,
               99.14
             ],
             [
@@ -57187,7 +58463,7 @@
           ],
           [
             [
-              6,
+              5,
               99.63
             ],
             [
@@ -57197,7 +58473,7 @@
           ],
           [
             [
-              6,
+              5,
               97.86
             ],
             [
@@ -57357,7 +58633,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -57367,7 +58643,7 @@
           ],
           [
             [
-              6,
+              5,
               99.35
             ],
             [
@@ -57377,7 +58653,7 @@
           ],
           [
             [
-              6,
+              5,
               96.27
             ],
             [
@@ -57388,7 +58664,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "arctic_ice_hornet": {
     "autoEggDrops": false,
@@ -57483,7 +58759,7 @@
           ],
           [
             [
-              6,
+              5,
               99.63
             ],
             [
@@ -57493,7 +58769,7 @@
           ],
           [
             [
-              6,
+              5,
               97.86
             ],
             [
@@ -57593,7 +58869,7 @@
           ],
           [
             [
-              6,
+              5,
               99.63
             ],
             [
@@ -57603,7 +58879,7 @@
           ],
           [
             [
-              6,
+              5,
               97.86
             ],
             [
@@ -57703,7 +58979,7 @@
           ],
           [
             [
-              6,
+              5,
               99.97
             ],
             [
@@ -57713,7 +58989,7 @@
           ],
           [
             [
-              6,
+              5,
               99.83
             ],
             [
@@ -57873,7 +59149,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -57883,7 +59159,7 @@
           ],
           [
             [
-              6,
+              5,
               99.35
             ],
             [
@@ -57893,7 +59169,7 @@
           ],
           [
             [
-              6,
+              5,
               96.27
             ],
             [
@@ -57904,7 +59180,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "arctic_igloo": {
     "autoEggDrops": false,
@@ -57989,7 +59265,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -57999,7 +59275,7 @@
           ],
           [
             [
-              6,
+              5,
               98.82
             ],
             [
@@ -58009,7 +59285,7 @@
           ],
           [
             [
-              6,
+              5,
               93.32
             ],
             [
@@ -58109,7 +59385,7 @@
           ],
           [
             [
-              6,
+              5,
               99.7
             ],
             [
@@ -58119,7 +59395,7 @@
           ],
           [
             [
-              6,
+              5,
               98.28
             ],
             [
@@ -58209,7 +59485,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -58219,7 +59495,7 @@
           ],
           [
             [
-              6,
+              5,
               98.82
             ],
             [
@@ -58229,7 +59505,7 @@
           ],
           [
             [
-              6,
+              5,
               93.32
             ],
             [
@@ -58389,7 +59665,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -58399,7 +59675,7 @@
           ],
           [
             [
-              6,
+              5,
               99.35
             ],
             [
@@ -58409,7 +59685,7 @@
           ],
           [
             [
-              6,
+              5,
               96.27
             ],
             [
@@ -58420,7 +59696,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "arctic_nuke": {
     "autoEggDrops": false,
@@ -58505,7 +59781,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -58515,7 +59791,7 @@
           ],
           [
             [
-              6,
+              5,
               99.26
             ],
             [
@@ -58525,7 +59801,7 @@
           ],
           [
             [
-              6,
+              5,
               95.77
             ],
             [
@@ -58625,7 +59901,7 @@
           ],
           [
             [
-              6,
+              5,
               99.63
             ],
             [
@@ -58635,7 +59911,7 @@
           ],
           [
             [
-              6,
+              5,
               97.86
             ],
             [
@@ -58945,7 +60221,7 @@
           ],
           [
             [
-              6,
+              5,
               99.81
             ],
             [
@@ -58955,7 +60231,7 @@
           ],
           [
             [
-              6,
+              5,
               98.92
             ],
             [
@@ -59055,7 +60331,7 @@
           ],
           [
             [
-              6,
+              5,
               99.96
             ],
             [
@@ -59065,7 +60341,7 @@
           ],
           [
             [
-              6,
+              5,
               99.74
             ],
             [
@@ -59155,7 +60431,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -59165,7 +60441,7 @@
           ],
           [
             [
-              6,
+              5,
               99.35
             ],
             [
@@ -59175,7 +60451,7 @@
           ],
           [
             [
-              6,
+              5,
               96.27
             ],
             [
@@ -59186,7 +60462,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "arctic_snowbush": {
     "autoEggDrops": false,
@@ -59281,7 +60557,7 @@
           ],
           [
             [
-              6,
+              5,
               99.93
             ],
             [
@@ -59291,7 +60567,7 @@
           ],
           [
             [
-              6,
+              5,
               99.57
             ],
             [
@@ -59391,7 +60667,7 @@
           ],
           [
             [
-              6,
+              5,
               99.63
             ],
             [
@@ -59401,7 +60677,7 @@
           ],
           [
             [
-              6,
+              5,
               97.86
             ],
             [
@@ -59501,7 +60777,7 @@
           ],
           [
             [
-              6,
+              5,
               99.85
             ],
             [
@@ -59511,7 +60787,7 @@
           ],
           [
             [
-              6,
+              5,
               99.14
             ],
             [
@@ -59611,7 +60887,7 @@
           ],
           [
             [
-              6,
+              5,
               99.89
             ],
             [
@@ -59621,7 +60897,7 @@
           ],
           [
             [
-              6,
+              5,
               99.35
             ],
             [
@@ -59721,7 +60997,7 @@
           ],
           [
             [
-              6,
+              5,
               99.93
             ],
             [
@@ -59731,7 +61007,7 @@
           ],
           [
             [
-              6,
+              5,
               99.57
             ],
             [
@@ -59891,7 +61167,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -59901,7 +61177,7 @@
           ],
           [
             [
-              6,
+              5,
               99.35
             ],
             [
@@ -59911,7 +61187,7 @@
           ],
           [
             [
-              6,
+              5,
               96.27
             ],
             [
@@ -59922,7 +61198,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "arctic_snowman": {
     "autoEggDrops": false,
@@ -60007,7 +61283,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -60017,7 +61293,7 @@
           ],
           [
             [
-              6,
+              5,
               99.26
             ],
             [
@@ -60027,7 +61303,7 @@
           ],
           [
             [
-              6,
+              5,
               95.77
             ],
             [
@@ -60127,7 +61403,7 @@
           ],
           [
             [
-              6,
+              5,
               99.7
             ],
             [
@@ -60137,7 +61413,7 @@
           ],
           [
             [
-              6,
+              5,
               98.28
             ],
             [
@@ -60237,7 +61513,7 @@
           ],
           [
             [
-              6,
+              5,
               99.63
             ],
             [
@@ -60247,7 +61523,7 @@
           ],
           [
             [
-              6,
+              5,
               97.86
             ],
             [
@@ -60337,7 +61613,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -60347,7 +61623,7 @@
           ],
           [
             [
-              6,
+              5,
               99.35
             ],
             [
@@ -60357,7 +61633,7 @@
           ],
           [
             [
-              6,
+              5,
               96.27
             ],
             [
@@ -60368,7 +61644,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "arctic_snowstorm": {
     "autoEggDrops": false,
@@ -60453,7 +61729,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -60463,7 +61739,7 @@
           ],
           [
             [
-              6,
+              5,
               99.56
             ],
             [
@@ -60473,7 +61749,7 @@
           ],
           [
             [
-              6,
+              5,
               97.44
             ],
             [
@@ -60573,7 +61849,7 @@
           ],
           [
             [
-              6,
+              5,
               99.7
             ],
             [
@@ -60583,7 +61859,7 @@
           ],
           [
             [
-              6,
+              5,
               98.28
             ],
             [
@@ -60743,7 +62019,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -60753,7 +62029,7 @@
           ],
           [
             [
-              6,
+              5,
               99.35
             ],
             [
@@ -60763,7 +62039,7 @@
           ],
           [
             [
-              6,
+              5,
               96.27
             ],
             [
@@ -60774,7 +62050,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "arctic_spider_digger": {
     "autoEggDrops": false,
@@ -60859,7 +62135,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -60869,7 +62145,7 @@
           ],
           [
             [
-              6,
+              5,
               99.03
             ],
             [
@@ -60879,7 +62155,7 @@
           ],
           [
             [
-              6,
+              5,
               94.45
             ],
             [
@@ -60969,7 +62245,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -60979,7 +62255,7 @@
           ],
           [
             [
-              6,
+              5,
               99.26
             ],
             [
@@ -60989,7 +62265,7 @@
           ],
           [
             [
-              6,
+              5,
               95.77
             ],
             [
@@ -61079,7 +62355,7 @@
           ],
           [
             [
-              6,
+              5,
               99.98
             ],
             [
@@ -61089,7 +62365,7 @@
           ],
           [
             [
-              6,
+              5,
               98.53
             ],
             [
@@ -61099,7 +62375,7 @@
           ],
           [
             [
-              6,
+              5,
               91.72
             ],
             [
@@ -61199,7 +62475,7 @@
           ],
           [
             [
-              6,
+              5,
               99.63
             ],
             [
@@ -61209,7 +62485,7 @@
           ],
           [
             [
-              6,
+              5,
               97.86
             ],
             [
@@ -61369,7 +62645,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -61379,7 +62655,7 @@
           ],
           [
             [
-              6,
+              5,
               99.35
             ],
             [
@@ -61389,7 +62665,7 @@
           ],
           [
             [
-              6,
+              5,
               96.27
             ],
             [
@@ -61400,7 +62676,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "arctic_spider_yoba": {
     "autoEggDrops": false,
@@ -61495,7 +62771,7 @@
           ],
           [
             [
-              6,
+              5,
               99.63
             ],
             [
@@ -61505,7 +62781,7 @@
           ],
           [
             [
-              6,
+              5,
               97.86
             ],
             [
@@ -61605,7 +62881,7 @@
           ],
           [
             [
-              6,
+              5,
               99.93
             ],
             [
@@ -61615,7 +62891,7 @@
           ],
           [
             [
-              6,
+              5,
               99.57
             ],
             [
@@ -61705,7 +62981,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -61715,7 +62991,7 @@
           ],
           [
             [
-              6,
+              5,
               99.35
             ],
             [
@@ -61725,7 +63001,7 @@
           ],
           [
             [
-              6,
+              5,
               96.27
             ],
             [
@@ -61736,7 +63012,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "arctic_stalagmite": {
     "autoEggDrops": false,
@@ -61821,7 +63097,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -61831,7 +63107,7 @@
           ],
           [
             [
-              6,
+              5,
               99.26
             ],
             [
@@ -61841,7 +63117,7 @@
           ],
           [
             [
-              6,
+              5,
               95.77
             ],
             [
@@ -61941,7 +63217,7 @@
           ],
           [
             [
-              6,
+              5,
               99.7
             ],
             [
@@ -61951,7 +63227,7 @@
           ],
           [
             [
-              6,
+              5,
               98.28
             ],
             [
@@ -62041,7 +63317,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -62051,7 +63327,7 @@
           ],
           [
             [
-              6,
+              5,
               99.35
             ],
             [
@@ -62061,7 +63337,7 @@
           ],
           [
             [
-              6,
+              5,
               96.27
             ],
             [
@@ -62072,7 +63348,7 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   },
   "arctic_tick": {
     "autoEggDrops": false,
@@ -62167,7 +63443,7 @@
           ],
           [
             [
-              6,
+              5,
               99.85
             ],
             [
@@ -62177,7 +63453,7 @@
           ],
           [
             [
-              6,
+              5,
               99.14
             ],
             [
@@ -62277,7 +63553,7 @@
           ],
           [
             [
-              6,
+              5,
               99.7
             ],
             [
@@ -62287,7 +63563,7 @@
           ],
           [
             [
-              6,
+              5,
               98.28
             ],
             [
@@ -62447,7 +63723,7 @@
           ],
           [
             [
-              6,
+              5,
               99.99
             ],
             [
@@ -62457,7 +63733,7 @@
           ],
           [
             [
-              6,
+              5,
               99.35
             ],
             [
@@ -62467,7 +63743,7 @@
           ],
           [
             [
-              6,
+              5,
               96.27
             ],
             [
@@ -62478,6 +63754,6 @@
         ]
       }
     ],
-    "fillPolicy": "fill-to-certain-with-lower-rarity"
+    "fillPolicy": "fill-to-certain-with-lower-rarity-up-to-mythic"
   }
 }

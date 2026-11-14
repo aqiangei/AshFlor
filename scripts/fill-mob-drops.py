@@ -2,7 +2,9 @@
 
 A mob tier whose chances total under 100% hands the missing share to a lower
 rarity: the lowest one already authored when the tier spans several, otherwise
-the rarity just below the authored one. Petals that only exist above common
+the rarity just below the authored one -- and never above Mythic. Ultra and
+Super are what the first Eternal is crafted from, so the fill gives every kill
+something without adding a single petal to that supply. Petals that only exist above common
 (Third Eye and the like) are rare by design and keep their reference chances,
 and so does a row authored at no more than RARE_DROP_PERCENT on every tier
 (Ruby from a Server, Meteor from a Rock, Mimic, Splitter): those are prizes,
@@ -16,8 +18,9 @@ import sys
 from pathlib import Path
 
 RARITIES = ['common', 'unusual', 'rare', 'epic', 'legendary', 'mythic', 'ultra', 'super', 'unique', 'apex']
-POLICY = 'fill-to-certain-with-lower-rarity'
+POLICY = 'fill-to-certain-with-lower-rarity-up-to-mythic'
 RARE_DROP_PERCENT = 2.5
+FILL_CEILING = RARITIES.index('mythic')
 
 
 def designed_rare(row):
@@ -29,7 +32,7 @@ def fill_target(pairs, floor):
     if floor > 0:
         return -1
     lowest = min(rarity for rarity, _ in pairs)
-    return lowest if len(pairs) > 1 else max(0, lowest - 1)
+    return min(FILL_CEILING, lowest if len(pairs) > 1 else max(0, lowest - 1))
 
 
 def add_share(pairs, rarity, percent):
