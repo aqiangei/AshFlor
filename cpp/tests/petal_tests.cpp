@@ -5937,19 +5937,19 @@ TEST(an_amulet_turns_its_tiers_share_of_overheal_into_shield) {
     rig.equip(0, "amulet", Rarity::Epic);
     rig.equip(1, "amulet", Rarity::Common);
     rig.settleEquips();
-    // +5% a tier, florr's figure: 20% at epic. The better one, not the sum.
-    CHECK_NEAR(rig.modifiers().overhealShield, 0.2, 1e-9);
+    // +6.25% a tier, a quarter over florr's figure: 25% at epic. The better one, not the sum.
+    CHECK_NEAR(rig.modifiers().overhealShield, 0.25, 1e-9);
     CHECK_NEAR(fixture().registry.petalStats(petalId("amulet"), Rarity::Ultra).overhealShield,
-               0.35, 1e-9);
+               0.4375, 1e-9);
 
     Health& health = rig.world.get<Health>(rig.player);
     ShieldState& shield = rig.world.get<ShieldState>(rig.player);
     shield.amount = 0.0;
     health.current = health.max - 10.0;
-    // Ten fill the bar; the amulet keeps a fifth of the spill.
+    // Ten fill the bar; the amulet keeps a quarter of the spill.
     CombatSystem::landHeal(rig.world, rig.player, health, 60.0);
     CHECK_NEAR(health.current, health.max, 1e-9);
-    CHECK_NEAR(shield.amount, (60.0 * kPlayerHealMultiplier - 10.0) * 0.2, 1e-9);
+    CHECK_NEAR(shield.amount, (60.0 * kPlayerHealMultiplier - 10.0) * 0.25, 1e-9);
     // Capped at max health, as a shell's shield is.
     CombatSystem::landHeal(rig.world, rig.player, health, health.max * 100.0);
     CHECK_NEAR(shield.amount, health.max, 1e-9);
@@ -6010,7 +6010,7 @@ TEST(a_basil_grows_the_heal_an_amulet_keeps_the_overflow_of) {
     health.current = health.max - 10.0;
     CombatSystem::landHeal(rig.world, rig.player, health, 40.0);
     CHECK_NEAR(health.current, health.max, 1e-9);
-    CHECK_NEAR(shield.amount, (40.0 * kPlayerHealMultiplier * 1.5 - 10.0) * 0.2, 1e-9);
+    CHECK_NEAR(shield.amount, (40.0 * kPlayerHealMultiplier * 1.5 - 10.0) * 0.25, 1e-9);
 }
 
 TEST(a_disc_resists_collisions_by_florrs_curve_and_does_not_stack) {
