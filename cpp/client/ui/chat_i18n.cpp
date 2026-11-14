@@ -500,6 +500,19 @@ std::string localizePlain(std::string text) {
     return text;
 }
 
+/// A map's name as the spawn picker gives it: by its id, or by the biome its
+/// id begins with (termite_mound_t3 is a termite mound); the English name the
+/// server sent when the table has neither.
+std::string mapNameTr(std::string id, const std::string& english) {
+    while (!id.empty()) {
+        if (const char* name = biomeTr(id, nullptr)) return name;
+        const std::size_t cut = id.rfind('_');
+        if (cut == std::string::npos) break;
+        id.erase(cut);
+    }
+    return english;
+}
+
 /// Translate entity phrase "Rarity Name" using rarity + name tables.
 std::string trEntity(const std::string& rarityAndName, const std::string& mobId, bool mobAnnouncement) {
     std::string rarity, name;
@@ -574,6 +587,13 @@ std::string localizeMarkupAware(std::string text) {
                 const auto end = prefix.find('\'', mobTag.size());
                 if (end != std::string::npos) mobId = prefix.substr(mobTag.size(), end - mobTag.size());
             }
+            std::string mapId;
+            constexpr std::string_view mapTag = " data-map='";
+            if (const auto at = prefix.find(mapTag); at != std::string::npos) {
+                const auto from = at + mapTag.size();
+                const auto end = prefix.find('\'', from);
+                if (end != std::string::npos) mapId = prefix.substr(from, end - from);
+            }
             auto tryVerb = [&](const char* enVerb, const char* zhVerbTpl) -> bool {
                 // zhVerbTpl uses %e for entity and optional trailing bits handled outside
                 const std::size_t at = body.find(enVerb);
@@ -586,11 +606,16 @@ std::string localizeMarkupAware(std::string text) {
                     verb == " has been summoned" || verb == " has been defeated";
                 const std::string entity = trEntity(head, mobId, mobAnnouncement);
                 const std::string rest = body.substr(at + std::char_traits<char>::length(enVerb));
-                // rest may be "!", " somewhere!", " by MARKUP", " by MARKUP!</b>" already cut
+                // rest may be "!", " somewhere!", " in MAP!", " by MARKUP", " by MARKUP!</b>" already cut
                 std::string zhBody;
                 if (std::string(enVerb) == " has spawned") {
                     if (startsWith(rest, " somewhere")) {
                         zhBody = entity + " 已在某处生成！";
+                    } else if (startsWith(rest, " in ")) {
+                        const std::size_t bang = rest.find('!', 4);
+                        const std::string english =
+                            rest.substr(4, bang == std::string::npos ? std::string::npos : bang - 4);
+                        zhBody = entity + " 已在" + mapNameTr(mapId, english) + "生成！";
                     } else {
                         zhBody = entity + " 已生成！";
                     }

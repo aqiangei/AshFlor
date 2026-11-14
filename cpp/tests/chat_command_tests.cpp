@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "server_harness.h"
+#include "client/ui/i18n.h"
 #include "server/bot_identity.h"
 #include "server/db.h"
 #include "server/systems/spawning.h"
@@ -462,6 +463,57 @@ TEST(a_boss_from_the_console_is_announced_to_the_whole_server) {
     CHECK(say(h, client, "/admin spawn bee super 1"));
     h.step(30, {&client});
     CHECK(!sawText(client, "Super Bee has spawned"));
+}
+
+// The test client keeps chat in whichever language was set last, and the suite
+// does not promise which that is; these read the English line the server sent.
+struct EnglishChat {
+    ui::Language before = ui::language();
+    EnglishChat() { ui::setLanguage(ui::Language::En); }
+    ~EnglishChat() { ui::setLanguage(before); }
+};
+
+TEST(a_hyper_spawn_names_its_map_to_the_players_on_another_and_no_more) {
+    const EnglishChat english;
+    Harness h("boss-announce-map", {});
+    if (!h.ready) { CHECK(false); return; }
+    const std::uint16_t bee = content().mobIndex("bee");
+    const MapData* overworld = h.server.worldMaps().forRealm(Realm::Overworld);
+    if (bee == kInvalidIndex || overworld == nullptr || overworld->displayName().empty()) {
+        CHECK(false);
+        return;
+    }
+
+    NetClient alice;
+    NetClient bob;
+    CHECK(loginNew(h, alice, "alice", "hunter2!"));
+    CHECK(loginNew(h, bob, "bob", "hunter2!"));
+    alice.joinGame(1280, 720, {}, "alice");
+    bob.joinGame(1280, 720, kMazeSpawnChoice, "bob");
+    CHECK(h.stepUntil({&alice, &bob}, [&] {
+        return alice.status() == NetClient::Status::Playing &&
+               bob.status() == NetClient::Status::Playing;
+    }));
+
+    // Alice is on the overworld, where it spawned; bob, in the maze, is told
+    // which map, and nothing about where on it.
+    const std::string named = "A Hyper Bee has spawned";
+    const std::string onMap = named + " in " + overworld->displayName() + "!";
+    GameServerPeer::announceMob(h.server, bee, Rarity::Apex, Realm::Overworld, false);
+    CHECK(h.stepUntil({&alice, &bob}, [&] {
+        return sawText(alice, named + "!") && sawText(bob, onMap);
+    }));
+    CHECK(!sawText(alice, onMap));
+    CHECK(!sawText(bob, named + " somewhere!"));
+
+    // A summon keeps "somewhere", and so does a line from another server,
+    // which never learns the realm.
+    GameServerPeer::announceMob(h.server, bee, Rarity::Apex, Realm::Overworld, true);
+    GameServerPeer::announceMob(h.server, bee, Rarity::Universal, std::nullopt, false);
+    CHECK(h.stepUntil({&alice, &bob}, [&] {
+        return sawText(bob, "A Hyper Bee has been summoned somewhere!") &&
+               sawText(bob, "A Devine Bee has spawned somewhere!");
+    }));
 }
 
 TEST(the_console_cannot_spawn_a_unique_while_its_biome_clock_cools_down) {

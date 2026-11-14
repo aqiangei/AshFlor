@@ -794,6 +794,10 @@ struct GameServerPeer {
         type.rarity = rarity;
         server.announceBossDefeat(NULL_ENTITY, type, {});
     }
+    static void announceMob(GameServer& server, std::uint16_t mob, Rarity rarity,
+                            std::optional<Realm> realm, bool summoned) {
+        server.announceMob(mob, rarity, realm, summoned);
+    }
 
     static Database& authorityDb(GameServer& s) { return s.database_; }
     static Json relaySkinReview(GameServer& server, const std::string& key, const Json& request) {

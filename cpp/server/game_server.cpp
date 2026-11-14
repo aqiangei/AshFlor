@@ -2280,10 +2280,22 @@ void GameServer::announceMob(std::uint16_t mobIndex, Rarity rarity,
     std::snprintf(color, sizeof color, "#%06x", rarityColor(rarity));
     const auto& mob = content().mob(mobIndex);
     if (rarity == Rarity::Unique || (mob.id == "ghost" && !isAnnouncedGhost(rarity))) return;
-    const auto prefix = "<b data-mob='" + escapedMarkup(mob.id) + "' style=\"color: " +
-        color + ";\">A " + rarityLabel(rarity) + " " + mob.name +
-        (summoned ? " has been summoned" : " has spawned");
-    const std::string remoteText = prefix + " somewhere!</b>";
+    // A hyper or better that spawned names its map to the players on another
+    // one -- which map, never where on it. A ritual's summon stays "somewhere":
+    // its summoner paid for that fight.
+    const MapData* map = localRealm && !summoned && rarityIndex(rarity) >= rarityIndex(Rarity::Apex)
+        ? worldMaps_.forRealm(*localRealm) : nullptr;
+    if (map != nullptr && map->displayName().empty()) map = nullptr;
+    const auto opening = [&](const MapData* named) {
+        return "<b data-mob='" + escapedMarkup(mob.id) + "'" +
+            (named != nullptr ? " data-map='" + escapedMarkup(named->id()) + "'" : std::string()) +
+            " style=\"color: " + color + ";\">A " + rarityLabel(rarity) + " " + mob.name +
+            (summoned ? " has been summoned" : " has spawned");
+    };
+    const std::string prefix = opening(nullptr);
+    const std::string remoteText = map != nullptr
+        ? opening(map) + " in " + escapedMarkup(map->displayName()) + "!</b>"
+        : prefix + " somewhere!</b>";
     for (auto& entry : sessions_) {
         Session& session = entry.second;
         if (!session.authenticated()) continue;

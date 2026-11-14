@@ -1207,8 +1207,9 @@ private:
     void collectSpawnBlockers(Realm realm, std::vector<MobDisc>& out) const;
 
     /// Drains the spawner's boss queue into chat. Worded per recipient: a
-    /// player standing in the boss's own section is told it spawned, everyone
-    /// else that it spawned "somewhere".
+    /// player standing on the boss's own map is told it spawned; everyone else
+    /// which map it spawned on, for a hyper or better, and below that only
+    /// "somewhere". A summon, and a line from another server, say "somewhere".
     void announceBossSpawns();
     void announceMob(std::uint16_t mobIndex, Rarity rarity,
                      std::optional<Realm> localRealm, bool summoned);
