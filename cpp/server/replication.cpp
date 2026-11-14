@@ -1063,26 +1063,62 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         if (eventCount == UINT16_MAX) break;
         if (view.tracked.find(meter.netId) == view.tracked.end()) continue;
         out.u8(static_cast<std::uint8_t>(net::EventKind::PracticeMeter));
-        out.u32(meter.netId);
+        out.varU32(meter.netId);
         out.f64(meter.dps);
         out.f64(meter.total);
         ++eventCount;
     }
+    // The viewer's position as the header above carried it and the client
+    // decoded it: what a near event's position is an offset from.
+    const Vec2 eventOrigin = wirePosition(viewerTransform->position);
+    const auto nearOffset = [&](Vec2 point, std::int16_t& x, std::int16_t& y) {
+        const double dx = std::round((point.x - eventOrigin.x) * net::kEventPositionScale);
+        const double dy = std::round((point.y - eventOrigin.y) * net::kEventPositionScale);
+        // Written so that a NaN fails it and goes out in the absolute form.
+        if (!(std::fabs(dx) <= 32767.0) || !(std::fabs(dy) <= 32767.0)) return false;
+        x = static_cast<std::int16_t>(dx);
+        y = static_cast<std::int16_t>(dy);
+        return true;
+    };
     const auto writeEvent = [&](const WireEvent& event, std::uint32_t other, std::uint8_t flag,
                                 bool ownPickup) {
         const std::size_t eventAt = out.size();
-        out.u8(static_cast<std::uint8_t>(event.kind));
-        out.u32(event.netId);
-        out.u32(other);
+        const std::size_t count = event.kind == net::EventKind::Lightning
+            ? std::min(event.points.size(), net::kMaxLightningTargets) : 0;
+        // One form for the whole record: near only when every point fits.
+        std::int16_t nearX = 0;
+        std::int16_t nearY = 0;
+        bool nearPosition = nearOffset(event.position, nearX, nearY);
+        for (std::size_t i = 0; nearPosition && i < count; ++i) {
+            std::int16_t x = 0;
+            std::int16_t y = 0;
+            nearPosition = nearOffset(event.points[i], x, y);
+        }
+        const auto writePoint = [&](Vec2 point) {
+            std::int16_t x = 0;
+            std::int16_t y = 0;
+            if (nearPosition && nearOffset(point, x, y)) {
+                out.i16(x);
+                out.i16(y);
+            } else {
+                out.position(point);
+            }
+        };
+        const float radius = static_cast<float>(event.radius);
+        std::uint8_t head = static_cast<std::uint8_t>(event.kind);
+        if (nearPosition) head |= net::kEventNearPosition;
+        if (radius == 0.0f) head |= net::kEventNoRadius;
+        out.u8(head);
+        out.varU32(event.netId);
+        out.varU32(other);
         out.f32(static_cast<float>(event.amount));
-        out.position(event.position);
-        out.f32(static_cast<float>(event.radius));
+        writePoint(event.position);
+        if (radius != 0.0f) out.f32(radius);
         out.u8(flag);
         if (event.kind == net::EventKind::PickedUp) { out.u32(event.pickupQuantity); out.boolean(ownPickup); }
         if (event.kind == net::EventKind::Lightning) {
-            const std::size_t count = std::min(event.points.size(), net::kMaxLightningTargets);
             out.u8(static_cast<std::uint8_t>(count));
-            for (std::size_t i = 0; i < count; ++i) out.position(event.points[i]);
+            for (std::size_t i = 0; i < count; ++i) writePoint(event.points[i]);
         }
         meter.event(event.kind, out.size() - eventAt);
         ++eventCount;

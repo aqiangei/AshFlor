@@ -857,7 +857,7 @@ TEST(the_viewers_own_figures_ride_only_when_they_change) {
     // (a one-byte id gap, the mask, the u16 fraction).
     f.world.get<Health>(f.viewer).current = 60;
     const std::size_t hurt = f.tick(client, 3, 1080);
-    CHECK_EQ(hurt, idle + 8 + 5);
+    CHECK_EQ(hurt, idle + 8 + 4);
     CHECK_NEAR(client.self().health, 60.0, 1e-3);
     CHECK_NEAR(client.self().maxHealth, 100.0, 1e-3);
     CHECK_EQ(client.self().level, 5);

@@ -1079,6 +1079,22 @@ struct PracticeMeter {
 /// cap buy nothing that can be seen. The set kept is the NEAREST, which is a
 /// disc around the strike -- the shape the effect should have anyway.
 inline constexpr std::size_t kMaxLightningTargets = 24;
+
+/// An event record's first byte (Version 128): the EventKind in the low five
+/// bits, and two bits above it that say which form the rest takes. The ids
+/// that follow are varU32s -- `other` is zero on most hits and costs a byte.
+inline constexpr std::uint8_t kEventKindMask = 0x1F;
+/// The position, and a Lightning's points, are i16 dx, i16 dy offsets from the
+/// viewer position in this snapshot's header, in 1/kEventPositionScale units,
+/// rather than f32 pairs. Set whenever every point of the event is within
+/// reach of that, which is every event in view; one streamed from across the
+/// realm (a squadmate's hit, a worn petal's tile) keeps the absolute form.
+inline constexpr std::uint8_t kEventNearPosition = 0x80;
+/// The f32 `radius` is zero and is not sent.
+inline constexpr std::uint8_t kEventNoRadius = 0x40;
+/// An eighth of a unit, reaching 4096 units either way: an event's position
+/// places a number or a burst, and is never added to anything.
+inline constexpr double kEventPositionScale = 8.0;
 /// Lightning points form an ordered chain rather than independent radial arms.
 inline constexpr std::uint8_t LightningChained = 1u;
 inline constexpr std::uint8_t LightningForeign = 2u;
