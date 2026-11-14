@@ -11,6 +11,10 @@ and so does a row authored at no more than RARE_DROP_PERCENT on every tier
 not the mob's ordinary loot. Rows that share a roll group are one draw, so the
 group is topped up as a whole, in proportion to each row's authored share.
 
+The arctic maps' mobs get only part of the gap at the tiers in PARTIAL_FILL:
+filled in full they would be worth more per HP than any older map's mobs, at
+Mythic most of all, so the rest of their roll stays empty.
+
 Usage: python scripts/fill-mob-drops.py [report.json]
 """
 import json
@@ -21,6 +25,17 @@ RARITIES = ['common', 'unusual', 'rare', 'epic', 'legendary', 'mythic', 'ultra',
 POLICY = 'fill-to-certain-with-lower-rarity-up-to-mythic'
 RARE_DROP_PERCENT = 2.5
 FILL_CEILING = RARITIES.index('mythic')
+# Share of the gap handed out, by mob id prefix and then the mob's tier; a tier
+# left out is filled in full. Holds each arctic map within 1.25x the ocean's
+# value per HP at that tier.
+PARTIAL_FILL = {'arctic_': {'legendary': 0.75, 'mythic': 0.2, 'ultra': 0.5}}
+
+
+def fill_share(mob, tier):
+    for prefix, shares in PARTIAL_FILL.items():
+        if mob.startswith(prefix):
+            return shares.get(RARITIES[tier], 1.0)
+    return 1.0
 
 
 def designed_rare(row):
@@ -66,7 +81,7 @@ def fill_mob_drops(tables, floor_of):
                 draws.append(group)
             for draw in draws:
                 authored = [sum(percent for _, percent in row['rarityChances'][tier]) for row in draw]
-                missing = round(100 - sum(authored), 6)
+                missing = round((100 - sum(authored)) * fill_share(mob, tier), 6)
                 if missing <= 0:
                     continue
                 fillable = [(row, share, fill_target(row['rarityChances'][tier], floor_of(row['itemType'])))
