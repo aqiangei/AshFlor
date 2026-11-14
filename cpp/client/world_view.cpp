@@ -442,8 +442,9 @@ bool WorldView::applySnapshot(ByteReader& reader, double receivedMillis, bool ke
     events.reserve(eventCount);
     for (std::uint16_t i = 0; i < eventCount; ++i) {
         ViewEvent e;
-        e.kind = static_cast<net::EventKind>(reader.u8());
-        e.netId = reader.u32();
+        const std::uint8_t head = reader.u8();
+        e.kind = static_cast<net::EventKind>(head & net::kEventKindMask);
+        e.netId = reader.varU32();
         if (e.kind == net::EventKind::PracticeMeter) {
             const double dps = reader.f64();
             const double total = reader.f64();
@@ -452,10 +453,21 @@ bool WorldView::applySnapshot(ByteReader& reader, double receivedMillis, bool ke
             }
             continue;
         }
-        e.otherNetId = reader.u32();
+        e.otherNetId = reader.varU32();
         e.amount = reader.f32();
-        e.position = reader.position();
-        e.radius = reader.f32();
+        // Near events place themselves by an offset from the viewer position
+        // this same snapshot's header carried (net::kEventNearPosition).
+        const bool nearPosition = (head & net::kEventNearPosition) != 0;
+        const auto readPoint = [&]() -> Vec2 {
+            if (!nearPosition) return reader.position();
+            const double dx = reader.i16();
+            const double dy = reader.i16();
+            return {selfPosition.x + dx / net::kEventPositionScale,
+                    selfPosition.y + dy / net::kEventPositionScale};
+        };
+        e.position = readPoint();
+        if (head & net::kEventNoRadius) e.radius = 0;
+        else e.radius = reader.f32();
         e.flag = reader.u8();
         if (e.kind == net::EventKind::PickedUp) {
             e.pickupQuantity = reader.u32();
@@ -475,7 +487,7 @@ bool WorldView::applySnapshot(ByteReader& reader, double receivedMillis, bool ke
             const std::uint8_t targets = reader.u8();
             if (keepTransientEffects) e.points.reserve(targets);
             for (std::uint8_t t = 0; t < targets; ++t) {
-                const auto point = reader.position();
+                const auto point = readPoint();
                 if (keepTransientEffects) e.points.push_back(point);
             }
         }
