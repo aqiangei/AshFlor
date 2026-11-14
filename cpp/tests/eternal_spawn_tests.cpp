@@ -1,6 +1,9 @@
 #include "test.h"
 #include "test_data.h"
 #include "server/systems/spawning.h"
+#include "shared/game/super_population.h"
+#include <map>
+#include <string>
 using namespace flix;
 TEST(eternal_stats_double_online_health_without_other_stat_inflation) {
     ContentRegistry c;std::string error;
@@ -13,7 +16,7 @@ TEST(eternal_stats_double_online_health_without_other_stat_inflation) {
         CHECK_NEAR(e.armor,s.armor,1e-9);
     }
 }
-TEST(eternal_three_per_regular_map_keeps_five_supers_and_waits_after_death) {
+TEST(eternal_three_per_regular_biome_keeps_its_supers_and_waits_after_death) {
     ContentRegistry c;WorldMaps maps;Terrain terrain;std::string error;
     CHECK(c.loadFiles(testsupport::dataFile("mobs.json"),testsupport::dataFile("petals.json"),error));
     CHECK(maps.load(testsupport::dataDir(),&terrain,error));
@@ -22,7 +25,7 @@ TEST(eternal_three_per_regular_map_keeps_five_supers_and_waits_after_death) {
     step(1000);for(auto& clock:spawn.bossClocks()){clock.uniqueReadyMillis=0;clock.apexReadyMillis=1e15;}
     for(int n=0;n<20;++n)step(2000+n*500);
     bool found=false;const auto garden=maps.realmOfId("garden",found);CHECK(found);
-    Entity boss=NULL_ENTITY;int mapsChecked=0;
+    Entity boss=NULL_ENTITY;std::map<std::string,int> eternalsByBiome;
     for(const auto& map:maps.maps()) {
         if(maps.isPrestige(map.realm())||!map.usesReferenceSpawnCurve())continue;
         int eternal=0,supers=0;
@@ -35,9 +38,12 @@ TEST(eternal_three_per_regular_map_keeps_five_supers_and_waits_after_death) {
             if(type.rarity==Rarity::Super)++supers;
         });
         std::printf("  %s: E=%d S=%d\n",map.id().c_str(),eternal,supers);
-        CHECK_EQ(eternal,3);CHECK_EQ(supers,5);++mapsChecked;
+        // Alternate layouts share their biome's slots; a rift fields no natural boss.
+        if(map.id().rfind("rift_",0)!=0)eternalsByBiome[map.biome()]+=eternal;
+        CHECK_EQ(supers,SuperPopulation::target);
     }
-    CHECK_EQ(mapsChecked,10);CHECK(boss!=NULL_ENTITY);if(boss==NULL_ENTITY)return;
+    for(const auto& [biome,eternal]:eternalsByBiome)CHECK_EQ(eternal,kEternalPopulationTarget);
+    CHECK_EQ(eternalsByBiome.size(),std::size_t(10));CHECK(boss!=NULL_ENTITY);if(boss==NULL_ENTITY)return;
     w.get<Health>(boss).current*=0.5;
     step(7200000);CHECK(w.isAlive(boss));CHECK(!w.has<Dead>(boss));
     w.add<Dead>(boss);step(7201000);

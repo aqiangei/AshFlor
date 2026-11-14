@@ -45,7 +45,7 @@ TEST(wiki_stat_battery_and_lightning_share_damage_chain_and_description) {
         CHECK_NEAR(s.lightningRange,240,1e-8); CHECK(hasLine(i,Rarity::Mythic,"基础闪电伤害：2916"));
     }
     CHECK(hasLine(content().petalIndex("battery"),Rarity::Mythic,"每轮放电次数：3"));
-    CHECK(hasLine(content().petalIndex("battery"),Rarity::Mythic,"实际受伤时放电"));
+    CHECK(hasLine(content().petalIndex("battery"),Rarity::Mythic,"花朵实际掉血时触发"));
     CHECK_NEAR(content().petalStats(content().petalIndex("lightning"),Rarity::Super).health,43740,1e-8);
 }
 TEST(wiki_stat_root_fang_clover_use_their_special_scaling) {

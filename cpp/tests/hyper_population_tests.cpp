@@ -2,10 +2,15 @@
 #include "test_data.h"
 #include "server/systems/spawning.h"
 #include "server/systems/loot.h"
+#include <map>
+#include <string>
+#include <utility>
 using namespace flix;
 namespace {
 const ContentRegistry& data(){static ContentRegistry c;static bool ready=false;if(!ready){std::string e;CHECK(c.loadFiles(testsupport::dataFile("mobs.json"),testsupport::dataFile("petals.json"),e));ready=true;}return c;}
 int population(World&w,Realm realm,Rarity rarity){int n=0;Query<MobTag,MobType,Transform,AmbientMob> q{w};q.without<Dead>();q.each([&](Entity e,MobTag&,MobType& t,Transform& at,AmbientMob&){const auto* b=w.tryGet<BodySegment>(e);if(!w.has<HoleTether>(e)&&!w.has<SuperFarmMob>(e)&&at.realm==realm&&t.rarity==rarity&&(!b||b->chainHead==e))++n;});return n;}
+// A natural Hyper may come out Ascendant and still fills the biome's Hyper slot.
+int hyperSlot(World&w,Realm realm){int n=0;Query<MobTag,MobType,Transform,AmbientMob> q{w};q.without<Dead>();q.each([&](Entity e,MobTag&,MobType& t,Transform& at,AmbientMob& ambient){const auto* b=w.tryGet<BodySegment>(e);const bool hyper=t.rarity==Rarity::Apex||(t.rarity==Rarity::Ascendant&&ambient.zone!=kInvalidIndex);if(!w.has<HoleTether>(e)&&!w.has<SuperFarmMob>(e)&&at.realm==realm&&hyper&&(!b||b->chainHead==e))++n;});return n;}
 }
 TEST(hyper_mobs_keep_xp_speed_and_hyper_pollen_uses_one_point_five_eternal){
     for(std::uint16_t i=0;i<data().mobCount();++i){const auto e=data().mobStats(i,Rarity::Unique),h=data().mobStats(i,Rarity::Apex);
@@ -57,17 +62,25 @@ TEST(hyper_one_per_regular_map_preserves_supers_eternals_and_waits_thirty_minute
     auto step=[&](double now){spawn.run(w,terrain,data(),std::vector<RealmPoint>{},rng,now,net::kTickSeconds,commands);commands.flush();};
     step(1000);for(auto& clock:spawn.bossClocks()){clock.uniqueReadyMillis=0;clock.apexReadyMillis=0;}
     for(int i=0;i<30;++i)step(2000+i*500);
-    int checked=0;Entity boss=NULL_ENTITY;bool found=false;const auto garden=maps.realmOfId("garden",found);CHECK(found);
+    Entity boss=NULL_ENTITY;bool found=false;const auto garden=maps.realmOfId("garden",found);CHECK(found);
+    // Alternate layouts share their biome's slots; a rift fields no natural boss.
+    std::map<std::string,std::pair<int,int>> bosses;
     for(const auto& map:maps.maps())if(!maps.isPrestige(map.realm())&&map.usesReferenceSpawnCurve()){
-        CHECK_EQ(population(w,map.realm(),Rarity::Apex),1);CHECK_EQ(population(w,map.realm(),Rarity::Unique),3);CHECK_EQ(population(w,map.realm(),Rarity::Super),10);++checked;
+        CHECK_EQ(population(w,map.realm(),Rarity::Super),10);
+        if(map.id().rfind("rift_",0)==0)continue;
+        auto& biome=bosses[map.biome()];
+        biome.first+=hyperSlot(w,map.realm());biome.second+=population(w,map.realm(),Rarity::Unique);
     }
-    CHECK_EQ(checked,10);Query<MobTag,MobType,Transform,AmbientMob> q{w};q.without<Dead>();
-    q.each([&](Entity e,MobTag&,MobType&t,Transform&at,AmbientMob&){const auto* b=w.tryGet<BodySegment>(e);if(t.rarity==Rarity::Apex&&at.realm==garden&&(!b||b->chainHead==e))boss=e;});
+    for(const auto& [biome,count]:bosses){CHECK_EQ(count.first,1);CHECK_EQ(count.second,3);}
+    CHECK_EQ(bosses.size(),std::size_t(10));Query<MobTag,MobType,Transform,AmbientMob> q{w};q.without<Dead>();
+    q.each([&](Entity e,MobTag&,MobType&t,Transform&at,AmbientMob& ambient){const auto* b=w.tryGet<BodySegment>(e);
+        const bool hyper=t.rarity==Rarity::Apex||(t.rarity==Rarity::Ascendant&&ambient.zone!=kInvalidIndex);
+        if(hyper&&at.realm==garden&&(!b||b->chainHead==e))boss=e;});
     CHECK(boss!=NULL_ENTITY);if(boss==NULL_ENTITY)return;
     w.get<Health>(boss).current*=.5;step(7200000);CHECK(w.isAlive(boss));CHECK(!w.has<Dead>(boss));
     w.add<Dead>(boss);step(7201000);CHECK_NEAR(spawn.bossCooldownLeft(Rarity::Apex,garden,7201000),1800000,1e-6);
-    w.destroy(boss);step(9000999);CHECK_EQ(population(w,garden,Rarity::Apex),0);
-    for(int i=0;i<20;++i)step(9001000+i*500);CHECK_EQ(population(w,garden,Rarity::Apex),1);
+    w.destroy(boss);step(9000999);CHECK_EQ(hyperSlot(w,garden),0);
+    for(int i=0;i<20;++i)step(9001000+i*500);CHECK_EQ(hyperSlot(w,garden),1);
 }
 TEST(hyper_top_contributor_gets_thirty_nine_trials_of_materials_below_hyper){
     World w;CommandBuffer commands{w};EventQueue events;SpatialGrid grid;LootSystem loot;Rng rng{81927};
