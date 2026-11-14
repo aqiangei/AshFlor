@@ -785,6 +785,12 @@ struct MobConfig {
     double petHealthScale = 1.0;
     double petDamageScale = 1.0;
 
+    /// Multiplies `speed` and `chase_speed` for a WILD spawn only
+    /// (`wild_speed_scale`); the summoned one keeps its full pace, so an egg
+    /// its owner already holds is unchanged. Zero roots the wild mob to the
+    /// spot: it is spawned with AiKind::Stationary.
+    double wildSpeedScale = 1.0;
+
     /// Per-spawn size jitter, multiplying `size`. Equal bounds means none.
     double randomSizeMin = 1.0;
     double randomSizeMax = 1.0;

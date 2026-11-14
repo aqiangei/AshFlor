@@ -132,7 +132,8 @@ struct Sim {
         world.add<Bounty>(e, Bounty{stats.xp, {}});
 
         MobAi brain;
-        brain.kind = stats.ai;
+        // As SpawnSystem does: a wild speed scale of zero roots the mob.
+        brain.kind = content().mob(index).wildSpeedScale == 0.0 ? AiKind::Stationary : stats.ai;
         brain.aggroRange = stats.aggroRange;
         world.add<MobAi>(e, brain);
 
@@ -4364,4 +4365,68 @@ TEST(deep_bulb_limits_notice_to_lit_bulbs_and_ordinary_enemies_in_deep_prestige_
     CHECK(!check(deep, at, true, Rarity::Common, true, 500, 660));
     CHECK(check(deep, at, true, Rarity::Common, false, 1400, 1820));
     CHECK(!check(deep, at, true, Rarity::Common, false, 1400, 1840));
+}
+
+TEST(a_wild_mob_rooted_by_its_speed_scale_never_moves) {
+    CHECK(contentReady());
+    for (const char* id : {"arctic_nuke", "bio_barrel", "bio_virus"}) {
+        Sim sim;
+        const Entity mob = sim.spawnMob(id, kOrigin);
+        const Entity player = sim.spawnPlayer(kOrigin + Vec2{120, 0});
+        sim.hurt(mob, player);
+        double fastest = 0.0;
+        for (int i = 0; i < 150; ++i) {
+            sim.tick();
+            fastest = std::max(fastest, sim.velocityOf(mob).length());
+        }
+        CHECK(fastest < 1e-9);
+        CHECK(distance(sim.positionOf(mob), kOrigin) < 1e-9);
+    }
+}
+
+TEST(a_wild_speed_scale_slows_the_wild_mob) {
+    CHECK(contentReady());
+    for (const char* id : {"jurassic_acid_bubble", "void_eye", "void_illuminati", "arctic_snowman",
+                           "bio_cancer"}) {
+        const MobConfig& config = content().mob(content().mobIndex(id));
+        CHECK(config.wildSpeedScale > 0.0);
+        CHECK(config.wildSpeedScale < 0.5);
+        Sim sim;
+        const Entity mob = sim.spawnMob(id, kOrigin);
+        const Entity player = sim.spawnPlayer(kOrigin + Vec2{150, 0});
+        sim.hurt(mob, player);
+        double fastest = 0.0;
+        for (int i = 0; i < 200; ++i) {
+            sim.tickIntent();
+            fastest = std::max(fastest, sim.velocityOf(mob).length());
+        }
+        // steerMob chases at 1.30 times the drive's chase speed.
+        CHECK(fastest <= chaseSpeedOf(id) * 1.30 * config.wildSpeedScale * 1.05);
+    }
+    // The one of them with nothing to shoot has only its body to bring, so it
+    // still closes -- slowly.
+    Sim sim;
+    const Entity bubble = sim.spawnMob("jurassic_acid_bubble", kOrigin);
+    const Entity player = sim.spawnPlayer(kOrigin + Vec2{150, 0});
+    sim.hurt(bubble, player);
+    sim.tick(40);
+    const double crept = distance(sim.positionOf(bubble), kOrigin);
+    CHECK(crept > 0.0);
+    CHECK(sim.gap(bubble, player) < 150.0);
+    CHECK(crept <= chaseSpeedOf("jurassic_acid_bubble") * 1.30 * 0.1 * 1.05 * 40 * net::kTickSeconds);
+}
+
+TEST(a_summoned_mob_ignores_the_wild_speed_scale) {
+    CHECK(contentReady());
+    for (const char* id : {"arctic_nuke", "arctic_snowman"}) {
+        Sim sim;
+        const Entity owner = sim.spawnPlayer(kOrigin);
+        const Entity pet = sim.spawnMob(id, kOrigin + Vec2{1000, 0});
+        // As the petal pass summons it: with the behaviour the config states.
+        sim.brainOf(pet).kind = content().mob(content().mobIndex(id)).ai;
+        sim.world.add<Pet>(pet, Pet{owner, 0});
+        sim.tickIntent(120);
+        CHECK(sim.brainOf(pet).petReturning);
+        CHECK(sim.velocityOf(pet).x < -chaseSpeedOf(id) * 0.9);
+    }
 }

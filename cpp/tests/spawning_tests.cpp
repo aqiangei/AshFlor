@@ -6463,3 +6463,35 @@ TEST(natural_leech_contact_grace_starts_on_first_wake) {
     CHECK(scripted != NULL_ENTITY);
     CHECK(!sim.world.has<NewLeechContactGrace>(scripted));
 }
+
+TEST(a_wild_speed_scale_of_zero_spawns_the_mob_stationary) {
+    Sim sim;
+    for (const char* id : {"arctic_nuke", "bio_barrel", "bio_virus"}) {
+        const auto index = shipped().mobIndex(id);
+        CHECK(index != kInvalidIndex);
+        if (index == kInvalidIndex) continue;
+        const MobConfig& config = shipped().mob(index);
+        CHECK(config.wildSpeedScale == 0.0);
+        // The summoned one is untouched: the config still walks and still hunts.
+        CHECK(config.speed > 0.0);
+        CHECK(config.ai == AiKind::Hostile);
+        const Entity e = sim.spawner.spawnMob(sim.world, sim.terrain, shipped(), index,
+                                              Rarity::Common, kCentre, Realm::Overworld, 0.0,
+                                              sim.rng);
+        CHECK(e != NULL_ENTITY);
+        if (e == NULL_ENTITY) continue;
+        CHECK(sim.world.get<MobAi>(e).kind == AiKind::Stationary);
+    }
+    // A slowed mob is still a mover, and an unscaled one keeps its config's behaviour.
+    for (const char* id : {"arctic_snowman", "arctic_spider"}) {
+        const auto index = shipped().mobIndex(id);
+        CHECK(index != kInvalidIndex);
+        if (index == kInvalidIndex) continue;
+        const Entity e = sim.spawner.spawnMob(sim.world, sim.terrain, shipped(), index,
+                                              Rarity::Common, kCentre, Realm::Overworld, 0.0,
+                                              sim.rng);
+        CHECK(e != NULL_ENTITY);
+        if (e == NULL_ENTITY) continue;
+        CHECK(sim.world.get<MobAi>(e).kind == AiKind::Hostile);
+    }
+}

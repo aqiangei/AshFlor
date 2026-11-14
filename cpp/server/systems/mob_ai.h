@@ -742,6 +742,10 @@ private:
         /// has nothing to do with the speed it wanders at. See
         /// MobConfig::chaseSpeed.
         double chaseSpeed = 0;
+        /// MobConfig::wildSpeedScale. Not folded into the two speeds above:
+        /// the row is shared with the summoned mob, which keeps its full pace.
+        /// wildDriveFor() applies it.
+        double wildPace = 1.0;
         double attackCooldownMillis = 0;
         /// The behaviour the CONFIG asks for. Read for pets, whose MobAi::kind
         /// is set by whoever summoned them.
@@ -840,6 +844,9 @@ private:
     static PetPreyTarget readPetPrey(const World& world, Entity candidate);
 
     Drive driveFor(std::uint16_t configIndex, Rarity rarity);
+    /// driveFor() as a WILD mob runs it: the speeds carry the config's
+    /// `wild_speed_scale`, and a scale of zero reads as a stationary mob.
+    Drive wildDriveFor(std::uint16_t configIndex, Rarity rarity);
 
     /// Adds the behaviour components this mob's TYPE calls for and it was not
     /// born with. Structural, so it runs before any component pointer is taken.
