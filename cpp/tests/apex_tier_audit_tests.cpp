@@ -90,3 +90,17 @@ TEST(apex_tier_audit_of_every_petal_stat) {
     report("PH_NOT_HYPER", hyperDiff);
     CHECK(c.petalCount() > 0);
 }
+
+// The Apex step raises what helps the holder. Glitch's damage is negative --
+// it heals what it touches -- so it keeps its Permanent Hyper figure.
+TEST(the_apex_step_does_not_deepen_a_downside) {
+    const auto& registry = shippedContent();
+    const auto glitch = registry.petalIndex("glitch");
+    CHECK(glitch < registry.petalCount());
+    if (glitch >= registry.petalCount()) return;
+    const PetalStats hyper = registry.petalStats(glitch, Rarity::PermanentHyper);
+    const PetalStats apex = registry.petalStats(glitch, Rarity::Ascendant);
+    CHECK(hyper.damage < 0.0);
+    CHECK_NEAR(apex.damage, hyper.damage, 1e-9);
+    CHECK(apex.health > hyper.health);
+}

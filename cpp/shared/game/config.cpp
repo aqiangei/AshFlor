@@ -2038,27 +2038,33 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
     // damage, which take `strength` -- apex's times sqrt(2).
     if (r == Rarity::Ascendant) {
         auto stats = buildPetalStats(c, Rarity::PermanentHyper);
-        stats.damage *= 1.25;
-        stats.bodyDamage *= 1.25;
-        stats.critDamage *= 1.25;
-        stats.poisonPerSecond *= 1.25;
-        stats.lightningDamagePerHit *= 1.25;
-        stats.armorReduction *= 1.25;
-        stats.armorPerStack *= 1.25;
-        stats.health *= 1.30;
-        stats.petalArmor *= 1.30;
-        stats.flowerHealthBonus *= 1.30;
-        stats.heal *= 1.15;
-        stats.passiveHealPerSecond *= 1.15;
-        stats.conditionalHealPerSecond *= 1.15;
-        stats.totemHealPerSecond *= 1.15;
-        stats.shield *= 1.15;
-        stats.overhealShield *= 1.15;
-        stats.healBonus *= 1.15;
-        stats.lifesteal *= 1.15;
-        stats.maxMana *= 1.15;
-        stats.mana *= 1.15;
-        stats.passiveManaPerSecond *= 1.15;
+        // Only what helps the holder is raised. A negative figure is a
+        // downside -- Glitch's damage, a stat a petal takes away -- and keeps
+        // its Permanent Hyper value; costs are not on this list at all.
+        const auto boost = [](double& value, double factor) {
+            if (value > 0.0) value *= factor;
+        };
+        boost(stats.damage, 1.25);
+        boost(stats.bodyDamage, 1.25);
+        boost(stats.critDamage, 1.25);
+        boost(stats.poisonPerSecond, 1.25);
+        boost(stats.lightningDamagePerHit, 1.25);
+        boost(stats.armorReduction, 1.25);
+        boost(stats.armorPerStack, 1.25);
+        boost(stats.health, 1.30);
+        boost(stats.petalArmor, 1.30);
+        boost(stats.flowerHealthBonus, 1.30);
+        boost(stats.heal, 1.15);
+        boost(stats.passiveHealPerSecond, 1.15);
+        boost(stats.conditionalHealPerSecond, 1.15);
+        boost(stats.totemHealPerSecond, 1.15);
+        boost(stats.shield, 1.15);
+        boost(stats.overhealShield, 1.15);
+        boost(stats.healBonus, 1.15);
+        boost(stats.lifesteal, 1.15);
+        boost(stats.maxMana, 1.15);
+        boost(stats.mana, 1.15);
+        boost(stats.passiveManaPerSecond, 1.15);
         return stats;
     }
     const Rarity graded = petalGameplayRarity(clampRarity(rarityIndex(r)));
