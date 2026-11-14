@@ -2090,8 +2090,11 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
     // -- a flat amount off each hit the wearer takes -- so a bone and a mob
     // of one tier are as hard to scratch as each other.
     s.petalArmor = c.petalArmor * kMobArmorScale[static_cast<std::size_t>(rarityIndex(tier))];
-    // The geometric armour follows Bone, not the wild mob armour plateau.
-    if (c.id == "icosahedron") s.petalArmor = c.petalArmor * stat;
+    // The geometric armour and Magic Bone follow Bone, not the wild mob armour plateau.
+    // The reference Mirror's armour is a fixed fifteenth of its health, so it
+    // rides the health ladder too.
+    if (c.id == "icosahedron" || c.id == "magic_bone" || c.id == "void_mirror")
+        s.petalArmor = c.petalArmor * stat;
     s.petalEvasion = c.petalEvasion;
     s.petalPoisonImmune = c.petalPoisonImmune;
     // A claw's bonus is damage, so it is on the damage ladder beside `damage`.

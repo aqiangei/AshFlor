@@ -3899,6 +3899,27 @@ TEST(a_claw_and_a_fang_work_on_a_duellist_too) {
     }
 }
 
+TEST(a_magic_fang_returns_mana_on_every_bite_by_tier) {
+    const auto& registry = testsupport::shippedContent();
+    const auto fang = registry.petalIndex("magic_fang");
+    CHECK(fang < registry.petalCount());
+    if (fang >= registry.petalCount()) return;
+    for (const Rarity tier : {Rarity::Common, Rarity::Rare}) {
+        Arena a;
+        const Entity player = a.player({1000, 1000});
+        a.world.add<ManaPool>(player, ManaPool{0.0, 1000.0});
+        const Entity mob = a.mob({1040, 1000}, 1e6);
+        equipPetal(a, player, fang, tier, {1025, 1000});
+        const double bite = 1.2 * petalManaScale(tier);
+
+        a.step(0.0, registry);
+        CHECK(a.health(mob) < 1e6);
+        CHECK_NEAR(a.world.get<ManaPool>(player).current, bite, 1e-9);
+        a.step(1000.0, registry);
+        CHECK_NEAR(a.world.get<ManaPool>(player).current, 2.0 * bite, 1e-9);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Cotton: a hit on the flower lands on the cotton first
 // ---------------------------------------------------------------------------

@@ -5080,6 +5080,72 @@ Entity loosePetalOf(Rig& rig) {
 
 } // namespace
 
+TEST(a_mirror_turns_a_missile_back_on_its_shooter_up_to_one_tier_above_it) {
+    const auto& registry = testsupport::shippedContent();
+    const std::uint16_t mirrorIndex = registry.petalIndex("void_mirror");
+    CHECK(mirrorIndex < registry.petalCount());
+    if (mirrorIndex >= registry.petalCount()) return;
+    // Armour is a fifteenth of health in the reference, so it climbs with it.
+    CHECK_NEAR(registry.petalStats(mirrorIndex, Rarity::Common).petalArmor, 2.0, 1e-9);
+    CHECK_NEAR(registry.petalStats(mirrorIndex, Rarity::Super).petalArmor, 4374.0, 1e-6);
+    CHECK_NEAR(registry.petalStats(mirrorIndex, Rarity::Unique).petalArmor, 13122.0, 1e-6);
+
+    for (const int lead : {0, 1, 2}) {
+        Rig rig(registry);
+        rig.equip(0, "void_mirror", Rarity::Ultra);
+        rig.freezeRing();
+        rig.settleEquips();
+        rig.settleRing();
+        Entity mirror = NULL_ENTITY;
+        for (const Entity e : rig.petals()) {
+            if (rig.world.get<PetalInstance>(e).configIndex == mirrorIndex) mirror = e;
+        }
+        CHECK(mirror != NULL_ENTITY);
+        if (mirror == NULL_ENTITY) return;
+        const Vec2 at = rig.position(mirror);
+        const Vec2 out = (at - rig.position(rig.player)).normalized();
+        const double radius = rig.world.get<Body>(mirror).radius;
+
+        const Entity mob = rig.world.create();
+        rig.world.add<MobTag>(mob);
+        rig.world.add<Transform>(mob, Transform{at + out * 800.0, 0.0});
+        rig.world.add<Faction>(mob, Faction{Team::Hostiles, false});
+        // Three mirror radii out, closing on the mirror: inside its reach of
+        // four, clear of its body.
+        const Vec2 from = at + out * (3.0 * radius);
+        Projectile missile;
+        missile.owner = mob;
+        missile.damage = 40.0;
+        missile.remainingDistance = 2000.0;
+        missile.rarity = static_cast<Rarity>(rarityIndex(Rarity::Ultra) + lead);
+        missile.lastPosition = from;
+        const Entity shot = rig.world.create();
+        rig.world.add<Projectile>(shot, missile);
+        rig.world.add<Transform>(shot, Transform{from, (-out).angle(),
+                                                 rig.world.get<Transform>(mirror).realm});
+        rig.world.add<Body>(shot, Body{4.0, 1.0});
+        rig.world.add<Motion>(shot).velocity = -out * 400.0;
+        rig.world.add<Faction>(shot, Faction{Team::Hostiles, false});
+
+        CombatSystem combat;
+        ricochetCombatTick(rig, combat);
+        CHECK(rig.world.isAlive(shot));
+        if (!rig.world.isAlive(shot)) continue;
+        const Projectile& after = rig.world.get<Projectile>(shot);
+        const Vec2 velocity = rig.world.get<Motion>(shot).velocity;
+        const double outward = velocity.x * out.x + velocity.y * out.y;
+        if (lead <= 1) {
+            CHECK_EQ(after.owner, rig.player);
+            CHECK(rig.world.get<Faction>(shot).team == Team::Players);
+            CHECK_NEAR(after.damage, lead == 0 ? 40.0 : 20.0, 1e-12);
+            CHECK_NEAR(outward, 400.0, 1e-9);
+        } else {
+            CHECK_EQ(after.owner, mob);
+            CHECK_NEAR(outward, -400.0, 1e-9);
+        }
+    }
+}
+
 TEST(wax_is_thirty_units_across_at_common_and_thirty_more_every_tier) {
     if (!contentLoaded()) return;
     const std::uint16_t wax = petalId("wax");

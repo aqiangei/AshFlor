@@ -2148,6 +2148,14 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
             const double left = net.view().self().slotReloadRemainingMillis[static_cast<std::size_t>(entry.slot)];
             if (left > 0) tile.counter = std::to_string(static_cast<int>(std::ceil(left / 1000.0))) + "s";
         }
+        // A magic petal forms only by paying mana, and a bar with no mana
+        // source has no pool to pay from, so it would never appear at all.
+        if (inGame_ && entry.slot < kLoadoutActiveSlots && tile.petalIndex != kNoPetal &&
+            !(net.view().self().maxMana > 0.0) &&
+            content().petalStats(tile.petalIndex, tile.rarity).requiredMana > 0.0) {
+            tile.reload = 0.0;
+            tile.counter = ui::language() == ui::Language::Zh ? "缺法力" : "No mana";
+        }
         // The petal in the slot being struck, on the field. Only in game: on
         // the title screen nothing is out there to be hit.
         if (inGame_) tile.flash = renderer.slotHitTint(entry.slot);

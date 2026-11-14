@@ -777,6 +777,12 @@ private:
                                std::vector<Entity>& entities, std::vector<ShotCandidate>& hits,
                                SpatialGrid::QueryScratch* scratch = nullptr) const;
     void prepareShotImpacts(World& world, const SpatialGrid& grid, bool bodyGridOnly);
+    /// The reference Mirror: a shot that could hurt the mirror's flower, and
+    /// outranks the mirror by at most one tier, turns back on its shooter as
+    /// the flower's own once it comes within four mirror radii -- at half
+    /// damage when it outranks the mirror. Runs before any shot lands, so the
+    /// mirror is never struck by what it sends back.
+    void reflectShotsOffMirrors(World& world, const ContentRegistry& content);
 
     /// Files every projectile in the shot index, and resolves the flower each
     /// one is answerable to. Run at the top of both phases, at the same points the
@@ -884,6 +890,14 @@ private:
     std::vector<LightningSource> strikers_;
     std::vector<FieldSource> fields_;
     std::vector<ShotSource> shots_;
+    struct MirrorGuard {
+        Entity owner = NULL_ENTITY;
+        Vec2 position{};
+        double reach = 0.0;
+        int tier = 0;
+        Realm realm = Realm::Overworld;
+    };
+    std::vector<MirrorGuard> mirrors_;
     std::vector<ShotImpact> impacts_;
     std::vector<ShotCandidate> liveShotCandidates_;
     std::vector<ShotTarget> shotTargets_;

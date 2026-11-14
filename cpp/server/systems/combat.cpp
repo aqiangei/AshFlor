@@ -3894,6 +3894,11 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
                         tooth->magicToothManaRefunded = true;
                     }
                 }
+                // Every bite, a fixed draught by tier, however hard it landed.
+                if (wild && tooth && registry.petal(tooth->configIndex).id == "magic_fang") {
+                    if (auto* mana = world.tryGet<ManaPool>(source.owner); mana && mana->has())
+                        mana->current = std::min(mana->max, mana->current + 1.2 * petalManaScale(source.rarity));
+                }
             }
 
             if (wild && technique && hit.applied > 0.0) {
@@ -4355,9 +4360,58 @@ void CombatSystem::prepareShotImpacts(World& world, const SpatialGrid& grid,
     });
 }
 
+void CombatSystem::reflectShotsOffMirrors(World& world, const ContentRegistry& content) {
+    const std::uint16_t mirrorIndex = content.petalIndex("void_mirror");
+    if (mirrorIndex >= content.petalCount()) return;
+    mirrors_.clear();
+    queries_->petals.each([&](Entity e, PetalInstance& petal, Transform& at, Body& body) {
+        if (petal.configIndex != mirrorIndex || world.has<Dead>(e)) return;
+        if (!world.isAlive(petal.owner) || world.has<Dead>(petal.owner)) return;
+        mirrors_.push_back({petal.owner, at.position, 4.0 * body.radius,
+                            petalTier(petal.rarity), at.realm});
+    });
+    if (mirrors_.empty()) return;
+
+    queries_->projectiles.each([&](Entity e, Projectile& projectile, Transform& at, Body& body,
+                                   Motion& motion) {
+        if (world.has<Dead>(e)) return;
+        const int tier = rarityIndex(projectile.rarity);
+        // Only missiles: a shot lying still (a mine, a web) is not turned.
+        if (motion.velocity.lengthSq() < 1e-9) return;
+        // Swept from where the shot was last tick: a fast one would otherwise
+        // step clean over the reach between two ticks.
+        const Vec2 from = projectile.lastPosition;
+        const Vec2 path = at.position - from;
+        const double span = path.lengthSq();
+        for (const MirrorGuard& mirror : mirrors_) {
+            if (mirror.realm != at.realm || tier > mirror.tier + 1) continue;
+            const Vec2 toMirror = mirror.position - from;
+            const double along = span > 1e-12
+                ? std::clamp((toMirror.x * path.x + toMirror.y * path.y) / span, 0.0, 1.0)
+                : 1.0;
+            const double reach = mirror.reach + body.radius;
+            if ((toMirror - path * along).lengthSq() > reach * reach) continue;
+            if (!canDamage(world, e, mirror.owner)) continue;
+
+            projectile.owner = mirror.owner;
+            projectile.creditTo = mirror.owner;
+            if (auto* side = world.tryGet<Faction>(e)) {
+                if (const auto* flower = world.tryGet<Faction>(mirror.owner)) *side = *flower;
+            }
+            if (tier > mirror.tier) projectile.damage *= 0.5;
+            projectile.glitchInfecting = false;
+            projectile.lastPosition = at.position;
+            motion.velocity = -motion.velocity;
+            at.angle += kPi;
+            return;
+        }
+    });
+}
+
 void CombatSystem::tickProjectiles(World& world, const SpatialGrid& grid,
                                    const ContentRegistry& content, double nowMillis, double dt,
                                    bool bodyGridOnly) {
+    reflectShotsOffMirrors(world, content);
     shots_.clear();
     queries_->projectiles.each([&](Entity e, Projectile& projectile, Transform& transform,
                                    Body& body, Motion& motion) {

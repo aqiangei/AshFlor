@@ -19,7 +19,7 @@ struct ArcticBlast {
     CombatSystem combat;
     Entity player = NULL_ENTITY;
 
-    explicit ArcticBlast(const char* id, Rarity rarity = Rarity::Common) {
+    explicit ArcticBlast(const char* id, Rarity rarity = Rarity::Common, const char* manaSource = nullptr) {
         player = world.create();
         world.add<PlayerTag>(player);
         world.add<Transform>(player, Transform{{5000,5000},0});
@@ -30,9 +30,11 @@ struct ArcticBlast {
         world.add<PetalRing>(player);
         world.add<Loadout>(player);
         equip(0, id, rarity);
+        if (manaSource) equip(1, manaSource);
         world.add<PlayerInput>(player);
         world.add<Motion>(player);
         tickPetals(0);
+        if (auto* pool = manaSource ? world.tryGet<ManaPool>(player) : nullptr) pool->current = pool->max;
         tickPetals(4000);
     }
 
@@ -697,7 +699,8 @@ TEST(zorr_mechanic_horn_updates_an_existing_summon_and_restores_damage) {
 }
 
 TEST(magic_bubble_bomb_contact_pushes_nearby_wild_mobs_once) {
-    ArcticBlast rig("magic_bubble_bomb");
+    // A magic petal forms only by paying mana, so the bar carries an orb.
+    ArcticBlast rig("magic_bubble_bomb", Rarity::Common, "mana_orb");
     const auto live = rig.liveIn(0);
     CHECK(!live.empty());
     if (live.empty()) return;
