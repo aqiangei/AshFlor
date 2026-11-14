@@ -379,15 +379,20 @@ TEST(health_and_state_changes_replicate) {
     Health& health = f.world.get<Health>(mob);
     health.current = 25;
     health.flashUntilMillis = 1200;
+    health.invulnerableUntilMillis = 1200;
     f.tick(client, 2, 1040);
 
     const auto& e = client.entities().at(netIdOf(f.world, mob));
     CHECK_NEAR(e.healthFraction, 0.25, 0.01);
-    CHECK((e.state & net::StateHurt) != 0);
+    CHECK((e.state & net::StateInvulnerable) != 0);
+    // The hurt flash is the server's own business: no client draws from it,
+    // so it is computed and kept off the wire.
+    CHECK((computeEntityState(f.world, mob, 1040) & net::StateHurt) != 0);
+    CHECK((e.state & net::StateHurt) == 0);
 
-    // The flash expires on its own once the deadline passes.
+    // The window expires on its own once the deadline passes.
     f.tick(client, 3, 1300);
-    CHECK((client.entities().at(netIdOf(f.world, mob)).state & net::StateHurt) == 0);
+    CHECK((client.entities().at(netIdOf(f.world, mob)).state & net::StateInvulnerable) == 0);
 }
 
 TEST(a_small_bite_out_of_a_huge_pool_still_reaches_the_client) {
@@ -769,8 +774,8 @@ TEST(chained_position_deltas_land_where_the_server_thinks_they_did) {
     // Hundreds of awkward little moves, every one rounded to the delta step.
     // The client adds each to what it holds and the server advances its
     // belief by the same rounded step, so the two never part -- exactly, not
-    // to a tolerance -- and neither strays from the truth by more than a
-    // half step.
+    // to a tolerance -- and neither strays from the truth by more than half
+    // of the coarser step, the short move's.
     Transform& transform = f.world.get<Transform>(mob);
     for (std::uint32_t t = 2; t < 400; ++t) {
         transform.position.x = 1100.3 + 300.0 * std::sin(0.1 * t) + 0.0137 * t;
@@ -779,8 +784,8 @@ TEST(chained_position_deltas_land_where_the_server_thinks_they_did) {
         const Vec2 held = client.entities().at(id).targetPosition;
         CHECK(held.x == f.view.tracked.at(id).position.x);
         CHECK(held.y == f.view.tracked.at(id).position.y);
-        CHECK_NEAR(held.x, transform.position.x, 0.5 / net::kPositionDeltaScale + 1e-9);
-        CHECK_NEAR(held.y, transform.position.y, 0.5 / net::kPositionDeltaScale + 1e-9);
+        CHECK_NEAR(held.x, transform.position.x, 0.5 / net::kPositionShortDeltaScale + 1e-9);
+        CHECK_NEAR(held.y, transform.position.y, 0.5 / net::kPositionShortDeltaScale + 1e-9);
     }
 }
 

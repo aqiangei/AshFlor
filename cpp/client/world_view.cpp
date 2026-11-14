@@ -391,8 +391,16 @@ bool WorldView::applySnapshot(ByteReader& reader, double receivedMillis, bool ke
     for (std::uint16_t i = 0; i < updateCount; ++i) {
         Update u{};
         u.netId = previousId += reader.varU32();
-        u.mask = reader.u16();
-        if (u.mask & net::FieldPositionDelta) {
+        u.mask = static_cast<std::uint16_t>(reader.varU32());
+        if ((u.mask & (net::FieldPosition | net::FieldPositionDelta)) ==
+            net::FieldPositionDelta) {
+            // The short move, widened to the full delta's steps so that the
+            // commit below has one form to add.
+            const int widen =
+                static_cast<int>(net::kPositionDeltaScale / net::kPositionShortDeltaScale);
+            u.deltaX = static_cast<std::int16_t>(reader.i8() * widen);
+            u.deltaY = static_cast<std::int16_t>(reader.i8() * widen);
+        } else if (u.mask & net::FieldPositionDelta) {
             u.deltaX = reader.i16();
             u.deltaY = reader.i16();
         } else if (u.mask & net::FieldPosition) {

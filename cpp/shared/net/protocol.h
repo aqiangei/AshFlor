@@ -24,7 +24,10 @@ using ConnectionId = std::uint32_t;
 /// Bumped whenever any message layout in this file changes.
 // Version 80 also requires the shared visible-garbage content rules so an
 // older painter cannot connect and show items the server will not award.
-inline constexpr std::uint16_t kProtocolVersion = 127; // Apex hammer forge and holder query.
+// Version 128: snapshot update records are smaller. The mask is a varint with
+// the common fields in its low seven bits, a short move is two bytes, and the
+// state byte carries only the bits a client draws from.
+inline constexpr std::uint16_t kProtocolVersion = 128; // Smaller snapshot update records.
 
 /// "Not one of the rotating store's cards": a purchase at the full ladder
 /// price. Any other value is a slot index the server checks against the offers
@@ -875,8 +878,12 @@ inline double readHealthFraction(ByteReader& in, bool wide) {
 ///
 /// The mask exists because most entities change one or two of these per tick:
 /// a drifting mob moves, a full-health petal does not, and a corpse changes
-/// nothing at all. Sending the mask costs two bytes and saves the rest.
+/// nothing at all. Sending the mask costs one byte and saves the rest.
 // Version 70: Drop spawns append u32 quantity after state; update masks are u16.
+// Version 128: the mask travels as a varU32. Everything an ordinary update
+// sets -- position, angle, health, state -- sits in the low seven bits, so the
+// mask is one byte on nearly every record; size, drop quantity and dice face,
+// which change rarely, sit above and cost the second byte only when set.
 enum UpdateFields : std::uint16_t {
     FieldDropQuantity = 1 << 8, ///< u32 stack quantity, only when changed
     FieldPetalVariant = 1 << 9, ///< u8 dice face, only when changed
@@ -891,7 +898,7 @@ enum UpdateFields : std::uint16_t {
     /// costs whatever it takes to describe the hit. See healthFieldIsWide().
     FieldHealth   = 1 << 2,
     FieldState    = 1 << 3,   ///< u8 EntityState bits
-    FieldSize     = 1 << 4,   ///< f32 radius; changes only on level-up or growth
+    FieldSize     = 1 << 7,   ///< f32 radius; changes only on level-up or growth
     /// u8 face flags, u16 equipment flags, u32 render/skin flags, u16 level,
     /// u8 best loadout rarity, u32 arena score, u8 shield (255ths of MAX
     /// health; the white pill rides the health bar, so that is the scale it
@@ -909,13 +916,33 @@ enum UpdateFields : std::uint16_t {
     /// short of a teleport; the absolute form covers the rest. The sender
     /// tracks the sum the client will hold, so rounding never accumulates.
     /// (Version 53.)
-    FieldPositionDelta = 1 << 7,
+    ///
+    /// On its own, without FieldPosition, it is the short move: i8 dx, i8 dy
+    /// in 1/kPositionShortDeltaScale units, added the same way. Half the bytes
+    /// again, and what nearly every moving entity sends at the full snapshot
+    /// rate. (Version 128.)
+    FieldPositionDelta = 1 << 4,
 };
 
 /// FieldPositionDelta's resolution: 1/32 of a unit, which is finer than the
 /// position tolerance (ReplicationTolerances::position), and reaches 1024
 /// units either way.
 inline constexpr double kPositionDeltaScale = 32.0;
+
+/// The short move's resolution: a quarter of a unit, reaching 31.75 units
+/// either way. Coarser than the position tolerance, which is safe because the
+/// sender advances its belief by the rounded step it sent: the remainder -- at
+/// most an eighth of a unit an axis, well under a pixel -- is carried into the
+/// next move rather than lost, and an entity that stops short of where it was
+/// last described is finished off with one full-resolution delta.
+inline constexpr double kPositionShortDeltaScale = 4.0;
+
+/// The EntityState bits that go on the wire: every bit except the three no
+/// client draws from. A hit flips StateHurt on and off again a moment later,
+/// which cost a state byte twice per hit on every entity in a fight -- and a
+/// whole update record for one that was otherwise standing still -- to tell
+/// the client something it never looked at. (Version 128.)
+inline constexpr std::uint8_t kReplicatedStateBits = 0xF8;
 
 /// Transient visual state, refreshed whenever FieldState is set.
 ///
@@ -924,6 +951,8 @@ inline constexpr double kPositionDeltaScale = 32.0;
 /// Chasing and PadCharging. Hurt, Poisoned, Slowed, Defending and Attacking
 /// are sent, and nothing on the client draws from them today.
 enum EntityState : std::uint8_t {
+    // Hurt, Poisoned and Slowed are computed (computeEntityState) and not sent:
+    // see kReplicatedStateBits.
     StateHurt      = 1 << 0,   ///< took damage recently (Health::flashUntilMillis);
                                ///< no client draws a flash from it
     StatePoisoned  = 1 << 1,
