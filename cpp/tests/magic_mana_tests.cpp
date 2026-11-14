@@ -8,6 +8,7 @@
 #include "server/systems/petals.h"
 #include "test_data.h"
 
+#include <set>
 #include <string>
 #include <vector>
 
@@ -114,6 +115,8 @@ TEST(magic_bubble_pays_again_after_every_pop) {
     int pops = 0;
     for (double now = 1000.0; now < 60000.0 && formed < 4; now += net::kTickMillis) {
         // Topped up every tick, so a payment is the only way below the top.
+        // The pool is made part-filled on the first tick, which is no payment.
+        const bool hadPool = world.tryGet<ManaPool>(player) != nullptr;
         if (auto* pool = world.tryGet<ManaPool>(player)) pool->current = pool->max;
         const int before = bubbles();
         auto& input = world.get<PlayerInput>(player).current;
@@ -128,7 +131,7 @@ TEST(magic_bubble_pays_again_after_every_pop) {
         for (const Entity e : doomed) world.destroy(e);
 
         if (before == 0 && bubbles() > 0) ++formed;
-        if (const auto* pool = world.tryGet<ManaPool>(player); pool && pool->max - pool->current > cost * 0.5) ++paid;
+        if (const auto* pool = world.tryGet<ManaPool>(player); hadPool && pool && pool->max - pool->current > cost * 0.5) ++paid;
     }
     std::printf("  magic_bubble cost %.3f formed %d paid %d pops %d\n", cost, formed, paid, pops);
     CHECK(formed >= 4);
@@ -136,9 +139,10 @@ TEST(magic_bubble_pays_again_after_every_pop) {
     CHECK_EQ(paid, formed);
 }
 
-// A storm lasts 20 s and the stick casts every 2 s, so the squads pile up
-// against the 30-summon cap: a cast with no room summons nothing and costs
-// nothing, which reads to a player as a stick that ignores its full bar.
+// The stick casts a squad every couple of seconds and each storm runs out on
+// its own clock. The storms never pass the 30-summon cap, and a cast pays only
+// when it summons: one with no room costs nothing, which reads to a player as
+// a stick that ignores its full bar.
 TEST(magic_stick_storms_stop_at_the_summon_cap_and_cost_only_when_cast) {
     const auto& registry = shippedContent();
     for (const Rarity tier : {Rarity::Common, Rarity::Apex}) {
@@ -171,17 +175,24 @@ TEST(magic_stick_storms_stop_at_the_summon_cap_and_cost_only_when_cast) {
         };
         int casts = 0, most = 0, castsAtCap = 0;
         std::string curve;
+        // Counted by birth, not by head count: once the first storms run out,
+        // a cast lands on the same tick an older squad expires.
+        std::set<Entity> seen;
         for (double now = 1000.0; now <= 41000.0; now += net::kTickMillis) {
+            const bool hadPool = world.tryGet<ManaPool>(player) != nullptr;
             if (auto* pool = world.tryGet<ManaPool>(player)) pool->current = pool->max;
-            const int before = storms();
             petals.run(world, registry, now, net::kTickSeconds, commands);
             commands.flush();
+            int born = 0;
+            Query<Pet>{world}.each([&](Entity pet, Pet& tag) {
+                if (tag.owner == player && !world.has<Dead>(pet) && seen.insert(pet).second) ++born;
+            });
             const int after = storms();
             most = std::max(most, after);
             const auto* pool = world.tryGet<ManaPool>(player);
-            if (pool && pool->max - pool->current > cost * 0.5) {
+            if (hadPool && pool && pool->max - pool->current > cost * 0.5) {
                 ++casts;
-                CHECK(after > before);
+                CHECK(born > 0);
                 if (after >= 30) ++castsAtCap;
             }
             if (static_cast<long>(now) % 4000 == 0) curve += " " + std::to_string(after);

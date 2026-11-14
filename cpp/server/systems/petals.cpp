@@ -248,6 +248,31 @@ double reloadScaleOf(World& world, const ContentRegistry& registry, Entity playe
            kPetalReloadFeelScale;
 }
 
+/// Starts the reload a petal owes for leaving the ring without breaking: its
+/// grain's own timer in an independent clump, the whole slot otherwise. The
+/// ring's fold only charges an absent petal that could have broken, so one that
+/// cannot -- no health pool, or invulnerable -- is stamped here, or it is back
+/// on the next tick with no reload at all.
+void stampSpentReload(World& world, const ContentRegistry& registry, Entity player,
+                      std::uint8_t slotId, std::uint8_t subIndex, const PetalStats& stats,
+                      double nowMillis) {
+    Loadout* loadout = world.tryGet<Loadout>(player);
+    PetalSlotState* state = world.tryGet<PetalSlotState>(player);
+    if (loadout == nullptr || state == nullptr || slotId >= kLoadoutActiveSlots) return;
+    PetalSlotState::Slot& slotState = state->slots[slotId];
+    const double reload = reloadMillisFor(stats, reloadScaleOf(world, registry, player));
+    if (slotState.independent) {
+        // One grain at a time, on the same array the break path stamps.
+        if (subIndex < slotState.instanceReadyAtMillis.size()) {
+            slotState.instanceReadyAtMillis[subIndex] = nowMillis + reload;
+        }
+        return;
+    }
+    LoadoutSlot& slot = loadout->slots[slotId];
+    slot.broken = true;
+    slot.reloadReadyAtMillis = nowMillis + reload;
+}
+
 double magicGoldenLeafManaScale(World& world, const ContentRegistry& registry, Entity player) {
     const auto* loadout = world.tryGet<Loadout>(player);
     if (!loadout) return 1.0;
@@ -3566,7 +3591,16 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
                 // Movement checks the complete path instead of capping speed.
                 popDisplacement += bearing * reach;
             }
+            const std::uint8_t poppedSlot = instance->slot;
+            const std::uint8_t poppedSub = instance->subIndex;
             world.add<Dead>(petal, Dead{player});
+            // A plain bubble is charged as a break by the ring's fold once it
+            // is gone. The magic one is invulnerable, so the fold never sees
+            // it go and its pop starts the reload here; otherwise it re-forms
+            // on the next tick, unpaid, for as long as defend is held.
+            if (!stats.breakable) {
+                stampSpentReload(world, registry, player, poppedSlot, poppedSub, stats, nowMillis);
+            }
             continue;
         }
 
@@ -3914,21 +3948,7 @@ void PetalSystem::spendPetal(World& world, const ContentRegistry& registry, Enti
     // the ring and nothing would stamp its slot, so it would stand there and
     // fire again the moment its shot timer came round. Do both by hand.
     world.add<Dead>(petal, Dead{player});
-    Loadout* loadout = world.tryGet<Loadout>(player);
-    PetalSlotState* state = world.tryGet<PetalSlotState>(player);
-    if (loadout == nullptr || state == nullptr || slotId >= kLoadoutActiveSlots) return;
-    PetalSlotState::Slot& slotState = state->slots[slotId];
-    const double reload = reloadMillisFor(stats, reloadScaleOf(world, registry, player));
-    if (slotState.independent) {
-        // One grain at a time, on the same array the break path stamps.
-        if (subIndex < slotState.instanceReadyAtMillis.size()) {
-            slotState.instanceReadyAtMillis[subIndex] = nowMillis + reload;
-        }
-        return;
-    }
-    LoadoutSlot& slot = loadout->slots[slotId];
-    slot.broken = true;
-    slot.reloadReadyAtMillis = nowMillis + reload;
+    stampSpentReload(world, registry, player, slotId, subIndex, stats, nowMillis);
 }
 
 bool PetalSystem::fireProjectiles(World& world, const ContentRegistry& registry, Entity player,
