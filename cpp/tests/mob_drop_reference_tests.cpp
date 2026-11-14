@@ -159,10 +159,10 @@ TEST(queen_ant_and_beetle_drop_pools_match_reference_in_actual_kills){
 
 TEST(ant_egg_trials_and_golden_leafbug_orb_conversion_use_reference_probabilities){
     const auto common=kills("ant_egg",Rarity::Common,200);const int rolls=200*kLootFeelCopies;
-    CHECK_NEAR(static_cast<double>(total(common,"egg"))/rolls,.762,.03);
+    CHECK_EQ(total(common,"egg"),rolls);
     const auto super=kills("ant_egg",Rarity::Super,100);const int supers=100*baseLootTrialsForRarity(Rarity::Super);
     CHECK_EQ(total(super,"egg"),supers);CHECK_EQ(super.size(),std::size_t(3));CHECK_NEAR(static_cast<double>(super.at({"egg",5}))/supers,.357,.03);
-    const auto ordinary=kills("golden_leafbug",Rarity::Super,100);CHECK_EQ(total(ordinary,"magic_leaf"),0);CHECK_NEAR(static_cast<double>(total(ordinary,"golden_leaf"))/supers,.643,.03);
+    const auto ordinary=kills("golden_leafbug",Rarity::Super,100);CHECK_EQ(total(ordinary,"magic_leaf"),0);CHECK_EQ(total(ordinary,"golden_leaf"),supers);
     const auto magic=kills("golden_leafbug",Rarity::Super,30,true);CHECK_EQ(total(magic,"golden_leaf"),0);CHECK_EQ(total(magic,"magic_leaf"),30*baseLootTrialsForRarity(Rarity::Super));
     for(const auto&[key,n]:magic)if(key.first=="magic_leaf")CHECK_EQ(key.second,5);
 }

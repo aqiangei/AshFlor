@@ -3715,10 +3715,11 @@ TEST(a_mob_pays_out_exactly_once_however_long_its_corpse_lingers) {
     commands.flush();
     // A common mob rolls each of its rows on its own, so how many came out is
     // the dice's business -- but never none, because the egg is certain, and
-    // never more than the table has rows.
+    // never more than the table has rows, its certain ones included.
     const std::size_t first = liveDrops(world).size();
     CHECK(first >= 1);
-    CHECK(first <= shippedTables().forMob(shipped().mobIndex("starfish")).size());
+    CHECK(first <= shippedTables().forMob(starfish).size() +
+                       shippedTables().guaranteedForMob(starfish).size());
 
     for (int i = 0; i < 5; ++i) {
         loot.run(world, grid, shipped(), rng, 40.0 * i, net::kTickSeconds, commands, events);
@@ -3826,6 +3827,7 @@ TEST(every_mob_above_common_leaves_one_of_each_of_its_drops) {
     const Entity player = makePlayer(world, kCentre + Vec2{5000, 0});
 
     // One of each row of its merged table. The scorpion authors its pincer
+    const auto starfish = shipped().mobIndex("starfish");
     // twice -- common and uncommon -- so a mob that simply dropped every
     // authored row would leave two pincers: the merge is what makes "one of
     // each" mean one. That is the premise, so it is checked first.
