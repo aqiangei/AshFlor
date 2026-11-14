@@ -1585,6 +1585,40 @@ TEST(wax_barrier_displaces_surrounding_mobile_mobs_without_changing_moon_mass_co
     }
 }
 
+TEST(an_ultra_moon_barely_gives_to_a_flower_or_a_mob_leaning_on_it) {
+    std::string error;
+    CHECK(loadContent(testsupport::dataDir(), error));
+    const double radius = 210.0;
+    PetalInstance instance;
+    instance.configIndex = content().petalIndex("moon_rock");
+    CHECK(instance.configIndex != kInvalidIndex);
+    const Vec2 at{3000, 3000};
+
+    Fixture fx;
+    const Entity moon = fx.spawnLoose(at, radius);
+    fx.world.get<Body>(moon).mass = moonMassForRadius(radius);
+    fx.world.add<PetalInstance>(moon, instance);
+    const Entity player = fx.spawnPlayer(at - Vec2{radius + kPlayerBaseRadius + 1.0, 0.0});
+    fx.drive(player, 0.0, 1.0);
+    fx.step(50);
+    const double walk = kPlayerMaxSpeed * 50.0 * net::kTickSeconds;
+    CHECK(fx.positionOf(moon).x - at.x < walk * 0.05);
+
+    Fixture shove;
+    const Entity rock = shove.spawnLoose(at, radius);
+    shove.world.get<Body>(rock).mass = moonMassForRadius(radius);
+    shove.world.add<PetalInstance>(rock, instance);
+    const Vec2 mobAt = at + Vec2{radius + 10.0, 0.0};
+    const Entity mob = shove.spawnMob(mobAt, 30, 20);
+    shove.world.add<MobType>(mob, MobType{content().mobIndex("ladybug"), Rarity::Common, 1.0});
+    shove.step(1, 0);
+    const double moonMove = at.x - shove.positionOf(rock).x;
+    const double mobMove = shove.positionOf(mob).x - mobAt.x;
+    CHECK(mobMove > 0);
+    CHECK(moonMove >= 0);
+    CHECK(mobMove > moonMove * 2);
+}
+
 TEST(wax_pushes_back_on_the_first_overlap_from_a_player) {
     std::string error;
     CHECK(loadContent(testsupport::dataDir(), error));

@@ -5080,6 +5080,20 @@ Entity loosePetalOf(Rig& rig) {
 
 } // namespace
 
+TEST(a_moon_is_put_down_as_heavy_as_its_size_squared) {
+    if (!contentLoaded()) return;
+    Rig rig;
+    rig.equip(0, "moon", Rarity::Ultra);
+    rig.settleEquips(6000);
+    const Entity moon = loosePetalOf(rig);
+    CHECK(moon != NULL_ENTITY);
+    if (moon == NULL_ENTITY) return;
+    const Body& body = rig.world.get<Body>(moon);
+    CHECK_NEAR(body.radius, 210.0, 1e-12);
+    CHECK_NEAR(body.mass, moonMassForRadius(body.radius), 1e-12);
+    CHECK_NEAR(body.mass, (210.0 / 25.0) * (210.0 / 25.0), 1e-9);
+}
+
 TEST(a_mirror_turns_a_missile_back_on_its_shooter_up_to_one_tier_above_it) {
     const auto& registry = testsupport::shippedContent();
     const std::uint16_t mirrorIndex = registry.petalIndex("void_mirror");
@@ -5331,7 +5345,8 @@ TEST(a_moon_is_a_loose_body_thirty_units_a_tier_like_wax) {
     if (body == NULL_ENTITY) return;
     CHECK(rig.world.has<LoosePetal>(body));
     CHECK_NEAR(rig.world.get<Body>(body).radius, 150.0, 1e-12);
-    CHECK_NEAR(rig.world.get<Body>(body).mass, kLoosePetalMass, 1e-12);
+    CHECK_NEAR(rig.world.get<Body>(body).mass, moonMassForRadius(150.0), 1e-12);
+    CHECK_NEAR(moonMassForRadius(150.0), 36.0, 1e-12);
     // The one petal with momentum, for a bubble to throw.
     CHECK(rig.world.has<Motion>(body));
     CHECK(rig.world.get<Replicated>(body).spawnFlags & net::SpawnLoosePetal);

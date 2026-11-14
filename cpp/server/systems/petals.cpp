@@ -1670,7 +1670,9 @@ Entity PetalSystem::spawnPetal(World& world, Entity player, Loadout& loadout, st
     // petal has none either: it moves only when something shoves it, and the
     // movement pass resolves that as a displacement (see LoosePetal).
     if (!config.noPhysics) {
-        world.add<Body>(petal, Body{stats.radius, loose ? kLoosePetalMass : 1.0});
+        const double mass = !loose ? 1.0
+            : config.id == kWaxPetalId ? kLoosePetalMass : moonMassForRadius(stats.radius);
+        world.add<Body>(petal, Body{stats.radius, mass});
         world.add<ContactDamage>(petal,
                                  ContactDamage{petalContactDamage(config, stats, rarity),
                                                std::max(0.0, stats.damageIntervalMillis)});

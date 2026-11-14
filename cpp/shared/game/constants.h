@@ -372,6 +372,15 @@ inline constexpr double kLoosePetalSpawnGap = 10.0;
 /// `1 + radius / flower radius` put an apex slab at 16 flowers) was a wall.
 inline constexpr double kLoosePetalMass = 0.25;
 
+/// What the moon weighs, in flowers. zorr's Moon is a "very fat petal" whose
+/// mass goes with the square of its size (zorr's mass column is 150 x size^2
+/// at every tier), so ours is its radius over a flower's, squared: an ultra
+/// moon rock is some seventy flowers and barely gives to a flower or a mob.
+inline double moonMassForRadius(double radius) {
+    const double scale = radius / kPlayerBaseRadius;
+    return scale * scale;
+}
+
 /// A claw's bonus lands while its victim is still ABOVE this fraction of its
 /// health: an opening strike, not a finisher.
 inline constexpr double kClawCritHealthFraction = 0.8;
