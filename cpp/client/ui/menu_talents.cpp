@@ -213,7 +213,7 @@ const std::vector<Branch>& branches() {
          {{4, 23.75}, {5, 23.25}, {6, 23.75}, {7, 23.25}, {8, 23.75},
           {9, 23.25}, {9, 24.25}, {8, 24.75}, {7, 24.75}}},
         {SkillId::MovementSpeed, {{4, 25.5}, {5.5, 26}, {7, 25.5}}},
-        {SkillId::Prestige, {{4, 26.25}}},
+        {SkillId::Prestige, {{4, 26.25}, {5, 26.75}}},
     };
     return kBranches;
 }

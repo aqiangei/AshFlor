@@ -628,8 +628,8 @@ double App::drawWaveBar(Canvas& canvas) {
 }
 
 double App::drawBossBars(Canvas& canvas, bool altHeld) {
-    // Eternal and Hyper only. Super farming mobs keep the ordinary bar under
-    // the ordinary bar under its body, which is also where its name is.
+    // Hyper and Apex only. Eternal and Super farming mobs keep the ordinary
+    // bar under their body, which is also where their name is.
     // A pet is somebody's summon and a target dummy is a permanent DPS-test
     // fixture, so neither earns the screen-top bar whatever tier it wears.
     // A centipede or a leech is one boss however many bodies it drags: the
@@ -639,10 +639,7 @@ double App::drawBossBars(Canvas& canvas, bool altHeld) {
     for (const auto& entry : net_.view().entities()) {
         const RemoteEntity& entity = entry.second;
         if (entity.kind != net::EntityKind::Mob) continue;
-        if (entity.rarity != Rarity::Unique &&
-            entity.rarity != Rarity::Apex && entity.rarity != Rarity::Ascendant) {
-            continue;
-        }
+        if (entity.rarity != Rarity::Apex && entity.rarity != Rarity::Ascendant) continue;
         if ((entity.spawnFlags & net::SpawnIsPet) != 0) continue;
         const MobConfig& config = content().mob(entity.typeIndex);
         if (config.id == "target_dummy" || config.chainBody) continue;
