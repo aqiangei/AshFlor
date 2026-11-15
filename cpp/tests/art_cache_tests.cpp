@@ -278,6 +278,58 @@ TEST(arctic_ice_hornet_sways_as_a_whole_with_distance) {
                            {{8, 32, 40, 96}, {88, 32, 120, 96}});
 }
 
+TEST(jurassic_tails_and_legs_walk_with_distance_round_a_back_that_holds_still) {
+    // Each faces right with its tail out behind on the left.
+    SpriteCache sprites;
+    CHECK(sprites.build(testsupport::shippedContent(), testsupport::dataDir()));
+    checkWalksWithDistance(sprites, "jurassic_tyrannosaurus", {62, 55, 79, 72},
+                           {{9, 62, 39, 73}, {57, 47, 75, 55}});
+    checkWalksWithDistance(sprites, "jurassic_raptor", {68, 58, 80, 70},
+                           {{9, 65, 54, 77}, {62, 47, 81, 56}, {62, 72, 71, 80}});
+    checkWalksWithDistance(sprites, "jurassic_stegosaurus", {65, 54, 84, 73},
+                           {{9, 45, 65, 74}, {43, 71, 64, 83}});
+    checkWalksWithDistance(sprites, "jurassic_diplodocus", {62, 55, 81, 74}, {{10, 61, 51, 74}});
+}
+
+TEST(jurassic_neck_flippers_and_wings_move_with_distance_round_a_body_that_holds_still) {
+    SpriteCache sprites;
+    CHECK(sprites.build(testsupport::shippedContent(), testsupport::dataDir()));
+    checkWalksWithDistance(sprites, "jurassic_elasmosaurus", {48, 58, 61, 71},
+                           {{76, 59, 119, 71}, {49, 36, 65, 55}, {27, 73, 45, 88}});
+    checkWalksWithDistance(sprites, "jurassic_pteranodon", {59, 59, 69, 69},
+                           {{62, 9, 77, 59}, {62, 69, 77, 119}});
+}
+
+TEST(arctic_ice_dragon_and_void_troll_move_as_a_whole_with_distance) {
+    SpriteCache sprites;
+    CHECK(sprites.build(testsupport::shippedContent(), testsupport::dataDir()));
+    checkWalksWithDistance(sprites, "arctic_ice_dragon", {0, 0, 0, 0},
+                           {{9, 38, 40, 108}, {40, 20, 88, 60}, {40, 60, 88, 108},
+                            {88, 20, 118, 108}});
+    checkWalksWithDistance(sprites, "void_troll", {0, 0, 0, 0},
+                           {{27, 10, 64, 40}, {64, 10, 101, 40}, {51, 66, 84, 76}});
+}
+
+TEST(bio_legs_and_tails_walk_with_distance_round_a_body_that_holds_still) {
+    SpriteCache sprites;
+    CHECK(sprites.build(testsupport::shippedContent(), testsupport::dataDir()));
+    checkWalksWithDistance(sprites, "bio_bacteria", {50, 51, 74, 75},
+                           {{35, 92, 57, 108}, {57, 20, 78, 35}, {32, 19, 56, 35}});
+    checkWalksWithDistance(sprites, "bio_bacteriophage", {51, 52, 75, 76},
+                           {{82, 81, 117, 109}, {9, 81, 46, 106}, {9, 26, 45, 48}});
+    checkWalksWithDistance(sprites, "bio_parasite", {53, 55, 71, 73}, {{102, 52, 119, 76}});
+}
+
+TEST(void_ghost_cicada_and_unabomber_walk_with_distance_round_parts_that_hold_still) {
+    SpriteCache sprites;
+    CHECK(sprites.build(testsupport::shippedContent(), testsupport::dataDir()));
+    checkWalksWithDistance(sprites, "void_ghost", {53, 54, 74, 75},
+                           {{45, 86, 76, 118}, {77, 86, 105, 110}, {20, 107, 44, 117}});
+    checkWalksWithDistance(sprites, "void_cicada_3301", {76, 55, 94, 73},
+                           {{35, 15, 76, 55}, {35, 73, 76, 113}});
+    checkWalksWithDistance(sprites, "void_unabomber", {51, 46, 75, 70}, {{46, 73, 82, 82}});
+}
+
 TEST(arctic_cave_spider_holds_one_pose) {
     const ContentRegistry& content = testsupport::shippedContent();
     SpriteCache sprites;
