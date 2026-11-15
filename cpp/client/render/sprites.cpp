@@ -48,6 +48,18 @@ std::string walkingLegArtwork(const std::string& source, int legsPerSide = 4,
     return out;
 }
 
+// Art whose root <svg> carries data-motion="walk" times every animation in it
+// by the distance walked, as the legs above are: a mob standing still holds
+// its pose.
+bool walksWithDistance(const std::string& art) {
+    const auto open = art.find("<svg");
+    if (open == std::string::npos) return false;
+    const auto close = art.find('>', open);
+    if (close == std::string::npos) return false;
+    return std::string_view(art).substr(open, close - open).find("data-motion=\"walk\"") !=
+           std::string_view::npos;
+}
+
 /// The fallback fill for a sprite that could not be compiled. Config colours
 /// are stored as 0xRRGGBBAA by the loader; the drawing layer works in RGB.
 std::uint32_t rgbOf(std::uint32_t rgba) { return rgba >> 8; }
@@ -645,7 +657,7 @@ bool SpriteCache::build(const ContentRegistry& content, const std::string& dataD
         const std::string& art = silverfish ? walkingLegArtwork(config.image, 3, kPi)
                              : walkingLegs ? walkingLegArtwork(config.image) : config.image;
         compile(art, config.colorRgba, "mob " + config.id, mobs_[i]);
-        mobs_[i].distanceAnimated = walkingLegs;
+        mobs_[i].distanceAnimated = walkingLegs || walksWithDistance(config.image);
         // These imported sprites face up-left; simulation heading zero is right.
         if (walkingLegs || config.id == "hel_wasp" || config.id == "nazar_beetle") {
             mobs_[i].facingOffset = 3.0 * kPi / 4.0;

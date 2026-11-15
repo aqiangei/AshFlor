@@ -10,6 +10,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <initializer_list>
 #include <map>
 #include <string>
 #include <utility>
@@ -173,6 +174,121 @@ TEST(silverfish_legs_move_with_distance_and_hold_when_still) {
     };
     CHECK(pixels(0.0, 0.0) != pixels(20.0, 0.0));
     CHECK(pixels(20.0, 0.0) == pixels(20.0, 2.0));
+}
+
+namespace {
+
+/// [x0, x1) by [y0, y1), in canvas pixels.
+struct PixelBox {
+    int x0, y0, x1, y1;
+};
+
+/// Mob `id` 112 px across on a 128 px canvas at heading zero, drawn as the
+/// world renderer draws one that has walked `distance`, the clock at `time`.
+std::vector<std::uint8_t> walkedPose(const SpriteCache& sprites, std::uint16_t id, double distance,
+                                     double time) {
+    Canvas canvas = Canvas::createVirtual(128, 128);
+    MobMotion motion;
+    motion.distance = distance;
+    sprites.drawMob(canvas, id, Rarity::Common, 64, 64, 112, 0.0, time, false, 0, {1, 0}, &motion);
+    return canvas.getImageData(0, 0, 128, 128);
+}
+
+int pixelsChangedIn(const std::vector<std::uint8_t>& a, const std::vector<std::uint8_t>& b,
+                    const PixelBox& box) {
+    int changed = 0;
+    for (int y = box.y0; y < box.y1; ++y) {
+        for (int x = box.x0; x < box.x1; ++x) {
+            const std::size_t at = static_cast<std::size_t>(y * 128 + x) * 4;
+            if (a[at] != b[at] || a[at + 1] != b[at + 1] || a[at + 2] != b[at + 2] ||
+                a[at + 3] != b[at + 3]) {
+                ++changed;
+            }
+        }
+    }
+    return changed;
+}
+
+/// Art recorded from zorr's walk cycles carries `data-motion="walk"` on its
+/// root, which plays the timeline by distance walked: mob `name` keeps the
+/// pose it stopped in however long it stands, and walking changes its picture
+/// inside every box of `moving` and nowhere inside `still`.
+void checkWalksWithDistance(const SpriteCache& sprites, const char* name, const PixelBox& still,
+                            std::initializer_list<PixelBox> moving) {
+    const ContentRegistry& content = testsupport::shippedContent();
+    const auto id = content.mobIndex(name);
+    CHECK(id != kInvalidIndex);
+    if (id == kInvalidIndex) return;
+    CHECK(sprites.mobDrawable(id));
+    const auto standing = walkedPose(sprites, id, 0.0, 0.0);
+    const auto walked = walkedPose(sprites, id, 20.0, 0.0);
+    const bool holds = standing == walkedPose(sprites, id, 0.0, 2.0) &&
+                       walked == walkedPose(sprites, id, 20.0, 2.0);
+    if (!holds) std::printf("    %s moves while it stands\n", name);
+    CHECK(holds);
+    const int strayed = pixelsChangedIn(standing, walked, still);
+    if (strayed != 0) std::printf("    %s: %d px change where nothing walks\n", name, strayed);
+    CHECK(strayed == 0);
+    int box = 0;
+    for (const PixelBox& part : moving) {
+        const int changed = pixelsChangedIn(standing, walked, part);
+        if (changed == 0) std::printf("    %s: nothing moves in box %d\n", name, box);
+        CHECK(changed > 0);
+        ++box;
+    }
+}
+
+} // namespace
+
+TEST(arctic_spider_legs_walk_with_distance_round_a_body_that_holds_still) {
+    SpriteCache sprites;
+    CHECK(sprites.build(testsupport::shippedContent(), testsupport::dataDir()));
+    checkWalksWithDistance(sprites, "arctic_spider", {56, 56, 72, 72},
+                           {{8, 8, 120, 40}, {8, 88, 120, 120}});
+    // The yoba's legs reach further forward than back, so the picture is
+    // centred ahead of its body.
+    checkWalksWithDistance(sprites, "arctic_spider_yoba", {46, 58, 60, 71},
+                           {{8, 8, 120, 46}, {8, 80, 120, 120}});
+}
+
+TEST(digger_drills_turn_with_distance_behind_a_body_that_holds_still) {
+    SpriteCache sprites;
+    CHECK(sprites.build(testsupport::shippedContent(), testsupport::dataDir()));
+    for (const char* name : {"arctic_frost_digger", "arctic_spider_digger", "void_alien_digger",
+                             "void_grave_digger"}) {
+        // The drill is the toothed ring round the body: it shows on all four sides.
+        checkWalksWithDistance(sprites, name, {48, 48, 80, 80},
+                               {{8, 48, 24, 80}, {104, 48, 120, 80},
+                                {48, 8, 80, 24}, {48, 104, 80, 120}});
+    }
+}
+
+TEST(arctic_tick_feelers_walk_with_distance_and_nothing_behind_them_moves) {
+    SpriteCache sprites;
+    CHECK(sprites.build(testsupport::shippedContent(), testsupport::dataDir()));
+    checkWalksWithDistance(sprites, "arctic_tick", {8, 8, 92, 120}, {{92, 44, 120, 84}});
+}
+
+TEST(arctic_ice_hornet_sways_as_a_whole_with_distance) {
+    // zorr's ice hornet has no walk cycle of its own; it sways about its
+    // body's centre instead, which moves both of its ends.
+    SpriteCache sprites;
+    CHECK(sprites.build(testsupport::shippedContent(), testsupport::dataDir()));
+    checkWalksWithDistance(sprites, "arctic_ice_hornet", {0, 0, 0, 0},
+                           {{8, 32, 40, 96}, {88, 32, 120, 96}});
+}
+
+TEST(arctic_cave_spider_holds_one_pose) {
+    const ContentRegistry& content = testsupport::shippedContent();
+    SpriteCache sprites;
+    CHECK(sprites.build(content, testsupport::dataDir()));
+    const auto id = content.mobIndex("arctic_spider_cave");
+    CHECK(id != kInvalidIndex);
+    if (id == kInvalidIndex) return;
+    CHECK(sprites.mobDrawable(id));
+    const auto standing = walkedPose(sprites, id, 0.0, 0.0);
+    CHECK(standing == walkedPose(sprites, id, 20.0, 0.0));
+    CHECK(standing == walkedPose(sprites, id, 0.0, 2.0));
 }
 
 TEST(art_cache_is_a_no_op_off_the_web) {
@@ -466,4 +582,12 @@ TEST(petal_pictures_stay_within_the_download_budget) {
         }
     }
     CHECK(bitmaps > 0);
+}
+
+TEST(mob_pictures_stay_within_the_download_budget) {
+    // mobs.json is downloaded before the first frame too, over the same shared
+    // link: the walk cycles may not take it past 4 MB.
+    std::string text;
+    CHECK(testsupport::readText(testsupport::dataFile("mobs.json"), text));
+    CHECK(text.size() <= 4u * 1024u * 1024u);
 }
