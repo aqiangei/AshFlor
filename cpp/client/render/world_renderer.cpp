@@ -3613,8 +3613,11 @@ bool WorldRenderer::poseMob(const MobDraw& mob, const MobConfig* config, double 
         const double r = pose.diameter * 0.5;
         const double ox = (pose.mirrored ? -config->visualOffsetX : config->visualOffsetX) * r;
         const double oy = config->visualOffsetY * r;
-        const double c = std::cos(pose.rotation);
-        const double s = std::sin(pose.rotation);
+        // The angel is drawn upright whatever its heading (drawMobBody: only
+        // its pupil turns), so its offset stays upright with the drawing.
+        const double turn = config->id == "void_angel" ? 0.0 : pose.rotation;
+        const double c = std::cos(turn);
+        const double s = std::sin(turn);
         pose.bodyShift = {ox * c - oy * s, ox * s + oy * c};
     }
     return true;
