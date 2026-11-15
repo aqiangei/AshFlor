@@ -511,38 +511,37 @@ void paintMobArt(Canvas& canvas, MobArt art, const MobArtAttributes& attr) {
         }
 
         case MobArt::Snowstorm: {
-            const double spin = attr.clockMs * 0.0017;
-            const auto ice = attr.pet ? 0x77D9D3u : 0x8CD2F2u;
-            const auto edge = attr.pet ? 0x286D72u : 0x396C91u;
-            canvas.save();
-            canvas.scale(static_cast<float>(attr.radius), static_cast<float>(attr.radius));
-            ui::disc(canvas, {}, 0.33, 0xDAF5FFu, edge, 0.055);
-            for (int arm = 0; arm < 3; ++arm) {
-                const double angle = spin + kTau * arm / 3.0;
-                const auto curve = [&](double offset) {
-                    canvas.beginPath();
-                    for (int step = 0; step <= 18; ++step) {
-                        const double t = step / 18.0;
-                        const Vec2 point = Vec2::fromAngle(angle + 1.8 * t + offset, 0.24 + 0.62 * t);
-                        if (step == 0) canvas.moveTo(point.x, point.y);
-                        else canvas.lineTo(point.x, point.y);
-                    }
-                    canvas.stroke();
-                };
-                roundStrokes(canvas, 0.22);
-                ui::setStroke(canvas, edge);
-                curve(0.0);
-                roundStrokes(canvas, 0.15);
-                ui::setStroke(canvas, ice);
-                curve(0.0);
-                roundStrokes(canvas, 0.055);
-                ui::setStroke(canvas, 0xF0FBFFu);
-                curve(0.065);
+            // zorr's snowstorm is the sandstorm in ice: three layers turning at
+            // three fractions of the same phase, each a side short of the one
+            // outside it -- heptagon, hexagon, pentagon -- in the teals of
+            // zorr's own picture. Its corners are barely rounded, hence a line
+            // width of a sixteenth of the radius where the sandstorm has a fifth.
+            const double radius = attr.radius;
+            const double spin = attr.animation / 3.0;
+            roundStrokes(canvas, radius / 16.0);
 
-                const Vec2 flake = Vec2::fromAngle(angle + 1.05, 0.94);
-                ui::disc(canvas, flake, 0.047, 0xF0FBFFu, edge, 0.025);
+            constexpr int sides[3] = {7, 6, 5};
+            constexpr std::uint32_t ice[3] = {0xB0DBD2u, 0x9FCEC4u, 0x89C0B4u};
+            const double shades[3] = {1.0, 0.9, 0.8};
+            const double scales[3] = {1.0, 2.0 / 3.0, 1.0 / 3.0};
+            canvas.save();
+            for (int layer = 0; layer < 3; ++layer) {
+                canvas.rotate(static_cast<float>(spin));
+                const std::uint32_t color =
+                    attr.pet ? ui::shade(kPetBodyColor, shades[layer]) : ice[layer];
+                ui::setFill(canvas, color);
+                ui::setStroke(canvas, color);
+                const double r = radius * scales[layer];
+                canvas.beginPath();
+                canvas.moveTo(static_cast<float>(r), 0.0f);
+                for (int i = 1; i <= sides[layer]; ++i) {
+                    const double angle = kTau * i / sides[layer];
+                    canvas.lineTo(static_cast<float>(std::cos(angle) * r),
+                                  static_cast<float>(std::sin(angle) * r));
+                }
+                canvas.fill();
+                canvas.stroke();
             }
-            ui::disc(canvas, {}, 0.09, 0xFFFFFFu, ice, 0.035);
             canvas.restore();
             break;
         }

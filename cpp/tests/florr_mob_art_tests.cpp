@@ -463,6 +463,29 @@ TEST(a_broken_tomb_is_drawn_open_and_empty) {
     CHECK(pixelsOf(open, kInside) > 200);
 }
 
+TEST(the_snowstorm_is_the_sandstorm_in_ice) {
+    // zorr's snowstorm: three layers -- heptagon, hexagon, pentagon -- in
+    // three teals, the outer one out to the radius.
+    const std::vector<std::uint8_t> storm = paint(mobArtFor("$arctic_snowstorm"), MobArtAttributes{});
+    const int outer = pixelsOf(storm, 0xB0DBD2u);
+    const int middle = pixelsOf(storm, 0x9FCEC4u);
+    const int inner = pixelsOf(storm, 0x89C0B4u);
+    int painted = 0;
+    for (std::size_t i = 0; i + 3 < storm.size(); i += 4) {
+        if (storm[i] != kBackground || storm[i + 1] != kBackground || storm[i + 2] != kBackground) {
+            ++painted;
+        }
+    }
+    // The radius-30 disc is 2827 px; a heptagon to its rim covers most of it.
+    const bool layered = outer > middle && middle > inner && inner > 150;
+    const bool filled = painted >= 2400 && painted <= 3100;
+    if (!layered || !filled) {
+        std::printf("    snowstorm: %d / %d / %d teal, %d painted\n", outer, middle, inner, painted);
+    }
+    CHECK(layered);
+    CHECK(filled);
+}
+
 TEST(a_summon_wears_the_flower_yellow_on_its_body) {
     // gardn's SET_BASE_COLOR: a summon's body is its owner's flower colour.
     // Every painter with a body colour of its own repaints it -- the bee's
@@ -470,7 +493,7 @@ TEST(a_summon_wears_the_flower_yellow_on_its_body) {
     // glass with no body colour to swap.
     std::vector<std::string> markers(std::begin(kFlorrMarkers), std::end(kFlorrMarkers));
     for (const char* gardn : {"rock", "cactus", "sandstorm", "crab", "leech", "leech_body",
-                              "spider"}) {
+                              "spider", "arctic_snowstorm"}) {
         markers.push_back(gardn);
     }
     MobArtAttributes pet;

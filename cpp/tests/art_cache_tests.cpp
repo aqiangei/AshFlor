@@ -8,10 +8,14 @@
 #include "render_rig.h"
 #include "test_data.h"
 
+#include <algorithm>
+#include <array>
+#include <cmath>
 #include <cstdint>
 #include <functional>
 #include <initializer_list>
 #include <map>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -514,6 +518,106 @@ bool endsWith(const std::string& text, const std::string& tail) {
            text.compare(text.size() - tail.size(), tail.size(), tail) == 0;
 }
 
+/// An egg as players tell it apart: the colour at its centre and the colour of
+/// its outline band, 3 px in from its left edge on the middle row of a 128 px
+/// drawing -- inside the band, which is at least 5 px wide there.
+struct EggLook {
+    bool drawn = false;
+    std::uint32_t fill = 0;
+    std::uint32_t ring = 0;
+};
+
+EggLook eggLook(const SpriteCache& sprites, std::uint16_t index) {
+    Canvas canvas = Canvas::createVirtual(128, 128);
+    sprites.drawPetal(canvas, index, Rarity::Common, 64, 64, 128, 0, 0);
+    const std::vector<std::uint8_t> image = canvas.getImageData(0, 0, 128, 128);
+    const auto at = [](int x) { return (64u * 128u + static_cast<std::size_t>(x)) * 4u; };
+    const auto rgb = [&](int x) {
+        return std::uint32_t{image[at(x)]} << 16 | std::uint32_t{image[at(x) + 1]} << 8 |
+               image[at(x) + 2];
+    };
+    int edge = 0;
+    while (edge < 64 && image[at(edge) + 3] == 0) ++edge;
+    if (edge >= 64) return {};
+    return {true, rgb(64), rgb(edge + 3)};
+}
+
+/// CIEDE2000 difference of two sRGB colours (0xRRGGBB, D65 white): about 1 is
+/// the least an eye sees with the two side by side.
+double deltaE2000(std::uint32_t first, std::uint32_t second) {
+    const auto lab = [](std::uint32_t rgb) {
+        const auto linear = [](std::uint32_t channel) {
+            const double c = channel / 255.0;
+            return c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4);
+        };
+        const double r = linear(rgb >> 16 & 0xFFu);
+        const double g = linear(rgb >> 8 & 0xFFu);
+        const double b = linear(rgb & 0xFFu);
+        const auto f = [](double t) { return t > 0.008856 ? std::cbrt(t) : 7.787 * t + 16.0 / 116.0; };
+        const double fx = f((0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047);
+        const double fy = f(0.2126 * r + 0.7152 * g + 0.0722 * b);
+        const double fz = f((0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883);
+        return std::array<double, 3>{116.0 * fy - 16.0, 500.0 * (fx - fy), 200.0 * (fy - fz)};
+    };
+    const auto [L1, a1, b1] = lab(first);
+    const auto [L2, a2, b2] = lab(second);
+    const double degree = kPi / 180.0;
+    const double pow25 = std::pow(25.0, 7);
+    const double cBar = (std::hypot(a1, b1) + std::hypot(a2, b2)) / 2.0;
+    const double g = 0.5 * (1.0 - std::sqrt(std::pow(cBar, 7) / (std::pow(cBar, 7) + pow25)));
+    const double a1p = (1.0 + g) * a1;
+    const double a2p = (1.0 + g) * a2;
+    const double c1p = std::hypot(a1p, b1);
+    const double c2p = std::hypot(a2p, b2);
+    const auto hue = [&](double b, double a) {
+        const double h = std::atan2(b, a) / degree;
+        return h < 0.0 ? h + 360.0 : h;
+    };
+    const double h1p = hue(b1, a1p);
+    const double h2p = hue(b2, a2p);
+    const bool grey = c1p * c2p == 0.0;
+    double dhp = grey ? 0.0 : h2p - h1p;
+    if (dhp > 180.0) dhp -= 360.0;
+    if (dhp < -180.0) dhp += 360.0;
+    const double dLp = L2 - L1;
+    const double dCp = c2p - c1p;
+    const double dHp = 2.0 * std::sqrt(c1p * c2p) * std::sin(dhp * degree / 2.0);
+    const double lBar = (L1 + L2) / 2.0;
+    const double cBarP = (c1p + c2p) / 2.0;
+    double hBar = h1p + h2p;
+    if (!grey) hBar = std::abs(h1p - h2p) <= 180.0 ? hBar / 2.0 : (hBar < 360.0 ? hBar + 360.0 : hBar - 360.0) / 2.0;
+    const double t = 1.0 - 0.17 * std::cos((hBar - 30.0) * degree) + 0.24 * std::cos(2.0 * hBar * degree) +
+                     0.32 * std::cos((3.0 * hBar + 6.0) * degree) - 0.20 * std::cos((4.0 * hBar - 63.0) * degree);
+    const double theta = 30.0 * std::exp(-std::pow((hBar - 275.0) / 25.0, 2));
+    const double rc = 2.0 * std::sqrt(std::pow(cBarP, 7) / (std::pow(cBarP, 7) + pow25));
+    const double sl = 1.0 + 0.015 * std::pow(lBar - 50.0, 2) / std::sqrt(20.0 + std::pow(lBar - 50.0, 2));
+    const double sc = 1.0 + 0.045 * cBarP;
+    const double sh = 1.0 + 0.015 * cBarP * t;
+    const double rt = -std::sin(2.0 * theta * degree) * rc;
+    return std::sqrt(std::pow(dLp / sl, 2) + std::pow(dCp / sc, 2) + std::pow(dHp / sh, 2) +
+                     rt * (dCp / sc) * (dHp / sh));
+}
+
+/// How far a petal's picture reaches from the centre of the box the field
+/// draws it into, as a fraction of that box: twice the furthest opaque pixel's
+/// distance along either axis, over the side.
+double petalReach(const SpriteCache& sprites, std::uint16_t index) {
+    constexpr int kSide = 200;
+    constexpr double kBox = 100.0;
+    Canvas canvas = Canvas::createVirtual(kSide, kSide);
+    sprites.drawPetal(canvas, index, Rarity::Common, kSide / 2.0, kSide / 2.0, kBox, 0, 0);
+    const std::vector<std::uint8_t> rgba = canvas.getImageData(0, 0, kSide, kSide);
+    const double centre = kSide / 2.0;
+    double half = 0.0;
+    for (int y = 0; y < kSide; ++y) {
+        for (int x = 0; x < kSide; ++x) {
+            if (rgba[(static_cast<std::size_t>(y) * kSide + x) * 4 + 3] < 40) continue;
+            half = std::max({half, centre - x, x + 1 - centre, centre - y, y + 1 - centre});
+        }
+    }
+    return 2.0 * half / kBox;
+}
+
 } // namespace
 
 TEST(egg_petals_are_vector_ellipses_and_no_two_share_their_colours) {
@@ -533,20 +637,9 @@ TEST(egg_petals_are_vector_ellipses_and_no_two_share_their_colours) {
         if (!endsWith(petal.id, "egg")) continue;
         ++eggs;
         CHECK(petal.image.find("<image") == std::string::npos);
-        Canvas canvas = Canvas::createVirtual(128, 128);
-        sprites.drawPetal(canvas, i, Rarity::Common, 64, 64, 128, 0, 0);
-        const std::vector<std::uint8_t> image = canvas.getImageData(0, 0, 128, 128);
-        const auto at = [](int x) { return (64u * 128u + static_cast<std::size_t>(x)) * 4u; };
-        const auto rgb = [&](int x) {
-            return std::uint32_t{image[at(x)]} << 16 | std::uint32_t{image[at(x) + 1]} << 8 |
-                   image[at(x) + 2];
-        };
-        int edge = 0;
-        while (edge < 64 && image[at(edge) + 3] == 0) ++edge;
-        CHECK(edge < 64);
-        // 3 px in from the left edge is inside the outline band, which is at
-        // least 5 px wide on a 128 px egg.
-        const auto look = std::make_pair(rgb(64), rgb(edge + 3));
+        const EggLook egg = eggLook(sprites, i);
+        CHECK(egg.drawn);
+        const auto look = std::make_pair(egg.fill, egg.ring);
         const auto [same, fresh] = looks.emplace(look, petal.id);
         if (!fresh) {
             std::printf("    %s has the colours of %s\n", petal.id.c_str(), same->second.c_str());
@@ -554,6 +647,70 @@ TEST(egg_petals_are_vector_ellipses_and_no_two_share_their_colours) {
         CHECK(fresh);
     }
     CHECK(eggs >= 61);
+}
+
+TEST(eggs_of_one_shade_are_told_apart_by_their_ring) {
+    // Step two of #2232 (#929 #2223 #2514). Fills a glance still mixed up --
+    // the ant egg and the beetle egg, igloo and stalagmite, five bright greens
+    // -- are ringed in a colour of the mob they hatch, as the snowman egg has
+    // its carrot ring: the beetle's purple, the stalagmite's teal, the barrel's
+    // hazard yellow. Every two eggs differ by CIEDE2000 9 in fill, or in ring
+    // at 0.7 of that weight, the band being the smaller part of the egg.
+    const ContentRegistry& content = shippedContent();
+    SpriteCache sprites;
+    CHECK(sprites.build(content, testsupport::dataDir()));
+    std::vector<std::pair<std::string, EggLook>> eggs;
+    for (std::uint16_t i = 0; i < content.petalCount(); ++i) {
+        if (endsWith(content.petal(i).id, "egg")) eggs.emplace_back(content.petal(i).id, eggLook(sprites, i));
+    }
+    CHECK(eggs.size() >= 61u);
+    for (std::size_t a = 0; a < eggs.size(); ++a) {
+        for (std::size_t b = a + 1; b < eggs.size(); ++b) {
+            const EggLook& first = eggs[a].second;
+            const EggLook& second = eggs[b].second;
+            const double apart = std::max(deltaE2000(first.fill, second.fill),
+                                          0.7 * deltaE2000(first.ring, second.ring));
+            if (apart < 9.0) {
+                std::printf("    %s and %s differ by %.1f\n", eggs[a].first.c_str(), eggs[b].first.c_str(), apart);
+            }
+            CHECK(apart >= 9.0);
+        }
+    }
+}
+
+TEST(petal_pictures_reach_the_edge_of_their_box) {
+    // #1315 #1565 #2076 #1125: pictures ported with wide transparent margins
+    // drew far inside their hit circle -- the magic stinger at a third of the
+    // stinger, void stardust's dots lost among their own particles -- and void
+    // dark matter was one transparent pixel. A tile divides a margin out; the
+    // field draws it. So every picture reaches 0.8 of its box from the centre,
+    // and the stingers all reach what the stinger does. Not air, which draws
+    // nothing on purpose, nor a petal whose authored visual_scale sets its
+    // size, nor these gardn ports: their margin is gardn's own, kGardnIcon's
+    // box column measures it and the tile divides by that figure, so cropping
+    // one would grow its tile icon instead.
+    static const std::set<std::string> gardnMargin = {
+        "amulet", "bone", "cotton", "cursor", "magic_bubble", "magic_fang", "magic_poo", "magic_rock",
+        "magic_soil", "magic_wing", "missile", "orange", "poo", "rice", "rock", "square", "wing"};
+    const ContentRegistry& content = shippedContent();
+    SpriteCache sprites;
+    CHECK(sprites.build(content, testsupport::dataDir()));
+    for (std::uint16_t i = 0; i < content.petalCount(); ++i) {
+        const PetalConfig& petal = content.petal(i);
+        if (petal.id == "air" || gardnMargin.count(petal.id) != 0) continue;
+        if (petal.visualScale > 0.0 && petal.visualScale != 1.0) continue;
+        const double reach = petalReach(sprites, i);
+        if (reach < 0.8) std::printf("    %s reaches %.2f of its box\n", petal.id.c_str(), reach);
+        CHECK(reach >= 0.8);
+    }
+    const double stinger = petalReach(sprites, content.petalIndex("stinger"));
+    for (const char* id : {"blood_stinger", "magic_stinger", "magic_blood_stinger"}) {
+        const double reach = petalReach(sprites, content.petalIndex(id));
+        if (std::abs(reach - stinger) > 0.05) {
+            std::printf("    %s reaches %.2f, the stinger %.2f\n", id, reach, stinger);
+        }
+        CHECK(std::abs(reach - stinger) <= 0.05);
+    }
 }
 
 TEST(petal_pictures_stay_within_the_download_budget) {
