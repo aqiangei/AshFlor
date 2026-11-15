@@ -659,7 +659,9 @@ bool SpriteCache::build(const ContentRegistry& content, const std::string& dataD
         compile(art, config.colorRgba, "mob " + config.id, mobs_[i]);
         mobs_[i].distanceAnimated = walkingLegs || walksWithDistance(config.image);
         // These imported sprites face up-left; simulation heading zero is right.
-        if (walkingLegs || config.id == "hel_wasp" || config.id == "nazar_beetle") {
+        if (walkingLegs || config.id == "hel_wasp" || config.id == "nazar_beetle" ||
+            config.id == "mecha_wasp" || config.id == "soldier_diver_ant" ||
+            config.id == "queen_fire_ant" || config.id == "desert_ladybug") {
             mobs_[i].facingOffset = 3.0 * kPi / 4.0;
         }
         mobs_[i].articulatedEyes = config.id == "mecha_flower" || config.id == "gambler";

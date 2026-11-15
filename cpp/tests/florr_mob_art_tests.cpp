@@ -715,3 +715,135 @@ TEST(arctic_ice_dragon_summon_shows_rarity_at_low_zoom) {
     CHECK(differingPixels(frame(true, false, Rarity::Mythic),
                           frame(true, false, Rarity::Rare)) > 5);
 }
+
+namespace {
+
+/// One frame of a common `id` facing `angle` with entity `state` bits, alone
+/// on the Overworld ground at `zoom` times the usual size, as RGBA; with no
+/// `id`, the ground alone. The mob sits at the canvas centre.
+constexpr int kCloseSize = 320;
+std::vector<std::uint8_t> closeMobFrame(const char* id, double angle, std::uint8_t state,
+                                        double zoom) {
+    WorldRenderer renderer;
+    renderer.setContent(&shipped());
+    renderer.setSprites(&shippedSprites());
+    renderer.options.names = false;
+    renderer.options.healthBars = false;
+    WorldView view;
+    view.setRealm(Realm::Overworld);
+    const Vec2 at{1000.0, 1000.0};
+    if (id != nullptr) {
+        const std::uint16_t type = shipped().mobIndex(id);
+        RemoteEntity mob;
+        mob.netId = 7;
+        mob.kind = net::EntityKind::Mob;
+        mob.position = mob.targetPosition = at;
+        mob.needsSnap = false;
+        mob.typeIndex = type;
+        mob.angle = angle;
+        mob.state = state;
+        mob.radius = shipped().mobStats(type, Rarity::Common).radius;
+        view.seedForTest(mob);
+    }
+    auto camera = testsupport::frameCamera(kCloseSize, at);
+    camera.userZoom = zoom;
+    Canvas canvas = Canvas::createVirtual(kCloseSize, kCloseSize);
+    renderer.draw(canvas, view, camera, at, 1.0);
+    return canvas.getImageData(0, 0, kCloseSize, kCloseSize);
+}
+
+/// How many pixels of a close frame `keep(dx, dy, byte index)` accepts, and
+/// where they lie on average; dx and dy are pixels right of and below the
+/// centre.
+struct PixelSpread {
+    int count = 0;
+    double x = 0.0;
+    double y = 0.0;
+};
+template <typename Keep>
+PixelSpread spreadOf(Keep keep) {
+    PixelSpread spread;
+    for (int row = 0; row < kCloseSize; ++row) {
+        for (int column = 0; column < kCloseSize; ++column) {
+            const double dx = column + 0.5 - kCloseSize / 2.0;
+            const double dy = row + 0.5 - kCloseSize / 2.0;
+            if (!keep(dx, dy, static_cast<std::size_t>(row * kCloseSize + column) * 4)) continue;
+            spread.x += dx;
+            spread.y += dy;
+            ++spread.count;
+        }
+    }
+    if (spread.count > 0) {
+        spread.x /= spread.count;
+        spread.y /= spread.count;
+    }
+    return spread;
+}
+
+bool changedAt(const std::vector<std::uint8_t>& a, const std::vector<std::uint8_t>& b,
+               std::size_t i) {
+    return std::abs(a[i] - b[i]) > 8 || std::abs(a[i + 1] - b[i + 1]) > 8 ||
+           std::abs(a[i + 2] - b[i + 2]) > 8;
+}
+
+} // namespace
+
+TEST(imported_mobs_cover_the_circle_they_collide_with) {
+    // Fitted whole inside the circle they collide with, these pictures left
+    // a third to two thirds of it bare, so the mobs hit from empty ground.
+    // Their bodies cover it about as a drawn mob's does; the wasp, a hornet's
+    // three-by-two oval, the least.
+    constexpr double kZoom = 2.0;
+    const std::vector<std::uint8_t> ground = closeMobFrame(nullptr, 0.0, 0, kZoom);
+    for (const char* id : {"mecha_spider", "hel_spider", "mecha_crab", "mecha_wasp",
+                           "nazar_beetle", "silverfish", "ghost", "soldier_diver_ant"}) {
+        const double reach =
+            shipped().mobStats(shipped().mobIndex(id), Rarity::Common).radius * kZoom;
+        CHECK(reach < kCloseSize / 2.0);
+        for (const double angle : {0.0, 2.0}) {
+            const std::vector<std::uint8_t> frame = closeMobFrame(id, angle, 0, kZoom);
+            const auto inside = [&](double dx, double dy, std::size_t) {
+                return dx * dx + dy * dy <= reach * reach;
+            };
+            const int circle = spreadOf(inside).count;
+            const int painted = spreadOf([&](double dx, double dy, std::size_t i) {
+                                    return inside(dx, dy, i) && changedAt(frame, ground, i);
+                                }).count;
+            const double covered = static_cast<double>(painted) / circle;
+            std::printf("    %s at %.0f covers %.3f of its circle\n", id, angle, covered);
+            CHECK(covered >= 0.7);
+        }
+    }
+}
+
+TEST(the_mecha_wasp_faces_its_heading_and_carries_its_missile_behind) {
+    // Its picture faced up-left, 135 degrees off its heading, and carried a
+    // red-tipped missile of its own besides the loaded one drawn behind every
+    // shooter.
+    constexpr double kZoom = 2.0;
+    const double reach =
+        shipped().mobStats(shipped().mobIndex("mecha_wasp"), Rarity::Common).radius * kZoom;
+    const std::vector<std::uint8_t> ground = closeMobFrame(nullptr, 0.0, 0, kZoom);
+    const std::vector<std::uint8_t> loaded = closeMobFrame("mecha_wasp", 0.0, 0, kZoom);
+    const std::vector<std::uint8_t> fired =
+        closeMobFrame("mecha_wasp", 0.0, net::StateUnloaded, kZoom);
+
+    const PixelSpread red = spreadOf([&](double, double, std::size_t i) {
+        return fired[i] > 150 && fired[i + 1] < 90 && fired[i + 2] < 90;
+    });
+    // Heading zero points right, along +x.
+    const PixelSpread missile = spreadOf(
+        [&](double, double, std::size_t i) { return changedAt(loaded, fired, i); });
+    const PixelSpread dark = spreadOf([&](double, double, std::size_t i) {
+        return changedAt(fired, ground, i) &&
+               std::max({fired[i], fired[i + 1], fired[i + 2]}) < 80;
+    });
+    std::printf("    reach %.1f; red %d; missile %d at (%.1f, %.1f); dark %d at (%.1f, %.1f)\n",
+                reach, red.count, missile.count, missile.x, missile.y, dark.count, dark.x, dark.y);
+    CHECK_EQ(red.count, 0);
+    CHECK(missile.count > 0);
+    CHECK(missile.x < -0.8 * reach);
+    CHECK(std::abs(missile.y) < 0.25 * reach);
+    CHECK(dark.count > 0);
+    CHECK(dark.x > 0.1 * reach);
+}

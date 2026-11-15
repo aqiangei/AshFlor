@@ -79,11 +79,12 @@ TEST(hel_spider_legs_follow_distance_instead_of_clock_time) {
     CHECK(standing != pixels(20, 0));
 }
 
-TEST(imported_hel_and_mecha_sprites_face_the_in_game_heading) {
+TEST(imported_up_left_sprites_face_the_in_game_heading) {
     const auto& content = testsupport::shippedContent();
     SpriteCache sprites;
     CHECK(sprites.build(content, testsupport::dataDir()));
-    for (const char* name : {"hel_spider", "hel_wasp", "mecha_crab", "mecha_spider"}) {
+    for (const char* name : {"hel_spider", "hel_wasp", "mecha_crab", "mecha_spider", "mecha_wasp",
+                             "soldier_diver_ant", "queen_fire_ant", "desert_ladybug"}) {
         const auto id = content.mobIndex(name);
         CHECK(sprites.mobDrawable(id));
         if (!sprites.mobDrawable(id)) continue;
