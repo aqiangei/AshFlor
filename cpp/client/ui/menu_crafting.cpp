@@ -211,7 +211,7 @@ void CraftingPanel::stage(const Profile& profile, std::uint16_t petalIndex, Rari
                           std::uint32_t addBatches) {
     const int possible = ownedCount(profile, petalIndex, rarity) / kBatch;
     if (possible <= 0 || !craftsOutOf(rarity) ||
-        (rarity == Rarity::PermanentHyper && (content().petal(petalIndex).id == "mjolnir" || petalHasOwnSource(content().petal(petalIndex))))) return;
+        (rarity == Rarity::PermanentHyper && !petalCraftsToApex(content(), petalIndex))) return;
 
     if (stagedPetal_ != petalIndex || stagedRarity_ != rarity) {
         stagedPetal_ = petalIndex;
@@ -517,7 +517,7 @@ bool CraftingPanel::render(MenuContext& ctx) {
             SlotCell cell;
             cell.count = owned;
             cell.greyed = !craftsOutOf(rarity) ||
-                (rarity == Rarity::PermanentHyper && (content().petal(petalIndex).id == "mjolnir" || petalHasOwnSource(content().petal(petalIndex))));
+                (rarity == Rarity::PermanentHyper && !petalCraftsToApex(content(), petalIndex));
             // Staged petals are gone from the player's point of view the
             // moment they land in the ring, so the badge counts down with each
             // click.
@@ -571,7 +571,13 @@ bool CraftingPanel::render(MenuContext& ctx) {
     if (touchTooltip || mouseTooltip) {
         const double reloadScale = profile.skills.reloadScale() *
             (1.0 - barReloadCut(content(), [&](int i) { return profile.equipped(content(), i); }, &profile.skills));
-        const auto lines = petalTooltipLines(inspected.petalIndex, inspected.rarity, profile.skills, reloadScale);
+        auto lines = petalTooltipLines(inspected.petalIndex, inspected.rarity, profile.skills, reloadScale);
+        if (inspected.rarity == Rarity::PermanentHyper && !petalCraftsToApex(content(), inspected.petalIndex)) {
+            TooltipLine note{tr(Msg::ApexOwnSource), 12.0, kPaper, 6.0};
+            note.alpha = 0.78;
+            note.maxWidth = 230.0;
+            lines.push_back(note);
+        }
         const Vec2 size = measureTooltip(lines, 0.0, 0.0, ctx.altMode);
         const Vec2 anchor = tooltipAnchor(inspected.bounds, size, canvas.width(), canvas.height());
         paintTooltip(canvas, anchor.x, anchor.y, lines, 0.0, 0.0, ctx.altMode);

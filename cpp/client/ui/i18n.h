@@ -87,6 +87,7 @@ enum class Msg : std::uint16_t {
     // -- menus / panels ------------------------------------------------------
     Craft,
     CraftAll,
+    ApexOwnSource,
     Talents,
     MobGallery,
     Shop,

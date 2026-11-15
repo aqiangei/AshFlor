@@ -65,7 +65,7 @@ void OraclePanel::reset() {
 void OraclePanel::stage(const Profile& profile, std::uint16_t petalIndex, Rarity rarity) {
     const int cost = oracleCraftCost(rarity);
     if (cost <= 0 ||
-        (rarity == Rarity::PermanentHyper && (content().petal(petalIndex).id == "mjolnir" || petalHasOwnSource(content().petal(petalIndex))))) return;
+        (rarity == Rarity::PermanentHyper && !petalCraftsToApex(content(), petalIndex))) return;
     if (profile.stackCount(petalIndex, rarity) < static_cast<std::uint32_t>(cost)) return;
     // One upgrade, so a click REPLACES what was staged rather than adding to
     // it: there is only ever one price in the slot.
@@ -261,7 +261,7 @@ bool OraclePanel::render(MenuContext& ctx) {
             const std::uint32_t price =
                 static_cast<std::uint32_t>(std::max(1, oracleCraftCost(rarity)));
             cell.greyed = oracleCraftCost(rarity) <= 0 || waiting || cell.count < price ||
-                (rarity == Rarity::PermanentHyper && (content().petal(petalIndex).id == "mjolnir" || petalHasOwnSource(content().petal(petalIndex))));
+                (rarity == Rarity::PermanentHyper && !petalCraftsToApex(content(), petalIndex));
             cell.badge = waiting ? "x" + stackCountText(cell.count)
                                  : stackCountText(cell.count) + "/" + std::to_string(price);
             cell.badgeCentred = true;
@@ -313,7 +313,14 @@ bool OraclePanel::render(MenuContext& ctx) {
         return true;
     }
 
-    if (hovered && phase_ == Phase::Idle) stage(profile, hovered->petalIndex, hovered->rarity);
+    if (hovered && phase_ == Phase::Idle) {
+        if (hovered->rarity == Rarity::PermanentHyper && !petalCraftsToApex(content(), hovered->petalIndex)) {
+            refusal_ = tr(Msg::ApexOwnSource);
+            refusalUntil_ = now + kRefusalSeconds;
+        } else {
+            stage(profile, hovered->petalIndex, hovered->rarity);
+        }
+    }
     return true;
 }
 

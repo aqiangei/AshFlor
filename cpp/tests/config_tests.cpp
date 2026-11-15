@@ -904,6 +904,18 @@ TEST(enums_and_colours_are_parsed_not_stored_as_text) {
     CHECK(r.petalIndex(kCrownLentPetalId) != kInvalidIndex);
 }
 
+TEST(magic_petals_craft_to_apex_while_own_source_petals_do_not) {
+    const ContentRegistry& r = shipped().registry;
+    for (const char* id : {"wing", "magic_wing", "magic_poo", "magic_fire", "magic_bubble_bomb", "magic_leaf"}) {
+        CHECK(r.petalIndex(id) != kInvalidIndex);
+        CHECK(petalCraftsToApex(r, r.petalIndex(id)));
+    }
+    for (const char* id : {"fire", "mjolnir", "void_soap", kChampionCrownPetalId}) {
+        CHECK(r.petalIndex(id) != kInvalidIndex);
+        CHECK(!petalCraftsToApex(r, r.petalIndex(id)));
+    }
+}
+
 // ---------------------------------------------------------------------------
 // The dirty data the shipped files actually contain
 // ---------------------------------------------------------------------------

@@ -81,6 +81,8 @@ constexpr Entry kTable[] = {
 
     {"Craft", "合成"},
     {"Craft All", "一键合成"},
+    {"This petal's Apex only comes from its own source; it can't be crafted.",
+     "这种花瓣的 Apex 只能从它自己的来源获得，不能合成。"},
     {"Talents", "天赋"},
     {"Mob Gallery", "图鉴"},
     {"Shop", "商店"},

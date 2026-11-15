@@ -1820,6 +1820,16 @@ private:
     void foldMapsIntoHash(const std::string& dataDir);
 };
 
+/// Whether a Permanent Hyper of this petal crafts up to Apex, on the crafting
+/// table or at the ocean oracle. A petal with a source of its own keeps its
+/// Apex with that source, and Mjolnir's Apex is forged. Magic petals all
+/// craft, whatever keeps them off the drop rows and the shop.
+inline bool petalCraftsToApex(const ContentRegistry& registry, std::uint16_t petalIndex) {
+    if (petalIndex >= registry.petalCount()) return false;
+    const PetalConfig& petal = registry.petal(petalIndex);
+    return petal.id != "mjolnir" && (!petalHasOwnSource(petal) || petal.id.rfind("magic_", 0) == 0);
+}
+
 /// The camera multiplier one worn petal asks for at `rarity`: below 1 pulls
 /// the camera out, 1 leaves it alone. Ordinary zoom petals keep the browser's
 /// 0.3 floor, so no tier can take the figure through zero and invert the

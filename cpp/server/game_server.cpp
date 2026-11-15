@@ -4625,6 +4625,10 @@ void GameServer::handleLoadLoadoutPreset(Session& session, net::Connection& conn
                result.missing > 0 ? net::NoticeSeverity::Warning : net::NoticeSeverity::Good, text);
 }
 
+namespace {
+constexpr const char* kOwnApexRefusal = "This petal's Apex only comes from its own source.";
+}  // namespace
+
 void GameServer::handleCraft(Session& session, net::Connection& connection, ByteReader& reader, bool quiet) {
     const std::uint16_t petalIndex = reader.u16();
     const auto rawRarity = reader.u8();
@@ -4644,8 +4648,7 @@ void GameServer::handleCraft(Session& session, net::Connection& connection, Byte
                        petalIndex < content().petalCount() &&
                        content().petal(petalIndex).id != "timed_mjolnir" &&
                        (rarity != Rarity::PermanentHyper ||
-                        (content().petal(petalIndex).id != "mjolnir" &&
-                         !petalHasOwnSource(content().petal(petalIndex)) &&
+                        (petalCraftsToApex(content(), petalIndex) &&
                          record.itemCount(Rarity::Ascendant, inventoryKey(petalIndex)) <=
                              kMaxStackCount - static_cast<int>(count / kCraftBatch)));
     if (!valid || !takeFromInventory(record, petalIndex, rarity, static_cast<int>(count))) {
@@ -4654,7 +4657,9 @@ void GameServer::handleCraft(Session& session, net::Connection& connection, Byte
         w.u8(static_cast<std::uint8_t>(rarity));
         w.u32(0);
         w.u8(0);
-        w.str("Not enough petals to craft.");
+        const bool ownApex = rarity == Rarity::PermanentHyper && petalIndex < content().petalCount() &&
+                             !petalCraftsToApex(content(), petalIndex);
+        w.str(ownApex ? kOwnApexRefusal : "Not enough petals to craft.");
         w.u32(0); w.u32(0);
         if (!quiet) connection.send(w);
         if (!quiet) resyncProfile(session, connection);
@@ -4803,14 +4808,17 @@ void GameServer::handleOracleCraft(Session& session, net::Connection& connection
         return;
     }
 
+    if (rarity == Rarity::PermanentHyper && petalIndex < content().petalCount() &&
+        !petalCraftsToApex(content(), petalIndex)) {
+        refuse(kOwnApexRefusal);
+        return;
+    }
     const int unitCost = oracleCraftCost(rarity);
     if (rawRarity != rarityIndex(rarity) || quantity == 0 ||
         (rarity == Rarity::PermanentHyper &&
          (worldMaps_.forRealm(body->realm) == nullptr ||
           worldMaps_.forRealm(body->realm)->templateId() != "ocean" ||
-          petalIndex >= content().petalCount() ||
-          content().petal(petalIndex).id == "mjolnir" ||
-          petalHasOwnSource(content().petal(petalIndex)))) ||
+          petalIndex >= content().petalCount())) ||
         unitCost <= 0 || petalIndex >= content().petalCount() ||
         !petalComesAt(content().petal(petalIndex), rarity) ||
         !petalComesAt(content().petal(petalIndex), upgradeRarity(rarity))) {

@@ -3716,6 +3716,60 @@ TEST(apex_hammer_fragments_upgrade_at_ocean_oracle) {
     CHECK(!out.success);
     removeDataDir(dir);
 }
+TEST(magic_petals_upgrade_at_ocean_oracle_while_own_source_petals_do_not) {
+    const double cell = kTileSize;
+    const auto map = fixtureMap(24, 24,
+        fixtureDoor("meadow", "Meadow", cell * 2, cell * 2, cell, cell, true, 0.0),
+        std::string(), std::string(), {}, {}, {}, fixtureNpc(kOracleX, kOracleY, "oracle", "epic"));
+    const auto dir = stageDataDir("magic-form-oracle", {{"ocean", map}});
+    Harness h("magic-form-oracle", [](const std::string& path) {
+        seedAccount(path, "seer");
+        seedStack(path, "seer", "petal_magic_fire", Rarity::PermanentHyper, 120);
+        seedStack(path, "seer", "petal_fire", Rarity::PermanentHyper, 120);
+    }, dir, 0);
+    CHECK(h.ready);
+    if (!h.ready) { removeDataDir(dir); return; }
+    NetClient client;
+    CHECK(joinAs(h, client, "seer"));
+    standBeside(h, client, "oracle");
+    OracleOutcome out;
+    client.requestOracleCraft(content().petalIndex("magic_fire"), Rarity::PermanentHyper);
+    CHECK(awaitOracle(h, client, out));
+    CHECK(out.success);
+    CHECK_EQ(out.spent, 120u);
+    CHECK_EQ(out.rarity, Rarity::Ascendant);
+    client.requestOracleCraft(content().petalIndex("fire"), Rarity::PermanentHyper);
+    CHECK(awaitOracle(h, client, out));
+    CHECK(!out.success);
+    CHECK(out.reason.find("own source") != std::string::npos);
+    removeDataDir(dir);
+}
+TEST(magic_petals_craft_on_the_table_while_own_source_petals_do_not) {
+    Harness h("magic-form-craft", [](const std::string& path) {
+        seedAccount(path, "smith");
+        seedStack(path, "smith", "petal_magic_fire", Rarity::PermanentHyper, 5);
+        seedStack(path, "smith", "petal_fire", Rarity::PermanentHyper, 5);
+    });
+    CHECK(h.ready);
+    if (!h.ready) return;
+    NetClient client;
+    CHECK(joinAs(h, client, "smith"));
+    const auto magicFire = content().petalIndex("magic_fire");
+    const auto fire = content().petalIndex("fire");
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stackCount(magicFire, Rarity::PermanentHyper) == 5 && p.stackCount(fire, Rarity::PermanentHyper) == 5;
+    }));
+    client.requestCraft(magicFire, Rarity::PermanentHyper, 5);
+    CHECK(h.stepUntil({&client}, [&] { return client.craftOutcome().pending; }, 200));
+    CHECK(client.craftOutcome().attempts > 0);
+    client.craftOutcome().pending = false;
+    client.requestCraft(fire, Rarity::PermanentHyper, 5);
+    CHECK(h.stepUntil({&client}, [&] { return client.craftOutcome().pending; }, 200));
+    CHECK(!client.craftOutcome().success);
+    CHECK_EQ(client.craftOutcome().attempts, 0u);
+    CHECK(client.craftOutcome().reason.find("own source") != std::string::npos);
+    CHECK(awaitProfile(h, client, [&](const Profile& p) { return p.stackCount(fire, Rarity::PermanentHyper) == 5; }));
+}
 TEST(apex_hammer_network_forge_and_quote) {
     const auto dir = titanWorld("apex-hammer-network");
     Harness h("apex-hammer-network", [](const std::string& path) {
