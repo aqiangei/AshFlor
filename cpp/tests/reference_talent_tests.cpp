@@ -213,6 +213,8 @@ TEST(reference_absorption_talent_preview_matches_server_and_protects_hyper) {
         seedUser(path, "absorbqa", "password7");
         seedStack(path, "absorbqa", "petal_rose", Rarity::Rare, 50);
         seedStack(path, "absorbqa", "petal_rose", Rarity::Apex, 1);
+        seedStack(path, "absorbqa", "petal_rose", Rarity::PermanentHyper, 2);
+        seedStack(path, "absorbqa", "petal_rose", Rarity::Ascendant, 1);
         Database db;
         std::string error;
         CHECK(db.load(path, error));
@@ -227,7 +229,7 @@ TEST(reference_absorption_talent_preview_matches_server_and_protects_hyper) {
     const auto rose = content().petalIndex("rose");
     const double before = client.profile().totalXp;
     const double preview = absorbXpTotal(50 * absorbUnits(Rarity::Rare), client.profile().skills);
-    CHECK_EQ(preview, 400.0);
+    CHECK_EQ(preview, 6400.0);
     client.requestAbsorb({{rose, Rarity::Rare, 50}});
     CHECK(h.stepUntil({&client}, [&] { return client.absorbOutcome().pending; }, 200));
     CHECK(client.absorbOutcome().success);
@@ -239,4 +241,17 @@ TEST(reference_absorption_talent_preview_matches_server_and_protects_hyper) {
     CHECK(!client.absorbOutcome().success);
     CHECK_EQ(client.profile().stackCount(rose, Rarity::Apex), 1u);
     CHECK_EQ(client.profile().totalXp, before + preview);
+
+    client.absorbOutcome().pending = false;
+    const double permanentXp = absorbXpTotal(2 * 16400000.0 + 840000000.0, client.profile().skills);
+    client.requestAbsorb({{rose, Rarity::PermanentHyper, 2}, {rose, Rarity::Ascendant, 1}});
+    CHECK(h.stepUntil({&client}, [&] { return client.absorbOutcome().pending; }, 200));
+    CHECK(client.absorbOutcome().success);
+    CHECK_EQ(client.absorbOutcome().reward, permanentXp);
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.totalXp == before + preview + permanentXp &&
+               p.stackCount(rose, Rarity::PermanentHyper) == 0 &&
+               p.stackCount(rose, Rarity::Ascendant) == 0;
+    }));
+    CHECK(!absorbable(content().petal(content().petalIndex("mjolnir")), Rarity::Ascendant));
 }

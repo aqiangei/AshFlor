@@ -374,7 +374,7 @@ private:
     void collectNpcDiscs();
     void collectStationaryMobs(World& world);
     void pushOutOfStationaryMobs(World& world, const Terrain& terrain, Transform& transform,
-                                 double radius);
+                                 double radius, Entity burrowedPlayer);
     /// Rebuilds looseDiscs_ from the live transforms, and writes it back.
     void collectLooseDiscs();
     void storeLooseDiscs(World& world) const;

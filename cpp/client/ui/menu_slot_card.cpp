@@ -141,6 +141,7 @@ constexpr int kUpgradeBaseColumns = rarityIndex(Rarity::Unique) + 1;
 std::size_t tierColumns(SlotGridTiers tiers) {
     switch (tiers) {
         case SlotGridTiers::PermanentHyper: return kUpgradeBaseColumns + 1;
+        case SlotGridTiers::Absorption: return kUpgradeBaseColumns + 2;
         case SlotGridTiers::Ascendant: return kLadderRarityCount + 1;
         case SlotGridTiers::Hyper: break;
     }
@@ -148,9 +149,12 @@ std::size_t tierColumns(SlotGridTiers tiers) {
 }
 
 Rarity slotGridRarity(SlotGridTiers tiers, std::size_t column) {
-    if (tiers == SlotGridTiers::PermanentHyper && column == kUpgradeBaseColumns)
+    if ((tiers == SlotGridTiers::PermanentHyper || tiers == SlotGridTiers::Absorption) &&
+        column == kUpgradeBaseColumns)
         return Rarity::PermanentHyper;
-    if (tiers == SlotGridTiers::Ascendant && column == kLadderRarityCount) return Rarity::Ascendant;
+    if ((tiers == SlotGridTiers::Ascendant && column == kLadderRarityCount) ||
+        (tiers == SlotGridTiers::Absorption && column == kUpgradeBaseColumns + 1))
+        return Rarity::Ascendant;
     return static_cast<Rarity>(column);
 }
 
@@ -158,6 +162,9 @@ bool slotGridShows(SlotGridTiers tiers, Rarity rarity) {
     switch (tiers) {
         case SlotGridTiers::PermanentHyper:
             return rarityIndex(rarity) < kUpgradeBaseColumns || rarity == Rarity::PermanentHyper;
+        case SlotGridTiers::Absorption:
+            return rarityIndex(rarity) < kUpgradeBaseColumns || rarity == Rarity::PermanentHyper ||
+                   rarity == Rarity::Ascendant;
         case SlotGridTiers::Ascendant:
             return rarityIndex(rarity) < kLadderRarityCount || rarity == Rarity::Ascendant;
         case SlotGridTiers::Hyper: break;

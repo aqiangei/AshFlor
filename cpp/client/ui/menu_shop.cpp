@@ -270,6 +270,7 @@ struct ShopState {
     double nextOfferQuerySeconds = 0;
     std::vector<ShopOffer> offers;
     TooltipDelay offerTooltip;
+    TouchInspectDelay touchOfferTooltip;
 
     std::vector<FallingStar> stars;
     Rng rng;
@@ -566,6 +567,7 @@ void ShopPanel::reset() {
     state.lines.clear();
     state.pendingPetal = kNoPetal;
     state.offerTooltip.reset();
+    state.touchOfferTooltip.reset();
     state.pressedAt = {-1e9, -1e9};
     // The shower belongs to the moment a code was redeemed. It can only be
     // drawn while the window is up, and a shower that resumed mid-air an hour
@@ -622,8 +624,8 @@ bool ShopPanel::render(MenuContext& ctx) {
     // latched here and used by both passes. While one is up the window under
     // it answers nothing.
     const bool modalUp = state.modal != ShopState::Modal::None;
-    std::int64_t bonusLeft = 0;
-    bool bonusAvailable = false;
+    bool bonusCanClaim = false;
+    bool bonusCanToggle = false;
     const Vec2 under = modalUp ? Vec2{-1e9, -1e9} : mouse;
 
     // What the pointer is over, pushed to the window once at the end.
@@ -715,8 +717,9 @@ bool ShopPanel::render(MenuContext& ctx) {
     Rect codeField{};
     Rect redeemButton{};
     Rect bonusButton{};
+    Rect bonusToggle{};
     Rect lockButton{};
-    Rect offerAnchor{};
+    std::array<Rect, kShopOfferCount> offerTiles{};
     int hoveredOffer = -1;
 
     if (tab_ == Tab::Offers || tab_ == Tab::Current) {
@@ -732,6 +735,7 @@ bool ShopPanel::render(MenuContext& ctx) {
         {
             if (state.offersRotation != rotation || state.offersLocked != showingLocked) {
                 state.offerTooltip.reset();
+                state.touchOfferTooltip.reset();
             }
             state.offersRotation = rotation;
             state.offersLocked = showingLocked;
@@ -743,7 +747,7 @@ bool ShopPanel::render(MenuContext& ctx) {
         const std::int64_t remaining = shopRotationEnd(
             ctx.net.currentShopRotation >= 0 ? ctx.net.currentShopRotation : shopRotation(shopClockNow())) - shopClockNow();
         const std::string caption = showingLocked
-            ? trEnZh("Super offers locked; Eternal offers rotate hourly", "超级商品已锁定 · 永恒商品每小时轮换")
+            ? trEnZh("Super and Eternal offers locked", "超级和永恒商品已锁定")
             : rotationCaption(remaining) + (preview ? trEnZh(" — Preview; unlock in Shop to buy", " · 仅预览，购买请先在商店页解锁") : "");
         text(canvas, caption, panel.x + panel.w * 0.5, panel.y + kSubMiddle,
              shopText(kSubSize));
@@ -761,7 +765,6 @@ bool ShopPanel::render(MenuContext& ctx) {
                  shopText(kLockSize));
         }
 
-        std::array<Rect, kShopOfferCount> tiles{};
         for (std::size_t i = 0; i < state.offers.size() && i < kShopOfferCount; ++i) {
             const ShopOffer& offer = state.offers[i];
             const Vec2 plateAt = at(kGridLeft + static_cast<double>(i % kShopTierOfferCount) * kCellWidth,
@@ -769,22 +772,23 @@ bool ShopPanel::render(MenuContext& ctx) {
             fillQuadRound(canvas, {plateAt.x, plateAt.y, kPlateWidth, kPlateHeight}, kPlateRadius,
                           kWindowRim);
 
-            tiles[i] = {plateAt.x + kTileLeft, plateAt.y + kTileTop, kTile, kTile};
+            const Rect tileRect{plateAt.x + kTileLeft, plateAt.y + kTileTop, kTile, kTile};
+            if (live && state.shown == ShopState::Modal::None &&
+                offer.petalIndex < content().petalCount()) offerTiles[i] = tileRect;
             if (state.shown == ShopState::Modal::None && !ctx.window.pointerIsTouch() &&
-                tiles[i].contains(under) && offer.petalIndex < content().petalCount()) {
+                offerTiles[i].contains(under)) {
                 hoveredOffer = static_cast<int>(i);
-                offerAnchor = tiles[i];
             }
             ItemTile tile;
             tile.petalIndex = offer.petalIndex;
             tile.rarity = offer.rarity;
             if (offer.remaining >= 0) tile.badge = trEnZh("Left ", "余 ") + std::to_string(offer.remaining);
             tile.timeSeconds = ctx.timeSeconds;
-            drawItemTile(canvas, ctx.sprites, tiles[i], tile);
+            drawItemTile(canvas, ctx.sprites, tileRect, tile);
 
             // After the tile and before the button, as florr orders them.
             if (offer.discountPercent > 0) {
-                drawDiscountBadge(canvas, {tiles[i].right(), tiles[i].y}, offer.discountPercent);
+                drawDiscountBadge(canvas, {tileRect.right(), tileRect.y}, offer.discountPercent);
             }
 
             // The button is the card's one control. Every one is live whatever
@@ -847,9 +851,11 @@ bool ShopPanel::render(MenuContext& ctx) {
         const auto elapsed = ctx.net.dropBonusPaused ? 0 :
             std::max<std::int64_t>(0, now - ctx.net.dropBonusUpdatedAt) *
             ctx.net.dropBonusCountdownRate / net::kTicksPerSecond;
-        const auto left = bonusLeft = std::max<std::int64_t>(0,
-            ctx.net.dropBonusUntil - ctx.net.dropBonusUpdatedAt - elapsed);
-        const bool ready = bonusAvailable = left > 0 || ctx.net.dropBonusNextClaim <= now;
+        const auto left = std::max<std::int64_t>(0, std::min(
+            ctx.net.dropBonusNextClaim - now,
+            ctx.net.dropBonusUntil - ctx.net.dropBonusUpdatedAt - elapsed));
+        bonusCanClaim = live && ctx.net.dropBonusUpdatedAt > 0 && ctx.net.dropBonusNextClaim <= now;
+        bonusCanToggle = live && left > 0;
         const int nextDay=ctx.net.dropBonusStreak+1;
         const int multiplier=left>0?ctx.net.dropBonusMultiplier:(nextDay%4==0?3:2);
         const double y=box.bottom()+28;
@@ -858,22 +864,31 @@ bool ShopPanel::render(MenuContext& ctx) {
             panel.x+panel.w*.5,y+30,shopText(14));
         text(canvas,trEnZh("S: 1.5/2x; E: 1.6/2.2x; H: 1.4/1.8x. Personal rolls.","普通日/第4天：S 1.5/2倍，E 1.6/2.2倍，H 1.4/1.8倍，仅本人加抽。"),
             panel.x+panel.w*.5,y+53,shopText(13));
-        text(canvas,trEnZh("H Eternal expectation: 0.5 / 0.7 / 0.9, not guaranteed. Resets at UTC+8 midnight.","H掉E期望：无加成0.5，普通日0.7，第4天0.9，非保底；漏领断签，零点更新。"),
+        text(canvas,trEnZh("Unused time expires at midnight (UTC+8), even while paused.","北京时间零点清空剩余时长，暂停时也会清空。"),
             panel.x+panel.w*.5,y+74,shopText(12));
-        bonusButton={panel.x+panel.w*.5-150,y+96,300,42};
-        const bool hot=ready&&bonusButton.contains(under);
-        drawFlorrButton(canvas,bonusButton,ready?0x55B8D4u:kButtonIdle,kButtonBorder,kButtonRadius,hot,ready&&pressing(bonusButton));
-        std::string label;
+        const double center = panel.x + panel.w * 0.5;
+        bonusButton = {left > 0 ? center - 225 : center - 150, y + 96, left > 0 ? 170.0 : 300.0, 42};
+        const bool hot = bonusCanClaim && bonusButton.contains(under);
+        drawFlorrButton(canvas, bonusButton, bonusCanClaim ? 0x55B8D4u : kButtonIdle,
+                        kButtonBorder, kButtonRadius, hot, hot && pressing(bonusButton));
+        const char* claimLabel = !bonusCanClaim ? trEnZh("Claimed today", "今日已领取")
+            : trEnZh("Claim 1 hour", "领取 1 小时");
+        text(canvas, claimLabel, bonusButton.x + bonusButton.w * 0.5,
+             bonusButton.y + bonusButton.h * 0.5, shopText(16));
+
         if (left > 0) {
-            label = ctx.net.dropBonusPaused ? trEnZh("Resume", "继续") : trEnZh("Pause", "暂停");
+            bonusToggle = {bonusButton.right() + 10, bonusButton.y, 270, bonusButton.h};
+            const bool toggleHot = bonusCanToggle && bonusToggle.contains(under);
+            drawFlorrButton(canvas, bonusToggle, 0x55B8D4u, kButtonBorder, kButtonRadius,
+                            toggleHot, toggleHot && pressing(bonusToggle));
+            std::string label = ctx.net.dropBonusPaused ? trEnZh("Resume", "继续") : trEnZh("Pause", "暂停");
             label += multiplier == 3 ? trEnZh(" enhanced bonus · ", "强化加成 · ") :
-                                      trEnZh(" bonus · ", "普通加成 · ");
+                                       trEnZh(" bonus · ", "普通加成 · ");
             label += std::to_string(left / 60000) + ":" + (left / 1000 % 60 < 10 ? "0" : "") +
                      std::to_string(left / 1000 % 60);
+            text(canvas, label, bonusToggle.x + bonusToggle.w * 0.5,
+                 bonusToggle.y + bonusToggle.h * 0.5, shopText(16));
         }
-        else if(ready)label=multiplier==3?trEnZh("Claim enhanced bonus: 1 hour","领取强化加成1小时"):trEnZh("Claim bonus: 1 hour","领取普通加成1小时");
-        else label=trEnZh("Claimed today","今日已领取");
-        text(canvas,label,bonusButton.x+bonusButton.w*.5,bonusButton.y+bonusButton.h*.5,shopText(16));
     } else {
         text(canvas, trEnZh("Earn Stars by Defeating Mythic+ Mobs", "击败神话及以上怪物获得星星"),
              panel.x + panel.w * 0.5, panel.y + kHeadingMiddle, shopText(kOffersHeadingSize));
@@ -904,11 +919,20 @@ bool ShopPanel::render(MenuContext& ctx) {
         }
     }
 
-    if (state.offerTooltip.update(hoveredOffer, ctx.timeSeconds, held || ctx.pressed())) {
-        const ShopOffer& offer = state.offers[static_cast<std::size_t>(hoveredOffer)];
+    const bool touchTooltip = state.touchOfferTooltip.touch(ctx.window, ctx.timeSeconds, [&](Vec2 point) {
+        if (modalUp) return -1;
+        for (std::size_t i = 0; i < offerTiles.size(); ++i) {
+            if (offerTiles[i].contains(point)) return static_cast<int>(i);
+        }
+        return -1;
+    }, ctx.window.touchPan().active);
+    const bool mouseTooltip = state.offerTooltip.update(hoveredOffer, ctx.timeSeconds, held || ctx.pressed());
+    if (touchTooltip || mouseTooltip) {
+        const auto index = static_cast<std::size_t>(touchTooltip ? state.touchOfferTooltip.target : hoveredOffer);
+        const ShopOffer& offer = state.offers[index];
         const auto lines = petalTooltipLines(offer.petalIndex, offer.rarity, SkillSet{}, 1.0);
         const Vec2 size = measureTooltip(lines, 0.0, 0.0, ctx.altMode);
-        const Vec2 anchor = tooltipAnchor(offerAnchor, size, canvas.width(), canvas.height());
+        const Vec2 anchor = tooltipAnchor(offerTiles[index], size, canvas.width(), canvas.height());
         paintTooltip(canvas, anchor.x, anchor.y, lines, 0.0, 0.0, ctx.altMode);
     }
 
@@ -1173,9 +1197,12 @@ bool ShopPanel::render(MenuContext& ctx) {
     }
 
     if(clicked(lockButton)){ctx.net.toggleShopLock();return true;}
-    if (clicked(bonusButton) && bonusAvailable) {
-        if (bonusLeft > 0) ctx.net.setDropBonusEnabled(ctx.net.dropBonusPaused);
-        else ctx.net.requestDailyDropBonus(true);
+    if (bonusCanClaim && clicked(bonusButton)) {
+        ctx.net.requestDailyDropBonus(true);
+        return true;
+    }
+    if (bonusCanToggle && clicked(bonusToggle)) {
+        ctx.net.setDropBonusEnabled(ctx.net.dropBonusPaused);
         return true;
     }
     if (!trimmed(state.code).empty() && clicked(redeemButton)) {

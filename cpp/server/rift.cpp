@@ -103,7 +103,7 @@ void GameServer::enterRift(Session& session, Vec2 position) {
     sendRealmChange(session, world_.get<Transform>(flower).position);
     if (auto* peer = listener_.find(session.connection)) {
         sendProfile(session, *peer);
-        sendSystem(*peer, "已进入裂隙。对局物品独立结算。输入 /rift 查看状态。");
+        sendSystem(*peer, "已进入裂隙。对局内普通掉落只进临时背包，离开时清空。冠军奖励在领奖房拾取后进主背包。输入 /rift 查看状态。");
     }
 }
 

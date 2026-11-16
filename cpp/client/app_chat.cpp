@@ -936,6 +936,15 @@ void App::editChatLine() {
             chatSuggestion_ = -1;
             return;
         }
+        const auto privateLine = normalizedWhisper(chatDraft_);
+        if (!privateLine.empty() && privateLine.size() > 3 &&
+            privateLine.find(' ', 3) == std::string::npos) {
+            chatDraft_ = privateLine + " ";
+            window_.resetSoftKeyboardBuffer();
+            chatField_.focusAtEnd(chatDraft_, timeSeconds_);
+            chatSuggestion_ = -1;
+            return;
+        }
     }
 
     if (chatSuggestion_ >= 0) {
@@ -987,6 +996,11 @@ void App::sendChatLine(const std::string& line) {
     menus_.settings().chatChannels |= static_cast<std::uint8_t>(1u << chatSendTab_);
     chatScroll_ = 0.0;
     if (handleClientCommand(line)) return;
+    if (const auto privateLine = normalizedWhisper(line); !privateLine.empty()) {
+        menus_.settings().chatChannels |= static_cast<std::uint8_t>(1u << kTabWhisper);
+        net_.sendChat(privateLine);
+        return;
+    }
     // "/global hi" says one line to everyone without leaving the channel, as
     // "/local hi" does on Local -- that one the server answers itself. Global
     // is a line with no slash, so the word is simply taken off.
@@ -1012,7 +1026,7 @@ void App::sendChatLine(const std::string& line) {
     net_.sendChat(chatChannelCommand(chatSendTab_, net_.whisperPartner()) + line);
 }
 
-Rect App::titleChatBox(int viewWidth, int viewHeight) {
+Rect App::titleChatBox(int viewWidth, int viewHeight, double visibleBottom) {
     // Put chat next to the lower-left buttons, before the loadout bar. The
     // transcript is laid out above this same field, below the joystick.
     Rect field{kChatFieldX, viewHeight - kChatFieldUp, kChatFieldWidth, kChatFieldHeight};
@@ -1032,6 +1046,9 @@ Rect App::titleChatBox(int viewWidth, int viewHeight) {
             field.w = std::clamp(viewWidth - field.x - kGap, 0.0, field.w);
         }
     }
+    if (visibleBottom < viewHeight) {
+        field.y = std::min(field.y, std::max(0.0, visibleBottom - field.h - 8.0));
+    }
     return field;
 }
 
@@ -1049,7 +1066,8 @@ void App::drawTitleChat(Canvas& canvas, double time) {
     // The slot stays either way, since Enter still opens it here. The region
     // shrinks to just the slot, so the lobby does not keep a transcript that
     // is no longer on screen as a place a press may land without closing it.
-    const Rect box = titleChatBox(canvas.width(), canvas.height());
+    const double visibleBottom = chatOpen_ ? window_.softKeyboardVisibleBottom() : canvas.height();
+    const Rect box = titleChatBox(canvas.width(), canvas.height(), visibleBottom);
     chatRegion_ = box;
     drawChatField(canvas, box, time);
 }
@@ -1154,13 +1172,15 @@ void App::drawChat(Canvas& canvas, double time) {
     const double bottom = canvas.height();
     Rect panel{kChatX, bottom - kChatPanelUp, kChatPanelWidth,
                kChatPanelUp - kChatPanelDown};
-    const Rect field = titleChatBox(canvas.width(), canvas.height());
+    const double visibleBottom = chatOpen_ ? window_.softKeyboardVisibleBottom() : bottom;
+    const Rect field = titleChatBox(canvas.width(), canvas.height(), visibleBottom);
+    const bool keyboardChat = visibleBottom < bottom;
     const bool mobileChat = touchControlsVisible() && mobile_.stickHitRadius() > 0.0;
-    if (mobileChat) {
+    if (mobileChat || keyboardChat) {
         constexpr double kMobilePanelHeight = 142.0;
         const double panelBottom = field.y - 8.0;
-        const double panelTop = std::max(mobile_.stickApproachBottom() + 6.0,
-                                         panelBottom - kMobilePanelHeight);
+        const double topLimit = keyboardChat ? 8.0 : mobile_.stickApproachBottom() + 6.0;
+        const double panelTop = std::max(topLimit, panelBottom - kMobilePanelHeight);
         const double tabsSpace = chatOpen_ ? kChatTabHeight + 4.0 : 0.0;
         panel = {field.x, panelTop + tabsSpace, field.w,
                  std::max(0.0, panelBottom - panelTop - tabsSpace)};
@@ -1170,7 +1190,8 @@ void App::drawChat(Canvas& canvas, double time) {
     // it, as one box. A press outside it closes the chat, and a press inside
     // must not -- selecting a message and picking a channel are both done
     // with the box open.
-    const double tabsTop = mobileChat ? panel.y - kChatTabHeight - 4.0 : bottom - kChatTabsUp;
+    const double tabsTop = mobileChat || keyboardChat ? panel.y - kChatTabHeight - 4.0
+                                                       : bottom - kChatTabsUp;
     const double regionTop = chatOpen_ ? std::min(tabsTop, panel.y) : panel.y;
     chatRegion_ = {panel.x, regionTop, panel.w, field.bottom() - regionTop};
     // For the wheel, which runs before this draw and needs last frame's box.

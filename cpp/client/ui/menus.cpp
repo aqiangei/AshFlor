@@ -944,9 +944,8 @@ void MenuSystem::toggle(MenuId id) {
     const bool opening = open_ != id;
     open_ = opening ? id : MenuId::None;
     drag_.clear();
-    // A panel opens at the top of its list, with no search text and nothing
-    // staged. Reopening onto whatever was left behind is how a player ends up
-    // staring at an empty grid because a filter they forgot is still applied.
+    // Most panels clear old filters on open. Crafting retains its place and
+    // its ring state so checking another menu cannot hide the current result.
     if (!opening) return;
     // From below the viewport every time, even when the card it replaces was
     // already seated: the browser shell it mirrors starts each open from
@@ -958,7 +957,7 @@ void MenuSystem::toggle(MenuId id) {
         // frame by where the flower is standing, so any of them may be the
         // one this open ends up drawing.
         case MenuId::Crafting:
-            crafting_.reset();
+            crafting_.reopen();
             absorb_.reset();
             oracle_.reset();
             trader_.reset();
@@ -1538,7 +1537,9 @@ void MenuSystem::drawIconStrip(Canvas& canvas, Window& window, double timeSecond
         // its centre inside the button by the rest of its diameter -- and the
         // strip's own inset from the screen edge is wider than the overhang,
         // so nothing of it falls off the top.
-        if (slot.menu == MenuId::Notifications && notificationsUnread_ > 0) {
+        const int unread = slot.menu == MenuId::Notifications ? notificationsUnread_ :
+                           slot.menu == MenuId::Guild && guildInvitePending_ ? 1 : 0;
+        if (unread > 0) {
             const Vec2 at{r.right() + kBadgeOverhang - kBadgeRadius,
                           r.y - kBadgeOverhang + kBadgeRadius};
             setFill(canvas, kPaper);
@@ -1561,7 +1562,7 @@ void MenuSystem::drawIconStrip(Canvas& canvas, Window& window, double timeSecond
             count.fill = kPaper;
             count.strokeWidth = 0;
             count.align = Align::Centre;
-            text(canvas, notificationsUnread_ > 99 ? "99+" : std::to_string(notificationsUnread_),
+            text(canvas, unread > 99 ? "99+" : std::to_string(unread),
                  at.x, at.y, count);
         }
         canvas.restore();
@@ -2468,7 +2469,14 @@ void MenuSystem::updateLoadoutInput(Window& window, NetClient& net, double timeS
     if (window.mouseReleased(MouseButton::Left) && loadoutTouchInspect_.consumedRelease) {
         drag_.clear(); loadoutPressSlot_=-1; loadoutPressSaved_=false; return;
     }
-    if (!window.mouseReleased(MouseButton::Left)) return;
+    if (!window.mouseReleased(MouseButton::Left)) {
+        if (!mouseDown) {
+            drag_.clear();
+            loadoutPressSlot_ = -1;
+            loadoutPressSaved_ = false;
+        }
+        return;
+    }
 
     // Tap on an empty slot: no drag was started, but the column still swaps.
     // Tap on a preset tile: load that saved loadout -- unless a long-press
@@ -3172,9 +3180,7 @@ void MenuSystem::render(Canvas& canvas, Window& window, NetClient& net, const Sp
     EM_ASM({Module.feedbackUsername=UTF8ToString($0);},feedbackUsername_.c_str());
 #endif
 
-    // Guild / squad invites raise the top-left Accept/Decline toast instead of
-    // forcing a panel open. Consume the edge so a later frame does not re-fire.
-    if (net.guildInvite().justArrived) net.guildInvite().justArrived = false;
+    guildInvitePending_ = net.guildInvite().waiting;
     if (net.squadInvite().justArrived) {
         net.squadInvite().justArrived = false;
         close(); // Reveal the Accept/Decline invitation above the game.
@@ -3191,13 +3197,21 @@ void MenuSystem::render(Canvas& canvas, Window& window, NetClient& net, const Sp
     // stopped being useful. The browser fetches on construction instead, so
     // the first frame that holds an account does the same here. Cleared with
     // the account, so a reconnect asks again on the socket it came back on.
+    notificationsUnread_ = net.haveSession() ? notificationsUnread(net, settings_) : 0;
     if (!net.haveSession()) {
         notificationsPrimed_ = false;
+        nextNotificationBadgePage_ = 0;
     } else if (!notificationsPrimed_) {
         notificationsPrimed_ = true;
+        nextNotificationBadgePage_ = timeSeconds + 0.35;
         net.requestNotifications(kNotificationPage, 0);
+    } else if (notificationsUnread_ < 100 && net.notificationsHaveMore() &&
+               !net.notificationsPending() && !net.notifications().empty() &&
+               timeSeconds >= nextNotificationBadgePage_) {
+        // Fetch enough to distinguish an exact count below the badge's 99+ cap.
+        nextNotificationBadgePage_ = timeSeconds + 0.35;
+        net.requestNotifications(kNotificationPage, net.notifications().back().timestampMillis);
     }
-    notificationsUnread_ = notificationsUnread(net, settings_);
 
     // What is painted is `drawn_`, which outlives `open_` for as long as the
     // card takes to slide back down.
@@ -3328,31 +3342,13 @@ void MenuSystem::render(Canvas& canvas, Window& window, NetClient& net, const Sp
 }
 
 void MenuSystem::drawInviteToasts(Canvas& canvas, Window& window, NetClient& net) {
-    inviteToastRects_.fill(Rect{});
-    struct Card {
-        std::string title;
-        std::string detail;
-        bool guild = false;
-    };
-    std::vector<Card> cards;
-    if (net.squadInvite().waiting && !net.squadInvite().dismissed) {
-        Card c;
-        c.title = net.squadInvite().fromGuild ? tr(Msg::SquadInviteGuild) : tr(Msg::SquadInvite);
-        char detail[128];
-        std::snprintf(detail, sizeof detail, tr(Msg::SquadInviteDetail),
-                      net.squadInvite().fromUsername.c_str());
-        c.detail = detail;
-        cards.push_back(std::move(c));
-    }
-    if (net.guildInvite().waiting && !net.guildInvite().dismissed) {
-        Card c;
-        c.guild = true;
-        c.title = tr(Msg::GuildInvite);
-        c.detail = "@" + net.guildInvite().fromUsername + " · " +
-                   net.guildInvite().displayName + " [" + net.guildInvite().guildName + "]";
-        cards.push_back(std::move(c));
-    }
-    if (cards.empty()) return;
+    squadInviteToastRect_ = {};
+    const auto& invite = net.squadInvite();
+    if (!invite.waiting || invite.dismissed) return;
+
+    char detail[128];
+    std::snprintf(detail, sizeof detail, tr(Msg::SquadInviteDetail), invite.fromUsername.c_str());
+    const char* title = tr(invite.fromGuild ? Msg::SquadInviteGuild : Msg::SquadInvite);
 
     // Roomier than the first pass: title / detail / actions need clear bands
     // rather than three lines stacked in an 78px strip.
@@ -3360,7 +3356,6 @@ void MenuSystem::drawInviteToasts(Canvas& canvas, Window& window, NetClient& net
     constexpr double kPadY = 14.0;
     constexpr double kW = 360.0;
     constexpr double kH = 118.0;
-    constexpr double kGap = 12.0;
     constexpr double kBtnH = 34.0;
     constexpr double kBtnW = 108.0;
     constexpr double kBtnGap = 12.0;
@@ -3368,99 +3363,84 @@ void MenuSystem::drawInviteToasts(Canvas& canvas, Window& window, NetClient& net
     constexpr double kRadius = 10.0;
     const Vec2 mouse{window.mouseX(), window.mouseY()};
     const bool released = window.mouseReleased(MouseButton::Left);
-    double y = stripBottom() + (releaseRect_.h > 0 ? releaseRect_.h + 8.0 : 0.0);
+    const double y = stripBottom() + (releaseRect_.h > 0 ? releaseRect_.h + 8.0 : 0.0);
     const double x = std::max(kTopIcon.inset, reservedLeft());
 
-    for (std::size_t i = 0; i < cards.size() && i < inviteToastRects_.size(); ++i) {
-        const Card& card = cards[i];
-        const Rect box{x, y, kW, kH};
-        inviteToastRects_[i] = box;
-        const bool underPanel = panelRect_.w > 0 && panelRect_.contains(mouse);
-        const bool over = box.contains(mouse) && !underPanel;
+    const Rect box{x, y, kW, kH};
+    squadInviteToastRect_ = box;
+    const bool underPanel = panelRect_.w > 0 && panelRect_.contains(mouse);
+    const bool over = box.contains(mouse) && !underPanel;
 
-        canvas.save();
-        setFill(canvas, 0x141419u, kOverlayPlateAlpha);
-        canvas.beginPath();
-        canvas.roundRect(static_cast<float>(box.x), static_cast<float>(box.y),
-                         static_cast<float>(box.w), static_cast<float>(box.h),
-                         static_cast<float>(kRadius));
-        canvas.fill();
-        setStroke(canvas, card.guild ? 0x27DADEu : 0x4FC3F7u);
-        canvas.setLineWidth(2.5f);
-        canvas.beginPath();
-        canvas.roundRect(static_cast<float>(box.x), static_cast<float>(box.y),
-                         static_cast<float>(box.w), static_cast<float>(box.h),
-                         static_cast<float>(kRadius));
-        canvas.stroke();
-        canvas.restore();
+    canvas.save();
+    setFill(canvas, 0x141419u, kOverlayPlateAlpha);
+    canvas.beginPath();
+    canvas.roundRect(static_cast<float>(box.x), static_cast<float>(box.y),
+                     static_cast<float>(box.w), static_cast<float>(box.h),
+                     static_cast<float>(kRadius));
+    canvas.fill();
+    setStroke(canvas, 0x4FC3F7u);
+    canvas.setLineWidth(2.5f);
+    canvas.beginPath();
+    canvas.roundRect(static_cast<float>(box.x), static_cast<float>(box.y),
+                     static_cast<float>(box.w), static_cast<float>(box.h),
+                     static_cast<float>(kRadius));
+    canvas.stroke();
+    canvas.restore();
 
-        const Rect closeBtn{box.right() - kClose - kPadX, box.y + kPadY, kClose, kClose};
-        const bool closeHover = over && closeBtn.contains(mouse);
-        canvas.save();
-        setFill(canvas, closeHover ? 0xE85D5Du : 0x3A3A42u);
-        canvas.beginPath();
-        canvas.roundRect(static_cast<float>(closeBtn.x), static_cast<float>(closeBtn.y),
-                         static_cast<float>(closeBtn.w), static_cast<float>(closeBtn.h), 6.0f);
-        canvas.fill();
-        canvas.restore();
-        TextStyle xMark;
-        xMark.size = 16.0;
-        xMark.fill = kPaper;
-        xMark.align = Align::Centre;
-        xMark.baseline = Baseline::Middle;
-        text(canvas, "×", closeBtn.x + closeBtn.w * 0.5, closeBtn.y + closeBtn.h * 0.5, xMark);
+    const Rect closeBtn{box.right() - kClose - kPadX, box.y + kPadY, kClose, kClose};
+    const bool closeHover = over && closeBtn.contains(mouse);
+    canvas.save();
+    setFill(canvas, closeHover ? 0xE85D5Du : 0x3A3A42u);
+    canvas.beginPath();
+    canvas.roundRect(static_cast<float>(closeBtn.x), static_cast<float>(closeBtn.y),
+                     static_cast<float>(closeBtn.w), static_cast<float>(closeBtn.h), 6.0f);
+    canvas.fill();
+    canvas.restore();
+    TextStyle xMark;
+    xMark.size = 16.0;
+    xMark.fill = kPaper;
+    xMark.align = Align::Centre;
+    xMark.baseline = Baseline::Middle;
+    text(canvas, "×", closeBtn.x + closeBtn.w * 0.5, closeBtn.y + closeBtn.h * 0.5, xMark);
 
-        const double textLeft = box.x + kPadX;
-        const double textRight = closeBtn.x - 10.0;
-        TextStyle head;
-        head.size = 16.0;
-        head.fill = kPaper;
-        head.align = Align::Left;
-        head.baseline = Baseline::Alphabetic;
-        text(canvas, card.title, textLeft, box.y + kPadY + 18.0, head);
-        TextStyle body = head;
-        body.size = 13.0;
-        body.fill = 0xCFC3B0u;
-        text(canvas, ellipsize(card.detail, body.size, textRight - textLeft), textLeft,
-             box.y + kPadY + 42.0, body);
+    const double textLeft = box.x + kPadX;
+    const double textRight = closeBtn.x - 10.0;
+    TextStyle head;
+    head.size = 16.0;
+    head.fill = kPaper;
+    head.align = Align::Left;
+    head.baseline = Baseline::Alphabetic;
+    text(canvas, title, textLeft, box.y + kPadY + 18.0, head);
+    TextStyle body = head;
+    body.size = 13.0;
+    body.fill = 0xCFC3B0u;
+    text(canvas, ellipsize(detail, body.size, textRight - textLeft), textLeft,
+         box.y + kPadY + 42.0, body);
 
-        const Rect accept{box.x + kPadX, box.bottom() - kBtnH - kPadY, kBtnW, kBtnH};
-        const Rect decline{accept.right() + kBtnGap, accept.y, kBtnW, kBtnH};
-        const bool acceptHover = over && accept.contains(mouse);
-        const bool declineHover = over && decline.contains(mouse);
-        ButtonStyle acceptStyle;
-        acceptStyle.fill = 0x6CBF5Eu;
-        acceptStyle.textSize = 14.0;
-        acceptStyle.outlineWidth = 3.0;
-        acceptStyle.radius = 6.0;
-        ButtonStyle declineStyle = acceptStyle;
-        declineStyle.fill = 0xE85D5Du;
-        button(canvas, accept, tipAccept(), acceptHover, false, acceptStyle);
-        button(canvas, decline, tipDecline(), declineHover, false, declineStyle);
+    const Rect accept{box.x + kPadX, box.bottom() - kBtnH - kPadY, kBtnW, kBtnH};
+    const Rect decline{accept.right() + kBtnGap, accept.y, kBtnW, kBtnH};
+    const bool acceptHover = over && accept.contains(mouse);
+    const bool declineHover = over && decline.contains(mouse);
+    ButtonStyle acceptStyle;
+    acceptStyle.fill = 0x6CBF5Eu;
+    acceptStyle.textSize = 14.0;
+    acceptStyle.outlineWidth = 3.0;
+    acceptStyle.radius = 6.0;
+    ButtonStyle declineStyle = acceptStyle;
+    declineStyle.fill = 0xE85D5Du;
+    button(canvas, accept, tipAccept(), acceptHover, false, acceptStyle);
+    button(canvas, decline, tipDecline(), declineHover, false, declineStyle);
 
-        if (released && !underPanel) {
-            if (closeBtn.contains(mouse)) {
-                if (card.guild) net.guildInvite().dismissed = true;
-                else net.squadInvite().dismissed = true;
-            } else if (accept.contains(mouse)) {
-                if (card.guild) {
-                    net.requestGuildAccept();
-                    net.guildInvite() = {};
-                } else {
-                    net.sendChat("/squad-accept");
-                    net.clearSquadInvite();
-                }
-            } else if (decline.contains(mouse)) {
-                if (card.guild) {
-                    net.requestGuildDecline();
-                    net.guildInvite() = {};
-                } else {
-                    net.sendChat("/squad-decline");
-                    net.clearSquadInvite();
-                }
-            }
+    if (released && !underPanel) {
+        if (closeBtn.contains(mouse)) {
+            net.squadInvite().dismissed = true;
+        } else if (accept.contains(mouse)) {
+            net.sendChat("/squad-accept");
+            net.clearSquadInvite();
+        } else if (decline.contains(mouse)) {
+            net.sendChat("/squad-decline");
+            net.clearSquadInvite();
         }
-        y += kH + kGap;
     }
 }
 
@@ -3491,6 +3471,7 @@ void MenuSystem::drawReleaseChip(Canvas& canvas, Window& window, NetClient& net)
 
 void MenuSystem::renderStripOnly(Canvas& canvas, Window& window, double timeSeconds) {
     feedbackUsername_.clear();
+    guildInvitePending_ = false;
     // The login screen has the strip and nothing else. Whatever the last
     // screen left in the panel and bar state is cleared rather than carried
     // over, or a card nobody is painting would still be swallowing clicks.
@@ -3506,7 +3487,7 @@ void MenuSystem::renderStripOnly(Canvas& canvas, Window& window, double timeSeco
     adminSlotShown_ = false;
     accountSlotShown_ = false;
     releaseRect_ = Rect{};
-    inviteToastRects_.fill(Rect{});
+    squadInviteToastRect_ = {};
     drawIconStrip(canvas, window, timeSeconds);
 }
 
@@ -3545,9 +3526,7 @@ bool MenuSystem::capturesMouse(Vec2 mouse) const {
     if(dungeonEntryRect_.w>0 && dungeonEntryRect_.contains(mouse))return true;
     if (panelRect_.w > 0 && panelRect_.contains(mouse)) return true;
     if (releaseRect_.w > 0 && releaseRect_.contains(mouse)) return true;
-    for (const Rect& toast : inviteToastRects_) {
-        if (toast.w > 0 && toast.contains(mouse)) return true;
-    }
+    if (squadInviteToastRect_.w > 0 && squadInviteToastRect_.contains(mouse)) return true;
     // The bar takes the click for owned slots (drag / column-swap) and, while
     // a preset bank is up, for the secondary tiles that load a saved loadout.
     // The trash, gaps and caption strip still fall through and fire an attack.

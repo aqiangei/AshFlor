@@ -667,8 +667,11 @@ bool GuildPanel::render(MenuContext& ctx) {
             text(canvas, ellipsize(member.name, kNameTextSize, nameWidth) + badge,
                  nameX, textY - (member.online ? kRosterLineOffset : 0.0), cardText(kNameTextSize));
             if (member.online) {
-                const std::string location = member.location.empty()
+                std::string location = member.location.empty()
                     ? (zh ? "大厅" : "Lobby") : member.location;
+                if (zh && location.rfind("Prestige ", 0) == 0) {
+                    location.replace(0, sizeof("Prestige ") - 1, "声望 ");
+                }
                 const double mapSize = kDetailTextSize * std::min(1.0,
                     labelWidth / std::max(1.0, measure(location, kDetailTextSize)));
                 textAtAlpha(canvas, location, nameX, textY + kRosterLineOffset,

@@ -187,24 +187,15 @@ Vec2 CraftingPanel::size(const Profile& profile) {
     return {slotCardWidth(tiers), slotCardHeight(SlotGrid::rows(profile, tiers), kBulkControlsHeight)};
 }
 
-void CraftingPanel::reset() {
-    bulkArmed_=false;
-    editingBlacklist_=false;
-    grid_.reset();
+void CraftingPanel::reopen() {
+    // Keep the staged stack, scroll position and any server result on the ring.
+    bulkArmed_ = false;
+    editingBlacklist_ = false;
+    grid_.endDrag();
     tooltip_.reset();
     touchInspect_.reset();
-    stagedPetal_ = kNoPetal;
-    batches_ = 0;
     heldPetal_ = kNoPetal;
     heldStep_ = 1;
-    phase_ = Phase::Idle;
-    resultPending_ = false;
-    spin_ = phaseAngle_ = shake_ = show_ = 0;
-    grow_.fill(0.0);
-    fx_.clear();
-    revealed_ = false;
-    slotKey_.fill(kNothing);
-    resultKey_ = kNothing;
 }
 
 void CraftingPanel::stage(const Profile& profile, std::uint16_t petalIndex, Rarity rarity,
@@ -238,8 +229,14 @@ void CraftingPanel::animate(double dtMs) {
 bool CraftingPanel::render(MenuContext& ctx) {
     Canvas& canvas = ctx.canvas;
     const Profile& profile = ctx.net.profile();
+    if (account_ != profile.username) {
+        *this = CraftingPanel{};
+        account_ = profile.username;
+    }
     const Vec2 mouse = ctx.mouse();
     const double nowMs = ctx.timeSeconds * 1000.0;
+    const bool inRift = ctx.net.inRiftMap();
+    if (inRift) bulkArmed_ = false;
 
     // One click of the ring hands back one batch of five, not the whole
     // staging area, so the slot badge counts down instead of vanishing.
@@ -495,7 +492,12 @@ bool CraftingPanel::render(MenuContext& ctx) {
     const std::string bulkTargetLabel=std::string(bulkChinese?"合成至：":"Craft to: ")+(bulkChinese?bulkZh[bulkTarget_]:rarityLabel(static_cast<Rarity>(bulkTarget_)));
     drawSlotButton(canvas,bulkTarget,bulkTargetLabel.c_str(),rarityColor(static_cast<Rarity>(bulkTarget_)),false,false);
     drawSlotButton(canvas,bulkNext,">",std::nullopt,bulkNext.contains(mouse),false);
-    drawSlotButton(canvas,bulkRun,bulkArmed_?(bulkChinese?"确认消耗低阶材料":"Confirm consuming lower tiers"):(bulkChinese?"一键合成全部低阶花瓣":"Craft all lower tiers"),bulkArmed_?0xCC6644u:0x5A9FDBu,bulkRun.contains(mouse),false);
+    const char* bulkRunLabel = inRift ? (bulkChinese ? "裂隙内无法合成" : "Crafting unavailable in Rift")
+        : bulkArmed_ ? (bulkChinese ? "确认消耗低阶材料" : "Confirm consuming lower tiers")
+                     : (bulkChinese ? "一键合成全部低阶花瓣" : "Craft all lower tiers");
+    const auto bulkRunTint = inRift ? std::nullopt
+        : std::optional<std::uint32_t>{bulkArmed_ ? 0xCC6644u : 0x5A9FDBu};
+    drawSlotButton(canvas, bulkRun, bulkRunLabel, bulkRunTint, !inRift && bulkRun.contains(mouse), false);
     const Rect blacklistButton{bulkPrev.x, bulkPrev.y + 36, panel.w - 24 - (editingBlacklist_ ? 100 : 0), 30};
     const Rect clearBlacklist{blacklistButton.right() + 5, blacklistButton.y, 95, 30};
     const std::string blacklistLabel = (bulkChinese ? "合成黑名单（" : "Excluded types (") +
@@ -524,6 +526,7 @@ bool CraftingPanel::render(MenuContext& ctx) {
             if (petalIndex == stagedPetal_ && rarity == stagedRarity_) {
                 cell.count = owned > held ? owned - held : 0;
             }
+            if (rarity == Rarity::PermanentHyper && cell.count < kBatch) cell.greyed = true;
             // A lone petal carries no badge; "x1" is noise on every cell of a
             // fresh account.
             if (cell.count > 1) cell.badge = "x" + stackCountText(cell.count);
@@ -544,7 +547,7 @@ bool CraftingPanel::render(MenuContext& ctx) {
     const Rect craftAllRect{craftPairX + craftW + kCraftButtonGap, card.button.y, craftAllW,
                             card.button.h};
     const bool mouseDown = ctx.window.mouseDown(MouseButton::Left);
-    const bool canCraft = phase_ == Phase::Idle && stagedPetal_ != kNoPetal && batches_ > 0;
+    const bool canCraft = !inRift && phase_ == Phase::Idle && stagedPetal_ != kNoPetal && batches_ > 0;
     const auto craftTint =
         canCraft ? std::optional<std::uint32_t>(rarityColor(upgradeRarity(stagedRarity_)))
                  : std::nullopt;
@@ -620,7 +623,7 @@ bool CraftingPanel::render(MenuContext& ctx) {
     }
 
     const auto beginCraft = [&]() {
-        if (phase_ != Phase::Idle || stagedPetal_ == kNoPetal || batches_ <= 0) return;
+        if (!canCraft) return;
         heldPetal_ = kNoPetal;
         phase_ = Phase::Spinning;
         phaseStarted_ = ctx.timeSeconds;
@@ -702,7 +705,8 @@ bool CraftingPanel::render(MenuContext& ctx) {
         bulkArmed_ = false;
         return true;
     }
-    if(phase_==Phase::Idle && bulkRun.contains(mouse)) {
+    if (phase_ == Phase::Idle && bulkRun.contains(mouse)) {
+        if (inRift) return true;
         if(!bulkArmed_){bulkArmed_=true;return true;}
         std::vector<std::uint16_t> excluded;
         for (std::uint16_t i = 0; i < content().petalCount(); ++i) if (isExcluded(i)) excluded.push_back(i);

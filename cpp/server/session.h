@@ -166,6 +166,7 @@ struct Session {
     double councilSampleAt = 0;
     double nextTitanQueryMillis = 0;
     double nextBulkCraftMillis = 0;
+    double nextSummonManaWarningMillis = 0;
     double nextTitanForgeAllMillis = 0;
 
     /// The revision of the last Profile or ProfileDelta sent on this

@@ -96,3 +96,80 @@ TEST(magic_eye_replaces_both_eyes_and_keeps_the_third_eye_independent) {
     CHECK(changes(third, both, 78, 83, 57, 68) == 0);
     CHECK(changes(render(EquipMagicEye), both, 78, 83, 57, 68) > 0);
 }
+
+TEST(a_mecha_wasp_only_draws_the_missile_while_loaded) {
+    const auto& content = testsupport::shippedContent();
+    SpriteCache sprites;
+    CHECK(sprites.build(content, testsupport::dataDir()));
+    const auto index = content.mobIndex("mecha_wasp");
+    if (index == kInvalidIndex) { CHECK(false); return; }
+    const auto draw = [&](bool loaded, double angle) {
+        WorldRenderer renderer;
+        renderer.setContent(&content);
+        renderer.setSprites(&sprites);
+        WorldView view;
+        view.setRealm(Realm::Overworld);
+        RemoteEntity wasp;
+        wasp.netId = 211;
+        wasp.kind = net::EntityKind::Mob;
+        wasp.typeIndex = index;
+        wasp.radius = 48.0;
+        wasp.angle = angle;
+        wasp.state = loaded ? 0 : net::StateUnloaded;
+        wasp.needsSnap = false;
+        view.seedForTest(wasp);
+        Canvas canvas = Canvas::createVirtual(240, 240);
+        renderer.draw(canvas, view, testsupport::frameCamera(240, {}), {}, 0.0);
+        return canvas.getImageData(0, 0, 240, 240);
+    };
+    const auto redPixels = [](const auto& image) {
+        int count = 0;
+        for (std::size_t i = 0; i + 3 < image.size(); i += 4) {
+            if (image[i] > 145 && image[i + 1] < 80 && image[i + 2] < 80) ++count;
+        }
+        return count;
+    };
+    for (double angle : {0.0, kPi}) {
+        CHECK_EQ(redPixels(draw(false, angle)), 0);
+        CHECK(redPixels(draw(true, angle)) > 5);
+    }
+}
+
+TEST(player_name_and_health_bar_paint_above_oversized_custom_skin) {
+    CHECK(testsupport::fontsReady());
+    SkinShape shape;
+    shape.t = SkinShapeType::Circle;
+    shape.r = 64;
+    shape.fill = "#e011cc";
+    CustomSkin skin;
+    skin.id = "plate-over-skin";
+    skin.shapes.push_back(shape);
+    const std::vector<CustomSkin> catalog{skin};
+
+    WorldView view;
+    view.setRealm(Realm::Overworld);
+    RemoteEntity flower;
+    flower.netId = 11;
+    flower.kind = net::EntityKind::Player;
+    flower.radius = playerRadiusForLevel(1);
+    flower.name = "Large skin";
+    flower.level = 1;
+    flower.needsSnap = false;
+    flower.equippedSkinId = skin.id;
+    flower.healthFraction = 1;
+    flower.healthBar.health = 1;
+    view.seedForTest(flower);
+
+    WorldRenderer renderer;
+    renderer.setSkinCatalog(&catalog);
+    const auto render = [&](bool names, bool bars) {
+        renderer.options.names = names;
+        renderer.options.healthBars = bars;
+        Canvas canvas = Canvas::createVirtual(180, 180);
+        renderer.draw(canvas, view, testsupport::frameCamera(180, {}), {}, 0.0);
+        return canvas.getImageData(55, 120, 70, 28);
+    };
+    const auto skinOnly = render(false, false);
+    CHECK(testsupport::differingPixels(skinOnly, render(true, false)) > 25);
+    CHECK(testsupport::differingPixels(skinOnly, render(false, true)) > 100);
+}

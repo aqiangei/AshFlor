@@ -235,6 +235,10 @@ public:
     void run(World& world, const SpatialGrid& grid, const ContentRegistry& content, Rng& rng,
              double nowMillis, double dt, CommandBuffer& commands, EventQueue& events);
 
+    /// Collects still-live personal mob drops in the player's current realm.
+    void collectReservedDrops(World& world, Entity player, net::ConnectionId owner,
+                              CommandBuffer& commands, EventQueue& events);
+
     /// Called after the tick's pickup and expiry commands have drained, before
     /// replication can expose the ground. Returns the number of retired stacks.
     std::size_t pruneGroundDrops(World& world);

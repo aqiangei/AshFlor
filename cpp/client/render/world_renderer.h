@@ -746,6 +746,7 @@ private:
     /// the browser build every bar is drawn after every body, so a mob drawn
     /// later can never cover an earlier one's name.
     mutable std::vector<MobDraw> mobLabels_;
+    mutable std::vector<const RemoteEntity*> playerPlates_;
 
     /// Advanced by update(), so the parts of the draw and ingest paths that
     /// need a clock (the invulnerability fade, the damage-number throttle) do

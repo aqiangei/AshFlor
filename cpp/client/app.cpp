@@ -1270,6 +1270,12 @@ void App::updateTextSelection(Canvas& canvas) {
     }
 
     const ui::FocusedField field = selectable.focusedField();
+    if (field.valid() && !field.state->selection.empty()) {
+        window_.publishClipboardSelection(field.options.copyable
+            ? field.state->selection.of(*field.value) : std::string{});
+    } else {
+        window_.publishClipboardSelection(selectable.hasSelection() ? selectable.selectedText() : std::string{});
+    }
     const bool overField = field.valid() && field.box.w > 0 && field.box.contains(mouse);
 
     // Ctrl/Cmd+C over a page selection. A focused field has already had its

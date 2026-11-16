@@ -749,6 +749,11 @@ void NetClient::requestLeaderboard(bool includeAdmins, std::uint32_t hyperOffset
     send(w);
 }
 
+bool NetClient::inRiftMap() const {
+    const auto* map = worldMaps_ && status_ == Status::Playing ? worldMaps_->forRealm(view_.realm()) : nullptr;
+    return map && map->id().rfind("rift_", 0) == 0;
+}
+
 void NetClient::requestNotifications(int limit, double beforeMillis) {
     notificationsPending_ = true;
     notificationsPaging_ = beforeMillis > 0;

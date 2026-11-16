@@ -276,6 +276,11 @@ void App::updateLobby() {
     // Exactly one thing owns the keyboard at a time. A panel's own search box
     // outranks the chat line, which outranks the name field, which outranks
     // the menu hotkeys -- otherwise typing a name opens half the menus.
+    if (!menus_.wantsText() && pressedChatBox()) {
+        nameField_.blur();
+        chatOpen_ = true;
+        chatField_.focusAtEnd(chatDraft_, timeSeconds_);
+    }
     if (menus_.wantsText()) {
         // A panel is taking the keystrokes; nothing here may also read them.
     } else if (chatOpen_) {
@@ -296,7 +301,7 @@ void App::updateLobby() {
             nameField_.blur();
         }
     } else if (!menus_.handleKeys(window_)) {
-        if (window_.keyPressed(Key::Enter) || pressedChatBox()) chatOpen_ = true;
+        if (window_.keyPressed(Key::Enter)) chatOpen_ = true;
     }
     if (!layout.pickerView.contains(mouse)) scrollChat();
     const auto pickerHit = [&](const Rect& r) {

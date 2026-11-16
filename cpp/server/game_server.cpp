@@ -813,6 +813,26 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
         const auto* before = world_.tryGet<Transform>(entity);
         const Realm from = before ? before->realm : realm;
         const bool movingWaveMember = world_.has<WavePlayer>(entity);
+        if (movingWaveMember) {
+            const auto* destination = worldMaps_.forRealm(realm);
+            const auto* session = sessionForEntity(entity);
+            if (destination && destination->prestige() && session && session->authenticated()) {
+                const int unlocked = database_.progress(session->userId).skills.level(SkillId::Prestige) + 1;
+                if (unlocked < destination->prestigeLevel()) {
+                    // The stored return point pre-dates any talent refund in
+                    // Wave. Use the same map on a tier the player still owns.
+                    bool found = false;
+                    const Realm plain = worldMaps_.realmOfId(destination->templateId(), found);
+                    if (found) {
+                        realm = unlocked > 0 ? worldMaps_.prestigeRealm(plain, found, unlocked) : plain;
+                    } else {
+                        realm = Realm::Overworld;
+                        if (const auto* home = worldMaps_.forRealm(realm))
+                            position = home->defaultSpawn(rng_, *terrain_);
+                    }
+                }
+            }
+        }
         moveEntityToRealm(entity, realm, position);
         const auto* after = world_.tryGet<Transform>(entity);
         if (movingWaveMember && after && after->realm != from) {
@@ -874,6 +894,14 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
 
     // A revived flower has to be un-announced to its own client, and only the
     // connection layer can do that.
+    petals_->onTimedSummonManaShortage = [this](Entity player) {
+        Session* session = sessionForEntity(player);
+        if (!session || wallClockMillis_ < session->nextSummonManaWarningMillis) return;
+        if (auto* connection = listener_.find(session->connection)) {
+            session->nextSummonManaWarningMillis = wallClockMillis_ + 12000;
+            sendSystem(*connection, "Not enough mana to summon.");
+        }
+    };
     petals_->onPlayerRevived = [this](Entity revived, Entity reviver) {
         onPlayerRevived(revived, reviver);
     };
@@ -2322,8 +2350,10 @@ void GameServer::announceMob(std::uint16_t mobIndex, Rarity rarity,
     }
 }
 
-void GameServer::bankPickups() {
-    for (const LootSystem::Pickup& pickup : loot_->pickups()) {
+void GameServer::bankPickups(std::size_t first) {
+    const auto& pickups = loot_->pickups();
+    for (std::size_t i = first; i < pickups.size(); ++i) {
+        const auto& pickup = pickups[i];
         Session* session = sessionForEntity(pickup.player);
         if (!session || session->userId.empty()) continue;
         if (pickup.petalIndex >= content().petalCount()) continue;
@@ -2348,6 +2378,13 @@ void GameServer::bankPickups() {
         session->profileDue = true;
         if (!session->inRift) announceRarePickup(*session, pickup.petalIndex, pickup.rarity);
     }
+}
+
+void GameServer::collectLeavingLoot(Session& session) {
+    if (!session.playing() || session.userId.empty() || session.arena || session.inRift) return;
+    const auto first = loot_->pickups().size();
+    loot_->collectReservedDrops(world_, session.entity, session.connection, commands_, events_);
+    bankPickups(first);
 }
 
 void GameServer::reapDead() {
@@ -2409,6 +2446,7 @@ void GameServer::reapDead() {
 
         if (isPlayer) {
             if (session != nullptr) {
+                collectLeavingLoot(*session);
                 session->deathReported = true;
                 const Entity killer = CombatSystem::creditedPlayer(world_, world_.get<Dead>(e).killer);
                 const auto fromHyperCorruption = [&](Entity player) {
@@ -3870,18 +3908,19 @@ void GameServer::sendDropBonus(Session& session, net::Connection& connection) {
     if(rotation>=0 && (!record.extra["lockedShopOffers"].isArray() || record.extra["lockedShopOffersRotation"].asDouble(-1)!=rotation)) {
         captureShopLock(record,rotation);database_.markDirty();
     }
+    if(saveMissingLockedEternals(record))database_.markDirty();
     const auto& b=record.extra["dailyDropBonus"];
-    const bool claimed=static_cast<std::int64_t>(b["day"].asDouble(-1))>=dropBonusDay(now);
+    const bool claimed = dropBonusClaimedToday(b, now);
     ByteWriter w;w.u8(static_cast<std::uint8_t>(net::ServerMessage::DailyDropBonusState));
     const auto remaining = dropBonusRemaining(record, now);
-    const bool paused = b["pausedMillis"].asDouble() > 0.0;
+    const bool paused = remaining > 0.0 && b["pausedMillis"].asDouble() > 0.0;
     w.u32(dropBonusStreak(record,now));
     w.u8(remaining > 0.0 ? clamp(b["multiplier"].asInt(1), 1, 3) : 1);
     w.u32(static_cast<std::uint32_t>(remaining));
     w.boolean(paused);
     w.u8(static_cast<std::uint8_t>(session.playing() ? simulationPacing_.ticksPerSecond() :
                                                        net::kTicksPerSecond));
-    w.u32(claimed?static_cast<std::uint32_t>((dropBonusDay(now)+1)*86400000-8LL*3600000-now):0);
+    w.u32(claimed?static_cast<std::uint32_t>(dropBonusResetAt(now) - now):0);
     w.i64(static_cast<std::int64_t>(record.extra["lockedShopRotation"].asDouble(-1)));
     const auto writeOffers = [&](const std::vector<ShopOffer>& offers) {
         w.u8(static_cast<std::uint8_t>(offers.size()));
@@ -3892,7 +3931,7 @@ void GameServer::sendDropBonus(Session& session, net::Connection& connection) {
         }
     };
     const auto current = shopRotation(shopClockNow());
-    writeOffers(lockedShopOffers(record, current));
+    writeOffers(lockedShopOffers(record));
     w.i64(current); writeOffers(shopOffers(current));
     connection.send(w);
 }
@@ -4223,7 +4262,8 @@ bool mentionsRaidTier(const std::string& text) {
 void GameServer::handleChat(Session& session, net::Connection& connection, ByteReader& reader) {
     const std::string raw = reader.str();
     if (!reader.ok() || !session.authenticated()) return;
-    const std::string text = sanitizeChat(raw);
+    const auto privateLine = normalizedWhisper(raw);
+    const std::string text = sanitizeChat(privateLine.empty() ? raw : privateLine);
     if (text.empty()) return;
 
     // A leading slash is a command, and a command is answered rather than
@@ -4726,7 +4766,7 @@ void GameServer::handleCraft(Session& session, net::Connection& connection, Byte
     database_.markDirty();
 
     const Rarity made = upgradeRarity(rarity);
-    if (upgrades > 0 && (!quiet || made == Rarity::Super))
+    if (upgrades > 0 && !quiet)
         announceRareCraft(session, petalIndex, made, upgrades, count - petalsReturned);
 
     w.boolean(upgrades > 0);
@@ -4742,6 +4782,10 @@ void GameServer::handleCraft(Session& session, net::Connection& connection, Byte
 }
 
 void GameServer::handleBulkCraft(Session& session, net::Connection& connection, ByteReader& reader) {
+    if (session.inRift) {
+        sendNotice(connection, net::NoticeSeverity::Warning, "裂隙对局中无法一键合成。");
+        return;
+    }
     const unsigned target=reader.u8();
     const unsigned count = reader.u16();
     if (!reader.ok() || count > content().petalCount()) return;
@@ -5699,7 +5743,8 @@ void GameServer::announceRareCraft(const Session& session, std::uint16_t petalIn
     // universal is never crafted -- it is forged at a titan, one at a time --
     // and says so.
     const bool forged = titanForge || made == Rarity::Universal;
-    if (made != Rarity::Super && made != Rarity::Unique && made != Rarity::Apex && made != Rarity::Ascendant && !forged) return;
+    if (made == Rarity::Super) return;
+    if (made != Rarity::Unique && made != Rarity::Apex && made != Rarity::Ascendant && !forged) return;
     if (petalIndex >= content().petalCount()) return;
 
     // In the tier's own colour, the one every other surface draws it in.
@@ -5726,17 +5771,9 @@ void GameServer::announceRareCraft(const Session& session, std::uint16_t petalIn
         (consumed ? ", consumed x" + std::to_string(consumed) : "") + ")";
     const std::string plain = article + " " + tier + " " + petal + verb + "@" +
                               session.username + " [" + playerName + "]" + details;
-    const bool privateCraft = made == Rarity::Super;
     const std::string marked = std::string("<b style=\"color: ") + tierColor + ";\">" +
-        article + " " + tier + " " + petal + verb + "<b style=\"color: " +
-        (privateCraft ? "yellow" : "#00ff00") + ";\">@" + session.username +
-        "</b> [<b style=\"color: " + (privateCraft ? "#00ff00" : "yellow") +
-        ";\">" + playerName + "</b>]</b>" + details;
-    if (privateCraft) {
-        if (auto* recipient = listener_.find(session.connection))
-            sendChatTo(*recipient, net::ChatChannel::System, "", marked);
-        return;
-    }
+        article + " " + tier + " " + petal + verb + "<b style=\"color: #00ff00;\">@" +
+        session.username + "</b> [<b style=\"color: yellow;\">" + playerName + "</b>]</b>" + details;
     if (broadcast && made != Rarity::Unique)
         broadcastChat(net::ChatChannel::System, "", marked);
 
@@ -6100,7 +6137,7 @@ void GameServer::handleBuyPetal(Session& session, net::Connection& connection, B
     }
     if (offerSlot != net::kNoShopOffer) {
         const auto locked=static_cast<std::int64_t>(record.extra["lockedShopRotation"].asDouble(-1));
-        const std::vector<ShopOffer> offers = (locked>=0?lockedShopOffers(record, purchaseRotation):shopOffers(purchaseRotation));
+        const std::vector<ShopOffer> offers = (locked>=0?lockedShopOffers(record):shopOffers(purchaseRotation));
         const auto slot = static_cast<std::size_t>(offerSlot);
         if (slot >= offers.size() || offers[slot].petalIndex != petalIndex ||
             offers[slot].rarity != rarity) {
@@ -7224,13 +7261,13 @@ void GameServer::handleNotifications(net::Connection& connection, ByteReader& re
               [](const Row& a, const Row& b) { return a.stamp > b.stamp; });
 
     const std::size_t want = std::min<std::size_t>(limit == 0 ? 50 : limit, 200);
-    const std::size_t shown = std::min(want, rows.size());
+    std::size_t shown = std::min(want, rows.size());
+    // The cursor is a timestamp, so a page must keep tied rows together.
+    while (shown > 0 && shown < rows.size() && rows[shown].stamp == rows[shown - 1].stamp) ++shown;
 
     ByteWriter w;
     w.u8(static_cast<std::uint8_t>(net::ServerMessage::Notifications));
-    // "More" is a full page, not a count of what is left: the browser reads
-    // `batch.length === limit` and so pages one request past the end.
-    w.boolean(shown == want);
+    w.boolean(shown < rows.size());
     w.u16(static_cast<std::uint16_t>(shown));
     for (std::size_t i = 0; i < shown; ++i) {
         const Json& entry = *rows[i].entry;
@@ -9245,6 +9282,7 @@ void GameServer::persistPlayer(const Session& session) {
 
 void GameServer::despawnPlayer(Session& session, bool persist) {
     if (session.entity == NULL_ENTITY) return;
+    if (!session.deathReported) collectLeavingLoot(session);
     // Control needs a flower at both ends, so the body going is the end of
     // any this session is part of: whoever was steering it is put back on
     // their own flower and told why, and a flower this one was steering is
@@ -9448,7 +9486,10 @@ std::string GameServer::biomeOfRealm(Realm realm) const {
 std::string GameServer::biomeLabel(const std::string& biome) const {
     if (biome.empty()) return biome;
     const std::string plain = stripPrestigePrefix(biome);
-    if (plain != biome) return std::string(kPrestigeLabel) + " " + biomeLabel(plain);
+    if (plain != biome) {
+        const bool second = biome.rfind(kPrestigeTwoMapPrefix, 0) == 0;
+        return std::string(kPrestigeLabel) + (second ? " II " : " I ") + biomeLabel(plain);
+    }
     for (const SpawnChoice& choice : worldMaps_.spawnChoices()) {
         if (biomeOfRealm(choice.realm) == biome) return choice.label;
     }

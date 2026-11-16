@@ -16,7 +16,7 @@ TEST(hyper_drop_payout_preserves_rolled_rarity_instead_of_promoting_super_to_ete
 namespace {
 const ContentRegistry& registry(){static ContentRegistry c;static bool loaded=false;if(!loaded){std::string e;CHECK(c.loadFiles(testsupport::dataFile("mobs.json"),testsupport::dataFile("petals.json"),e));loaded=true;}return c;}
 using Counts=std::map<std::pair<std::string,int>,int>;
-Counts kills(const char* id,Rarity rarity,int count,bool orb=false,int bonus=1,int* maxEternal=nullptr,bool splitAccount=false){
+Counts kills(const char* id,Rarity rarity,int count,bool orb=false,int bonus=1,int* maxEternal=nullptr,bool splitAccount=false,double damage=100.0){
     const auto& c=registry();World w;CommandBuffer commands{w};EventQueue events;SpatialGrid grid;Rng rng{81927};LootSystem loot;loot.bonusMultiplier=[bonus](Entity){return bonus;};
     const Entity p=w.create();w.add<PlayerTag>(p);w.add<Transform>(p,Transform{{10000,10000},0});w.add<Body>(p,Body{25,1});w.add<Health>(p,Health{100,100,0,0});
     w.add<PlayerAccount>(p,PlayerAccount{"audit-user","audit",77,false});
@@ -24,7 +24,7 @@ Counts kills(const char* id,Rarity rarity,int count,bool orb=false,int bonus=1,i
     if(splitAccount){sibling=w.create();w.add<PlayerTag>(sibling);w.add<PlayerAccount>(sibling,PlayerAccount{"audit-user","audit",77,false});w.add<Transform>(sibling,Transform{{10000,10000},0});w.add<Health>(sibling,Health{100,100,0,0});}
     int previousEternal=0;
     if(orb){w.add<Loadout>(p);auto& s=w.get<Loadout>(p).slots[0];s.configIndex=c.petalIndex("mana_orb");s.rarity=Rarity::Mythic;}
-    for(int i=0;i<count;++i){const Entity corpse=w.create();w.add<MobTag>(corpse);w.add<MobType>(corpse,MobType{c.mobIndex(id),rarity,1});w.add<Transform>(corpse,Transform{{1000,1000},0});w.add<Health>(corpse,Health{0,100,0,0});Bounty b;b.credit(p,100,77);if(splitAccount)b.credit(sibling,100,77);w.add<Bounty>(corpse,b);w.add<Dead>(corpse,Dead{p});loot.run(w,grid,c,rng,i,0,commands,events);commands.flush();w.destroy(corpse);
+    for(int i=0;i<count;++i){const Entity corpse=w.create();w.add<MobTag>(corpse);w.add<MobType>(corpse,MobType{c.mobIndex(id),rarity,1});w.add<Transform>(corpse,Transform{{1000,1000},0});w.add<Health>(corpse,Health{0,100,0,0});Bounty b;b.credit(p,damage,77);if(splitAccount)b.credit(sibling,damage,77);w.add<Bounty>(corpse,b);w.add<Dead>(corpse,Dead{p});loot.run(w,grid,c,rng,i,0,commands,events);commands.flush();w.destroy(corpse);
         if(maxEternal){int now=0;Query<DropTag,DropItem> q{w};q.each([&](Entity,DropTag&,DropItem& d){if(d.rarity==Rarity::Unique&&LootSystem::mayPickUp(d,p,77))now+=static_cast<int>(d.quantity);});*maxEternal=std::max(*maxEternal,now-previousEternal);previousEternal=now;}
     }
     Counts out;Query<DropTag,DropItem> drops{w};drops.each([&](Entity,DropTag&,DropItem& d){out[{c.petal(d.configIndex).id,rarityIndex(d.rarity)}]+=static_cast<int>(d.quantity);});return out;
@@ -41,6 +41,26 @@ TEST(apex_reward_roll_is_personal_and_independent_of_drop_bonus) {
         }
         CHECK_NEAR(static_cast<double>(apex) / trials, 0.02, 0.012);
     }
+}
+
+TEST(hyper_personal_permanent_drop_matches_the_apex_rate_and_damage_floor) {
+    constexpr int trials = 1500;
+    const auto countPermanent = [](const Counts& drops) {
+        int total = 0;
+        for (const auto& [key, count] : drops) {
+            if (key.second != rarityIndex(Rarity::PermanentHyper)) continue;
+            CHECK(key.first == "rose" || key.first == "light");
+            total += count;
+        }
+        return total;
+    };
+    for (const int bonus : {1, 3}) {
+        const auto drops = kills("ladybug", Rarity::Apex, trials, false, bonus, nullptr, true);
+        CHECK_NEAR(static_cast<double>(countPermanent(drops)) / trials, kApexPetalDropChance, 0.011);
+    }
+    CHECK_EQ(countPermanent(kills("ladybug", Rarity::Apex, trials, false, 3, nullptr, false, 0.9)), 0);
+    const auto atFloor = kills("ladybug", Rarity::Apex, trials, false, 1, nullptr, false, 1.0);
+    CHECK_NEAR(static_cast<double>(countPermanent(atFloor)) / trials, kApexPetalDropChance, 0.011);
 }
 
 TEST(apex_uses_the_mobs_normal_petal_table) {
@@ -405,5 +425,30 @@ TEST(hyper_eternal_allocations_do_not_exceed_super_chances) {
     for(const char* id:{"battery","cogwheel","fragment","mimic"}){
         auto number=[&](Rarity rarity){auto i=result.find({id,rarityIndex(rarity)});return i==result.end()?0:i->second;};
         CHECK(number(Rarity::Super)>number(Rarity::Unique));
+    }
+}
+
+TEST(ordinary_and_void_ghosts_drop_splitter_with_the_existing_high_tier_rates) {
+    const auto& c = registry();
+    DropTables tables;
+    std::string error;
+    CHECK(tables.load(c, testsupport::dataFile("mob_drops.json"), error));
+    const auto splitter = c.petalIndex("splitter");
+    for (const char* id : {"ghost", "void_ghost"}) {
+        const auto& rows = tables.guaranteedForMob(c.mobIndex(id));
+        const auto row = std::find_if(rows.begin(), rows.end(), [&](const auto& entry) {
+            return entry.petalIndex == splitter;
+        });
+        CHECK(row != rows.end());
+        if (row == rows.end()) continue;
+        CHECK(ratesFor(row->rates, Rarity::Mythic).empty());
+        for (const auto tier : {Rarity::Ultra, Rarity::Super, Rarity::Unique}) {
+            const auto& rates = ratesFor(row->rates, tier);
+            CHECK_EQ(rates.size(), std::size_t(1));
+            if (rates.empty()) continue;
+            CHECK_EQ(rarityIndex(rates[0].rarity), rarityIndex(tier));
+            CHECK_NEAR(rates[0].probability, 0.0017083156, 1e-12);
+        }
+        CHECK(total(kills(id, Rarity::Super, 600), "splitter") > 0);
     }
 }

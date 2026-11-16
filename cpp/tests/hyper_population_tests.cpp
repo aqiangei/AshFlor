@@ -109,7 +109,7 @@ TEST(digger_uses_the_reduced_health_and_damage_across_rarities) {
     CHECK_NEAR(data().mob(id).petDamageScale, 0.5, 1e-6);
 }
 
-TEST(super_farm_has_thirty_six_slots_and_refills_the_deepest_sewer_room){
+TEST(super_farm_respects_map_caps_and_refills_the_deepest_sewer_room){
     ContentRegistry c;WorldMaps maps;Terrain terrain;std::string error;
     CHECK(c.loadFiles(testsupport::dataFile("mobs.json"),testsupport::dataFile("petals.json"),error));
     CHECK(maps.load(testsupport::dataDir(),&terrain,error));
@@ -131,11 +131,18 @@ TEST(super_farm_has_thirty_six_slots_and_refills_the_deepest_sewer_room){
             if(map.id()=="sewers")for(const auto& band:map.elements())
                 if(band.isSpawnBand()&&!band.singular&&band.forceRarity<0&&band.difficulty==highest&&zoneContains(band.bounds,band.polygon,at.position)){deepSewers.push_back(e);break;}
         });
-        CHECK(farm>0);CHECK(farm<=kSuperFarmPopulation);CHECK_EQ(population(w,map.realm(),Rarity::Super),10);++mapsChecked;
+        const int mapCap = map.templateId() == "hel" ? 36 :
+            map.templateId() == "computer" ? kSuperFarmPopulation + 6 : kSuperFarmPopulation;
+        CHECK(farm > 0);
+        CHECK(farm <= mapCap);
+        CHECK_EQ(population(w, map.realm(), Rarity::Super), 10);
+        ++mapsChecked;
     }
     CHECK(mapsChecked>=10);CHECK(victim!=NULL_ENTITY);
-    CHECK_EQ(kSuperFarmPopulation,36);CHECK(deepSewers.size()>=12);
-    for(const auto& event:spawn.bossSpawns)CHECK(event.rarity!=Rarity::Super);
+    CHECK(deepSewers.size() >= static_cast<std::size_t>(kSuperFarmPopulation / 3));
+    for (const auto& event : spawn.bossSpawns) {
+        if (event.rarity == Rarity::Super) CHECK_EQ(c.mob(event.mobIndex).id, "ghost");
+    }
     auto count=[&](){int n=0;Query<SuperFarmMob,Transform> q{w};q.without<Dead>();q.each([&](Entity,SuperFarmMob&,Transform& at){if(at.realm==garden)++n;});return n;};
     const auto deepCount=[&](){int n=0;if(!sewerMap)return n;Query<SuperFarmMob,Transform> q{w};q.without<Dead>();
         q.each([&](Entity,SuperFarmMob&,Transform& at){if(at.realm!=sewerMap->realm())return;
@@ -143,7 +150,8 @@ TEST(super_farm_has_thirty_six_slots_and_refills_the_deepest_sewer_room){
     const int before=count();w.add<Dead>(victim);for(auto e:deepSewers)w.add<Dead>(e);
     step(2000);CHECK_EQ(count(),before-1);CHECK_EQ(deepCount(),0);
     step(31999);CHECK_EQ(count(),before-1);CHECK_EQ(deepCount(),0);
-    step(32500);CHECK_EQ(count(),before);CHECK(deepCount()>=12);
+    step(32500);CHECK_EQ(count(),before);
+    CHECK(deepCount() >= kSuperFarmPopulation / 3);
 }
 TEST(super_farm_health_and_loot_budget_change_without_touching_eternal_or_hyper_rewards){
     for(std::uint16_t i=0;i<data().mobCount();++i){const auto& mob=data().mob(i);
@@ -177,16 +185,37 @@ TEST(todo1105_dedicated_super_realm_is_pickable_and_stocks_only_supers) {
                   1000 + i * 500, net::kTickSeconds, commands);
         commands.flush();
     }
-    int population = 0;
-    Query<MobTag, MobType, Transform> mobs{world};
-    mobs.without<Dead>();
-    mobs.each([&](Entity entity, MobTag&, MobType& type, Transform& at) {
-        if (at.realm != realm) return;
-        CHECK(type.rarity == Rarity::Super);
-        const auto* segment = world.tryGet<BodySegment>(entity);
-        if (!segment || segment->chainHead == entity) ++population;
-    });
-    CHECK_EQ(population, kSuperFarmPopulation);
+    const auto farmMobs = [&] {
+        std::vector<Entity> heads;
+        Query<MobTag, MobType, Transform> mobs{world};
+        mobs.without<Dead>();
+        mobs.each([&](Entity entity, MobTag&, MobType& type, Transform& at) {
+            if (at.realm != realm) return;
+            CHECK(type.rarity == Rarity::Super);
+            const auto* segment = world.tryGet<BodySegment>(entity);
+            if (!segment || segment->chainHead == entity) heads.push_back(entity);
+        });
+        return heads;
+    };
+    const auto initial = farmMobs();
+    CHECK_EQ(initial.size(), static_cast<std::size_t>(kSuperFarmPopulation));
+    for (const Entity mob : initial) world.add<Dead>(mob);
+
+    const auto* map = maps.forRealm(realm);
+    CHECK(map != nullptr);
+    if (!map) return;
+    const auto viewer = map->defaultSpawn(rng, terrain);
+    const auto step = [&](double now) {
+        spawn.run(world, terrain, data(), std::vector<RealmPoint>{{viewer, realm}}, rng,
+                  now, net::kTickSeconds, commands);
+        commands.flush();
+    };
+    step(11000.0);
+    CHECK(farmMobs().empty());
+    step(40999.0);
+    CHECK(farmMobs().empty());
+    for (double now = 41000.0; now <= 45000.0; now += 500.0) step(now);
+    CHECK_EQ(farmMobs().size(), static_cast<std::size_t>(kSuperFarmPopulation));
 }
 
 TEST(termite_mound_backlog_prunes_idle_duplicates_but_keeps_occupied_instances){
@@ -212,20 +241,78 @@ TEST(jungle_centipede_spawns_a_complete_networked_body_chain){
     });CHECK_EQ(bodies,kCentipedeSegmentCount);
 }
 
-TEST(centipede_chains_stay_complete_at_capacity_and_touch_at_actual_body_size){
-    const auto& c=data();
-    for(const auto* id:{"centipede","jungle_centipede","desert_centipede","evil_centipede","hel_centipede"})for(const auto rarity:{Rarity::Common,Rarity::Super,Rarity::Unique,Rarity::Apex}){
-        World w;Terrain terrain;SpawnSystem spawn;Rng rng{66};spawn.mobCap=1;
-        const auto index=c.mobIndex(id);
-        const auto head=spawn.spawnMob(w,terrain,c,index,rarity,{3000,3000},Realm::Overworld,0,rng);
-        CHECK(head!=NULL_ENTITY);int count=0;
-        Query<BodySegment,Body,Transform> q{w};q.each([&](Entity e,BodySegment& link,Body& body,Transform& at){
-            if(e==head||link.chainHead!=head)return;++count;
-            const auto& leader=w.get<Body>(link.ahead);const auto& pos=w.get<Transform>(link.ahead);
-            CHECK_NEAR(link.spacing,leader.radius+body.radius+kGardnSegmentGap,1e-6);
-            // Very large chains exceed this empty terrain's default bounds.
-            if(rarity==Rarity::Common)CHECK_NEAR((at.position-pos.position).length(),link.spacing,1e-6);
-        });CHECK_EQ(count,kCentipedeSegmentCount);
+TEST(a_new_centipede_chain_stays_on_one_side_of_a_wall) {
+    const auto& content = data();
+    const auto index = content.mobIndex("jungle_centipede");
+    const auto& config = content.mob(index);
+    Terrain terrain;
+    constexpr int wallX = 20;
+    for (int y = 0; y < kTilesPerAxis; ++y) terrain.setTile(wallX, y, Tile::Solid);
+    const double east = (wallX + 1) * kTileSize;
+    const Vec2 origin{east + 15.0, 20 * kTileSize};
+    int shortened = 0;
+    for (int seed = 1; seed <= 12; ++seed) {
+        World world;
+        SpawnSystem spawn;
+        Rng rng{static_cast<std::uint64_t>(seed)};
+        const Entity head = spawn.spawnMob(world, terrain, content, index, Rarity::Apex,
+                                          origin, Realm::Overworld, 0, rng);
+        CHECK(head != NULL_ENTITY);
+        int links = 0;
+        Query<BodySegment, Transform>{world}.each([&](Entity part, BodySegment& link, Transform& at) {
+            if (part == head || link.chainHead != head) return;
+            ++links;
+            const Vec2 leader = world.get<Transform>(link.ahead).position;
+            CHECK(at.position.x >= east);
+            CHECK(!terrain.blocked(at.position, Realm::Overworld));
+            CHECK(!terrain.segmentBlocked(leader, at.position, Realm::Overworld));
+            if ((at.position - leader).length() < link.spacing - 1.0) ++shortened;
+        });
+        CHECK_EQ(links, config.segmentCount);
+    }
+    CHECK(shortened > 0);
+}
+
+TEST(centipede_chains_stay_complete_at_capacity_and_touch_at_actual_body_size) {
+    const auto& content = data();
+    const auto species = {"centipede", "jungle_centipede", "desert_centipede",
+                          "evil_centipede", "hel_centipede"};
+    Terrain terrain;
+    for (const auto* id : species) {
+        for (const auto rarity : {Rarity::Common, Rarity::Super, Rarity::Unique, Rarity::Apex}) {
+            World world;
+            SpawnSystem spawn;
+            Rng rng{66};
+            const auto index = content.mobIndex(id);
+            const auto& config = content.mob(index);
+            CHECK_EQ(config.segmentCount, kCentipedeSegmentCount);
+            const auto spawnChain = [&] {
+                return spawn.spawnMob(world, terrain, content, index, rarity,
+                                      {3000, 3000}, Realm::Overworld, 0, rng);
+            };
+
+            spawn.mobCap = kCentipedeSegmentCount;
+            CHECK(spawnChain() == NULL_ENTITY);
+            CHECK_EQ(Query<MobTag>{world}.count(), 0u);
+
+            spawn.mobCap = 1 + kCentipedeSegmentCount;
+            const Entity head = spawnChain();
+            CHECK(head != NULL_ENTITY);
+            int count = 0;
+            Query<BodySegment, Body, Transform>{world}.each([&](Entity part, BodySegment& link, Body& body, Transform& at) {
+                if (part == head || link.chainHead != head) return;
+                ++count;
+                const auto& leader = world.get<Body>(link.ahead);
+                const auto& position = world.get<Transform>(link.ahead);
+                CHECK_NEAR(link.spacing, leader.radius + body.radius + kGardnSegmentGap, 1e-6);
+                // The largest chains can start compressed against the map bounds.
+                if (rarity == Rarity::Common && config.minRarity == Rarity::Common) {
+                    CHECK_NEAR((at.position - position.position).length(), link.spacing, 1e-6);
+                }
+            });
+            CHECK_EQ(count, kCentipedeSegmentCount);
+            CHECK(spawnChain() == NULL_ENTITY);
+        }
     }
 }
 

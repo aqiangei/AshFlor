@@ -3596,7 +3596,10 @@ bool WorldRenderer::poseMob(const MobDraw& mob, const MobConfig* config, double 
     if (pose.diameter <= 0.5 || pose.alpha <= 0.0) return false;
 
     pose.rotation = (config && config->hideRotation) ? 0.0 : mob.angle;
-    if (config && config->id == "jungle_ladybug") pose.rotation += 3.0 * kPi / 4.0;
+    if (config && (config->id == "jungle_ladybug" || config->id == "mecha_wasp")) {
+        // These sprites face northwest at rest. The simulated facing is east at zero.
+        pose.rotation += 3.0 * kPi / 4.0;
+    }
     pose.mirrored = config && config->reversed;
     // The server points `reversed` art backwards by adding pi to the facing.
     // The browser build MIRRORS it instead, which is a different transform for
@@ -3768,7 +3771,11 @@ void WorldRenderer::drawMobBody(Canvas& canvas, const Camera& camera, const MobD
         // Dark opening separates the soft-coloured contents from the sack.
         ui::setFill(canvas,0x232323u,.86);canvas.beginPath();
         canvas.ellipse(0,static_cast<float>(-bagSize*.10),static_cast<float>(bagSize*.36),static_cast<float>(bagSize*.29),0,0,static_cast<float>(kTau));canvas.fill();
+        // Let the bag face its direction while the item artwork stays readable.
+        canvas.save();
+        if (mirrored) canvas.scale(-1.0f, 1.0f);
         drawGarbagePile(canvas, mob.position, mob.radius * 2.0, 0.0, mob.netId, mob.rarity);
+        canvas.restore();
         // Front lip wraps the lowest row without hiding its identifying shape.
         ui::setFill(canvas,0x333333u);ui::setStroke(canvas,0x292929u);
         canvas.setLineWidth(static_cast<float>(bagSize*.025));canvas.beginPath();
@@ -4191,7 +4198,6 @@ void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const
             if (entity.dead()) {
                 // Corpse body has no bar / level / petals; the name stays so a
                 // downed teammate can still be found for revive.
-                drawCorpseName(canvas, entity, camera, at);
                 drawCorpse(canvas, entity, camera, at, timeSeconds);
                 break;
             }
@@ -4202,10 +4208,7 @@ void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const
             // stranger. The chat bubble is the one piece of furniture the
             // local flower does keep, and drawChatBubbles draws it.
             //
-            // The plate goes down first so a grown flower paints over the top
-            // of its own name rather than the other way round.
             if (entity.isSelf()) drawSelfManaBar(canvas, entity, camera, at);
-            else drawPlayerPlate(canvas, entity, camera, at, timeSeconds);
             drawFlower(canvas, entity, camera, at, timeSeconds);
             break;
 
@@ -4998,6 +5001,8 @@ void WorldRenderer::draw(Canvas& canvas, const EntityMap& entities, const Camera
             return;
         }
         if (!onScreen(at, entity.radius)) return;
+        if (entity.kind == net::EntityKind::Player && (!entity.isSelf() || entity.dead()))
+            playerPlates_.push_back(&entity);
 
         if (entity.kind == net::EntityKind::Drop) ++timing_.itemCount;
         if (entity.kind == net::EntityKind::Petal && entity.ownerNetId != 0 && !entity.isRingPetal() &&
@@ -5052,6 +5057,7 @@ void WorldRenderer::draw(Canvas& canvas, const EntityMap& entities, const Camera
     };
 
     mobLabels_.clear();
+    playerPlates_.clear();
     for (const net::EntityKind kind : kOrder) {
         // A drop's glitter opens the drop layer, so it lies UNDER every drop,
         // live or dying, and over the flowers below. Drawn with the effects it
@@ -5225,6 +5231,13 @@ void WorldRenderer::draw(Canvas& canvas, const EntityMap& entities, const Camera
 
     drawEffects(canvas, camera);
     chargeOps(ops_.effects);
+    // Player labels sit above all skins, including skins on other bodies.
+    for (const RemoteEntity* entity : playerPlates_) {
+        const Vec2 at = entity->isSelf() ? selfDrawn : entity->position;
+        if (entity->dead()) drawCorpseName(canvas, *entity, camera, at);
+        else drawPlayerPlate(canvas, *entity, camera, at, timeSeconds);
+    }
+    chargeOps(ops_.labels);
     if (lightClipped) canvas.restore();
     // Last of all, over every body and every effect: what somebody is saying
     // is the one thing on screen that must never be hidden behind the fight --

@@ -325,7 +325,8 @@ TEST(a_sacrifice_on_gentle_ground_is_turned_away_and_kept) {
 
     kill(world, body);
     CHECK(h.stepUntil({&alice}, [&] {
-        return sawText(alice, "cannot be used in low mob rarity areas");
+        return sawText(alice, "The monsters in this area are too low in rarity") ||
+               sawText(alice, "死亡位置的怪物稀有度太低");
     }));
     h.step(5, {&alice});
     CHECK(!alice.profile().loadout.empty() &&

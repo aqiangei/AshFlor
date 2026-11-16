@@ -148,6 +148,19 @@ Key fromDomKey(const char* name) {
 // would need a permission prompt mid-game; a paste event needs none.
 EM_JS(void, web_clipboard_init, (), {
   Module.cppCanvasClipboard = '';
+  const supplySelection = (event) => {
+    const selected = Module.cppCanvasCopyOverride || Module.cppCanvasCopySelection;
+    if (!selected || !event.clipboardData) return;
+    const focused = document.activeElement;
+    // Real page inputs still own their own selections.
+    if (!Module.cppCanvasCopyOverride && focused &&
+        (focused.isContentEditable || focused.matches('input, textarea')) &&
+        focused.id !== '__flix_soft_keyboard') return;
+    event.clipboardData.setData('text/plain', selected);
+    event.preventDefault();
+  };
+  addEventListener('copy', supplySelection);
+  addEventListener('cut', supplySelection);
   // Bumped on every paste, never reset. pump() watches it for a change rather
   // than for a flag it would have to clear, so a paste that lands while the
   // page is between frames is still delivered to the frame that follows.
@@ -156,6 +169,9 @@ EM_JS(void, web_clipboard_init, (), {
     const clipboard = event.clipboardData || window.clipboardData;
     if (!clipboard || !clipboard.getData) return;
     Module.cppCanvasClipboard = clipboard.getData('text') || '';
+    // The canvas consumes this paste. Letting the hidden IME input insert it
+    // as well leaves a separate native selection that can later erase chat.
+    if (event.target?.id === '__flix_soft_keyboard') event.preventDefault();
     Module.cppCanvasPasteAt = performance.now();
     Module.cppCanvasPasteSeq = (Module.cppCanvasPasteSeq | 0) + 1;
   });
@@ -182,7 +198,15 @@ EM_JS(void, web_clipboard_get, (char* out, int capacity), {
 EM_JS(void, web_clipboard_set, (const char* text), {
   const value = UTF8ToString(text);
   Module.cppCanvasClipboard = value;
-  if (navigator.clipboard) navigator.clipboard.writeText(value).catch(() => {});
+  const legacyCopy = () => {
+    Module.cppCanvasCopyOverride = value;
+    try { document.execCommand('copy'); } finally { Module.cppCanvasCopyOverride = null; }
+  };
+  if (navigator.clipboard) navigator.clipboard.writeText(value).catch(legacyCopy);
+  else legacyCopy();
+});
+EM_JS(void, web_clipboard_selection, (const char* text), {
+  Module.cppCanvasCopySelection = UTF8ToString(text);
 });
 EM_JS(void, web_set_cursor, (const char* element, const char* shape), {
   const node = document.getElementById(UTF8ToString(element));
@@ -340,6 +364,13 @@ EM_JS(void, web_soft_keyboard, (int wanted), {
     Module.cppSoftUp = false;
   }
 });
+EM_JS(void, web_soft_reset, (), {
+  const node = document.getElementById('__flix_soft_keyboard');
+  if (!node || node.__composing) return;
+  node.value = ' ';
+  node.__last = node.value;
+  node.setSelectionRange(1, 1);
+});
 EM_JS(void, web_soft_caret, (const char* element, double x, double y, double fit), {
   const canvas = document.getElementById(UTF8ToString(element));
   const node = document.getElementById('__flix_soft_keyboard');
@@ -348,6 +379,20 @@ EM_JS(void, web_soft_caret, (const char* element, double x, double y, double fit
   // Fixed DOM coordinates use CSS pixels, never backing-store/DPR pixels.
   node.style.left = Math.max(0, Math.min(innerWidth-28, rect.left+x*fit))+'px';
   node.style.top = Math.max(0, Math.min(innerHeight-28, rect.top+y*fit))+'px';
+});
+EM_JS(double, web_soft_visible_bottom, (const char* element, double fit, double height), {
+  if (!navigator.maxTouchPoints || document.activeElement?.id !== '__flix_soft_keyboard' ||
+      !(fit > 0)) return height;
+  const canvas = document.getElementById(UTF8ToString(element));
+  if (!canvas) return height;
+  const rect = canvas.getBoundingClientRect();
+  const viewport = window.visualViewport;
+  const keyboard = navigator.virtualKeyboard?.boundingRect;
+  const visibleBottom = Math.min(rect.bottom,
+      viewport ? viewport.offsetTop + viewport.height : innerHeight,
+      keyboard?.height > 0 && keyboard.width > 0 ? keyboard.top : rect.bottom);
+  if (rect.bottom - visibleBottom <= 1 || !(rect.height > 0)) return height;
+  return Math.max(0, Math.min(height, (visibleBottom - rect.top) * canvas.clientHeight / (rect.height * fit)));
 });
 EM_JS(int, web_ime_busy, (), {
   const node = document.getElementById('__flix_soft_keyboard');
@@ -876,20 +921,11 @@ struct Window::Impl {
     impl->mouseY = static_cast<float>(targetY) * toDesign;
   }
 
-  // The input guard's pointer rule (see input_guard.h): a mouse sample the
-  // pointer physics does not believe is moved to a random point on the
-  // canvas, in the same CSS pixels the event's own coordinates are in. That
-  // sample only; the next is judged on its own.
   PointerPhysics pointerPhysics;
 
-  void randomPoint(double& targetX, double& targetY) const {
-    targetX = emscripten_random() * pointWidth;
-    targetY = emscripten_random() * pointHeight;
-  }
-
-  void judgePointer(PointerSample::Kind kind, const EmscriptenMouseEvent* event,
-                    double& targetX, double& targetY) {
-    if (!inputGuard) return;
+  bool judgePointer(PointerSample::Kind kind, const EmscriptenMouseEvent* event,
+                    double targetX, double targetY) {
+    if (!inputGuard) return true;
     PointerSample sample;
     sample.kind = kind;
     sample.millis = event->timestamp;
@@ -898,14 +934,7 @@ struct Window::Impl {
     sample.sinceFrameMillis = emscripten_get_now() - lastFrameMillis;
     sample.scripted = !eventTrusted;
     pointerPhysics.setBounds(pointWidth, pointHeight);
-    if (!pointerPhysics.judge(sample)) randomPoint(targetX, targetY);
-  }
-
-  // Touch has no physics to judge -- a finger lands wherever it lands -- so
-  // only the browser's word is taken: a contact a script made is moved.
-  void disguiseIfScripted(double& targetX, double& targetY) const {
-    if (!inputGuard || eventTrusted) return;
-    randomPoint(targetX, targetY);
+    return pointerPhysics.judge(sample);
   }
 
   // The input guard's key rule. Set on a keydown it dropped, so the keyup
@@ -931,19 +960,25 @@ struct Window::Impl {
     if (emscripten_get_now() < impl->ghostUntilMillis) return EM_TRUE;
     double targetX = web_canvas_coordinate(impl->elementId.c_str(), event->clientX, 0);
     double targetY = web_canvas_coordinate(impl->elementId.c_str(), event->clientY, 1);
-    const double originalX = targetX, originalY = targetY;
-    impl->judgePointer(type == EMSCRIPTEN_EVENT_MOUSEMOVE   ? PointerSample::Kind::Move
-                       : type == EMSCRIPTEN_EVENT_MOUSEDOWN ? PointerSample::Kind::Press
-                                                            : PointerSample::Kind::Release,
-                       event, targetX, targetY);
-    // Real text-field gestures must be usable even before enough mouse
-    // movement exists to judge a trajectory. This exception is confined to
-    // registered input rectangles; gameplay and scripted events stay guarded.
+    if (impl->inputGuard && !impl->eventTrusted) return EM_TRUE;
+    const bool accepted = impl->judgePointer(
+        type == EMSCRIPTEN_EVENT_MOUSEMOVE ? PointerSample::Kind::Move
+        : type == EMSCRIPTEN_EVENT_MOUSEDOWN ? PointerSample::Kind::Press
+                                            : PointerSample::Kind::Release,
+        event, targetX, targetY);
+    // Allow real text-field gestures even before there is a motion history.
     const float keyboardScale = impl->fit > 0 ? static_cast<float>(1.0 / impl->fit) : 1.0f;
-    if (impl->eventTrusted && impl->onKeyboardField(originalX * keyboardScale,
-                                                   originalY * keyboardScale)) {
-      targetX = originalX;
-      targetY = originalY;
+    const bool trustedField = impl->eventTrusted &&
+        impl->onKeyboardField(targetX * keyboardScale, targetY * keyboardScale);
+    if (!accepted && !trustedField) {
+      // A real release still ends a held button, without turning into an
+      // activation at the last accepted position.
+      if (type == EMSCRIPTEN_EVENT_MOUSEUP && event->button >= 0 && event->button <= 2) {
+        const auto button = static_cast<std::size_t>(event->button);
+        impl->mouseHeld[button] = false;
+        impl->pendingDownEdge[button] = false;
+      }
+      return EM_TRUE;
     }
     recordPointer(impl, targetX, targetY);
     impl->pointerIsTouch = false;
@@ -962,6 +997,7 @@ struct Window::Impl {
     else if (event->button == 2) index = static_cast<std::size_t>(MouseButton::Right);
     if (index < kButtonCount) {
       const bool downNow = type == EMSCRIPTEN_EVENT_MOUSEDOWN;
+      if (!downNow && impl->inputGuard && !impl->mouseHeld[index]) return EM_TRUE;
       impl->mouseHeld[index] = downNow;
       (downNow ? impl->pendingDownEdge : impl->pendingUpEdge)[index] = true;
     }
@@ -973,10 +1009,12 @@ struct Window::Impl {
     Impl* impl = implOf(userData);
     double targetX = web_canvas_coordinate(impl->elementId.c_str(), event->clientX, 0);
     double targetY = web_canvas_coordinate(impl->elementId.c_str(), event->clientY, 1);
-    impl->judgePointer(type == EMSCRIPTEN_EVENT_MOUSEENTER ? PointerSample::Kind::Enter
-                                                          : PointerSample::Kind::Leave,
-                       event, targetX, targetY);
-    recordPointer(impl, targetX, targetY);
+    if (impl->inputGuard && !impl->eventTrusted) return EM_TRUE;
+    const bool accepted = impl->judgePointer(
+        type == EMSCRIPTEN_EVENT_MOUSEENTER ? PointerSample::Kind::Enter : PointerSample::Kind::Leave,
+        event, targetX, targetY);
+    if (accepted) recordPointer(impl, targetX, targetY);
+    else if (type == EMSCRIPTEN_EVENT_MOUSEENTER) return EM_TRUE;
     impl->pointerInside = type == EMSCRIPTEN_EVENT_MOUSEENTER;
     if (impl->pointerInside) return EM_TRUE;
 
@@ -985,7 +1023,8 @@ struct Window::Impl {
     for (std::size_t i = 0; i < kButtonCount; ++i) {
       if (impl->mouseHeld[i]) {
         impl->mouseHeld[i] = false;
-        impl->pendingUpEdge[i] = true;
+        if (accepted) impl->pendingUpEdge[i] = true;
+        else impl->pendingDownEdge[i] = false;
       }
     }
     return EM_TRUE;
@@ -993,6 +1032,7 @@ struct Window::Impl {
 
   static EM_BOOL onTouch(int type, const EmscriptenTouchEvent* event, void* userData) {
     Impl* impl = implOf(userData);
+    if (impl->inputGuard && !impl->eventTrusted) return EM_TRUE;
     const float toDesign = impl->fit > 0 ? static_cast<float>(1.0 / impl->fit) : 1.0f;
     TouchPhase phase = TouchPhase::Began;
     if (type == EMSCRIPTEN_EVENT_TOUCHMOVE) phase = TouchPhase::Moved;
@@ -1020,7 +1060,6 @@ struct Window::Impl {
       handledCanvasTouch = true;
       double targetX = web_canvas_coordinate(impl->elementId.c_str(), point.clientX, 0);
       double targetY = web_canvas_coordinate(impl->elementId.c_str(), point.clientY, 1);
-      impl->disguiseIfScripted(targetX, targetY);
       const float x = static_cast<float>(targetX) * toDesign;
       const float y = static_cast<float>(targetY) * toDesign;
       if (phase == TouchPhase::Began && !impl->tapOnlyLive &&
@@ -1108,9 +1147,7 @@ struct Window::Impl {
         impl->onKeyboardField(static_cast<float>(targetX)*toDesign,
                               static_cast<float>(targetY)*toDesign);
     if (!trustedField && impl->inputGuard &&
-        (!impl->eventTrusted || !impl->pointerPhysics.lastBelieved())) {
-      impl->randomPoint(targetX, targetY);
-    }
+        (!impl->eventTrusted || !impl->pointerPhysics.lastBelieved())) return EM_TRUE;
     const float x = static_cast<float>(targetX) * toDesign;
     const float y = static_cast<float>(targetY) * toDesign;
     if (impl->onKeyboardField(x, y)) {
@@ -1248,6 +1285,9 @@ struct Window::Impl {
     // reload and the developer tools are not the game's to swallow -- unless
     // the client has claimed that one combination (setClaimedShortcuts).
     if (event->ctrlKey || event->metaKey) {
+      // Ctrl+A selects the canvas draft only. The IME input is an edit
+      // bridge whose independent DOM selection must stay at its end.
+      if (impl->softKeyboardUp && key == Key::A) return EM_TRUE;
       const auto& claimed = impl->claimedShortcuts;
       return std::find(claimed.begin(), claimed.end(), key) != claimed.end() ? EM_TRUE : EM_FALSE;
     }
@@ -1886,10 +1926,25 @@ void Window::dismissSoftKeyboard() {
 
 void Window::setSoftKeyboardCaret(float x, float y) {
 #ifdef __EMSCRIPTEN__
+  const double visibleBottom = softKeyboardVisibleBottom();
+  if (visibleBottom < height() && impl_->fit > 0.0) {
+    // The DOM input is 28 CSS pixels high even when the game UI is scaled down.
+    const double maxY = std::max(0.0, visibleBottom - 32.0 / impl_->fit);
+    y = std::min(y, static_cast<float>(maxY));
+  }
   web_soft_caret(impl_->elementId.c_str(), x, y, impl_->fit);
 #else
   (void)x; (void)y;
 #endif
+}
+
+double Window::softKeyboardVisibleBottom() const {
+#ifdef __EMSCRIPTEN__
+  if (impl_->softKeyboardUp) {
+    return web_soft_visible_bottom(impl_->elementId.c_str(), impl_->fit, height());
+  }
+#endif
+  return height();
 }
 
 void Window::ensureSoftKeyboard() {
@@ -1949,6 +2004,20 @@ std::string Window::pastedText() const {
   const std::size_t v = static_cast<std::size_t>(Key::V);
   if (!impl_->ctrl || v >= kKeyCount || !impl_->pressed[v]) return {};
   return clipboardText();
+#endif
+}
+
+void Window::resetSoftKeyboardBuffer() {
+#ifdef __EMSCRIPTEN__
+  web_soft_reset();
+#endif
+}
+
+void Window::publishClipboardSelection(const std::string& text) {
+#ifdef __EMSCRIPTEN__
+  web_clipboard_selection(text.c_str());
+#else
+  (void)text;
 #endif
 }
 

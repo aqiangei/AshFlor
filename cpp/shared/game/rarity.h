@@ -286,6 +286,9 @@ inline double petalManaScale(Rarity r) {
     return std::pow(2.0, ladderIndex(r));
 }
 
+inline double magicFangManaPerBite(Rarity rarity) { return 1.2 * petalManaScale(rarity); }
+inline double magicToothManaPerReload(Rarity rarity) { return 0.30 * petalManaScale(rarity); }
+
 /// Magic Cotton improves by 50% per tier through Eternal. Higher tiers keep
 /// the Eternal conversion rate, with Hyper's defence technique handled in combat.
 inline constexpr double magicCottonDamagePerMana(Rarity rarity) {

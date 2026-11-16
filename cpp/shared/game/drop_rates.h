@@ -8,10 +8,17 @@
 namespace flix {
 
 inline constexpr double kApexPetalDropChance = 0.02;
+
+inline constexpr Rarity personalBossRewardRarity(Rarity mobRarity) {
+    if (mobRarity == Rarity::Ascendant) return Rarity::Ascendant;
+    if (mobRarity == Rarity::Apex) return Rarity::PermanentHyper;
+    return Rarity::Common;
+}
+
 struct DropRate { Rarity rarity=Rarity::Common; double probability=0; };
 inline Rarity payoutDropRarity(Rarity rolled,Rarity mob) {
     // A Hyper kill must not promote every Super roll into an Eternal.
-    // Preserve the authored roll; Hyper petals remain forge-only.
+    // The personal boss roll is separate from this ordinary drop pipeline.
     return rarityIndex(rolled)>=rarityIndex(Rarity::Apex)?Rarity::Unique:rolled;
 }
 using DropRates = std::vector<std::vector<DropRate>>;

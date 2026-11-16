@@ -488,7 +488,9 @@ bool WavePanel::render(MenuContext& ctx) {
     }
     const bool valid = code_.size() == 6 &&
         std::all_of(code_.begin(), code_.end(), [](char c) { return c >= '0' && c <= '9'; });
-    if (ctx.pressed() && start.contains(mouse)) {
+    const auto& status = ctx.net.waveRoomStatus;
+    const bool occupied = status.known && status.occupied > 0;
+    if (!occupied && ctx.pressed() && start.contains(mouse)) {
         ctx.net.sendChat("/wave start");
         return false;
     }
@@ -508,19 +510,20 @@ bool WavePanel::render(MenuContext& ctx) {
     panelClose(canvas, close, close.contains(mouse));
     TextStyle info;
     info.size = 14.0;
-    const auto& status = ctx.net.waveRoomStatus;
     const auto lamp = [&](double left, const std::string& label, std::uint32_t colour) {
         fillQuadRound(canvas, {left, y + 49.0, 10.0, 10.0}, 5.0, colour);
         text(canvas, label, left + 16.0, y + 54.0, info);
     };
-    lamp(x, status.known ? "房间 " + std::to_string(status.occupied) + "/4" : "查询房间中",
+    lamp(x, !status.known ? "查询房间中" : occupied
+             ? "已占用 " + std::to_string(status.occupied) + "/4" : "可创建房间",
          !status.known ? 0x9BA4AAu : status.occupied == 4 ? 0xF47776u :
          status.occupied > 0 ? 0xFAD66Fu : 0x8EE26Au);
     lamp(panel.x + panel.w * .46,
          !status.known ? "查询奖励中" : status.dailyCapReached ? "今日星星已达上限" : "今日还可获得星星",
          !status.known ? 0x9BA4AAu : status.dailyCapReached ? 0xFAD66Fu : 0x8EE26Au);
-    text(canvas, "房号发到个人聊天，开房 30 秒后开打。", x, y + 74.0, info);
-    pillButton(canvas, start, "创建房间", kLeaderboardSkin.border);
+    text(canvas, occupied ? "每服一间，等本局结束后即可开房。" : "房号发到个人聊天，开房 30 秒后开打。",
+         x, y + 74.0, info);
+    pillButton(canvas, start, "创建房间", occupied ? 0x767676u : kLeaderboardSkin.border);
     pillButton(canvas, leave, "离开房间", kLeaderboardSkin.border);
     inputField(canvas, field, code_, "六位房号", typing, ctx.timeSeconds, &field_);
     pillButton(canvas, join, "加入", valid ? kLeaderboardSkin.border : 0x767676u);
