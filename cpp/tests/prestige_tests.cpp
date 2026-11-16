@@ -2944,7 +2944,7 @@ TEST(wave_chat_creates_a_private_code_and_round_trips_to_the_origin) {
     host.sendChat("/wave start");
     CHECK(h.stepUntil({&host, &guest}, [&] {
         for (const auto& line : host.chat()) {
-            const auto marker = line.text.find("Wave \u623f ");
+            const auto marker = line.text.find("已进入 试炼房 ");
             if (marker == std::string::npos) continue;
             const auto firstDigit = line.text.find_first_of("0123456789", marker);
             if (firstDigit != std::string::npos) code = line.text.substr(firstDigit, 6);
@@ -3383,6 +3383,11 @@ TEST(wave_is_endless_bounded_spaced_and_rewards_participation) {
     }
     CHECK(Query<WaveEnemy>{world}.collect().empty());
     CHECK(CombatSystem::canDamage(world, members[0], members[1]));
+    CHECK_EQ(dungeon.waveOccupancy(), 0u);
+    const auto nextRoom = dungeon.waveCommand(world, terrain, members[0], "start", rng, now + 181100.0);
+    CHECK(nextRoom.find("已进入") != std::string::npos);
+    CHECK_EQ(dungeon.waveOccupancy(), 1u);
+    CHECK(dungeon.inWave(world, members[0]));
 }
 
 namespace {

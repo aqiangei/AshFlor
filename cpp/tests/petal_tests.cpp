@@ -1453,6 +1453,25 @@ TEST(a_battery_spends_three_charges_then_reloads_full_without_auto_firing) {
     CHECK_NEAR(rig.world.get<PetalSlotState>(rig.player).slots[0].counter, 3.0, 1e-9);
     rig.tick(20);CHECK_EQ(countStrikes(rig),3u);
 }
+TEST(totem_healing_does_not_cancel_a_battery_hit) {
+    const auto& registry = testsupport::shippedContent();
+    Rig rig(registry);
+    rig.equip(0, "battery", Rarity::Unique);
+    rig.equip(1, "totem", Rarity::Super);
+    rig.settleEquips();
+    const auto mob = ramMob(rig);
+    auto& health = rig.world.get<Health>(rig.player);
+    health.current = health.max / 2.0;
+    const double before = health.current;
+    rig.system.onKill(rig.world, registry, rig.player, rig.now);
+    CombatSystem combat;
+    CHECK(combat.applyDamage(rig.world, rig.player, mob, 1.0, rig.now).applied > 0.0);
+    rig.tick();
+    CHECK(rig.world.get<Health>(rig.player).current > before);
+    CHECK_EQ(batteryCharges(rig), 2);
+    CHECK_EQ(countStrikes(rig), 1u);
+}
+
 TEST(a_battery_remembers_one_real_hit_during_its_discharge_interval) {
     const auto& registry = testsupport::shippedContent();
     Rig rig(registry);
@@ -4495,6 +4514,26 @@ TEST(duplicator_adds_one_copy_to_a_clump_and_triplicator_two) {
         // A single petal is not a clump, and is left alone.
         CHECK_EQ(rig.petals(1).size(), std::size_t(1));
     }
+}
+
+TEST(duplicator_applies_the_same_bonus_to_hyper_and_permanent_hyper) {
+    if (!contentLoaded()) return;
+    const auto copies = [](const char* id, Rarity rarity, int talentTier) {
+        Rig rig;
+        buyDuplicator(rig, talentTier);
+        rig.equip(0, id, rarity);
+        rig.settleEquips();
+        return rig.petals(0).size();
+    };
+    for (const auto* id : {"sandy", "basic"}) {
+        for (int tier : {0, 2, 3}) {
+            const auto temporary = copies(id, Rarity::Apex, tier);
+            CHECK(temporary > 0);
+            CHECK_EQ(copies(id, Rarity::PermanentHyper, tier), temporary);
+        }
+    }
+    CHECK_EQ(copies("basic", Rarity::PermanentHyper, 2), std::size_t(1));
+    CHECK_EQ(copies("basic", Rarity::PermanentHyper, 3), std::size_t(2));
 }
 
 TEST(duplicator_without_four_loadout_upgrades_adds_nothing) {

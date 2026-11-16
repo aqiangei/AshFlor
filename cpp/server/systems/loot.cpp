@@ -2,6 +2,7 @@
 #include "server/workers.h"
 
 #include <algorithm>
+#include <limits>
 #include <cstdio>
 #include <fstream>
 #include <tuple>
@@ -619,6 +620,19 @@ void LootSystem::collectFresh(World& world, CommandBuffer& commands, EventQueue&
     });
 }
 
+void LootSystem::collectReservedDrops(World& world, Entity player, net::ConnectionId owner,
+                                      CommandBuffer& commands, EventQueue& events) {
+    const auto* at = world.tryGet<Transform>(player);
+    if (at == nullptr || owner == 0) return;
+    bind(world);
+    drops_->each([&](Entity entity, DropTag&, Transform& dropAt, Lifetime& lifetime, DropItem& drop) {
+        if (dropAt.realm != at->realm || lifetime.remainingSeconds <= 0 || drop.singleCopy ||
+            drop.riftPrize || !claimed(drop.eligible, player, owner)) return;
+        tryCollect(world, player, at->position, at->realm,
+                   std::numeric_limits<double>::infinity(), entity, commands, events);
+    });
+}
+
 void LootSystem::tryCollect(World& world, Entity player, Vec2 playerPosition, Realm playerRealm,
                             double reachSq, Entity candidate, CommandBuffer& commands,
                             EventQueue& events) {
@@ -836,14 +850,17 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
                                  damageFloor);
         }
 
-        if (const auto* inherited = world.tryGet<InheritedLootClaims>(corpse)) {
-            for (const auto& claim : inherited->recipients) {
-                const Entity player = liveContributorBody(world, {claim.player, claim.owner, 0.0});
-                if (player != NULL_ENTITY &&
-                    std::find(eligible_.begin(), eligible_.end(), player) == eligible_.end())
-                    eligible_.push_back(player);
+        const auto addInheritedClaims = [&](std::vector<Entity>& eligible) {
+            if (const auto* inherited = world.tryGet<InheritedLootClaims>(corpse)) {
+                for (const auto& claim : inherited->recipients) {
+                    const Entity player = liveContributorBody(world, {claim.player, claim.owner, 0.0});
+                    if (player != NULL_ENTITY &&
+                        std::find(eligible.begin(), eligible.end(), player) == eligible.end())
+                        eligible.push_back(player);
+                }
             }
-        }
+        };
+        addInheritedClaims(eligible_);
 
         // A common mob rolls its authored rows one by one; everything above
         // it leaves one of every drop it has, from the merged table.
@@ -895,19 +912,27 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
         // from everybody else. kRarityCount is "no orb worn", which is almost
         // every flower in the game, and then nothing splits.
         const auto baseEligible=eligible_;
-        if (apexKill && !table.empty()) {
-            std::vector<const DropTables::Entry*> apexPool;
+        const Rarity rewardRarity = personalBossRewardRarity(apexKill ? Rarity::Ascendant : mobRarity);
+        if (rewardRarity != Rarity::Common && !table.empty()) {
+            std::vector<const DropTables::Entry*> rewardPool;
             for (const auto& entry : table) {
                 if (entry.kind == DropTables::Kind::RandomPetal ||
                     (entry.petalIndex < content.petalCount() &&
                      allowsAuthoredApexReward(content.petal(entry.petalIndex)) &&
-                     petalComesAt(content.petal(entry.petalIndex), Rarity::Ascendant))) {
-                    apexPool.push_back(&entry);
+                     petalComesAt(content.petal(entry.petalIndex), rewardRarity))) {
+                    rewardPool.push_back(&entry);
                 }
             }
+            const double personalDamageFloor = lootDamageFloor(maxHealth);
+            std::vector<Entity> rewardEligible;
+            if (!apexKill && !rewardPool.empty()) {
+                selectLootRecipients(ranked_, lootSlotsForRarity(mobRarity), squads, rewardEligible,
+                                     personalDamageFloor);
+                addInheritedClaims(rewardEligible);
+            }
             std::vector<std::string> paidAccounts;
-            for (const Entity claimant : baseEligible) {
-                if (apexPool.empty()) break;
+            for (const Entity claimant : (apexKill ? baseEligible : rewardEligible)) {
+                if (rewardPool.empty()) break;
                 const auto* account = world.tryGet<PlayerAccount>(claimant);
                 const auto* location = world.tryGet<Transform>(claimant);
                 if (!account || account->connection == 0 || account->userId.empty() ||
@@ -917,23 +942,23 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
                 const bool contributed = std::any_of(ranked_.begin(), ranked_.end(),
                     [&](const Bounty::Share& share) {
                         return (share.owner == account->connection || share.player == claimant) &&
-                               share.damage >= damageFloor;
+                               share.damage >= personalDamageFloor;
                     });
                 if (!contributed) continue;
                 paidAccounts.push_back(account->userId);
                 if (!rng.chance(kApexPetalDropChance)) continue;
                 // One personal roll per kill. Magic conversion only changes the
                 // selected type, so it cannot change the odds or rarity.
-                const auto* entry = apexPool[rng.below(apexPool.size())];
+                const auto* entry = rewardPool[rng.below(rewardPool.size())];
                 auto petal = entry->kind == DropTables::Kind::RandomPetal
-                    ? tables_.randomPetal(rng, Rarity::Ascendant) : entry->petalIndex;
+                    ? tables_.randomPetal(rng, rewardRarity) : entry->petalIndex;
                 if (petal == kInvalidIndex) continue;
                 const auto magic = entry->magicPetal != kNoPetal
                     ? entry->magicPetal : content.magicFormOf(petal);
                 const int orbTier = wornOrbTier(world, content, claimant, magicOrb);
                 if (magic < content.petalCount() && orbTier != kRarityCount &&
                     orbTier >= rarityIndex(content.petal(magic).minRarity)) petal = magic;
-                const Entity drop = spawnDrop(world, petal, Rarity::Ascendant, at, realm, {claimant});
+                const Entity drop = spawnDrop(world, petal, rewardRarity, at, realm, {claimant});
                 if (drop != NULL_ENTITY) {
                     auto& item = world.get<DropItem>(drop);
                     item.humansOnly = true;

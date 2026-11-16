@@ -252,7 +252,7 @@ private:
     std::string pickerTabOf(const std::string& choiceId) const;
     /// The title screen's chat line, bottom-left, under the icon column.
     /// Instance (not static): with touch controls up it lifts clear of the stick.
-    Rect titleChatBox(int viewWidth, int viewHeight);
+    Rect titleChatBox(int viewWidth, int viewHeight, double visibleBottom);
     void drawTitleChat(Canvas&, double time);
     /// The daily-login card, top-right. Painted last, over the panels, exactly
     /// as the browser build's own always-on-top widget is.

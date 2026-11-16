@@ -308,6 +308,7 @@ public:
     /// flag that stops a second death being announced. Left unset the flower
     /// still stands up; its own client simply is not told.
     std::function<void(Entity revived, Entity reviver)> onPlayerRevived;
+    std::function<void(Entity)> onTimedSummonManaShortage;
     std::function<bool(Entity target, Entity marker, Rarity rarity)> canMarkPlayer;
     std::function<bool(Entity target, Entity marker, Rarity rarity, bool toVoid, bool frozen)> onPlayerMarked;
 

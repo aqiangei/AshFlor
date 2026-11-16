@@ -185,18 +185,22 @@ void GameServer::offerSacrifice(Session& session, Entity corpse) {
         std::string why;
         switch (plan.outcome) {
             case SpawnSystem::SacrificeOutcome::LowGround:
-                why = "Your " + petalName + " cannot be used in low mob rarity areas.";
+                why = "Blood Sacrifice kept. The monsters in this area are too low in rarity.";
                 break;
             case SpawnSystem::SacrificeOutcome::Prestige:
-                why = "Your " + petalName +
-                      " went unanswered: no Unique or Apex can stand in a Prestige biome.";
+                why = "Blood Sacrifice kept. This Prestige map does not allow a ritual of this tier.";
                 break;
             case SpawnSystem::SacrificeOutcome::Taken:
-                why = "此区域的同阶 Boss 名额已被现存怪物或正在进行的血祭占用。血祭已保留。";
+                why = "Blood Sacrifice kept. A boss or another ritual already occupies this rarity slot.";
                 break;
-            default:
-                why = "Your " + petalName + " went unanswered: nothing lives here.";
+            case SpawnSystem::SacrificeOutcome::NoBand:
+                why = "Blood Sacrifice kept. There is no spawn area at the spot where you died.";
                 break;
+            case SpawnSystem::SacrificeOutcome::NoMob:
+                why = "Blood Sacrifice kept. This area has no eligible monster for the ritual.";
+                break;
+            case SpawnSystem::SacrificeOutcome::Summoned:
+                return;
         }
         sendNotice(*connection, net::NoticeSeverity::Warning, why);
         return;

@@ -961,10 +961,8 @@ void SpawnSystem::spawnBodyChain(World& world, const Terrain& terrain,
     const Body* headBody = world.tryGet<Body>(head);
     double leaderRadius = headBody != nullptr ? headBody->radius : bodyStats.radius;
 
-    // Straight back from the head's facing, and stepped from the REQUESTED
-    // points rather than the resolved ones: a segment nudged out of a wall must
-    // not bend the rest of the body around it. The chain pass owns the shape
-    // from the next tick onwards, and it starts from a straight animal.
+    // Start behind the head, keeping each link on its leader's side of a wall.
+    // Close to a wall the chain starts compressed and unfolds as the head moves.
     const Vec2 back = Vec2::fromAngle(headAngle + kPi);
 
     Entity ahead = head;
@@ -976,7 +974,7 @@ void SpawnSystem::spawnBodyChain(World& world, const Terrain& terrain,
         const double bodyRadius = bodyStats.radius * kSpawnedMobBodyScale;
         const double spacing = config.segmentSpacing(leaderRadius, bodyRadius);
         leaderRadius = bodyRadius;
-        at = at + back * spacing;
+        at = terrain.resolveLinkedCircle(at, back * spacing, kMobWallRadius, realm);
         // Segments belong to the animal, not to the band: the head is the one
         // thing the band counted, and the chain is rebuilt from scratch every
         // time that head comes back to life.
@@ -995,7 +993,10 @@ void SpawnSystem::spawnBodyChain(World& world, const Terrain& terrain,
         world.add<BodySegment>(segment, link);
         // After the add, which relocated the row the spawn had just written.
         // A segment faces the way its head does or the body starts out kinked.
-        if (Transform* transform = world.tryGet<Transform>(segment)) transform->angle = headAngle;
+        if (Transform* transform = world.tryGet<Transform>(segment)) {
+            transform->angle = headAngle;
+            at = transform->position;
+        }
         // Both directions, here rather than only in the AI pass that maintains
         // them: a shared-health chain hit on its very first tick has to be
         // walkable from the head before anything has had a chance to think.

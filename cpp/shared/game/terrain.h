@@ -562,6 +562,10 @@ public:
     /// input upstream costs the caller a shove, never the tick.
     Vec2 resolveCircle(Vec2 position, double radius, Realm realm) const;
 
+    /// Places a follower within a clear segment from its leader, shortening
+    /// the desired offset when it would put the follower across a wall.
+    Vec2 resolveLinkedCircle(Vec2 leader, Vec2 offset, double radius, Realm realm) const;
+
     /// True when the segment crosses any blocking SHAPE. A DDA walk over the
     /// cells, testing the shapes of each: no allocation, and bounded even for
     /// nonsense endpoints.

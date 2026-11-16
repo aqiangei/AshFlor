@@ -5224,8 +5224,6 @@ void PetalSystem::summonTimedPets(World& world, const ContentRegistry& registry,
     int room = kMaxPetEntitiesPerPlayer - countOwnedPets(world, state);
     if (room <= 0) return;
     const double manaCost = stats.petManaCost * magicGoldenLeafManaScale(world, registry, player);
-    if (!canAffordMana(world, player, manaCost)) return;
-
     if (config.id == "magic_stick") {
         const auto stickIndex = registry.petalIndex("mysterious_stick");
         if (stickIndex < registry.petalCount()) {
@@ -5243,6 +5241,10 @@ void PetalSystem::summonTimedPets(World& world, const ContentRegistry& registry,
     }
     const int count = std::min(room, summonSquadSize(config.petCount, rarity));
     if (count <= 0) return;
+    if (!canAffordMana(world, player, manaCost)) {
+        if (onTimedSummonManaShortage) onTimedSummonManaShortage(player);
+        return;
+    }
 
     const int spawned = summonPets(world, registry, player, slot, config.petMobIndex, rarity,
                                    count, ownerTransform->position, state,
@@ -5501,6 +5503,25 @@ int PetalSystem::summonPets(World& world, const ContentRegistry& registry, Entit
             for(const auto& circle:occupied){const double clearance=radius+circle.radius+2;
                 if((circle.at-candidate).lengthSq()<clearance*clearance){overlaps=true;break;}}
             if(!overlaps){spawnAt=candidate;placed=true;}
+        }
+        if (!placed && terrain_ && radius > ownerRadius) {
+            // A large summon can walk a corridor its full combat radius
+            // cannot fit. Try its normal movement hull at a clear point
+            // on the owner's side before giving up on the hatch.
+            const double startAngle = rng_.angle();
+            for (int seat = 0; seat < 4 * kRingSeats && !placed; ++seat) {
+                const double distance = ownerRadius + kMobWallRadius + 8 + 80 * (seat / kRingSeats);
+                const Vec2 candidate = at + Vec2::fromAngle(
+                    startAngle + kTau * (seat % kRingSeats) / kRingSeats, distance);
+                const auto wall = terrain_->resolveWall(candidate, kMobWallRadius, realm);
+                if (wall.collided || wall.unresolved || terrain_->blocked(candidate, realm) ||
+                    terrain_->segmentBlocked(at, candidate, realm)) continue;
+                const bool overlaps = std::any_of(occupied.begin(), occupied.end(), [&](const HatchCircle& other) {
+                    const double clearance = other.radius + kMobWallRadius + 2;
+                    return (other.at - candidate).lengthSq() < clearance * clearance;
+                });
+                if (!overlaps) { spawnAt = candidate; placed = true; }
+            }
         }
         if (!placed) {
             if (slotState.configIndex >= registry.petalCount() ||

@@ -3523,6 +3523,12 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
                                           world.has<Health>(victim) &&
                                           canDamage(world, source.attacker, victim);
             if (mobTouchesPlayer) {
+                const auto* burrow = world.tryGet<BurrowState>(victim);
+                if (burrow && burrow->active && nowMillis < burrow->untilMillis) {
+                    const auto* ring = world.tryGet<MobRingPetal>(source.attacker);
+                    const Entity observer = ring ? ring->mob : source.attacker;
+                    if (!canNoticeBurrowed(world, observer, victim)) continue;
+                }
                 const auto* grace = source.isMobBody && source.suppressPlayerShove
                     ? world.tryGet<NewLeechContactGrace>(source.attacker) : nullptr;
                 if (grace && nowMillis < grace->untilMillis) continue;
@@ -3890,14 +3896,14 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
                 if (wild && tooth && !tooth->magicToothManaRefunded &&
                     registry.petal(tooth->configIndex).id == "magic_tooth") {
                     if (auto* mana = world.tryGet<ManaPool>(source.owner)) {
-                        mana->current = std::min(mana->max, mana->current + .30 * petalManaScale(source.rarity));
+                        mana->current = std::min(mana->max, mana->current + magicToothManaPerReload(source.rarity));
                         tooth->magicToothManaRefunded = true;
                     }
                 }
                 // Every bite, a fixed draught by tier, however hard it landed.
                 if (wild && tooth && registry.petal(tooth->configIndex).id == "magic_fang") {
                     if (auto* mana = world.tryGet<ManaPool>(source.owner); mana && mana->has())
-                        mana->current = std::min(mana->max, mana->current + 1.2 * petalManaScale(source.rarity));
+                        mana->current = std::min(mana->max, mana->current + magicFangManaPerBite(source.rarity));
                 }
             }
 
@@ -4466,6 +4472,32 @@ void CombatSystem::tickProjectiles(World& world, const SpatialGrid& grid,
         const auto first = planned ? plan->begin : std::size_t{0};
         const auto last = planned ? plan->end : candidates.size();
 
+        // Resolve solid cover along the swept path before touching players behind it.
+        const auto entryDistance = [&](Entity victim) {
+            const auto& at = world.get<Transform>(victim);
+            const auto& body = world.get<Body>(victim);
+            const Vec2 delta = at.position - shot.from;
+            const double along = delta.x * shot.axis.x + delta.y * shot.axis.y;
+            const double reach = shot.radius + body.radius;
+            const double across = std::max(0.0, delta.lengthSq() - along * along);
+            return std::max(0.0, along - std::sqrt(std::max(0.0, reach * reach - across)));
+        };
+        Entity meteor = NULL_ENTITY;
+        double coverDistance = std::numeric_limits<double>::infinity();
+        const TeamInfo shotTeam = teamOf(world, shot.entity);
+        if (shotTeam.known && shotTeam.team == Team::Hostiles && !wildOnly) {
+            for (auto i = first; i < last; ++i) {
+                const Entity victim = candidates[i].impact.victim;
+                if (!world.has<PlantedMeteor>(victim) || !canHit(world, victim, shot.entity, nowMillis) ||
+                    !sweepLiveShotTarget(world, shot, victim)) continue;
+                const double distance = entryDistance(victim);
+                if (distance < coverDistance) {
+                    coverDistance = distance;
+                    meteor = victim;
+                }
+            }
+        }
+
         // Geometry is read-only. Check health and relations live, in the
         // same candidate order, before sorting the hits for this projectile.
         impacts_.clear();
@@ -4475,6 +4507,7 @@ void CombatSystem::tickProjectiles(World& world, const SpatialGrid& grid,
             const auto impact = candidate.testLive ? sweepLiveShotTarget(world, shot, victim)
                                                   : std::optional<ShotImpact>{candidate.impact};
             if (!impact) continue;
+            if (meteor != NULL_ENTITY && victim != meteor && entryDistance(victim) >= coverDistance) continue;
             // Above canHit() on purpose: a glitch shot marks the flower it
             // touches whether or not the hit itself is refused, and a
             // flower under respawn protection is not in `impacts_` at all.
@@ -4491,9 +4524,12 @@ void CombatSystem::tickProjectiles(World& world, const SpatialGrid& grid,
         // front to back, and ordering by distance is the only answer that does
         // not depend on grid bucket order.
         std::sort(impacts_.begin(), impacts_.end(),
-                  [](const ShotImpact& a, const ShotImpact& b) {
-                      return a.distanceSquared < b.distanceSquared;
-                  });
+                         [meteor](const ShotImpact& a, const ShotImpact& b) {
+                             if (meteor != NULL_ENTITY && (a.victim == meteor || b.victim == meteor)) {
+                                 return a.victim != meteor;
+                             }
+                             return a.distanceSquared < b.distanceSquared;
+                         });
 
         // Only resolved once something is actually going to be hit: this is a
         // per-shot table lookup and most shots spend their life hitting
@@ -4598,7 +4634,8 @@ void CombatSystem::tickProjectiles(World& world, const SpatialGrid& grid,
             // Hyper-only PvE shots spend their single impact on contact.
             // Other ammunition can penetrate while its durability pool lasts.
             if (!world.isAlive(shot.entity) || world.has<Dead>(shot.entity)) break;
-            if (((wildOnly || electron) && !hit.refused) || !std::isfinite(cost) || cost <= 0.0) {
+            if (((wildOnly || electron || impact.victim == meteor) && !hit.refused) ||
+                !std::isfinite(cost) || cost <= 0.0) {
                 world.add<Dead>(shot.entity);
                 break;
             }

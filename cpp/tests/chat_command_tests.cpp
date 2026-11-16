@@ -2744,7 +2744,7 @@ TEST(a_whisper_reaches_one_player_and_echoes_to_the_sender) {
     const std::size_t carolBefore = carol.chat().size();
     const std::size_t bobBefore = bob.chat().size();
     // Typed in the wrong case: the copies carry the account's own spelling.
-    alice.sendChat("/w BOB meet me by the oak");
+    alice.sendChat("\xEF\xBB\xBF" " /whisper\xC2\xA0" "BOB\xE3\x80\x80" "meet me by the oak");
     CHECK(h.stepUntil({&alice, &bob, &carol},
                       [&] { return bob.chat().size() > bobBefore; }, 120));
     h.step(3, {&alice, &bob, &carol});
@@ -2763,8 +2763,8 @@ TEST(a_whisper_reaches_one_player_and_echoes_to_the_sender) {
     CHECK_EQ(carol.chat().size(), carolBefore);
     CHECK(!sawText(carol, "meet me by the oak"));
 
-    CHECK(say(h, alice, "/w nobody hello"));
-    CHECK(sawText(alice, "No player named nobody is online."));
+    alice.sendChat("/w nobody hello");
+    CHECK(h.stepUntil({&alice}, [&] { return sawText(alice, "No player named nobody is online.") || sawText(alice, "没有名为 nobody 的在线玩家。"); }, 120));
     CHECK(say(h, alice, "/w alice hello"));
     CHECK(sawText(alice, "You cannot whisper to yourself."));
     CHECK(say(h, alice, "/w bob"));

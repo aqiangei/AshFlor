@@ -221,7 +221,7 @@ constexpr Pair kNameTr[] = {
     {"Javascript", "JavaScript"},
     {"Javascript Egg", "JavaScript蛋"},
     {"JavaScript Egg", "JavaScript蛋"},
-    {"Jelly", "水母"},
+    {"Jelly", "果冻"},
     {"Jellyfish", "水母"},
     {"Jellyfish Egg", "水母蛋"},
     {"Ladybug", "瓢虫"},
@@ -434,6 +434,7 @@ std::string localizePlain(std::string text) {
         const char* zh;
     };
     static constexpr Exact kExact[] = {
+        {"Not enough mana to summon.", "法力不足，无法召唤。"},
         {"That player is already in a squad.", "该玩家已在小队中。"},
         {"That player already has a pending invite.", "该玩家已有待处理邀请。"},
         {"You are already in a squad.", "你已在小队中。"},
@@ -454,6 +455,16 @@ std::string localizePlain(std::string text) {
          "冰封印记已将你送到极地。30 秒后可用 /mark-return 返回原处。"},
         {"Frozen Mark: sent to Arctic. Use /mark-return to go back.",
          "冰封印记已将你送到极地。输入 /mark-return 返回原处。"},
+        {"Blood Sacrifice kept. The monsters in this area are too low in rarity.",
+         "血祭已保留。死亡位置的怪物稀有度太低，无法召唤。"},
+        {"Blood Sacrifice kept. This Prestige map does not allow a ritual of this tier.",
+         "血祭已保留。这张声望地图不允许这个档位的血祭。"},
+        {"Blood Sacrifice kept. A boss or another ritual already occupies this rarity slot.",
+         "血祭已保留。此处同阶 Boss 名额已被怪物或另一场血祭占用。"},
+        {"Blood Sacrifice kept. There is no spawn area at the spot where you died.",
+         "血祭已保留。死亡位置没有刷怪区域。"},
+        {"Blood Sacrifice kept. This area has no eligible monster for the ritual.",
+         "血祭已保留。此处刷怪区域没有可供血祭召唤的怪物。"},
         {"Press Enter to chat...", "按 Enter 聊天…"},
     };
     for (const Exact& e : kExact) {

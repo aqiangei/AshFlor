@@ -1402,6 +1402,21 @@ bool Terrain::outside(Vec2 p, Realm realm) const {
     return p.x < 0.0 || p.x >= extent.x || p.y < 0.0 || p.y >= extent.y;
 }
 
+Vec2 Terrain::resolveLinkedCircle(Vec2 leader, Vec2 offset, double radius, Realm realm) const {
+    const Vec2 placed = resolveCircle(leader + offset, radius, realm);
+    if (!segmentBlocked(leader, placed, realm)) return placed;
+
+    double clear = 0.0;
+    double blocked = 1.0;
+    for (int i = 0; i < 12; ++i) {
+        const double mid = (clear + blocked) * 0.5;
+        if (segmentBlocked(leader, leader + offset * mid, realm)) blocked = mid;
+        else clear = mid;
+    }
+    const Vec2 shortened = resolveCircle(leader + offset * clear, radius, realm);
+    return segmentBlocked(leader, shortened, realm) ? leader : shortened;
+}
+
 bool Terrain::segmentBlocked(Vec2 a, Vec2 b, Realm realm) const {
     if (!std::isfinite(a.x) || !std::isfinite(a.y) || !std::isfinite(b.x) || !std::isfinite(b.y)) {
         return true;

@@ -1,6 +1,7 @@
 #include "test.h"
 #include "server_harness.h"
 #include "client/ui/i18n.h"
+#include "server/systems/loot.h"
 
 using namespace flix;
 using namespace flix::testsupport;
@@ -14,6 +15,7 @@ TEST(rift_elimination_ends_the_round_and_champion_claims_all_rewards_once) {
     CHECK(h.ready);
     if (!h.ready) return;
     NetClient winner, second;
+    winner.setWorldMaps(&h.server.worldMaps());
     const std::vector<NetClient*> clients{&winner, &second};
     if (!connectClient(h, winner) || !connectClient(h, second)) {
         CHECK(false);
@@ -74,11 +76,31 @@ TEST(rift_elimination_ends_the_round_and_champion_claims_all_rewards_once) {
     CHECK(bothEntered);
     if (winner.view().realm() != main || second.view().realm() != main) return;
     CHECK_EQ(winner.profile().inventory.size(), std::size_t{0});
+    CHECK(winner.inRiftMap());
+    winner.requestBulkCraft(Rarity::Super);
+    CHECK(h.stepUntil(clients, [&] {
+        for (const auto& line : winner.chat()) {
+            if (line.text.find("裂隙对局中无法一键合成") != std::string::npos) return true;
+        }
+        return false;
+    }, 100));
+    CHECK_EQ(winner.profile().inventory.size(), std::size_t{0});
     for (int slot = 0; slot < 5; ++slot) {
         const auto expected = content().petalIndex(slot == 4 ? "rose" : "basic");
         CHECK_EQ(winner.profile().loadout[slot].petalIndex, expected);
         CHECK(winner.profile().loadout[slot].rarity == Rarity::Common);
     }
+    CHECK(sawText(winner, "离开时清空"));
+    const auto* entrant = GameServerPeer::sessionOf(h.server, "riftwinner");
+    CHECK(entrant && entrant->arena);
+    if (!entrant || !entrant->arena) return;
+    LootSystem fixtureLoot;
+    const auto rock = content().petalIndex("rock");
+    const Vec2 at = h.server.world().get<Transform>(entrant->entity).position;
+    CHECK(fixtureLoot.spawnDrop(h.server.world(), rock, Rarity::Rare, at, main, {entrant->entity}) != NULL_ENTITY);
+    CHECK(h.stepUntil(clients, [&] { return winner.profile().stackCount(rock, Rarity::Rare) == 1; }, 150));
+    CHECK_EQ(GameServerPeer::authorityDb(h.server).progress(entrant->userId)
+                 .itemCount(Rarity::Rare, "petal_rock"), 0);
     h.clock += 3.0 * 60 * 1000;
     CHECK(h.stepUntil(clients, [&] { return !winner.riftOpen(); }));
     auto& world = h.server.world();
@@ -153,6 +175,7 @@ TEST(rift_elimination_ends_the_round_and_champion_claims_all_rewards_once) {
     }
     CHECK(h.stepUntil({&returning}, [&] { return returning.view().realm() == Realm::Overworld; }));
     CHECK(prizeDrops().empty());
+    CHECK_EQ(returning.profile().stackCount(rock, Rarity::Rare), 0u);
     unsigned total = 0;
     unsigned permanentHyper = 0;
     unsigned fission = 0;

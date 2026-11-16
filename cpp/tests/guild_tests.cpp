@@ -127,6 +127,30 @@ TEST(the_notification_feed_arrives_newest_first_and_pages_backwards) {
     CHECK(!client.notificationsHaveMore());
 }
 
+TEST(notification_pages_keep_equal_timestamps_and_report_the_exact_end) {
+    Harness h("notices-tie", [](const std::string& path) {
+        seedUser(path, "reader", "password7");
+        seedNotifications(path, 5);
+        Json root;
+        std::string error;
+        if (!Json::parseFile(path, root, error)) return;
+        root["notifications"][2]["timestamp"] = Json(1003.0);
+        root.writeFile(path, 2);
+    });
+    if (!h.ready) { CHECK(false); return; }
+    NetClient client;
+    CHECK(loginAs(h, client, "reader", "password7"));
+    client.requestNotifications(2, 0);
+    CHECK(h.stepUntil({&client}, [&] { return !client.notificationsPending(); }, 200));
+    CHECK_EQ(client.notifications().size(), std::size_t{3});
+    CHECK(client.notificationsHaveMore());
+    if (client.notifications().empty()) return;
+    client.requestNotifications(2, client.notifications().back().timestampMillis);
+    CHECK(h.stepUntil({&client}, [&] { return !client.notificationsPending(); }, 200));
+    CHECK_EQ(client.notifications().size(), std::size_t{5});
+    CHECK(!client.notificationsHaveMore());
+}
+
 TEST(reading_the_notification_feed_leaves_the_stored_array_intact) {
     Harness h("notices-shape", [](const std::string& path) {
         seedUser(path, "reader", "password7");

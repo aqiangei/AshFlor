@@ -64,7 +64,15 @@ constexpr double kPagePrefetch = 100.0;
 /// would be a second thing to keep true. `read` is a mirror of the settings
 /// file's list, kept as a set so a card's read test is a lookup rather than a
 /// scan of the whole history once per card per frame.
+struct NotificationLayout {
+    double width = -1.0;
+    std::uint32_t revision = 0;
+    std::vector<std::vector<std::string>> lines;
+    double height = 0;
+};
+
 struct FeedState {
+    NotificationLayout wide, narrow;
     bool requested = false;
     std::set<std::string> read;
     /// How many ids the mirror was built from. This panel is the only writer
@@ -284,10 +292,6 @@ double cardHeight(std::size_t lineCount) {
                     kCardChrome + static_cast<double>(lineCount) * kLinePitch);
 }
 
-double cardHeight(const std::string& message, double maxTextWidth) {
-    return cardHeight(wrapMessage(message, maxTextWidth).size());
-}
-
 /// "3 days ago" / "Just now". Plural only past one, as the reference's
 /// `days > 1 ? 's' : ''` gives.
 std::string timeAgo(double stampMillis, double nowMillis) {
@@ -322,7 +326,7 @@ bool NotificationsPanel::render(MenuContext& ctx) {
     const Vec2 mouse = ctx.mouse();
     FeedState& state = feedState();
 
-    if (!state.requested) {
+    if (!state.requested && !ctx.net.notificationsPending()) {
         state.requested = true;
         ctx.net.requestNotifications(kNotificationPage, 0);
     }
@@ -340,31 +344,29 @@ bool NotificationsPanel::render(MenuContext& ctx) {
         state.mirrored = readIds.size();
     };
 
-    const double viewport = panel.h - kHeaderHeight;
+    const double viewport = panel.h - kHeaderHeight - kPadding;
     const double wideText = panel.w - kPadding * 2 - kTextInset * 2;
     const double narrowText = wideText - (kScrollbarWidth + 5.0);
 
-    // Measured twice, exactly as the reference measures it: a list that needs
-    // a scrollbar wraps against a narrower card, which can add lines and so
-    // change the answer the first pass gave.
-    double contentHeight = 40.0;
-    if (!entries.empty() || loading) {
-        const auto sum = [&](double textWidth) {
-            double total = 0;
-            for (const NotificationEntry& notice : entries) {
-                // The measuring pass counts the card and NOT the 10px between
-                // two of them, while the draw pass advances by both. The list
-                // therefore stops 10px per entry short of its own end. That is
-                // the reference's arithmetic and the panel is compared against
-                // it, so it is reproduced rather than corrected.
-                total += cardHeight(notice.message, textWidth);
-            }
-            if (hasMore) total += 40.0;
-            return total;
-        };
-        contentHeight = sum(wideText);
-        if (contentHeight > viewport) contentHeight = sum(narrowText);
-    }
+    const auto measure = [&](NotificationLayout& layout, double width) {
+        if (layout.width == width && layout.revision == ctx.net.notificationsRevision()) return;
+        layout.width = width;
+        layout.revision = ctx.net.notificationsRevision();
+        layout.lines.clear();
+        layout.lines.reserve(entries.size());
+        layout.height = 2.0 * kPadding;
+        for (const NotificationEntry& notice : entries) {
+            layout.lines.push_back(wrapMessage(notice.message, width));
+            layout.height += cardHeight(layout.lines.back().size()) + kCardGap;
+        }
+        if (hasMore) layout.height += 30.0;
+        else if (!entries.empty()) layout.height -= kCardGap;
+    };
+    measure(state.wide, wideText);
+    const bool needsScrollbar = state.wide.height > viewport;
+    if (needsScrollbar) measure(state.narrow, narrowText);
+    const NotificationLayout& layout = needsScrollbar ? state.narrow : state.wide;
+    const double contentHeight = layout.height;
 
     scroll_.contentHeight = contentHeight;
     scroll_.viewHeight = viewport;
@@ -425,7 +427,6 @@ bool NotificationsPanel::render(MenuContext& ctx) {
     canvas.clip();
 
     const double entryWidth = view.w - (scrollable ? kScrollbarWidth + 5.0 : 0.0);
-    const double maxTextWidth = entryWidth - kTextInset * 2;
     double contentY = view.y + kPadding - scroll_.offset;
     std::vector<std::pair<Rect, std::string>> cards;
 
@@ -444,14 +445,15 @@ bool NotificationsPanel::render(MenuContext& ctx) {
         // it was posted (NotificationEntry::timestampMillis), and "3 days ago"
         // is measured against that.
         const double now = static_cast<double>(wallClockMillis());
-        for (const NotificationEntry& notice : entries) {
-            const bool isRead = read.count(notice.id) != 0;
-            const std::vector<std::string> lines = wrapMessage(notice.message, maxTextWidth);
+        for (std::size_t i = 0; i < entries.size(); ++i) {
+            const NotificationEntry& notice = entries[i];
+            const auto& lines = layout.lines[i];
             const double height = cardHeight(lines.size());
             const Rect card{view.x, contentY, entryWidth, height};
-            cards.emplace_back(card, notice.id);
-
-            if (card.bottom() >= view.y && card.y <= view.bottom()) {
+            if (card.y > view.bottom()) break;
+            if (card.bottom() >= view.y) {
+                cards.emplace_back(card, notice.id);
+                const bool isRead = read.count(notice.id) != 0;
                 setFill(canvas, kPaper, isRead ? 0.1 : 0.15);
                 roundPath(canvas, card, 8.0);
                 canvas.fill();
@@ -482,7 +484,7 @@ bool NotificationsPanel::render(MenuContext& ctx) {
             contentY += height + kCardGap;
         }
 
-        if (hasMore) {
+        if (hasMore && contentY <= view.bottom()) {
             TextStyle footer = faint;
             footer.align = Align::Centre;
             textAtAlpha(canvas, loading ? "Loading..." : "Scroll for more",
@@ -514,8 +516,7 @@ bool NotificationsPanel::render(MenuContext& ctx) {
         for (const NotificationEntry& notice : entries) markRead(notice.id);
         return true;
     }
-    // Card rects are recorded unclipped, exactly as the reference records
-    // them, so a card scrolled out of the body still answers for a click.
+    if (!view.contains(mouse)) return true;
     for (const std::pair<Rect, std::string>& card : cards) {
         if (card.first.contains(mouse)) {
             markRead(card.second);

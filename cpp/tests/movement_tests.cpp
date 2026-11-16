@@ -392,6 +392,27 @@ TEST(a_solid_stationary_mob_blocks_player_movement_but_not_cutter) {
     }
 }
 
+TEST(a_burrowed_flower_can_walk_through_a_surface_fossil) {
+    std::string error;
+    CHECK(loadContent(testsupport::dataDir(), error));
+    const auto index = content().mobIndex("jurassic_fossil");
+    const auto stats = content().mobStats(index, Rarity::Common);
+    const Vec2 centre{5000.0, 5000.0};
+    const double contact = stats.radius * mobBodyContactScale("jurassic_fossil") + kPlayerBaseRadius;
+    Fixture fx;
+    const Entity fossil = fx.spawnMob(centre, stats.radius, stats.mass);
+    fx.world.add<MobType>(fossil, MobType{index, Rarity::Common, 1.0});
+    fx.world.add<MobAi>(fossil).kind = AiKind::Stationary;
+    const Vec2 start = centre - Vec2{contact - 10.0, 0.0};
+    const Entity player = fx.spawnPlayer(start);
+    fx.world.add<BurrowState>(player, BurrowState{1000.0, true});
+    fx.step(1);
+    CHECK_NEAR(distance(fx.positionOf(player), start), 0.0, 1e-9);
+    fx.world.get<BurrowState>(player).untilMillis = 0.0;
+    fx.step(1);
+    CHECK_NEAR(distance(fx.positionOf(player), centre), contact, 1e-6);
+}
+
 TEST(tangible_stationary_hole_blocks_players_even_without_mob_separation) {
     std::string error;
     CHECK(loadContent(testsupport::dataDir(), error));

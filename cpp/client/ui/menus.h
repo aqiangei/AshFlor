@@ -607,7 +607,7 @@ struct SlotCardLayout {
 /// The tiers a slot grid has columns for: the ladder (Hyper); the ladder up to
 /// unique, then permanent hyper (PermanentHyper); the ladder, then Ascendant
 /// (Ascendant, the trader's: traderTakes in shared/game/npc.h).
-enum class SlotGridTiers { Hyper, PermanentHyper, Ascendant };
+enum class SlotGridTiers { Hyper, PermanentHyper, Ascendant, Absorption };
 
 /// The window's width for the selected grid columns, with a minimum of 610.
 double slotCardColumnsWidth(std::size_t columns);
@@ -675,7 +675,8 @@ public:
         Rect bounds;
     };
 
-    void reset() { scroll_ = {}; thumbGrab_.reset(); }
+    void reset() { scroll_ = {}; endDrag(); }
+    void endDrag() { scroll_.thumbGrab.reset(); thumbGrab_.reset(); }
     /// How many rows the account's petals make: one a type held at a tier the
     /// grid has a column for.
     static std::size_t rows(const Profile&, SlotGridTiers tiers);
@@ -834,7 +835,7 @@ int slotBurstGrains(Rarity rarity);
 class CraftingPanel {
 public:
     bool render(MenuContext&);
-    void reset();
+    void reopen();
     /// The window's width and height for this account: the grid's columns
     /// set the one and its rows the other.
     static Vec2 size(const Profile&);
@@ -853,6 +854,7 @@ private:
     SlotGrid grid_;
     ui::TooltipDelay tooltip_;
     ui::TouchInspectDelay touchInspect_;
+    std::string account_;
     /// What is staged. A craft consumes five at a time; `batches` is how many
     /// fives are queued, which is what the slot badge counts.
     std::uint16_t stagedPetal_ = kNoPetal;
@@ -1891,9 +1893,11 @@ private:
     /// render(), which is the only entry point holding a NetClient -- the
     /// login screen's strip has no account and so never badges anything.
     int notificationsUnread_ = 0;
+    bool guildInvitePending_ = false;
     /// Whether this session has already asked for its first page. See the note
     /// in render(): the badge cannot count a feed nobody fetched.
     bool notificationsPrimed_ = false;
+    double nextNotificationBadgePage_ = 0;
     /// Whether the strip shows the admin dashboard's button: the server's
     /// word that this account is an admin, as of the last render(), which is
     /// the only entry point holding a NetClient. The login screen's strip has
@@ -1910,7 +1914,7 @@ private:
     Rect dungeonEntryRect_{};
     bool pendingDungeonEntry_=false;
     /// Invite toast cards as last painted (guild and/or squad), for hits.
-    std::array<Rect, 2> inviteToastRects_{};
+    Rect squadInviteToastRect_{};
 
     /// The icon artwork, compiled on first use. One document per glyph, shared
     /// with nothing; the shop compiles its own two copies of the star.

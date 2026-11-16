@@ -3,8 +3,58 @@
 #include "client/ui/menu_widgets.h"
 #include "client/ui/menus.h"
 #include "client/ui/i18n.h"
+#include "client/ui/content_i18n.h"
 #include "shared/game/config.h"
 using namespace flix;
+TEST(laser_and_void_tooltips_explain_the_available_effects) {
+    std::string error;
+    CHECK(loadContent(testsupport::dataDir(), error));
+    ui::setLanguage(ui::Language::En);
+    const auto laser = content().petalIndex("laser");
+    const auto hasLine = [&](Rarity rarity, const char* text) {
+        const auto lines = ui::petalTooltipLines(laser, rarity, {}, 1.0);
+        for (const auto& line : lines) if (line.text.find(text) != std::string::npos) return true;
+        return false;
+    };
+    CHECK(hasLine(Rarity::Unique, "This tier deals contact damage only."));
+    CHECK(!hasLine(Rarity::Unique, "390 units"));
+    CHECK(hasLine(Rarity::PermanentHyper, "390 units"));
+    CHECK(std::string(ui::petalDescTr("void_singularity", "")).find("33%") != std::string::npos);
+    CHECK(std::string(ui::petalDescTr("void_void_mark", "")).find("the Void") != std::string::npos);
+    ui::setLanguage(ui::Language::Zh);
+    CHECK(std::string(ui::petalDescTr("void_gamma_ray", "")).find("攻击") != std::string::npos);
+}
+
+TEST(fang_and_tooth_tooltips_report_their_mana_refunds) {
+    std::string error;
+    CHECK(loadContent(testsupport::dataDir(), error));
+    ui::setLanguage(ui::Language::En);
+    const auto hasLine = [&](const char* petal, Rarity rarity, const char* expected) {
+        const auto lines = ui::petalTooltipLines(content().petalIndex(petal), rarity, {}, 1.0);
+        for (const auto& line : lines) if (line.text == expected) return true;
+        return false;
+    };
+    CHECK(hasLine("magic_fang", Rarity::Common, "Mana per damaging bite on a wild mob: 1.2"));
+    CHECK(hasLine("magic_fang", Rarity::Rare, "Mana per damaging bite on a wild mob: 4.8"));
+    CHECK(hasLine("magic_tooth", Rarity::Common, "Mana restored at most once per reload: 0.3"));
+    CHECK(hasLine("jurassic_fossil_egg", Rarity::Common, "Summon contact damage: 0"));
+}
+
+TEST(magic_blood_stinger_tooltip_matches_mana_and_contact_damage) {
+    std::string error;
+    CHECK(loadContent(testsupport::dataDir(), error));
+    const auto index = content().petalIndex("magic_blood_stinger");
+    CHECK(index != kInvalidIndex);
+    const auto& config = content().petal(index);
+    CHECK_NEAR(config.contactSelfDamage, 0.0, 1e-9);
+    CHECK(config.requiredMana > 0.0);
+    CHECK(content().petalStats(index, Rarity::Common).damage > 0.0);
+    ui::setLanguage(ui::Language::En);
+    CHECK_EQ(std::string(ui::petalDescTr(config.id, "")), "Costs mana to form and deals contact damage.");
+    ui::setLanguage(ui::Language::Zh);
+    CHECK_EQ(std::string(ui::petalDescTr(config.id, "")), "生成时消耗法力，碰撞时造成伤害。");
+}
+
 TEST(mimic_tooltip_shows_eternal_cpp_stats_and_copied_reload){
     std::string error;CHECK(loadContent(testsupport::dataDir(),error));ui::setLanguage(ui::Language::Zh);
     const auto mimic=content().petalIndex("mimic"),cpp=content().petalIndex("c++");
@@ -29,7 +79,7 @@ TEST(ant_and_beetle_tooltips_match_the_buffed_summon_stats){
     for(const auto* id:{"egg","beetle_egg"})for(int tier=0;tier<kRarityCount;++tier){
         const auto rarity=clampRarity(tier);const auto index=content().petalIndex(id);const auto& config=content().petal(index);
         const auto lines=ui::petalTooltipLines(index,rarity,{},1.0);bool health=false,damage=false;
-        for(const auto& line:lines){health|=line.text.find("Summon health: ")==0;damage|=line.text.find("Summon damage: ")==0;}
+        for(const auto& line:lines){health|=line.text.find("Summon health: ")==0;damage|=line.text.find("Summon contact damage: ")==0;}
         CHECK(health);CHECK(damage);CHECK_NEAR(eggSummonCombatScale(config),2.0,1e-9);
     }
 }

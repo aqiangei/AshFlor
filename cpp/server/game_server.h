@@ -1535,7 +1535,8 @@ private:
     void applyVoidGravity(double dt);
 
     /// Moves what the loot system handed out into the owning accounts.
-    void bankPickups();
+    void bankPickups(std::size_t first = 0);
+    void collectLeavingLoot(Session&);
     void tick(double wallMillis, double worldMillis);
     void replicate(double nowMillis, double wallMillis);
     void reapDead();

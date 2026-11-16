@@ -201,10 +201,9 @@ Vec2 turned(Vec2 v, double radians) {
 } // namespace
 
 Vec2 AbsorbPanel::size(const Profile& profile) {
-    // Every ladder tier: anything up to apex may go in, so the grid has a
-    // column for each, the trader's width.
-    const std::size_t rows = SlotGrid::rows(profile, SlotGridTiers::Hyper);
-    return {slotCardWidth(SlotGridTiers::Hyper),
+    // Keep the two permanent tiers selectable alongside ordinary drops.
+    const std::size_t rows = SlotGrid::rows(profile, SlotGridTiers::Absorption);
+    return {slotCardWidth(SlotGridTiers::Absorption),
             std::min(kMaxHeight, kEmptyHeight + kRowPitch * static_cast<double>(rows))};
 }
 
@@ -522,7 +521,7 @@ bool AbsorbPanel::render(MenuContext& ctx) {
                      std::max(0.0, panel.bottom() - kListBottomPad - listTop)};
     list.listInsetY = kListInsetY;
     const std::optional<SlotGrid::Pick> hovered = grid_.render(
-        ctx, list, kAbsorbSkin, SlotGridTiers::Hyper,
+        ctx, list, kAbsorbSkin, SlotGridTiers::Absorption,
         [&](std::uint16_t petalIndex, Rarity rarity, std::uint32_t owned) {
             SlotCell cell;
             // What is staged has left the stack as far as the player can see.

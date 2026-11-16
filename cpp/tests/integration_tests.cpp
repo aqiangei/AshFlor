@@ -5,6 +5,7 @@
 #include "server/db.h"
 #include "server/game_server.h"
 #include "server/systems/combat.h"
+#include "server/systems/loot.h"
 #include "server/systems/mob_ai.h"
 #include "server/systems/petals.h"
 #include "server_harness.h"
@@ -2146,4 +2147,67 @@ TEST(inventory_packet_flood_shares_a_budget_across_opcodes_and_recovers) {
     client.setLoadoutSlot(0, kNoPetal, Rarity::Common);
     CHECK(h.stepUntil({&client}, [&] { return client.profile().loadout[0].empty(); }));
     CHECK(!record->loadout[0].has_value());
+}
+
+TEST(personal_drops_are_banked_once_on_death_leave_and_disconnect) {
+    Harness h("leaving-loot", {}, testsupport::dataDir(), 0);
+    if (!h.ready) { CHECK(false); return; }
+    NetClient client;
+    if (!connectClient(h, client)) { CHECK(false); return; }
+    client.requestRegister("loottester", "valid-password");
+    if (!h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::LoggedIn; })) {
+        CHECK(false);
+        return;
+    }
+    const auto join = [&] {
+        client.joinGame(1280, 720);
+        return h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; });
+    };
+    if (!join()) { CHECK(false); return; }
+
+    World& world = h.server.world();
+    const auto account = world.get<PlayerAccount>(onlyPlayer(world)).userId;
+    const auto petal = content().petalIndex("rose");
+    const auto inventory = [&] {
+        return h.server.database().findProgress(account)->itemCount(Rarity::Rare, "petal_rose");
+    };
+    LootSystem drops;
+    const auto place = [&](Entity player, Realm realm, const std::vector<Entity>& owners) {
+        const auto& at = world.get<Transform>(player);
+        return drops.spawnDrop(world, petal, Rarity::Rare, at.position + Vec2{500, 0}, realm, owners);
+    };
+
+    const Entity first = onlyPlayer(world);
+    const Realm realm = world.get<Transform>(first).realm;
+    const int before = inventory();
+    place(first, realm, {first});
+    place(first, realm, {}); // Public.
+    place(first, Realm::Maze, {first}); // Different realm.
+    const auto expired = place(first, realm, {first});
+    world.get<Lifetime>(expired).remainingSeconds = 0;
+    const auto contest = place(first, realm, {first});
+    world.get<DropItem>(contest).singleCopy = true;
+
+    world.get<Health>(first).current = 0;
+    world.add<Dead>(first);
+    CHECK(h.stepUntil({&client}, [&] { return client.dead(); }));
+    CHECK_EQ(inventory(), before + 1);
+    client.leaveGame();
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::LoggedIn; }));
+    CHECK_EQ(inventory(), before + 1);
+
+    if (!join()) { CHECK(false); return; }
+    const Entity second = onlyPlayer(world);
+    place(second, world.get<Transform>(second).realm, {second});
+    client.leaveGame();
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::LoggedIn; }));
+    CHECK_EQ(inventory(), before + 2);
+
+    if (!join()) { CHECK(false); return; }
+    const Entity third = onlyPlayer(world);
+    place(third, world.get<Transform>(third).realm, {third});
+    client.disconnect();
+    CHECK(h.stepUntil({}, [&] { return inventory() == before + 3; }));
+    h.step(3, {});
+    CHECK_EQ(inventory(), before + 3);
 }

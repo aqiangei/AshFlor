@@ -187,10 +187,9 @@ public:
     // Browser only: treats input as possibly synthetic (see input_guard.h). A
     // mouse sample that does not move the way a physical mouse or trackpad
     // can -- a teleport, a click where the pointer never travelled to, a
-    // ruler-straight constant-speed line -- lands at a random point on the
-    // canvas instead of the one it names, as does a touch a script made; keys
-    // pressed faster than a person types are dropped. Off unless asked for:
-    // the headless rigs drive the page with exactly that kind of input.
+    // ruler-straight constant-speed line -- is dropped, as is a touch a script
+    // made. Keys pressed faster than a person types are also dropped. Off
+    // unless asked for, since headless rigs often use synthetic input.
     // Recorded and otherwise ignored natively.
     void setInputGuard(bool on);
     bool desynchronized() const;
@@ -335,6 +334,9 @@ public:
     void ensureSoftKeyboard();
     /// Position the browser IME anchor at the painted caret (design units).
     void setSoftKeyboardCaret(float x, float y);
+    /// Bottom of the part of the canvas visible above the on-screen keyboard.
+    /// Returns the full design height when the focused input is unobstructed.
+    double softKeyboardVisibleBottom() const;
 
     /// UTF-8 typed this frame, for text fields. Distinct from keyPressed:
     /// this is what the keyboard layout produced, not which key was struck.
@@ -371,6 +373,8 @@ public:
     /// since what arrives is whatever the user last copied ANYWHERE.
     std::string clipboardText() const;
     void setClipboardText(const std::string& text);
+    void publishClipboardSelection(const std::string& text);
+    void resetSoftKeyboardBuffer();
 
     /// The text a paste asked for THIS frame, empty when nothing was pasted.
     ///

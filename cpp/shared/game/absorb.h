@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 // Absorbing: petals traded in for XP, from the craft window's Absorb side.
 //
 // One header because both ends price a request -- the client to print the
@@ -24,7 +24,7 @@ namespace flix {
 /// have): everyone starts with it, so it is worth nothing.
 inline constexpr const char* kUnabsorbablePetalId = "basic";
 
-/// Common through Eternal. Tracked Hyper/admin holdings have no burn quote.
+/// Common through Eternal. The craftable permanent tiers have separate values.
 inline constexpr double kAbsorbXpByTier[] = {1, 4, 16, 80, 500, 3000, 18500, 140000, 840000};
 
 /// How many petal stacks one Absorb request may name. More than a grid holds:
@@ -33,17 +33,20 @@ inline constexpr int kMaxAbsorbStacks = 4096;
 
 /// Whole base XP, summed before applying the talent and rounding once.
 inline double absorbUnits(Rarity rarity) {
+    if (rarity == Rarity::PermanentHyper) return 16400000.0;
+    if (rarity == Rarity::Ascendant) return 840000000.0;
     const int tier = rarityIndex(rarity);
     return tier >= 0 && tier < 9 ? kAbsorbXpByTier[tier] : 0.0;
 }
 
 inline double absorbXpPerPetal(Rarity rarity) { return absorbUnits(rarity); }
 
-/// Whether a petal may be absorbed at `rarity`: anything on the ladder except
-/// the basic. Contested Hyper petals and universals are tracked holdings;
-/// destroying one is not a trade the game offers.
+/// Common through Eternal and the two permanent tiers, with existing exclusions.
+/// The forged Apex hammer is a tracked holding.
+
 inline bool absorbable(const PetalConfig& petal, Rarity rarity) {
-    return rarityIndex(rarity) < rarityIndex(Rarity::Apex) && petal.id != kUnabsorbablePetalId;
+    return absorbUnits(rarity) > 0.0 && petal.id != kUnabsorbablePetalId &&
+           petal.id != "timed_mjolnir" && (rarity != Rarity::Ascendant || petal.id != "mjolnir");
 }
 
 /// Reference Absorption talent scales absorbed XP independently of Luck.

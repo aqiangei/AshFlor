@@ -203,3 +203,37 @@ TEST(magic_stick_storms_stop_at_the_summon_cap_and_cost_only_when_cast) {
         CHECK(most <= 30);
     }
 }
+
+TEST(magic_stick_reports_when_an_eligible_summon_lacks_mana) {
+    const auto& registry = shippedContent();
+    World world;
+    PetalSystem petals;
+    CommandBuffer commands{world};
+    const Entity player = world.create();
+    world.add<PlayerTag>(player);
+    world.add<Transform>(player, Transform{{900.0, 900.0}, 0.0});
+    world.add<Motion>(player);
+    world.add<Body>(player, Body{kPlayerBaseRadius, 1.0});
+    world.add<Health>(player, Health{100.0, 100.0});
+    world.add<Faction>(player, Faction{Team::Players, true});
+    world.add<PlayerInput>(player);
+    world.add<PlayerModifiers>(player);
+    world.add<PetalRing>(player);
+    auto& slot = world.add<Loadout>(player).slots[0];
+    slot.configIndex = registry.petalIndex("magic_stick");
+    slot.rarity = Rarity::Common;
+
+    int warnings = 0;
+    petals.onTimedSummonManaShortage = [&](Entity owner) {
+        CHECK_EQ(owner, player);
+        ++warnings;
+    };
+    for (int tick = 1; tick <= 300; ++tick) {
+        petals.run(world, registry, tick * net::kTickMillis, net::kTickSeconds, commands);
+        commands.flush();
+    }
+    CHECK(warnings > 0);
+    int storms = 0;
+    Query<Pet>{world}.each([&](Entity, Pet&) { ++storms; });
+    CHECK_EQ(storms, 0);
+}

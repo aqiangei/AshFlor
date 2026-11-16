@@ -429,10 +429,11 @@ void MovementSystem::collectStationaryMobs(World& world) {
 }
 
 void MovementSystem::pushOutOfStationaryMobs(World& world, const Terrain& terrain,
-                                             Transform& transform, double radius) {
+                                             Transform& transform, double radius, Entity burrowedPlayer) {
     stationaryMobGrid_.query(transform.realm, transform.position, radius,
                              stationaryMobCandidates_, stationaryMobScratch_);
     for (const Entity mob : stationaryMobCandidates_) {
+        if (burrowedPlayer != NULL_ENTITY && !canNoticeBurrowed(world, mob, burrowedPlayer)) continue;
         const auto& at = world.get<Transform>(mob);
         const auto& type = world.get<MobType>(mob);
         const double mobRadius = sanitizeCollisionRadius(world.get<Body>(mob).radius) *
@@ -604,8 +605,11 @@ void MovementSystem::movePlayers(World& world, const Terrain& terrain,
         // NPC is the last word on where the flower may stand, as a wall is.
         if (!looseDiscs_.empty()) shoveLooseBodies(terrain, transform, body);
         const auto* visuals = world.tryGet<PlayerVisuals>(e);
-        if (!stationaryMobGrid_.empty() && (!visuals || !(visuals->equipFlags & EquipCutter)))
-            pushOutOfStationaryMobs(world, terrain, transform, body.radius);
+        if (!stationaryMobGrid_.empty() && (!visuals || !(visuals->equipFlags & EquipCutter))) {
+            const auto* burrow = world.tryGet<BurrowState>(e);
+            const bool underground = burrow && burrow->active && nowMillis < burrow->untilMillis;
+            pushOutOfStationaryMobs(world, terrain, transform, body.radius, underground ? e : NULL_ENTITY);
+        }
         if (!npcDiscs_.empty()) pushOutOfNpcs(terrain, transform, body.radius);
         // Discard velocity into a wall while retaining the achieved slide.
         // Otherwise turning away first has to cancel a full inward velocity.

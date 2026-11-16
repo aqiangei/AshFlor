@@ -19,6 +19,7 @@
 #include <cctype>
 #include <cstdint>
 #include <string>
+#include <string_view>
 
 namespace flix {
 
@@ -44,6 +45,39 @@ inline std::string trimmed(const std::string& s) {
     if (first == std::string::npos) return {};
     const std::size_t last = s.find_last_not_of(" \t\r\n");
     return s.substr(first, last - first + 1);
+}
+
+/// Clipboard text can carry invisible padding or full-width spaces around a
+/// command. Recognize private-message commands before any channel prefix or
+/// public dispatch, and leave the message itself as it was typed.
+inline std::string normalizedWhisper(std::string_view line) {
+    const auto separatorBytes = [&](std::size_t at) -> std::size_t {
+        if (at == line.size()) return 0;
+        const char c = line[at];
+        if (c == ' ' || c == '\t' || c == '\r' || c == '\n') return 1;
+        if (line.substr(at, 2) == "\xC2\xA0") return 2; // non-breaking space
+        const auto next = line.substr(at, 3);
+        return next == "\xE3\x80\x80" || next == "\xEF\xBB\xBF" ||
+               next == "\xE2\x80\x8B" ? 3 : 0;
+    };
+    const auto skip = [&](std::size_t at) {
+        while (const auto bytes = separatorBytes(at)) at += bytes;
+        return at;
+    };
+    const auto tokenEnd = [&](std::size_t at) {
+        while (at < line.size() && !separatorBytes(at)) ++at;
+        return at;
+    };
+    const auto start = skip(0);
+    if (start == line.size() || line[start] != '/') return {};
+    const auto verbEnd = tokenEnd(start);
+    const auto verb = lowerCase(std::string(line.substr(start, verbEnd - start)));
+    if (verb != "/w" && verb != "/whisper") return {};
+    const auto target = skip(verbEnd), end = tokenEnd(target), message = skip(end);
+    if (target == line.size()) return "/w";
+    std::string out = "/w " + std::string(line.substr(target, end - target));
+    if (message < line.size()) out += " " + std::string(line.substr(message));
+    return out;
 }
 
 /// The value of one hex digit, either case, or -1 for anything that is not one.

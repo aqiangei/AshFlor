@@ -27,16 +27,51 @@ TEST(daily_bonus_pauses_without_losing_time_and_slow_ticks_spend_simulated_time)
     CHECK_EQ(dropBonusRemaining(r, start + 100), 3599950.0);
     CHECK(setDropBonusEnabled(r, start + 100, false));
     CHECK(!setDropBonusEnabled(r, start + 200, false));
-    const auto tomorrow = start + 86400000;
-    CHECK_EQ(dropBonusRemaining(r, tomorrow), 3599950.0);
-    CHECK_EQ(activeDropBonus(r, tomorrow), 1);
-    CHECK(!claimDropBonus(r, tomorrow));
-    CHECK(!compensateSlowDropBonus(r, tomorrow, 100, 50));
-    CHECK(setDropBonusEnabled(r, tomorrow, true));
-    CHECK(!setDropBonusEnabled(r, tomorrow + 100, true));
-    CHECK_EQ(activeDropBonus(r, tomorrow), 2);
-    CHECK_EQ(dropBonusRemaining(r, tomorrow + 100), 3599850.0);
-    CHECK(!claimDropBonus(r, tomorrow + 100));
-    CHECK(claimDropBonus(r, tomorrow + 3600000));
-    CHECK_EQ(dropBonusStreak(r, tomorrow + 3600000), 2);
+    CHECK_EQ(dropBonusRemaining(r, start + 1000), 3599950.0);
+    CHECK_EQ(activeDropBonus(r, start + 1000), 1);
+    CHECK(!compensateSlowDropBonus(r, start + 1000, 100, 50));
+    CHECK(setDropBonusEnabled(r, start + 1000, true));
+    CHECK(!setDropBonusEnabled(r, start + 1100, true));
+    CHECK_EQ(activeDropBonus(r, start + 1000), 2);
+    CHECK_EQ(dropBonusRemaining(r, start + 1100), 3599850.0);
+    CHECK(!claimDropBonus(r, start + 1100));
+}
+
+TEST(daily_bonus_expires_at_beijing_midnight_and_caps_new_claim_at_one_hour) {
+    const std::int64_t midnight = 20000LL * 86400000 - 8LL * 3600000;
+    for (const bool paused : {false, true}) {
+        PlayerRecord r;
+        auto& bonus = r.extra["dailyDropBonus"];
+        bonus["day"] = static_cast<double>(dropBonusDay(midnight) - 2);
+        bonus["streak"] = 3;
+        CHECK(claimDropBonus(r, midnight - 60000));
+        CHECK_EQ(activeDropBonus(r, midnight - 60000), 3);
+        CHECK_EQ(dropBonusResetAt(midnight - 1), midnight);
+        if (paused) CHECK(setDropBonusEnabled(r, midnight - 30000, false));
+        CHECK(!claimDropBonus(r, midnight - 1));
+        CHECK(dropBonusRemaining(r, midnight - 1) > 0.0);
+        CHECK_EQ(dropBonusRemaining(r, midnight), 0.0);
+        CHECK_EQ(activeDropBonus(r, midnight), 1);
+        CHECK(!setDropBonusEnabled(r, midnight, true));
+        CHECK(!compensateSlowDropBonus(r, midnight, 100, 50));
+
+        CHECK(claimDropBonus(r, midnight));
+        CHECK_EQ(dropBonusRemaining(r, midnight), 3600000.0);
+        CHECK_EQ(activeDropBonus(r, midnight), 2);
+        CHECK_EQ(dropBonusStreak(r, midnight), 5);
+        CHECK(!claimDropBonus(r, midnight + 1));
+        CHECK(!claimDropBonus(r, midnight + 3600000));
+    }
+}
+
+TEST(daily_bonus_maintenance_cannot_restore_previous_days_time) {
+    const std::int64_t midnight = 20000LL * 86400000 - 8LL * 3600000;
+    PlayerRecord r;
+    CHECK(claimDropBonus(r, midnight - 60000));
+    auto& bonus = r.extra["dailyDropBonus"];
+    CHECK(pauseDropBonusForMaintenance(bonus, midnight - 30000, "update"));
+    CHECK(resumeDropBonusAfterMaintenance(r, midnight + 30000));
+    CHECK_EQ(dropBonusRemaining(r, midnight + 30000), 0.0);
+    CHECK_EQ(activeDropBonus(r, midnight + 30000), 1);
+    CHECK(!pauseDropBonusForMaintenance(bonus, midnight + 30000, "next"));
 }

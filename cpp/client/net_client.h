@@ -612,6 +612,7 @@ public:
 
     Status status() const { return status_; }
     bool riftOpen() const { return riftOpen_; }
+    bool inRiftMap() const;
     /// Whether this client is holding an account: logged in, or in a game.
     /// Everything the server says about an account or a world is only
     /// meaningful while this holds.

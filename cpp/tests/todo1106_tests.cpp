@@ -313,7 +313,7 @@ TEST(todo1106_bulk_craft_keeps_results_private) {
     CHECK(h.stepUntil({&crafter,&reader},[&]{return sawText(crafter,"global-after-craft");}));
 }
 
-TEST(todo1106_super_craft_keeps_results_private) {
+TEST(todo1106_super_craft_has_no_announcement) {
     Harness h("quiet-super",[](const std::string& path){
         seedUser(path,"smith","password7");
         seedUser(path,"observer","password7");
@@ -329,9 +329,8 @@ TEST(todo1106_super_craft_keeps_results_private) {
     CHECK(client.craftOutcome().crafted>0);
     client.requestNotifications(50,0);
     CHECK(h.stepUntil({&client,&observer},[&]{return !client.notificationsPending();}));
-    CHECK(sawText(client,"超级 玫瑰 已被"));
-    CHECK(sawText(client,"color: yellow;\">@smith"));
-    CHECK(sawText(client,"color: #00ff00;\">smith"));
+    CHECK(!sawText(client,"超级 玫瑰 已被"));
+    CHECK(!sawText(client,"has been crafted by"));
     CHECK(!sawText(observer,"超级 玫瑰 已被"));
     CHECK(!sawText(observer,"color: yellow;\">@smith"));
     CHECK(client.notifications().empty());

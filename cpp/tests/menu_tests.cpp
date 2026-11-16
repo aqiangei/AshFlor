@@ -905,7 +905,7 @@ TEST(the_forge_refuses_a_universal_stack_and_keeps_every_petal) {
     CHECK_EQ(client.profile().stackCount(rose, Rarity::Universal), 50u);
 }
 
-TEST(a_super_craft_keeps_results_private) {
+TEST(a_super_craft_has_no_announcement) {
     Harness h("craft-notice", [](const std::string& path) {
         seedAccount(path, "smith", "password7", 0, 0);
         // Ultra -> super is a 1% roll, so the pool has to be deep enough that
@@ -932,7 +932,7 @@ TEST(a_super_craft_keeps_results_private) {
     client.craftOutcome().pending = false;
 
     h.step(10,{&client});
-    CHECK(sawText(client, "超级 玫瑰 已被"));
+    CHECK(!sawText(client, "超级 玫瑰 已被"));
     CHECK(awaitFeed(h,client));
     CHECK(client.notifications().empty());
 

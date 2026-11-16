@@ -8,12 +8,9 @@
 //   * A mouse that does not move like a mouse is not believed about where it
 //     is. PointerPhysics, below, judges every sample the way a physical
 //     pointer is bound to behave -- it cannot teleport, it takes time to get
-//     anywhere, it wobbles -- and a sample it cannot vouch for is still
-//     delivered (a press is still a press) but at a random point on the
-//     canvas. Only that one sample: the next is judged afresh. A program can
-//     then click, but it cannot aim. Whether the browser itself says it made
-//     the event (Event.isTrusted) is one input to that judgement, not the
-//     judgement.
+//     anywhere, it wobbles. The window discards rejected samples and keeps
+//     the last accepted coordinates. Whether the browser itself says it
+//     made the event (Event.isTrusted) is one input to that judgement.
 //
 //   * Keys pressed faster than any person types are dropped. That is
 //     KeyRateLimit.
@@ -105,11 +102,9 @@ struct PointerSample {
 /// Whether a pointer is moving like a physical mouse or trackpad.
 ///
 /// Every sample gets a verdict of its own, and a sample that is not believed
-/// costs exactly that sample: the caller moves it to a random point and the
-/// next one is judged afresh, from where the device really is. So a rule that
-/// misfires on a real hand is one glitched event, never a pointer that stays
-/// random -- and the rules a MOVE is held to are only the ones a hand cannot
-/// break however it is waved about:
+/// costs only that sample: the window keeps its last accepted position and
+/// the next event is judged afresh, from where the device really is. A MOVE
+/// is held to the following checks:
 ///
 ///   * it does not teleport. The first event out of rest covers at most what
 ///     a frame of acceleration can (kMaxFirstStep). Mid-stroke the step may do

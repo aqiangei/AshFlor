@@ -376,6 +376,16 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         // {0:rarity} is: a champion's crown hands out a Basic of whatever tier
         // the crown is.
         std::string description = petalDescTr(config.id, config.description.c_str());
+        if (config.id == "laser") {
+            const bool pulses = technique && technique->technique == HyperTechnique::LaserPulse;
+            if (language() == Language::Zh) {
+                description = pulses ? "接触时造成伤害，攻击时还会发射短促脉冲。"
+                                     : "当前品质只造成接触伤害。";
+            } else {
+                description = pulses ? "Deals contact damage and fires a brief pulse while attacking."
+                                     : "This tier deals contact damage only.";
+            }
+        }
         if (fragment) {
             const bool zh = language() == Language::Zh;
             if (rarity == Rarity::PermanentHyper) {
@@ -627,7 +637,7 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
                 : config.petCount)*(apex && !config.petSummonTiers ? 3 : 1)),12.0};lines.push_back(pet);
         special("召唤物生命：", "Summon health: ",summon.health*summonScale*summon.petHealthScale*kSummonedMobHealthScale*skills.healthScale(SkillId::Summoner)*eggSummonHealthScale(config)*ascendantSummonHealthScale(rarity));
         lines.push_back({std::string(chinese ? "召唤物稀有度：" : "Summon rarity: ") + rarityTr(summonRarity), 12.0});
-        special("召唤物伤害：", "Summon damage: ",
+        special("召唤物接触伤害：", "Summon contact damage: ",
                 summon.damage * summonScale * summon.petDamageScale * summonDamageScale(config, rarity) * ascendantSummonDamageScale(rarity) *
                 skills.effectScale(SkillId::PetDamage));
         if(apex && petalIsEgg(config))lines.push_back({chinese?"H护甲：己方召唤物受到不高于蛋稀有度的野怪体伤时，单次最多损失35%最大生命；不抵挡玩家、毒素或技能。":"H escort armour: wild body hits up to the egg tier deal at most 35% of summon max health per hit; no protection from players, poison or abilities.",12.0});
@@ -916,6 +926,18 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         lines.push_back(steal);
     }
 
+    if (config.id == "magic_fang" || config.id == "magic_tooth") {
+        const bool fang = config.id == "magic_fang";
+        const char* label = fang
+            ? (chinese ? "每次有效咬中野怪回复法力：" : "Mana per damaging bite on a wild mob: ")
+            : (chinese ? "每次重装至多回复法力：" : "Mana restored at most once per reload: ");
+        const double amount = fang ? magicFangManaPerBite(rarity) : magicToothManaPerReload(rarity);
+        TooltipLine refund{label + oneDecimal(amount), 12.0};
+        refund.alpha = 0.72;
+        refund.labelColor = kStatGeneric;
+        lines.push_back(refund);
+    }
+
     if (stats.petalEvasion > 0.0) {
         lines.push_back({std::string(chinese ? "花瓣自身闪避：" : "Petal evasion: ") + exactNumber(stats.petalEvasion * 100.0) + "%", 12.0});
         lines.push_back({chinese ? "仅保护花瓣自身；闪电不可闪避。" : "Protects this petal only; lightning bypasses evasion.", 12.0});
@@ -953,8 +975,8 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     // and the storm's span is what the payment buys. florr's
     // Petal/Attribute/SpawnManaCost, "Spawn Cost: X mana".
     if (stats.petManaCost > 0.0) {
-        const std::string label = colourMarkup("Spawn Cost:", kStatGeneric) + " ";
-        const std::string unit = " " + colourMarkup("mana", kStatMana);
+        const std::string label = colourMarkup(chinese ? "每次召唤消耗：" : "Summon cost:", kStatGeneric) + " ";
+        const std::string unit = " " + colourMarkup(chinese ? "法力" : "mana", kStatMana);
         TooltipLine summon{label + abbreviate(stats.petManaCost) + unit, 12.0};
         summon.alpha = 0.56;
         summon.markup = true;
@@ -1059,8 +1081,12 @@ bool InventoryPanel::render(MenuContext& ctx) {
     const double centre = (gridLeft + gridRight) * 0.5;
 
     panelCard(canvas, panel, kInventorySkin);
-    panelTitle(canvas, panel, menuTitle(MenuId::Inventory),
-               language() == Language::Zh ? "拖动花瓣以装备" : "Drag a petal to equip it");
+    const bool riftBag = ctx.net.inRiftMap();
+    const bool chinese = language() == Language::Zh;
+    panelTitle(canvas, panel,
+               riftBag ? (chinese ? "裂隙临时背包" : "Temporary Rift Bag") : menuTitle(MenuId::Inventory),
+               riftBag ? (chinese ? "对局材料不会带回主背包" : "Match items stay in the Rift")
+                       : (chinese ? "拖动花瓣以装备" : "Drag a petal to equip it"));
 
     // --- header controls ---------------------------------------------------
     const Rect closeRect = closeButtonRect(panel);

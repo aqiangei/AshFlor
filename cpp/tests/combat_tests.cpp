@@ -990,6 +990,23 @@ TEST(a_flower_running_into_a_mob_is_bounced_back_off_it) {
     CHECK_NEAR(a.world.get<Motion>(player).velocity.x, 300.0 + kGardnBounceKick, 1e-9);
 }
 
+TEST(only_underground_mobs_bump_a_burrowed_flower) {
+    for (bool underground : {false, true}) {
+        Arena a;
+        const Entity player = a.player({1000, 1000});
+        a.world.get<Motion>(player).velocity = {-300.0, 0.0};
+        const Entity mob = a.mob({980, 1000}, 100.0);
+        a.world.add<ContactDamage>(mob, ContactDamage{10.0, 500.0});
+        a.world.add<MobType>(mob, MobType{0, Rarity::Common, 1.0});
+        a.world.add<BurrowState>(player, BurrowState{1000.0, true,
+                            static_cast<std::uint16_t>(underground ? 0 : 1)});
+        a.step(0.0);
+        CHECK_NEAR(a.health(player), underground ? 90.0 : 100.0, 1e-9);
+        CHECK_NEAR(a.world.get<Motion>(player).velocity.x,
+                   underground ? 300.0 + kGardnBounceKick : -300.0, 1e-9);
+    }
+}
+
 TEST(a_mob_contact_knocks_an_invulnerable_player_back) {
     Arena a;
     const Entity player = a.player({1000, 1000});
@@ -1404,6 +1421,23 @@ TEST(a_fast_projectile_cannot_step_over_a_body_between_ticks) {
 
     a.step(0.0);
     CHECK_NEAR(a.health(mob), 75.0, 1e-9);
+    CHECK(a.world.has<Dead>(shot));
+}
+
+TEST(a_planted_meteor_intercepts_a_wild_missile_swept_past_it) {
+    Arena a;
+    const Entity player = a.player({1060, 1000});
+    const Entity mob = a.mob({700, 1150}, 100.0);
+    const Entity meteor = a.actor({880, 1060}, 85.0, 200.0, Team::Players);
+    a.world.add<PlantedMeteor>(meteor, PlantedMeteor{player});
+    a.world.add<LoosePetal>(meteor);
+    const Entity shot = spawnShot(a, {1120, 1000}, {8000, 0}, 25.0, 1000.0, mob, mob);
+    a.world.get<Projectile>(shot).lastPosition = {730, 1000};
+    a.world.add<Health>(shot, Health{1000, 1000});
+    const double before = a.health(player);
+    a.step(0.0);
+    CHECK_NEAR(a.health(player), before, 1e-9);
+    CHECK_NEAR(a.health(meteor), 175.0, 1e-9);
     CHECK(a.world.has<Dead>(shot));
 }
 
@@ -2100,6 +2134,39 @@ Entity equipPetal(Arena& a, Entity owner, std::uint16_t configIndex, Rarity rari
 }
 
 } // namespace
+
+TEST(cancer_marks_only_bio_mobs_at_its_tier_or_below) {
+    const auto& registry = testsupport::shippedContent();
+    for (const auto rarity : {Rarity::Common, Rarity::Rare}) {
+        Arena a;
+        const Entity player = a.player({1000, 1000});
+        const Entity target = a.mob({1040, 1000}, 1000.0);
+        a.world.add<MobType>(target, MobType{registry.mobIndex("bio_bacteria"), rarity, 1.0});
+        equipPetal(a, player, registry.petalIndex("cancer"), Rarity::Uncommon, {1040, 1000});
+        a.step(0.0, registry);
+        CHECK_EQ(a.world.has<CancerSubdivision>(target), rarity == Rarity::Common);
+    }
+}
+
+TEST(sandstorm_and_blueberry_pay_equal_xp_for_equal_damage) {
+    const auto& registry = testsupport::shippedContent();
+    for (const bool storm : {false, true}) {
+        Arena a;
+        const Entity player = a.player({1000, 1000});
+        const Entity victim = a.mob({1040, 1000}, 100.0, 1200.0);
+        Entity source;
+        if (storm) {
+            source = a.actor({1040, 1000}, 20.0, 100.0, Team::Players);
+            a.world.add<MobTag>(source);
+            a.world.add<MobType>(source, MobType{registry.mobIndex("sandstorm"), Rarity::Common, 1.0});
+            a.world.add<Pet>(source, Pet{player, 0});
+        } else {
+            source = equipPetal(a, player, registry.petalIndex("magic_peas"), Rarity::Common, {1040, 1000});
+        }
+        CHECK(a.combat.applyDamage(a.world, victim, source, 100.0, 0.0).killed);
+        CHECK_NEAR(a.world.get<PlayerProgress>(player).totalXp, 1200.0, 1e-9);
+    }
+}
 
 TEST(a_petal_hits_with_its_config_stats_and_its_own_cooldown) {
     const Fixture& f = fixture();

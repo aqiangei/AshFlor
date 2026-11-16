@@ -9,8 +9,8 @@
 using namespace flix;
 
 TEST(gallery_magic_drop_preview_follows_all_authored_conversions_and_orb_cap) {
-    std::string error; CHECK(loadContent("/data",error)); ui::Fonts::init("/data",error);
-    Json data; CHECK(Json::parseFile("/data/mob_drops.json",data,error)); int checked=0;
+    std::string error; CHECK(loadContent(testsupport::dataDir(),error)); CHECK(ui::Fonts::init(testsupport::dataDir(),error));
+    Json data; CHECK(Json::parseFile(testsupport::dataFile("mob_drops.json"),data,error)); int checked=0;
     for(const auto& mob:data.keys())for(const auto& entry:data[mob]["drops"].items()){
         const auto source=content().petalIndex(entry["itemType"].asString());
         const auto magic=entry.contains("magicItemType")?content().petalIndex(entry["magicItemType"].asString()):content().magicFormOf(source);
@@ -19,7 +19,7 @@ TEST(gallery_magic_drop_preview_follows_all_authored_conversions_and_orb_cap) {
         const auto converted=galleryDropPreview(content().mobIndex(mob),Rarity::Apex,rarityIndex(Rarity::Unique));
         bool seen=false;
         for(const auto& d:plain)CHECK(d.petalIndex!=magic);
-        for(const auto& d:converted)if(d.petalIndex==magic){seen=true;CHECK(rarityIndex(d.rarity)<=8);CHECK(d.probability>0);}
+        for(const auto& d:converted)if(d.petalIndex==magic){seen=true;CHECK(d.rarity==Rarity::PermanentHyper || rarityIndex(d.rarity)<=8);CHECK(d.probability>0);}
         CHECK(seen);++checked;
     }
     CHECK(checked>=20);
@@ -35,12 +35,12 @@ TEST(gallery_magic_drop_preview_follows_all_authored_conversions_and_orb_cap) {
     for(const char* mob:{"ladybug","jungle_ladybug","desert_ladybug"}){
         bool found=false;
         for(const auto& d:galleryDropPreview(content().mobIndex(mob),Rarity::Apex,5))
-            if(d.petalIndex==content().petalIndex("mana_orb")){found=true;CHECK(rarityIndex(d.rarity)<=5);}
+            if(d.petalIndex==content().petalIndex("mana_orb")){found=true;CHECK(d.rarity==Rarity::PermanentHyper || rarityIndex(d.rarity)<=5);}
         CHECK(found);
     }
 }
 TEST(gallery_magic_orb_checks_active_slots_and_resolves_mimic) {
-    std::string error; CHECK(loadContent("/data",error));
+    std::string error; CHECK(loadContent(testsupport::dataDir(),error));
     Profile p;p.loadout.resize(kLoadoutSlots);
     const auto orb=content().petalIndex("mana_orb");
     p.loadout[kLoadoutActiveSlots]={orb,Rarity::Apex};CHECK_EQ(galleryOrbTier(p),kRarityCount);
@@ -73,4 +73,25 @@ TEST(gallery_hyper_eternal_cells_share_the_reduced_budget) {
         if(d.rarity==Rarity::Unique)total+=d.probability;
     // The two 0.9645% Super tails each cap their Eternal share at half.
     CHECK_NEAR(total, 0.9645, 1e-8);
+}
+
+TEST(gallery_shows_personal_boss_rewards_at_two_percent_total) {
+    std::string error;
+    CHECK(loadContent(testsupport::dataDir(), error));
+    CHECK(ui::Fonts::init(testsupport::dataDir(), error));
+    const auto ladybug = content().mobIndex("ladybug");
+    for (const auto mobTier : {Rarity::Apex, Rarity::Ascendant}) {
+        const auto petalTier = personalBossRewardRarity(mobTier);
+        double total = 0.0;
+        int rows = 0;
+        for (const auto& drop : galleryDropPreview(ladybug, mobTier, kRarityCount)) {
+            if (drop.rarity != petalTier) continue;
+            CHECK(drop.petalIndex == content().petalIndex("rose") ||
+                  drop.petalIndex == content().petalIndex("light"));
+            total += drop.probability;
+            ++rows;
+        }
+        CHECK_EQ(rows, 2);
+        CHECK_NEAR(total, 100.0 * kApexPetalDropChance, 1e-8);
+    }
 }
