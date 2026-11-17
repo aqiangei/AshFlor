@@ -35,11 +35,13 @@ inline Json weightInputs(const Database& db) {
         int level=levelFromTotalXp(p->totalXp).level;
         if(level<2 && seconds<60) continue;
         double petals=0;
-        for(int r=0;r<rarityIndex(Rarity::Admin);++r) {
+        for (int r = 0; r < kRarityCount; ++r) {
+            const auto rarity = static_cast<Rarity>(r);
+            if (rarity == Rarity::Admin) continue;
             double count=0;
-            for(const auto& kv:p->inventory[rarityName(static_cast<Rarity>(r))].members())
+            for(const auto& kv:p->inventory[rarityName(rarity)].members())
                 if(kv.first.rfind("petal_",0)==0) count+=PlayerRecord::stackCount(kv.second);
-            for(const auto& item:p->loadout) if(item && rarityIndex(item->rarity)==r) ++count;
+            for(const auto& item:p->loadout) if(item && item->rarity==rarity) ++count;
             petals+=(r+1)*std::log1p(count);
         }
         Json row=Json::object(); row["id"]=id; row["name"]=a->username;

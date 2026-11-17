@@ -8,6 +8,8 @@ struct GarbagePetal {
 };
 
 inline std::vector<std::uint16_t> garbageEligiblePetals(const ContentRegistry& content, Rarity rarity) {
+    // Apex uses the Hyper ordinary drop table. Match that player's preview to the server.
+    if (rarity == Rarity::Ascendant) rarity = Rarity::Apex;
     int highest = std::max(1, std::min(rarityIndex(rarity), rarityIndex(Rarity::Super)));
     if (!content.garbageDropRates().empty()) {
         highest = -1;

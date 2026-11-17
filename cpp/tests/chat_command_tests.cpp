@@ -57,6 +57,62 @@ std::vector<Database::BackupInfo> reopenBackups(Harness& h) {
 
 } // namespace
 
+TEST(auto_squad_requires_two_opt_ins_in_the_same_map_near_the_same_level) {
+    const double cell = kTileSize;
+    const auto map = fixtureMap(24, 24, fixtureDoor("meadow", "Meadow", cell * 2, cell * 2,
+                                                   cell * 4, cell * 4, true, 0.0), "");
+    const std::string dir = stageDataDir("auto-squad", {{"meadow", map}, {"warren", map}});
+    CHECK(!dir.empty());
+    if (dir.empty()) return;
+    Harness h("auto-squad", {}, dir, 0);
+    if (!h.ready) { CHECK(false); removeDataDir(dir); return; }
+    NetClient one, two;
+    CHECK(loginNew(h, one, "autofirst", "password7"));
+    CHECK(loginNew(h, two, "autosecond", "password7"));
+    one.joinGame(1000, 800, {}, "autofirst");
+    two.joinGame(1000, 800, {}, "autosecond");
+    CHECK(h.stepUntil({&one, &two}, [&] {
+        return one.status() == NetClient::Status::Playing &&
+               two.status() == NetClient::Status::Playing;
+    }));
+    World& world = h.server.world();
+    const Entity first = bodyNamed(world, "autofirst");
+    const Entity second = bodyNamed(world, "autosecond");
+    CHECK(first != NULL_ENTITY && second != NULL_ENTITY);
+    if (first == NULL_ENTITY || second == NULL_ENTITY) { removeDataDir(dir); return; }
+    auto& firstProgress = world.get<PlayerProgress>(first);
+    auto& secondProgress = world.get<PlayerProgress>(second);
+    firstProgress.level = secondProgress.level = 25;
+
+    one.sendChat("/squad-auto on");
+    h.step(25, {&one, &two});
+    CHECK(!one.squad().inSquad && !two.squad().inSquad);
+    bool found = false;
+    auto& secondPosition = world.get<Transform>(second);
+    secondPosition.realm = h.server.worldMaps().realmOfId("warren", found);
+    CHECK(found);
+    two.sendChat("/squad auto on");
+    h.step(25, {&one, &two});
+    CHECK(!one.squad().inSquad && !two.squad().inSquad);
+    secondPosition.realm = Realm::Overworld;
+    secondProgress.level = 25 + kAutoSquadMaxLevelGap + 1;
+    h.step(25, {&one, &two});
+    CHECK(!one.squad().inSquad && !two.squad().inSquad);
+
+    two.sendChat("/squad-auto off");
+    h.step(3, {&one, &two});
+    secondProgress.level = 25 + kAutoSquadMaxLevelGap;
+    h.step(25, {&one, &two});
+    CHECK(!one.squad().inSquad && !two.squad().inSquad);
+    two.sendChat("/squad-auto on");
+    CHECK(h.stepUntil({&one, &two}, [&] {
+        return one.squad().members.size() == 2 && two.squad().members.size() == 2;
+    }, 30));
+    CHECK_EQ(one.squad().id, two.squad().id);
+    CHECK(!one.squad().isPublic);
+    removeDataDir(dir);
+}
+
 TEST(admin_dashboard_shows_a_bag_and_a_full_admin_announces) {
     // The dashboard's panel reads the player list and a bag over its own
     // binary message (admin_dashboard_tests.cpp has the rest of it); here it

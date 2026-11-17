@@ -66,6 +66,12 @@ struct Profile {
     };
     std::vector<Slot> loadout;
 
+    struct TimedHammerLease {
+        int slot = -1;
+        double readyAtMillis = 0;
+    };
+    std::vector<TimedHammerLease> timedHammerLeases;
+
     /// Bar slot `slot` as it is actually equipped -- a mimic resolved to the
     /// petal it copies, by the server's own rule (resolveEquippedPetal).
     EquippedPetal equipped(const ContentRegistry& registry, int slot) const {
@@ -160,6 +166,7 @@ struct NotificationEntry {
     /// Unix milliseconds, so "3 days ago" can be measured against a wall clock
     /// rather than against this process's uptime.
     double timestampMillis = 0;
+    std::string petalId;
 };
 
 /// The player's guild, as the last GuildUpdate described it.
@@ -173,6 +180,8 @@ struct GuildState {
         /// The biome an online member's body is in, as the spawn picker labels
         /// it. Empty for anyone offline or without a body just now.
         std::string location;
+        std::uint64_t lastSeenMillis = 0;
+        bool sameShard = true;
     };
 
     bool joined = false;

@@ -8,6 +8,7 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <string>
 
 #include "server/replication.h"
@@ -40,15 +41,6 @@ constexpr std::size_t kMaxPollenCloudsPerBody = 18;
 /// tick, and the ring step across a gap that wide flings the ring past it; the
 /// glide carries it over without the overshoot.
 constexpr double kRingAnchorSwitchGlideMillis = 300.0;
-
-/// An apex egg does not hatch an apex pet. The reference substitutes three
-/// unique ones, which is the top of the ladder a pet can actually reach. A
-/// universal egg hatches the same three, stronger (see summonPets).
-constexpr int kApexPetCount = 3;
-
-int summonSquadSize(int count, Rarity rarity) {
-    return std::max(0, count) * (ladderRarity(rarity) == Rarity::Apex ? kApexPetCount : 1);
-}
 
 /// Live summons one player may hold, counting every slot's squad together --
 /// and every segment of a summoned centipede, which is a body in the world
@@ -277,12 +269,9 @@ double magicGoldenLeafManaScale(World& world, const ContentRegistry& registry, E
     const auto* loadout = world.tryGet<Loadout>(player);
     if (!loadout) return 1.0;
     const auto* tree = world.tryGet<PlayerSkillTree>(player);
-    const auto magicLeaf = registry.petalIndex("magic_golden_leaf");
-    if (magicLeaf == kInvalidIndex) return 1.0;
     return 1.0 - barReloadCut(registry, [&](int slot) {
-        const auto petal = equippedPetal(registry, *loadout, slot);
-        return petal.configIndex == magicLeaf ? petal : EquippedPetal{};
-    }, tree ? &tree->skills : nullptr);
+        return equippedPetal(registry, *loadout, slot);
+    }, tree ? &tree->skills : nullptr, true);
 }
 
 double hyperBreakReloadScale(const World& world, Entity owner, const HyperTechniqueInfo* technique) {
@@ -342,8 +331,11 @@ double rangeMultiplier(const PetalConfig& config) {
 /// is: one petal's quirk is not worth a schema field. gardn spells the same
 /// thing as `petal.petal_id == PetalID::kWing`.
 double lungeReach(const PetalConfig& config, const PetalInstance& instance, double ageMillis) {
-    if (config.id != "wing") return 0.0;
+    if (config.id != "wing" && config.id != "magic_wing") return 0.0;
     const double wave = std::sin(std::max(0.0, ageMillis) * 0.001 * kWingOrbitLungeRate);
+    if (config.id == "magic_wing") {
+        return kWingOrbitLungeReach * 0.25 * wave * wave;
+    }
     const auto technique = hyperTechnique(config.id, instance.rarity, instance.mimicked);
     const double reach = technique == HyperTechnique::WingReach ? 1.20 : 1.0;
     return kWingOrbitLungeReach * reach * wave * wave;
@@ -2052,6 +2044,10 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
             // ONE contribution per SLOT. A four-grain clump of sand is one
             // equipped petal, not four; summing per instance would make `count`
             // the strongest stat in the game.
+            if (stats.summonRangeBonus > aggregate.summonRangeBonus) {
+                aggregate.summonRangeBonus = stats.summonRangeBonus;
+                aggregate.summonRangeManaDrain = stats.passiveManaDrain;
+            }
             flowerHealthBonus += stats.flowerHealthBonus;
             flowerRadiusBonus += stats.flowerRadiusBonus;
             aggregate.modifiers.maxHealthScale *= mods.maxHealth;
@@ -2206,6 +2202,7 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
             // alone counts, and a second bandage is a spare.
             if (stats.undeadMillis > aggregate.modifiers.undeadMillis) {
                 aggregate.modifiers.undeadMillis = stats.undeadMillis;
+                aggregate.modifiers.undeadBandageTier = petalTier(equipped.rarity);
                 aggregate.modifiers.unrevivableMillis = stats.unrevivableMillis;
                 aggregate.modifiers.undeadBodyDamageScale = 1.0 - stats.undeadBodyDamageCut;
             }
@@ -2277,6 +2274,7 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
         (totalBulb - strongestBulb) * kAdditionalBulbAggroScale);
     const double bulbBoost = 1.0 + strongestBulb + stackedBulbs;
     aggregate.modifiers.litAggroBulb = strongestBulb > 0.0;
+    aggregate.modifiers.petTargetRangeScale = bulbSummonTargetRangeScale(strongestBulb + stackedBulbs);
     aggregate.modifiers.aggroRangeScale = aggroCut * std::max(aggroBoost, bulbBoost);
     aggregate.modifiers.magnetism += magnetBonus;
     if (const auto* timers = world.tryGet<HyperPetalTimers>(player);
@@ -2292,7 +2290,7 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
     std::sort(hemoglobinBonuses.begin(), hemoglobinEnd, [](double a, double b) { return a > b; });
     for (std::size_t i = 0; i < hemoglobinCount; ++i)
         aggregate.modifiers.hemoglobinHealBonus += hemoglobinBonuses[i] / static_cast<double>(i + 1);
-    aggregate.modifiers.hemoglobinHealBonus = std::min(0.25, aggregate.modifiers.hemoglobinHealBonus);
+    aggregate.modifiers.hemoglobinHealBonus = std::min(1.15, aggregate.modifiers.hemoglobinHealBonus);
 
     const auto healEnd = healBonuses.begin() + static_cast<std::ptrdiff_t>(healBonusCount);
     std::sort(healBonuses.begin(), healEnd, [](double a, double b) { return a > b; });
@@ -2312,6 +2310,7 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
         // table, and it folds no petal `playerModifiers.damage` into the petal
         // side at all. Collapsing the two costs an apex-talented ring 2.5x its
         // damage, so the two factors are published separately.
+        aggregate.modifiers.spillRadiusScale *= tree->skills.effectScale(SkillId::FluidReach);
         aggregate.modifiers.petalDamageScale = tree->skills.effectScale(SkillId::Damage);
         aggregate.modifiers.maxHealthScale *= tree->skills.statScale(SkillId::Health);
         aggregate.modifiers.damageScale *= tree->skills.bodyDamageScale() *
@@ -2545,6 +2544,12 @@ void PetalSystem::updateManaPool(World& world, Entity player, const Aggregate& a
     // and mana it can no longer hold is spilled rather than banked against the
     // next time one goes on.
     pool->current = clamp(pool->current, 0.0, pool->max);
+    if (aggregate.summonRangeBonus > 0.0 && dt > 0.0) {
+        auto* modifiers = world.tryGet<PlayerModifiers>(player);
+        if (modifiers && spendMana(world, player, aggregate.summonRangeManaDrain * dt)) {
+            modifiers->summonRangeBonus = aggregate.summonRangeBonus;
+        }
+    }
 }
 
 void PetalSystem::updateRing(World& world, Entity player, const Aggregate& aggregate, double dt) {
@@ -3381,7 +3386,7 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
                 const auto* owner = world.tryGet<Transform>(player);
                 if (!terrain_ || (owner && !terrain_->segmentBlocked(owner->position, at, owner->realm))) {
                     const auto* modifiers = world.tryGet<PlayerModifiers>(player);
-                    const double radius = (32.0 + 7.0 * ladderIndex(instance->rarity)) *
+                    const double radius = bloodPoolRadius(instance->rarity) *
                         (modifiers ? modifiers->spillRadiusScale : 1.0);
                     const Entity patch = emitGroundEffect(world, player, at, GroundEffectKind::Blood,
                         radius, 0.0, 1.0, instance->rarity, 2.0);
@@ -3538,7 +3543,8 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
         // Bubble pops as soon as the ring is pulled in and propels the flower,
         // then pays its rarity-scaled reload.
         const bool magicBubble = config.id == "magic_bubble";
-        if ((config.id == "bubble" || magicBubble) && defending) {
+        // Match the ring stance: attack takes priority when both are held.
+        if ((config.id == "bubble" || magicBubble) && defending && !attackHeld) {
             // The body the burst throws: the flower, or the moon its ring is
             // laid out around -- the user's rule: a moon is boosted in the
             // flower's place.
@@ -3878,8 +3884,8 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
             const double damageScale = modifiers ? modifiers->petalDamageScale : 1.0;
             const bool plutonium = config.id == "arctic_plutonium";
             const bool corium = config.id == "arctic_corium";
-            const double radius = (radiation.radius + (plutonium ? 200.0 : corium ? 150.0 : 0.0) *
-                std::max(0, ladderIndex(rarity) - 7)) * hyperAmount(profile, HyperTechnique::WideRadiation);
+            const double radius = baseRadiationRadius(config, rarity) *
+                hyperAmount(profile, HyperTechnique::WideRadiation);
             if (radiation.lightningBounces > 0 && radiation.pulseDamage > 0.0) {
                 strikeLightning(world, player, at, radiation.pulseDamage * strength, rarity,
                                 radiation.lightningBounces, radius / 240.0);
@@ -3888,23 +3894,26 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
             const double pulse = radiation.burnDamage > 0.0 ? radiation.poisonDamage * strength * damageScale :
                 (radiation.poisonPerSecond > 0.0
                                       ? radiation.poisonPerSecond * strength : stats.damage) * damageScale;
+            const bool uranium = config.id == "uranium";
+            const double enemyPulse = uranium ? uraniumRadiationDps(stats, rarity) * damageScale : pulse;
             const double directHit = radiation.pulseDamage * strength * damageScale;
             const double lifetime = interval + (directHit > 0.0 ? net::kTickMillis * 0.5 : 0.0);
             const auto kind = plutonium ? GroundEffectKind::Plutonium : corium ? GroundEffectKind::Corium
                 : GroundEffectKind::Radiation;
             const Entity cloud = emitGroundEffect(world, player, at, kind,
-                                                  radius, pulse, 1.0, rarity, lifetime / 1000.0,
+                                                  radius, enemyPulse, 1.0, rarity, lifetime / 1000.0,
                                                   directHit, interval);
             if (GroundEffect* field = world.tryGet<GroundEffect>(cloud)) {
-                // The same boosted pulse is what the wearer is poisoned
-                // against: a stronger uranium is stronger both ways.
+                // Uranium's stronger offensive radiation uses the original self-poison rate.
                 field->poisonDurationMillis = config.radiation.poisonDurationMillis;
                 field->ownerPoisonPerSecond = pulse * config.radiation.selfPoisonScale;
                 field->burnDamage = radiation.burnDamage * strength * damageScale;
                 // Monster-tier damage must not instantly kill the wearer.
                 // Retain real self-harm, bounded to 4% max flower HP per second.
-                if(config.id=="uranium") if(const auto* health=world.tryGet<Health>(player))
-                    field->ownerPoisonPerSecond=std::min(field->ownerPoisonPerSecond,health->max*.04);
+                if (uranium) {
+                    if (const auto* health = world.tryGet<Health>(player))
+                        field->ownerPoisonPerSecond = std::min(field->ownerPoisonPerSecond, health->max * 0.04);
+                }
             }
         }
         if (config.petMobIndex != kInvalidIndex) {
@@ -5101,10 +5110,7 @@ void PetalSystem::maintainPets(World& world, const ContentRegistry& registry, En
     // instead pinned every summon to common: mob stats scale by 3 per tier, so
     // an egg above common was worth nothing.
     const auto* tree = world.tryGet<PlayerSkillTree>(player);
-    const bool egg = summonUsesDuplicator(config);
-    const int squad = egg ? petalCopies(config.petCount, tree ? &tree->skills : nullptr,
-        slot, petalTier(rarity), config.stackable) : config.petCount;
-    const int wanted = config.petSummonTiers ? squad : summonSquadSize(squad, rarity);
+    const int wanted = configuredSummonCount(config, rarity, tree ? &tree->skills : nullptr, slot);
     const Rarity petRarity = config.petSummonTiers || apexNukeHatchesHyper(config, rarity)
         ? configuredSummonRarity(config, rarity) : rarity;
     if (wanted <= 0) return;
@@ -5449,15 +5455,21 @@ int PetalSystem::summonPets(World& world, const ContentRegistry& registry, Entit
     const double ownerRadius=ownerBody?ownerBody->radius:kPlayerBaseRadius;
     const double maxRadius=mob.radius*petSizeScale*config.maxRandomSize();
     const double searchReach = ownerRadius + (closeHatch ? 4.0 : 14.0) * maxRadius + 10.0;
-    struct HatchCircle {Vec2 at;double radius;};
+    enum class HatchOccupant { Shell, Mobile, Fixed };
+    struct HatchCircle { Vec2 at; double radius; HatchOccupant kind; };
     std::vector<HatchCircle> occupied;
-    const auto collect=[&](const Transform& pos,const Body& body){
+    const auto collect=[&](const Transform& pos,const Body& body,HatchOccupant kind){
         const double reach=searchReach+body.radius;
         if(pos.realm==realm&&(pos.position-at).lengthSq()<reach*reach)
-            occupied.push_back({pos.position,body.radius});
+            occupied.push_back({pos.position,body.radius,kind});
+    };
+    const auto occupantKind = [&](Entity entity) {
+        return world.has<MobTag>(entity) && world.has<Motion>(entity) &&
+               !anchoredAgainstKnockback(world, registry, entity)
+            ? HatchOccupant::Mobile : HatchOccupant::Fixed;
     };
     Query<Pet,Transform,Body> pets{world};pets.without<Dead>();
-    pets.each([&](Entity,Pet&,Transform& pos,Body& body){collect(pos,body);});
+    pets.each([&](Entity entity,Pet&,Transform& pos,Body& body){collect(pos,body,occupantKind(entity));});
     // A sandstorm fights through contact. A large enemy beside its owner
     // should not force it to spawn outside the fight.
     if (!closeHatch) {
@@ -5465,13 +5477,13 @@ int PetalSystem::summonPets(World& world, const ContentRegistry& registry, Entit
         for (const Entity mobEntity : attractionCandidates_) {
             const auto* pos = world.tryGet<Transform>(mobEntity);
             const auto* body = world.tryGet<Body>(mobEntity);
-            if (pos && body && !world.has<Dead>(mobEntity)) collect(*pos, *body);
+            if (pos && body && !world.has<Dead>(mobEntity)) collect(*pos, *body, occupantKind(mobEntity));
         }
     }
     Query<PetalInstance,Transform,Body> eggs{world};
     eggs.each([&](Entity,PetalInstance& source,Transform& pos,Body& body){
         if(source.configIndex<registry.petalCount()&&registry.petal(source.configIndex).petMobIndex!=kInvalidIndex)
-            collect(pos,body);
+            collect(pos,body,HatchOccupant::Shell);
     });
     // Counted once and carried, because the summons below are what change it.
     int owned = countOwnedPets(world, state);
@@ -5509,18 +5521,65 @@ int PetalSystem::summonPets(World& world, const ContentRegistry& registry, Entit
             // cannot fit. Try its normal movement hull at a clear point
             // on the owner's side before giving up on the hatch.
             const double startAngle = rng_.angle();
-            for (int seat = 0; seat < 4 * kRingSeats && !placed; ++seat) {
+            std::optional<Vec2> crowdedHatchAt;
+            // A duplicated Zatan brood needs more room along a straight corridor.
+            const int fallbackRings = config.id == "void_zatan" ? 12 : 4;
+            for (int seat = 0; seat < fallbackRings * kRingSeats && !placed; ++seat) {
                 const double distance = ownerRadius + kMobWallRadius + 8 + 80 * (seat / kRingSeats);
                 const Vec2 candidate = at + Vec2::fromAngle(
                     startAngle + kTau * (seat % kRingSeats) / kRingSeats, distance);
                 const auto wall = terrain_->resolveWall(candidate, kMobWallRadius, realm);
                 if (wall.collided || wall.unresolved || terrain_->blocked(candidate, realm) ||
                     terrain_->segmentBlocked(at, candidate, realm)) continue;
-                const bool overlaps = std::any_of(occupied.begin(), occupied.end(), [&](const HatchCircle& other) {
-                    const double clearance = other.radius + kMobWallRadius + 2;
-                    return (other.at - candidate).lengthSq() < clearance * clearance;
-                });
-                if (!overlaps) { spawnAt = candidate; placed = true; }
+                bool mobileOverlap = false;
+                bool blockedByOccupant = false;
+                for (const HatchCircle& other : occupied) {
+                    const double hull = other.kind == HatchOccupant::Fixed ? radius : kMobWallRadius;
+                    const double clearance = other.radius + hull + 2;
+                    if ((other.at - candidate).lengthSq() >= clearance * clearance) continue;
+                    if (other.kind == HatchOccupant::Mobile) {
+                        mobileOverlap = true;
+                    } else {
+                        blockedByOccupant = true;
+                        break;
+                    }
+                }
+                if (blockedByOccupant) continue;
+                if (!mobileOverlap) {
+                    spawnAt = candidate;
+                    placed = true;
+                } else if (!chain && !crowdedHatchAt) {
+                    // In a narrow passage mobile bodies can yield to the hatchling.
+                    // Keep ordinary crowd avoidance where its full body fits and
+                    // for chains, whose body segments are laid behind the head.
+                    const auto fullWall = terrain_->resolveWall(candidate, radius, realm);
+                    if (fullWall.collided || fullWall.unresolved) crowdedHatchAt = candidate;
+                }
+            }
+            if (!placed && crowdedHatchAt) {
+                spawnAt = *crowdedHatchAt;
+                placed = true;
+            }
+        }
+        if (!placed && closeHatch && terrain_ && radius > ownerRadius) {
+            // A sandstorm can travel on its normal movement hull even when
+            // the passage cannot fit either its full body or a hatch ring.
+            // Try the wearer's side of the wall before leaving the slot empty.
+            const auto hull = terrain_->resolveWall(at, kMobWallRadius, realm);
+            const auto full = terrain_->resolveWall(at, radius, realm);
+            if (!hull.collided && !hull.unresolved && !terrain_->blocked(at, realm) &&
+                (full.collided || full.unresolved)) {
+                const bool occupiedByFixed = std::any_of(occupied.begin(), occupied.end(),
+                    [&](const HatchCircle& other) {
+                        if (other.kind == HatchOccupant::Mobile) return false;
+                        const double clearance = other.radius +
+                            (other.kind == HatchOccupant::Fixed ? radius : kMobWallRadius) + 2;
+                        return (other.at - at).lengthSq() < clearance * clearance;
+                    });
+                if (!occupiedByFixed) {
+                    spawnAt = at;
+                    placed = true;
+                }
             }
         }
         if (!placed) {
@@ -5541,7 +5600,7 @@ int PetalSystem::summonPets(World& world, const ContentRegistry& registry, Entit
                                         angle, realm, radius, sizeJitter, strength,
                                         expiresAtMillis);
         slotState.pets.push_back(pet);
-        occupied.push_back({spawnAt,radius});
+        occupied.push_back({spawnAt,radius,HatchOccupant::Fixed});
         ++owned;
         ++spawned;
 
@@ -5584,7 +5643,7 @@ int PetalSystem::summonPets(World& world, const ContentRegistry& registry, Entit
             world.add<BodySegment>(segment, link);
             if (BodySegment* leader = world.tryGet<BodySegment>(ahead)) leader->behind = segment;
             slotState.pets.push_back(segment);
-            occupied.push_back({place,bodyRadius});
+            occupied.push_back({place,bodyRadius,HatchOccupant::Fixed});
             ++owned;
             ahead = segment;
         }

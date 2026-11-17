@@ -1598,6 +1598,21 @@ TEST(a_boss_is_a_live_mob_wherever_it_rolled_and_never_sleeps) {
     CHECK_EQ(sim.mobsIn(band), standing);
 }
 
+TEST(a_ghost_queues_spawn_announcements_only_at_hyper_or_apex) {
+    const auto ghost = shipped().mobIndex("ghost");
+    CHECK(ghost != kInvalidIndex);
+    for (auto tier : {Rarity::Super, Rarity::Unique, Rarity::Apex, Rarity::Ascendant}) {
+        Sim sim;
+        const auto mob = sim.spawner.spawnMob(sim.world, sim.terrain, shipped(), ghost, tier,
+                                             kCentre, Realm::Overworld, sim.now, sim.rng);
+        CHECK(mob != NULL_ENTITY);
+        const bool announced = tier == Rarity::Apex || tier == Rarity::Ascendant;
+        CHECK_EQ(sim.spawner.bossSpawns.size(), announced ? std::size_t{1} : std::size_t{0});
+        if (announced && !sim.spawner.bossSpawns.empty())
+            CHECK_EQ(sim.spawner.bossSpawns.front().entity, mob);
+    }
+}
+
 TEST(a_boss_announces_itself_whatever_placed_it) {
     // Not just a band stocking itself: the arena, a nest, a script and the
     // operator console all reach the world through spawnMob, and the
@@ -2917,6 +2932,21 @@ Entity makeFighter(World& world, Vec2 at) {
 }
 
 } // namespace
+
+TEST(fire_ant_holes_do_not_spawn_over_each_other) {
+    Sim sim;
+    const auto type = shipped().mobIndex("fire_ant_hole");
+    auto spawn = [&](Vec2 at) {
+        return sim.spawner.spawnMob(sim.world, sim.terrain, shipped(), type,
+                                    Rarity::Legendary, at, Realm::Overworld, 0.0, sim.rng);
+    };
+    const Entity first = spawn(kCentre);
+    CHECK(first != NULL_ENTITY);
+    if (first == NULL_ENTITY) return;
+    CHECK_EQ(spawn(kCentre), NULL_ENTITY);
+    CHECK(spawn(kCentre + Vec2{1000, 0}) != NULL_ENTITY);
+    CHECK(sim.world.has<Intangible>(first));
+}
 
 TEST(a_fire_ant_hole_waits_for_a_flower_then_sends_its_whole_brood) {
     Sim sim;
@@ -6098,7 +6128,16 @@ TEST(restored_termite_mound_map_allows_entry_and_returns_to_its_entrance) {
     const Entity player=makePlayer(w,at);w.get<Transform>(player).realm=home;
     const Entity mound=spawn.spawnMob(w,terrain,shipped(),shipped().mobIndex("termite_mound"),Rarity::Uncommon,at,home,0,rng);
     CHECK(mound!=NULL_ENTITY);if(mound==NULL_ENTITY)return;w.get<Transform>(player).position=w.get<Transform>(mound).position;
-    dungeons.moveToRealm=[&](Entity e,Realm realm,Vec2 position){auto& t=w.get<Transform>(e);t.realm=realm;t.position=position;};
+    double now = 1000;
+    dungeons.moveToRealm = [&](Entity entity, Realm realm, Vec2 position) {
+        // Match the server's ordinary cross-realm transfer guard.
+        const auto* pads = w.tryGet<TeleporterState>(entity);
+        if (pads && now < pads->markHoldUntilMillis) return;
+        auto& transform = w.get<Transform>(entity);
+        transform.realm = realm;
+        transform.position = position;
+    };
+    dungeons.requestEntry(player, now);
     dungeons.run(w,terrain,shipped(),spawn,combat,rng,1000,commands);commands.flush();
     dungeons.run(w,terrain,shipped(),spawn,combat,rng,1700,commands);commands.flush();
     const Realm inside=w.get<Transform>(player).realm;CHECK(inside!=home);CHECK(dungeons.isInstance(inside));
@@ -6107,6 +6146,24 @@ TEST(restored_termite_mound_map_allows_entry_and_returns_to_its_entrance) {
     CHECK_EQ(brood,31);CHECK_EQ(overminds,1);
     Realm outside;Vec2 exit;CHECK(dungeons.exitFor(inside,rng,kPlayerBaseRadius,outside,exit));CHECK(outside==home);
     CHECK(distanceSq(exit,w.get<Transform>(mound).position)<1000.0*1000.0);
+    if (inside == home) return;
+
+    std::vector<Entity> cleared;
+    inhabitants.each([&](Entity mob, MobTag&, MobType&, Transform& transform) {
+        if (transform.realm == inside) cleared.push_back(mob);
+    });
+    for (const Entity mob : cleared) w.destroy(mob);
+    now = 2000;
+    dungeons.run(w, terrain, shipped(), spawn, combat, rng, now, commands);
+    commands.flush();
+    CHECK(w.get<Transform>(player).realm == inside);
+
+    w.ensure<TeleporterState>(player).markHoldUntilMillis = now + 30000.0;
+    now += kDungeonClearedLingerMillis;
+    dungeons.run(w, terrain, shipped(), spawn, combat, rng, now, commands);
+    commands.flush();
+    CHECK(w.get<Transform>(player).realm == home);
+    CHECK(!dungeons.exitFor(inside, rng, kPlayerBaseRadius, outside, exit));
 }
 TEST(imported_powder_bonuses_stack_additively_and_do_not_change_mob_speed) {
     World w;CommandBuffer commands{w};PetalSystem petals;const Entity p=makePlayer(w,kCentre);

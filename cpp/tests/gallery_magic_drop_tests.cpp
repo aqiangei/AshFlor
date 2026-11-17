@@ -8,6 +8,24 @@
 #include "shared/game/drop_rates.h"
 using namespace flix;
 
+TEST(gallery_apex_desert_centipede_body_shows_its_personal_drop_pool) {
+    std::string error;
+    CHECK(loadContent(testsupport::dataDir(), error));
+    CHECK(ui::Fonts::init(testsupport::dataDir(), error));
+    const auto body = content().mobIndex("desert_centipede_body");
+    const auto salt = content().petalIndex("salt");
+    const auto powder = content().petalIndex("mysterious_powder");
+    const auto drops = galleryDropPreview(body, Rarity::Ascendant, kRarityCount);
+    int personalRows = 0;
+    for (const auto& drop : drops) {
+        if (drop.rarity != Rarity::Ascendant) continue;
+        CHECK(drop.petalIndex == salt || drop.petalIndex == powder);
+        CHECK_NEAR(drop.probability, 100.0 * kApexPetalDropChance / 2.0, 1e-9);
+        ++personalRows;
+    }
+    CHECK_EQ(personalRows, 2);
+}
+
 TEST(gallery_magic_drop_preview_follows_all_authored_conversions_and_orb_cap) {
     std::string error; CHECK(loadContent(testsupport::dataDir(),error)); CHECK(ui::Fonts::init(testsupport::dataDir(),error));
     Json data; CHECK(Json::parseFile(testsupport::dataFile("mob_drops.json"),data,error)); int checked=0;

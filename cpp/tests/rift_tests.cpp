@@ -180,6 +180,8 @@ TEST(rift_elimination_ends_the_round_and_champion_claims_all_rewards_once) {
     unsigned permanentHyper = 0;
     unsigned fission = 0;
     for (const auto& stack : returning.profile().inventory) {
+        CHECK(stack.petalIndex != content().petalIndex("mjolnir"));
+        CHECK(stack.petalIndex != content().petalIndex("timed_mjolnir"));
         if (stack.rarity == Rarity::Unique) total += stack.count;
         if (stack.rarity == Rarity::PermanentHyper) permanentHyper += stack.count;
         if (stack.rarity == Rarity::Unique && stack.petalIndex == content().petalIndex("fission")) fission += stack.count;

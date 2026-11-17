@@ -82,6 +82,17 @@ struct RealmPoint {
     Realm realm = Realm::Overworld;
 };
 
+/// Centre a rectangular view without showing coordinates beyond the map.
+inline Vec2 boundedViewportCentre(Vec2 target, Vec2 viewport, Vec2 extent) {
+    const auto centreAxis = [](double position, double visible, double size) {
+        if (!(size > 0.0)) return position;
+        const double half = std::min(visible, size) * 0.5;
+        return std::clamp(position, half, size - half);
+    };
+    return {centreAxis(target.x, viewport.x, extent.x),
+            centreAxis(target.y, viewport.y, extent.y)};
+}
+
 /// The spawn-picker id each realm is asked for by name. The overworld has
 /// none: any other string names a biome inside it.
 inline constexpr const char* kArenaSpawnChoice = "pvp";

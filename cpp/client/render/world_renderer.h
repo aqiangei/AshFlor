@@ -273,6 +273,7 @@ public:
     /// frame by frame. Optional in the same way the terrain is: without it
     /// there is nothing to paint and the realm draws as void.
     void setWorldMaps(const WorldMaps* maps) { worldMaps_ = maps; }
+    const WorldMaps* worldMaps() const { return worldMaps_; }
     void setRiftOpen(bool open) { riftOpen_ = open; }
 
     /// What the settings menu switches off. Presentation only: nothing here

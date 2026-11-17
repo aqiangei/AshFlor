@@ -1,4 +1,6 @@
 #pragma once
+
+#include "shared/game/wave.h"
 // Dungeons: the nests a flower walks INTO.
 //
 // A mob whose config carries a `dungeon` (the termite mound) is a door. A
@@ -77,7 +79,7 @@ public:
     void switchWaveBody(Entity previous, Entity active);
     net::WaveHud waveHudFor(const World& world, Entity player, double nowMillis) const;
     bool waveExterior(const World& world, Entity player, Realm& realm) const;
-    std::uint8_t waveOccupancy() const { return static_cast<std::uint8_t>(wave_.members.size()); }
+    std::uint8_t waveOccupancy() const;
     std::function<void(Entity, const std::string&)> waveSummary;
     struct WaveAward {
         int stars = 0;
@@ -141,7 +143,7 @@ private:
         int size = 0;
         int queued = 0;
         std::vector<Entity> enemies;
-        std::array<Entity, 4> participants{};
+        std::array<Entity, kWaveMaxPlayers> participants{};
     };
     struct WaveRoom {
         Realm realm = Realm::Overworld;
@@ -154,12 +156,14 @@ private:
         double nextBatchMillis = 0.0;
         double cleanupUntilMillis = 0.0;
         double lastProgressMillis = 0.0;
-    } wave_;
-    void runWave(World& world, const Terrain& terrain, const ContentRegistry& content,
+    };
+    std::array<WaveRoom, kWaveRoomCount> waveRooms_{};
+    const WaveRoom* waveRoomFor(const World& world, Entity player) const;
+    void runWave(WaveRoom& room, World& world, const Terrain& terrain, const ContentRegistry& content,
                  SpawnSystem& spawning, Rng& rng, double nowMillis, CommandBuffer& commands);
     void leaveWave(World& world, const WaveMember& member);
-    void closeWave(World& world, CommandBuffer& commands, const std::string& text);
-    void summarizeWave(const WaveMember& member, const std::string& reason) const;
+    void closeWave(WaveRoom& room, World& world, CommandBuffer& commands, const std::string& text);
+    void summarizeWave(const WaveRoom& room, const WaveMember& member, const std::string& reason) const;
 
     bool indexed_ = false;
     std::vector<Instance> instances_;

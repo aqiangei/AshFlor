@@ -16,8 +16,18 @@ TEST(hyper_drop_payout_preserves_rolled_rarity_instead_of_promoting_super_to_ete
 namespace {
 const ContentRegistry& registry(){static ContentRegistry c;static bool loaded=false;if(!loaded){std::string e;CHECK(c.loadFiles(testsupport::dataFile("mobs.json"),testsupport::dataFile("petals.json"),e));loaded=true;}return c;}
 using Counts=std::map<std::pair<std::string,int>,int>;
-Counts kills(const char* id,Rarity rarity,int count,bool orb=false,int bonus=1,int* maxEternal=nullptr,bool splitAccount=false,double damage=100.0){
+struct BossFloorAudit {
+    bool enabled;
+    std::vector<int> meaningfulByKill;
+    std::vector<int> floorCopiesByKill;
+};
+Counts kills(const char* id,Rarity rarity,int count,bool orb=false,int bonus=1,int* maxEternal=nullptr,bool splitAccount=false,double damage=100.0,
+             BossFloorAudit* audit=nullptr){
     const auto& c=registry();World w;CommandBuffer commands{w};EventQueue events;SpatialGrid grid;Rng rng{81927};LootSystem loot;loot.bonusMultiplier=[bonus](Entity){return bonus;};
+    if (audit) loot.allowsBossParticipationFloor = [audit](Realm) { return audit->enabled; };
+    int priorMeaningful = 0;
+    int priorPrivateFloor = 0;
+    const auto floor = rarity == Rarity::Ascendant ? Rarity::Unique : Rarity::Super;
     const Entity p=w.create();w.add<PlayerTag>(p);w.add<Transform>(p,Transform{{10000,10000},0});w.add<Body>(p,Body{25,1});w.add<Health>(p,Health{100,100,0,0});
     w.add<PlayerAccount>(p,PlayerAccount{"audit-user","audit",77,false});
     Entity sibling=NULL_ENTITY;
@@ -25,6 +35,22 @@ Counts kills(const char* id,Rarity rarity,int count,bool orb=false,int bonus=1,i
     int previousEternal=0;
     if(orb){w.add<Loadout>(p);auto& s=w.get<Loadout>(p).slots[0];s.configIndex=c.petalIndex("mana_orb");s.rarity=Rarity::Mythic;}
     for(int i=0;i<count;++i){const Entity corpse=w.create();w.add<MobTag>(corpse);w.add<MobType>(corpse,MobType{c.mobIndex(id),rarity,1});w.add<Transform>(corpse,Transform{{1000,1000},0});w.add<Health>(corpse,Health{0,100,0,0});Bounty b;b.credit(p,damage,77);if(splitAccount)b.credit(sibling,damage,77);w.add<Bounty>(corpse,b);w.add<Dead>(corpse,Dead{p});loot.run(w,grid,c,rng,i,0,commands,events);commands.flush();w.destroy(corpse);
+        if (audit) {
+            int meaningful = 0, privateFloor = 0;
+            Query<DropTag,DropItem>{w}.each([&](Entity, DropTag&, DropItem& d) {
+                if (!LootSystem::mayPickUp(d,p,77) || rarityIndex(d.rarity) < rarityIndex(floor)) return;
+                meaningful += static_cast<int>(d.quantity);
+                if (d.rarity == floor && d.singleCopy && d.humansOnly) {
+                    CHECK_EQ(d.eligible.size(), 1u);
+                    CHECK_EQ(d.quantity, 1u);
+                    ++privateFloor;
+                }
+            });
+            audit->meaningfulByKill.push_back(meaningful - priorMeaningful);
+            audit->floorCopiesByKill.push_back(privateFloor - priorPrivateFloor);
+            priorMeaningful = meaningful;
+            priorPrivateFloor = privateFloor;
+        }
         if(maxEternal){int now=0;Query<DropTag,DropItem> q{w};q.each([&](Entity,DropTag&,DropItem& d){if(d.rarity==Rarity::Unique&&LootSystem::mayPickUp(d,p,77))now+=static_cast<int>(d.quantity);});*maxEternal=std::max(*maxEternal,now-previousEternal);previousEternal=now;}
     }
     Counts out;Query<DropTag,DropItem> drops{w};drops.each([&](Entity,DropTag&,DropItem& d){out[{c.petal(d.configIndex).id,rarityIndex(d.rarity)}]+=static_cast<int>(d.quantity);});return out;
@@ -63,6 +89,38 @@ TEST(hyper_personal_permanent_drop_matches_the_apex_rate_and_damage_floor) {
     CHECK_NEAR(static_cast<double>(countPermanent(atFloor)) / trials, kApexPetalDropChance, 0.011);
 }
 
+TEST(boss_participation_floor_only_tops_up_empty_qualified_kills) {
+    constexpr int trials = 240;
+    for (const Rarity mob : {Rarity::Apex, Rarity::Ascendant}) {
+        BossFloorAudit baseline{false}, candidate{true}, lowBaseline{false}, lowCandidate{true};
+        const Rarity floor = mob == Rarity::Ascendant ? Rarity::Unique : Rarity::Super;
+        const auto old = kills("ladybug", mob, trials, false, 1, nullptr, true, 1.0, &baseline);
+        const auto now = kills("ladybug", mob, trials, false, 1, nullptr, true, 1.0, &candidate);
+        int misses = 0;
+        for (int i = 0; i < trials; ++i) {
+            misses += baseline.meaningfulByKill[i] == 0;
+            CHECK_EQ(candidate.meaningfulByKill[i], std::max(1, baseline.meaningfulByKill[i]));
+            CHECK_EQ(candidate.floorCopiesByKill[i], baseline.meaningfulByKill[i] == 0 ? 1 : 0);
+        }
+        CHECK(misses > 0);
+        CHECK(misses < trials);
+        std::printf("boss floor %s: zero-result kills %d -> 0 of %d\n", rarityName(mob), misses, trials);
+        // Diff only the requested floor grade; jackpot and all other grades
+        // are byte-for-byte identical in the fixed-seed aggregate.
+        auto withoutFloor = [floor](Counts drops) {
+            for (auto it = drops.begin(); it != drops.end();) {
+                if (it->first.second == rarityIndex(floor)) it = drops.erase(it);
+                else ++it;
+            }
+            return drops;
+        };
+        CHECK(withoutFloor(old) == withoutFloor(now));
+        const auto beforeLow = kills("ladybug", mob, 60, false, 1, nullptr, false, 0.9, &lowBaseline);
+        const auto afterLow = kills("ladybug", mob, 60, false, 1, nullptr, false, 0.9, &lowCandidate);
+        CHECK(beforeLow == afterLow);
+    }
+}
+
 TEST(apex_uses_the_mobs_normal_petal_table) {
     const auto result = kills("ladybug", Rarity::Ascendant, 1200);
     int roses = 0;
@@ -76,6 +134,18 @@ TEST(apex_uses_the_mobs_normal_petal_table) {
     CHECK(roses > 0);
     CHECK(lights > 0);
     CHECK_NEAR((roses + lights) / 1200.0, 0.02, 0.012);
+}
+
+TEST(apex_desert_centipede_body_keeps_the_existing_personal_roll) {
+    constexpr int trials = 2400;
+    const auto drops = kills("desert_centipede_body", Rarity::Ascendant, trials);
+    int personal = 0;
+    for (const auto& [key, count] : drops) {
+        if (key.second != rarityIndex(Rarity::Ascendant)) continue;
+        CHECK(key.first == "salt" || key.first == "mysterious_powder");
+        personal += count;
+    }
+    CHECK_NEAR(static_cast<double>(personal) / trials, kApexPetalDropChance, 0.009);
 }
 
 TEST(apex_white_hole_rewards_come_from_its_void_table) {
@@ -387,7 +457,7 @@ TEST(carrot_projectile_speed_keeps_range_and_reload) {
 TEST(centipede_body_kills_award_loot_without_soul_splitter) {
     const auto& c=registry();
     for(const char* name:{"hel_centipede","jungle_centipede","centipede","desert_centipede","evil_centipede"})
-    for(const auto rarity:{Rarity::Super,Rarity::Unique,Rarity::Apex}) {
+    for(const auto rarity:{Rarity::Super,Rarity::Unique,Rarity::Apex,Rarity::Ascendant}) {
         World w;Terrain terrain;SpawnSystem spawn;CombatSystem combat;LootSystem loot;
         CommandBuffer commands{w};EventQueue events;SpatialGrid grid;Rng rng{91};
         const auto player=w.create();w.add<PlayerTag>(player);w.add<PlayerAccount>(player,PlayerAccount{"body-loot","body-loot",77,false});
@@ -395,6 +465,7 @@ TEST(centipede_body_kills_award_loot_without_soul_splitter) {
         const auto head=spawn.spawnMob(w,terrain,c,c.mobIndex(name),rarity,{3000,3000},Realm::Overworld,0,rng);
         CHECK(head!=NULL_ENTITY);if(head==NULL_ENTITY)continue;
         const auto body=w.get<BodySegment>(head).behind;CHECK(body!=NULL_ENTITY);if(body==NULL_ENTITY)continue;
+        CHECK(w.get<MobType>(body).rarity == rarity);
         CHECK(!w.get<BodySegment>(body).sharedHealth);
         const auto hit=combat.applyDamage(w,body,player,w.get<Health>(body).max*2,1000);
         CHECK(hit.killed);CHECK(w.has<Dead>(body));CHECK(!w.has<Dead>(head));

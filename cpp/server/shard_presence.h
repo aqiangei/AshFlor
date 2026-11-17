@@ -51,6 +51,7 @@ public:
                 const int mob=notice["mob"].asInt(-1),tier=notice["rarity"].asInt(-1);
                 if(mob<0||mob>=65535||tier<0||tier>=kRarityCount)continue;
                 event["mob"]=mob;event["rarity"]=tier;event["summoned"]=notice["summoned"].asBool();
+                event["prestige"]=notice["prestige"].asBool();
             }
             notices_.push_back({id,node.shard,std::move(event),now});
             if(notices_.size()>256)notices_.pop_front();

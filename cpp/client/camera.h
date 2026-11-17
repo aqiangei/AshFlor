@@ -21,23 +21,22 @@
 //    stayed put. A camera cannot fix a window size on its own; only something
 //    above both layers can.
 //
-//  * The camera is pinned to the flower, never eased toward it. src/game.ts's
-//    updateCamera writes the camera straight from the flower's *drawn*
-//    position each frame, so the flower sits exactly on the screen centre.
-//    That is load-bearing: the mouse control law reads the cursor's offset
-//    from the screen centre and treats it as the offset from the flower, so a
-//    lagging camera would skew steering, not just drift the flower off centre.
+//  * The camera follows the flower's drawn position as far as the viewport
+//    fits on the map. Near an edge, the flower moves off screen centre.
 
-#include "shared/core/types.h"
+#include "shared/game/realm.h"
 
 namespace flix {
 
 class Camera {
 public:
-    /// Centres the camera on `target`. The only way the camera moves: it is
-    /// called every frame with the flower's drawn position, and again on
-    /// respawn and teleport.
-    void snapTo(Vec2 target) { centre_ = target; }
+    void setWorldExtent(Vec2 extent) { extent_ = extent; }
+
+    /// Frame the target at the current zoom, stopping at map boundaries.
+    void snapTo(Vec2 target) {
+        const double z = zoom();
+        centre_ = boundedViewportCentre(target, {viewportWidth_ / z, viewportHeight_ / z}, extent_);
+    }
 
     /// The visible extent in DESIGN units -- Window::width()/height(), never
     /// a pixel count. Feeding it pixels is what makes a HiDPI display show
@@ -55,7 +54,9 @@ public:
     /// multiplier so a UI preference cannot change the world view.
     double zoom() const {
         const double z = userZoom * loadoutZoom / uiScale_;
-        return std::isfinite(z) && z > 0.0 ? z : 1.0;
+        const double requested = std::isfinite(z) && z > 0.0 ? z : 1.0;
+        if (!(extent_.x > 0.0 && extent_.y > 0.0)) return requested;
+        return std::max({requested, viewportWidth_ / extent_.x, viewportHeight_ / extent_.y});
     }
 
     Vec2 worldToScreen(Vec2 world) const {
@@ -110,7 +111,7 @@ public:
             return;
         }
         // Smooth in log space so high-tier zoom changes have the same feel
-        // as small ones, while the flower stays pinned to the screen centre.
+        // as small ones.
         loadoutZoomInMotion_ = dt > 0.0;
         loadoutZoom *= std::exp(gap * (1.0 - std::exp(-18.0 * std::clamp(dt, 0.0, 0.05))));
     }
@@ -118,6 +119,7 @@ public:
 private:
     bool loadoutZoomInMotion_ = false;
     Vec2 centre_;
+    Vec2 extent_;
     int viewportWidth_ = 1280;
     int viewportHeight_ = 720;
     double uiScale_ = 1.0;

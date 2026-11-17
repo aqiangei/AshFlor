@@ -19,6 +19,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -241,6 +242,7 @@ struct ClientSettings {
     /// Player-chosen camera zoom, multiplied into whatever the loadout asks
     /// for. Persisted, because it is a comfort setting, not a game state.
     double zoom = 1.0;
+    bool zoomDirty = false;
     /// How much of the gap between a drawn position and the authoritative one
     /// is closed per frame at 60 fps -- the smoothness/latency trade for every
     /// flower, petal, drop and mob facing. The TypeScript client kept the same
@@ -290,6 +292,7 @@ struct ClientSettings {
     /// rides in the settings file with everything else. Server ids carry no
     /// whitespace, which is what lets them share this file's key/value lines.
     std::vector<std::string> readNotifications;
+    bool notificationReadsDirty = false;
     /// The key that opens each menu, indexed by MenuId.
     std::array<Key, kMenuCount> hotkeys{};
     /// The key bound to every other action, indexed by ControlAction. The four
@@ -472,6 +475,7 @@ struct MenuContext {
     bool altMode = false;
     ShardSelection* shardSelection = nullptr;
     bool scrollbarOwnsPointer = false;
+    const Profile* craftInventory = nullptr;  ///< Display inventory while a craft is rolling.
 
     Vec2 mouse() const { return {window.mouseX(), window.mouseY()}; }
     bool over(Rect r) const { return r.contains(mouse()); }
@@ -508,6 +512,8 @@ private:
     double stackLerp_ = 0;
     std::string search_;
     ui::TextFieldState searchField_;
+    std::size_t dropMap_ = 0;
+    std::unordered_map<std::string, std::vector<bool>> mapDrops_;
 };
 
 // ---------------------------------------------------------------------------
@@ -607,7 +613,7 @@ struct SlotCardLayout {
 /// The tiers a slot grid has columns for: the ladder (Hyper); the ladder up to
 /// unique, then permanent hyper (PermanentHyper); the ladder, then Ascendant
 /// (Ascendant, the trader's: traderTakes in shared/game/npc.h).
-enum class SlotGridTiers { Hyper, PermanentHyper, Ascendant, Absorption };
+enum class SlotGridTiers { Hyper, PermanentHyper, Trader, Absorption };
 
 /// The window's width for the selected grid columns, with a minimum of 610.
 double slotCardColumnsWidth(std::size_t columns);
@@ -835,6 +841,8 @@ int slotBurstGrains(Rarity rarity);
 class CraftingPanel {
 public:
     bool render(MenuContext&);
+    void update(NetClient&, double timeSeconds);
+    const Profile& visibleInventory(const Profile&);
     void reopen();
     /// The window's width and height for this account: the grid's columns
     /// set the one and its rows the other.
@@ -848,6 +856,7 @@ private:
 
     /// Adds up to `addBatches` more batches of this petal (`UINT32_MAX` = fill).
     void stage(const Profile&, std::uint16_t petalIndex, Rarity rarity, std::uint32_t addBatches);
+    void startRoll(NetClient&, double timeSeconds);
     /// Steps the ring's eases by `dtMs`.
     void animate(double dtMs);
 
@@ -909,6 +918,10 @@ private:
     /// is compared against.
     std::uint16_t spinPetal_ = kNoPetal;
     Rarity spinRarity_ = Rarity::Common;
+    std::uint64_t attemptsBeforeRoll_ = 0;
+    std::vector<std::pair<std::size_t, Profile::Stack>> preCraftStacks_;
+    std::optional<std::uint32_t> visibleRevision_;
+    Profile displayBag_;
     /// How long this roll lasts before its outcome shows, in ms: florr's
     /// rule, set from the tier on the click (rollBaseMillis_) and cut short
     /// on a failure when the outcome arrives (rollMillis_).
@@ -982,6 +995,7 @@ private:
 
     SlotGrid grid_;
     std::vector<Staged> staged_;
+    bool bulkSelected_ = false;
     std::vector<RingTile> ring_;
     /// The grains a stack bursts into when it is absorbed, and the tiles on
     /// their way out when one is taken back.
@@ -1391,6 +1405,8 @@ private:
     std::uint32_t chartRecord_ = 0;
     std::string chartPlayer_;
     std::size_t chartSource_ = 0;
+    std::uint32_t pendingDeleteRecord_ = 0;
+    double pendingDeleteUntil_ = 0;
 };
 
 class WavePanel {
@@ -1462,11 +1478,13 @@ class NotificationsPanel {
 public:
     bool render(MenuContext&);
     void reset();
+    void updateReadAll(const NetClient&, ClientSettings&);
     static double preferredWidth();
     static Rect bounds(int viewWidth, int viewHeight);
 
 private:
     ui::Scroller scroll_;
+    bool readingAll_ = false;
 };
 
 /// How many of the loaded notifications the player has not read, for the badge
@@ -1714,7 +1732,7 @@ public:
     /// The first y below the top icon row, strip inset included.
     double stripBottom() const;
     double stripRight() const;
-    double feedbackRight() const;
+    Rect feedbackButton() const;
 
     /// True while the strip's changelog button should shake: while the
     /// changelog holds more releases than the player had seen the last time
@@ -1974,6 +1992,8 @@ private:
     int pendingCycle_ = 0;
     bool pendingSecondaryDelete_ = false;
     /// R: swap the two rows.
+    int pendingUnequipSlot_ = -1;
+    bool unequipKeyHeld_ = false;
     bool pendingRowSwap_ = false;
     /// A K/L + number chord: the preset it names, or -1, and whether Shift
     /// was down, which makes it a save rather than a load.

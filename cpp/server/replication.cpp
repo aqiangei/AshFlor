@@ -8,6 +8,7 @@
 #include "server/systems/petals.h"
 #include "shared/game/constants.h"
 #include "shared/game/spatial.h"
+#include "shared/game/terrain.h"
 
 namespace flix {
 
@@ -358,7 +359,7 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
     const Transform* viewerTransform = world.tryGet<Transform>(viewer);
     if (!viewerTransform) return;
 
-    const Vec2 centre = viewerTransform->position;
+    const Vec2 flower = viewerTransform->position;
     // The viewer sees its own realm and nothing else. Every realm's
     // coordinates start at (0, 0), so a position alone says nothing about
     // whether an entity is anywhere near this client -- it has to be in the
@@ -370,6 +371,8 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
     } else if (const PlayerLocation* location = world.tryGet<PlayerLocation>(viewer)) {
         viewport = location->viewport;
     }
+    const Vec2 centre = frame.terrain ?
+        boundedViewportCentre(flower, viewport, frame.terrain->cameraExtent(realm)) : flower;
     // A RECTANGLE, per axis, sized off the window the client says it is
     // drawing: the reference builds the same box every frame from the viewport
     // reported by the latest input packet, so a resize or a zoom widens what is
@@ -479,7 +482,7 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         // A squadmate is exempt for its own reason -- see Frame::alwaysVisible
         // -- but only within the viewer's realm: a party member in the maze has
         // no position that means anything on an overworld screen.
-        const double distanceSq = flix::distanceSq(transform.position, centre);
+        const double distanceSq = flix::distanceSq(transform.position, flower);
         if (drop && !frame.showAllVisibleLoot && world.get<Replicated>(e).rarity < Rarity::Ultra) {
             if (distanceSq > kNearbyLootReach * kNearbyLootReach) return;
             // Keep only the nearest low-tier stacks. High tiers and the
@@ -665,6 +668,28 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
     const Loadout* viewerLoadout = world.tryGet<Loadout>(viewer);
     const PetalSlotState* viewerSlots = world.tryGet<PetalSlotState>(viewer);
 
+    // Self-hatching eggs can already be on the ring while their summons
+    // are still charging. Expose that clock through the existing slot timer.
+    std::array<double, kLoadoutActiveSlots> hatchRemaining{};
+    if (viewerLoadout && viewerSlots) {
+        for (const Entity petal : viewerLoadout->spawned) {
+            const auto* egg = world.tryGet<PetalInstance>(petal);
+            if (!egg || egg->slot >= kLoadoutActiveSlots ||
+                egg->nextActionMillis <= frame.nowMillis || world.has<Dead>(petal)) continue;
+            const auto& config = content().petal(egg->configIndex);
+            if (!config.petSummonTiers || config.petMobIndex == kInvalidIndex) continue;
+            const auto& brood = viewerSlots->slots[egg->slot].pets;
+            if (config.petLifetimeMillis <= 0.0 &&
+                std::any_of(brood.begin(), brood.end(), [&](Entity pet) {
+                    const auto* mob = world.tryGet<MobType>(pet);
+                    return mob && mob->configIndex == config.petMobIndex && !world.has<Dead>(pet);
+                })) continue;
+            const double remaining = egg->nextActionMillis - frame.nowMillis;
+            double& next = hatchRemaining[egg->slot];
+            next = next > 0.0 ? std::min(next, remaining) : remaining;
+        }
+    }
+
     struct SlotReport {
         double reloadRemaining = 0;
         double health = 1.0;
@@ -697,7 +722,7 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         } else if (slot.broken) {
             out.reloadRemaining = slot.reloadReadyAtMillis - frame.nowMillis;
         }
-        out.reloadRemaining = std::max(0.0, out.reloadRemaining);
+        out.reloadRemaining = std::max(hatchRemaining[index], out.reloadRemaining);
         if (live != nullptr) out.health = live->healthFraction;
         if (live != nullptr && live->counter >= 0.0) {
             out.counter = static_cast<std::uint16_t>(

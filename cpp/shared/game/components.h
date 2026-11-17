@@ -377,6 +377,8 @@ struct Undead {
     Entity killer = NULL_ENTITY;
     double unrevivableMillis = 0;
     double bodyDamageScale = 1.0;
+    int bandageTier = 0;
+    bool shortenedByScar = false;
 };
 
 /// A mob that is not killed by the blow that empties it but stands Undead
@@ -461,7 +463,7 @@ struct SpongeDamageState {
     std::vector<SpongeDamageEffect> effects;
 };
 
-/// Marks a Bio mob for subdivision, or identifies a copy that has already split.
+/// Marks a wild mob for subdivision, or identifies a copy created by subdivision.
 struct CancerSubdivision {
     bool spawnedCopy = false;
 };
@@ -690,6 +692,7 @@ struct PlayerModifiers {
     /// usual.
     double aggroRangeScale = 1.0;
     bool litAggroBulb = false;
+    double petTargetRangeScale = 1.0;  ///< Active Bulbs, capped independently of wild aggro.
     double petalAttractionRadius = 30.0; ///< base loose-petal attraction radius
     /// Extra attack reach, world units: the best attackRange on the bar.
     double attackRange = 0.0;
@@ -718,6 +721,7 @@ struct PlayerModifiers {
     /// What one of root's armour stacks absorbs. Multiple roots use the
     /// strongest one rather than summing, as lotus does one line up: two
     /// roots are one bank of stacks, at the better petal's strength.
+    double summonRangeBonus = 0.0;
     double armorPerStack = 0.0;
     double spongeDamageDurationMillis = 0.0;
     /// What the knockback this flower TAKES is multiplied by: 1 plus every
@@ -740,6 +744,7 @@ struct PlayerModifiers {
     /// before it dies after all, and how long it then cannot be revived. The
     /// best bandage's figures (they do not stack); zero without one.
     double undeadMillis = 0.0;
+    int undeadBandageTier = 0;
     double unrevivableMillis = 0.0;
     /// What this flower's body hits for while it is Undead, as a multiple of
     /// its body damage: the bandage's 1 - reduction.

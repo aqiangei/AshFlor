@@ -464,6 +464,7 @@ void drawPetalCluster(Canvas& canvas, const SpriteCache& sprites, std::uint16_t 
     double fit = shape.shrink;
     const double clusterDiameter = (shape.ring * 2.0 + shape.diameter) * fit;
     if (maxDiameter > 0 && clusterDiameter > maxDiameter) fit *= maxDiameter / clusterDiameter;
+    if (iconId == "blood_stinger") fit *= 0.85;
 
     const double diameter = shape.diameter * fit;
     const double ring = shape.ring * fit;
@@ -727,7 +728,8 @@ void drawItemTile(Canvas& canvas, const SpriteCache& sprites, Rect rect, const I
     }
 
     if (filled && tile.showName) {
-        const PetalConfig& named = content().petal(tile.petalIndex);
+        const auto nameIndex = tile.namePetalIndex == kNoPetal ? tile.petalIndex : tile.namePetalIndex;
+        const PetalConfig& named = content().petal(nameIndex);
         const std::string enName = titleCase(named.name);
         const std::string name = petalNameTr(named.id, enName.c_str());
         if (!name.empty()) {

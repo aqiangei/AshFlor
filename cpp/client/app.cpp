@@ -771,9 +771,14 @@ void App::frame(double dt) {
     // play its iris over the next join.
     const bool teleported = net_.takeTeleported();
     // Every drawn position advances here, BEFORE the screens see the frame.
-    // The cursor control law measures from the flower's drawn position and the
-    // camera pins to it, so easing after them would steer and frame the world
-    // from a position one frame stale.
+    // Keep input and rendering aligned with the current drawn position.
+    const auto positionCamera = [&] {
+        const Vec2 selfDrawn =
+            net_.selfPlaced() ? net_.view().selfDrawnPosition() : net_.arrival();
+        camera_.setWorldExtent(net_.terrain().cameraExtent(net_.view().realm()));
+        camera_.snapTo(selfDrawn);
+        return selfDrawn;
+    };
     if (screen_ == Screen::Playing || screen_ == Screen::Dead) {
         // Before anything paints, so the iris holds up the frame from before
         // the jump.
@@ -788,10 +793,8 @@ void App::frame(double dt) {
         // where it WAS would sweep the view across a world it is not in.
         // Snapped exactly as the join does, then the stream takes over.
         Vec2 arrival;
-        if (net_.takeRealmChange(arrival)) {
-            net_.view().snapAll();
-            camera_.snapTo(arrival);
-        }
+        if (net_.takeRealmChange(arrival)) net_.view().snapAll();
+        positionCamera();
     }
 
     // The death card eases in from above and back out again, the way the
@@ -817,6 +820,11 @@ void App::frame(double dt) {
         else easeToward(lowHealthVignette_, dark, kLowHealthVignetteEaseSeconds);
     }
 
+    if (screen_ != Screen::Playing) {
+        if (pinchDistance_ > 0.0) menus_.settings().zoomDirty = true;
+        zoomTouches_.clear();
+        pinchDistance_ = 0.0;
+    }
     switch (screen_) {
         case Screen::Connecting:   updateConnecting(); break;
         case Screen::Login:        updateLogin(dt); break;
@@ -857,7 +865,7 @@ void App::frame(double dt) {
         altMode_ = !altMode_;
     }
     // The copy above resets it every frame, so it has to be put back after it.
-    renderer_.options.rarityGlow = altMode_;
+    renderer_.options.rarityGlow = altMode_ || menus_.settings().render.rarityGlow;
     menus_.setAltMode(altMode_);
     camera_.userZoom = menus_.settings().zoom;
     // The petals' share of the zoom, read off the account's own loadout. It is
@@ -936,23 +944,13 @@ void App::frame(double dt) {
         // here, and only while there is a world for them to float over --
         // leaving the game clears them outright.
         net_.ageChatBubbles(dt);
-        // Pinned, not eased: the reference keeps the flower exactly on the
-        // screen centre, which is what the cursor-relative control law reads.
-        // The EASE is on the flower itself, earlier in this same frame -- see
-        // the interpolate() call above.
-        //
-        // Until a snapshot has placed the body -- the frames right after a
-        // join or a realm change -- the view's self is a zeroed default, and
-        // pinning to it draws the map's top-left corner with no flower in it.
-        // The arrival the server sent is the honest position for those frames.
-        const Vec2 selfDrawn =
-            net_.selfPlaced() ? net_.view().selfDrawnPosition() : net_.arrival();
-        camera_.snapTo(selfDrawn);
+        // Settings and loadout zoom can change after the input pass.
+        const Vec2 selfDrawn = positionCamera();
         prepareDarkness(selfDrawn);
         renderer_.setRiftOpen(net_.riftOpen());
         renderer_.draw(canvas, net_.view(), camera_, selfDrawn, timeSeconds_);
         // Aim assist over the world (and under darkness / HUD), like AshFlor.
-        drawMovementHelper(canvas);
+        drawMovementHelper(canvas, selfDrawn);
         // A dark map's dark, over the world only, like the wash below.
         drawDarkness(canvas);
         // Dead: the WORLD goes dim, and only the world. The reference's wash
@@ -999,6 +997,8 @@ void App::frame(double dt) {
             if (deathCardSlide_ > 0.01) {
                 drawDeathCard(canvas, timeSeconds_);
                 drawRunLoot(canvas, timeSeconds_);
+            } else if (screen_ == Screen::Dead && !deathCardVisible_ && !menus_.anyOpen()) {
+                drawClosedDeathRespawn(canvas);
             }
         });
         if (connectionLost()) drawDisconnectBanner(canvas);
@@ -1101,10 +1101,12 @@ void App::frame(double dt) {
         }
         if(feedback&&feedbackLink){
             const font=links.style.fontSize;
-            const placement=[key,box.height,$5,$6,innerHeight].join(',');
+            const compactTouch=matchMedia('(pointer: coarse)').matches && $10>0;
+            const placement=[key,box.height,$5,$6,innerHeight,$8,$9,compactTouch,$10,$11].join(',');
             if(Module.feedbackPlacement!==placement){
                 Module.feedbackPlacement=placement;
                 feedback.style.fontSize=font;
+                feedback.toggleAttribute('data-touch-icon',compactTouch);
                 const margin=8;
                 const rightEdge=Math.min(box.right,innerWidth)-margin;
                 const rowLeft=box.left+$5*scale+margin;
@@ -1116,15 +1118,23 @@ void App::frame(double dt) {
                     (rowLeft>=linksRect.right+margin||rowLeft+buttonWidth+margin<=linksRect.left||
                      rowTop+50<=linksRect.top);
                 feedback.toggleAttribute('data-beside',beside);
-                if(beside){
+                if(compactTouch){
+                    feedback.style.left=(box.left+($5-$10)*scale)+'px';
+                    feedback.style.top=(box.top+$11*scale)+'px';
+                    feedback.style.width=($10*scale)+'px';
+                }else if(beside){
                     feedback.style.left=rowLeft+'px';
                     feedback.style.top=rowTop+'px';
                     feedback.style.width=buttonWidth+'px';
                 }else{
-                    const freeWidth=Math.min(310,box.width-32);
-                    feedback.style.left=(box.left+(box.width-freeWidth)/2)+'px';
-                    feedback.style.top=Math.max(linksRect.bottom+10,box.top+Math.min(160,box.height*.20),
-                        $4?box.top+($6?266:170)*scale:0)+'px';
+                    const top=Math.max(linksRect.bottom+10,box.top+Math.min(160,box.height*.20),
+                        $4?box.top+($6?266:170)*scale:0);
+                    const nameTop=box.top+$9*scale;
+                    // In a short lobby the web notice can cross the row containing Ready.
+                    const moveLeft=$8>0&&top<nameTop+42*scale&&top+58>nameTop;
+                    const freeWidth=Math.min(310,moveLeft?Math.max(buttonWidth,$8*scale-2*margin):box.width-32);
+                    feedback.style.left=(box.left+(moveLeft?margin:(box.width-freeWidth)/2))+'px';
+                    feedback.style.top=top+'px';
                     feedback.style.width=freeWidth+'px';
                 }
             }
@@ -1135,10 +1145,18 @@ void App::frame(double dt) {
         }
     }), (screen_==Screen::Login||screen_==Screen::Lobby)&&!menus_.anyOpen()&&!net_.joinPending(),
        window_.width(),menus_.stripRight(),menus_.stripBottom(),screen_==Screen::Lobby&&net_.dailyStreak().known,
-       menus_.feedbackRight(),streakDetailsOpen_,kAshflorFeedbackBoard);
+       menus_.feedbackButton().right(),streakDetailsOpen_,kAshflorFeedbackBoard,
+       screen_==Screen::Lobby?nameBox_.x:0,screen_==Screen::Lobby?nameBox_.y:0,
+       menus_.feedbackButton().w,menus_.feedbackButton().y);
 #endif
-    if (menus_.settings().craftBlacklistDirty) {
-        if (menus_.settings().save(settingsPath())) menus_.settings().craftBlacklistDirty = false;
+    auto& settingsForSave = menus_.settings();
+    if (settingsForSave.craftBlacklistDirty || settingsForSave.notificationReadsDirty ||
+        settingsForSave.zoomDirty) {
+        if (settingsForSave.save(settingsPath())) {
+            settingsForSave.craftBlacklistDirty = false;
+            settingsForSave.notificationReadsDirty = false;
+            settingsForSave.zoomDirty = false;
+        }
     }
     window_.present();
 

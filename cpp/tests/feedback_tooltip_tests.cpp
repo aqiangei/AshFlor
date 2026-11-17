@@ -68,10 +68,13 @@ TEST(mimic_tooltip_shows_eternal_cpp_stats_and_copied_reload){
         CHECK(stats.damage>0);CHECK(stats.health>0);
         const auto base=content().petalStats(cpp,Rarity::Unique);
         const auto expected=ui::petalTooltipLines(cpp,Rarity::Unique,{},stats.reloadMillis/base.reloadMillis);
-        CHECK_EQ(lines.size(),expected.size());CHECK(lines.front().text.find("C++")!=std::string::npos);
+        CHECK_EQ(lines.size(),expected.size());CHECK_EQ(lines.front().text,"拟态");
         for(std::size_t i=1;i<lines.size()&&i<expected.size();++i){CHECK_EQ(lines[i].text,expected[i].text);CHECK_EQ(lines[i].altText,expected[i].altText);}
         CHECK_EQ(lines.front().badges.size(),expected.front().badges.size());
         for(std::size_t i=0;i<lines.front().badges.size();++i)CHECK_EQ(lines.front().badges[i].text,expected.front().badges[i].text);
+        ui::setLanguage(ui::Language::En);
+        CHECK_EQ(ui::equippedPetalTooltipLines(mimic,effective,{},1.0).front().text,"Mimic");
+        ui::setLanguage(ui::Language::Zh);
     }
 }
 TEST(ant_and_beetle_tooltips_match_the_buffed_summon_stats){

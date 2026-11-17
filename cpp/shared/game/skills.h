@@ -39,6 +39,7 @@ enum class SkillId : std::uint8_t {
     Prestige,
     PetDamage,
     ManaRegen,
+    FluidReach,
     Count,
 };
 
@@ -48,23 +49,23 @@ inline constexpr int kSkillCount = static_cast<int>(SkillId::Count);
 inline constexpr std::array<const char*, kSkillCount> kSkillKeys = {
     "health", "loadout", "rotation", "antennae", "luck", "medic", "petalHealth",
     "poison", "reach", "reload", "sharpEdges", "secondChance", "magnetism",
-    "duplicator", "bodyToxicity", "concentratedPoison", "summoner", "damage", "absorbing", "movementSpeed", "prestige", "petDamage", "manaRegen",
+    "duplicator", "bodyToxicity", "concentratedPoison", "summoner", "damage", "absorbing", "movementSpeed", "prestige", "petDamage", "manaRegen", "fluidReach",
 };
 
 inline constexpr std::array<const char*, kSkillCount> kSkillLabels = {
     "Health", "Loadout", "Petal Rotation", "Antennae", "Luck", "Medic",
     "Petal Health", "Poison", "Reach", "Reload", "Sharp Edges", "Second Chance",
-    "Magnetism", "Duplicator", "Body Toxicity", "Concentrated Poison", "Summoner", "Damage", "Absorption", "Movement Speed", "Prestige", "Pet Damage", "Mana Regeneration",
+    "Magnetism", "Duplicator", "Body Toxicity", "Concentrated Poison", "Summoner", "Damage", "Absorption", "Movement Speed", "Prestige", "Pet Damage", "Mana Regeneration", "Fluid Reach",
 };
 
 inline constexpr std::array<const char*, kSkillCount> kSkillLabelsZh = {
     "血量", "槽位", "转速", "触角", "幸运", "治疗", "花瓣耐久", "剧毒", "攻击范围",
-    "刷新", "锐利边缘", "第二次机会", "磁性", "重瓣", "身体毒性", "浓缩剧毒", "召唤师", "伤害", "吸收", "移动速度", "声望", "宠物伤害", "魔力回复",
+    "刷新", "锐利边缘", "第二次机会", "磁性", "重瓣", "身体毒性", "浓缩剧毒", "召唤师", "伤害", "吸收", "移动速度", "声望", "宠物伤害", "魔力回复", "流体范围",
 };
 
 /// How many buyable tiers each branch has (florrclone costs[].length).
 inline constexpr std::array<int, kSkillCount> kSkillTiers = {
-    9, 5, 5, 3, 9, 9, 9, 9, 3, 9, 8, 2, 1, 4, 1, 1, 9, 10, 10, 3, 2, 10, 9,
+    9, 5, 5, 3, 9, 9, 9, 9, 3, 9, 8, 2, 1, 4, 1, 1, 9, 10, 10, 3, 2, 10, 9, 3,
 };
 
 /// Per-tier point costs from florrclone.
@@ -92,8 +93,10 @@ inline constexpr std::array<std::array<int, 10>, kSkillCount> kSkillCosts = {{
     {{175, 200}},                                  // unlock the prestige worlds
     {{2, 3, 5, 8, 12, 16, 20, 25, 30, 35}},   // pet damage
     {{2, 4, 6, 8, 10, 14, 18, 22, 26}}, // mana regeneration
+    {{4, 8, 14}}, // fluid reach
 }};
 
+inline constexpr std::array<double, 3> kFluidReachTalentScale = {1.10, 1.20, 1.30};
 inline constexpr std::array<double, 9> kManaRegenTalentScale = {1.08, 1.16, 1.25, 1.35, 1.45, 1.56, 1.68, 1.82, 2.0};
 // zorr's Speed talent is +20% a level over six; our three tiers are its
 // levels 2/4/6 (+40/80/120%) at an eighth of the strength.
@@ -361,6 +364,7 @@ struct SkillSet {
         if (id == SkillId::ManaRegen) return tableAt(kManaRegenTalentScale, level(id));
         if (id == SkillId::PetDamage) return tableAt(kPetDamageTalentScale, level(id));
         if (id == SkillId::Damage) return tableAt(kDamageTalentPetalScale, level(id));
+        if (id == SkillId::FluidReach) return tableAt(kFluidReachTalentScale, level(id));
         if (id == SkillId::Absorbing) return tableAt(kAbsorbTalentScale, level(id));
         if (id == SkillId::Medic) return medicScale();
         return 1.0;

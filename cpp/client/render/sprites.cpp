@@ -883,8 +883,9 @@ void SpriteCache::drawMobPicture(Canvas& canvas, std::uint16_t index, Rarity rar
     double radius = diameter * 0.5;
     const double reach = std::max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY) * radius;
     if (reach > box) radius *= box / reach;
+    const double previewTime = mobArt(index) == MobArt::Snowstorm ? -timeSeconds : timeSeconds;
     draw(canvas, mobSprite(index, rarity), x - (bounds.minX + bounds.maxX) * 0.5 * radius,
-         y - (bounds.minY + bounds.maxY) * 0.5 * radius, radius * 2.0, 0.0, timeSeconds, false,
+         y - (bounds.minY + bounds.maxY) * 0.5 * radius, radius * 2.0, 0.0, previewTime, false,
          worldRadius);
 }
 

@@ -405,3 +405,75 @@ TEST(shop_lock_from_an_earlier_hour_sells_its_own_eternal_cards_until_unlocked) 
     CHECK_EQ(buyer.profile().stackCount(eternal.petalIndex, Rarity::Unique), 1);
     CHECK_NEAR(buyer.profile().stars, stars - price, 1e-9);
 }
+
+TEST(apex_kill_pays_the_normal_top_tier_star_bounty) {
+    Harness h("apex-star-credit");
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient client;
+    CHECK(loginNew(h, client, "slayer", "password7"));
+    client.joinGame(1280, 720);
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; }));
+
+    // Reaching into the world is the only way to make a kill deterministic:
+    // waiting for a real fight to resolve is a test that fails on a slow
+    // machine. Everything from the damage onward is the shipping path. The
+    // usual bots are running, so the flower is found by its account rather
+    // than as whichever one a query visits last.
+    World& world = h.server.world();
+    const Entity player = onlyPlayer(world);
+    const double starsBefore = client.profile().stars;
+    CHECK(player != NULL_ENTITY);
+    if (player == NULL_ENTITY) return;
+
+    // Mobs arrive on the spawner's own schedule, and the starter petals need a
+    // tick or two to reach the ring, so wait for both -- and take a mob IN THE
+    // PLAYER'S REALM. Every map with spawn bands stocks its own, and one from
+    // another map cannot be parked on this flower: the park below moves a
+    // position, and the same position in another coordinate space is not the
+    // same place, so the two never touch and the kill never happens.
+    const Realm realm = world.get<Transform>(player).realm;
+    Entity mob = NULL_ENTITY;
+    Query<MobTag, MobType, Transform> mobs{world};
+    Query<PetalInstance, Transform> petals{world};
+    const bool armed = h.stepUntil({&client}, [&] {
+        mob = NULL_ENTITY;
+        mobs.each([&](Entity e, MobTag&, MobType&, Transform& at) {
+            if (mob == NULL_ENTITY && at.realm == realm) mob = e;
+        });
+        bool anyPetal = false;
+        petals.each([&](Entity, PetalInstance&, Transform&) { anyPetal = true; });
+        return mob != NULL_ENTITY && anyPetal;
+    }, 600);
+    CHECK(armed);
+    if (!armed) return;
+
+    const std::uint16_t mobIndex = world.get<MobType>(mob).configIndex;
+    // Apex needs the same loot eligibility as its normal star bounty.
+    world.get<MobType>(mob).rarity = Rarity::Ascendant;
+    // And unarmoured, because whatever this map happened to stock may be one
+    // whose armour a starting ring cannot get through -- an ultra bee wears
+    // 729, and the stock basic petal swings 10. This test is about the kill
+    // ledger; armour has its own tests.
+    if (world.has<Armor>(mob)) world.get<Armor>(mob).amount = 0.0;
+
+    const bool credited = h.stepUntil({&client}, [&] {
+        if (client.profile().killCount(mobIndex, Rarity::Ascendant) > 0) return true;
+        if (!world.isAlive(mob) || world.has<Dead>(mob)) return false;
+        // Park the mob on the flower, one hit from death. The TypeScript
+        // player pipeline resolves this body contact before moveEnemies(), so
+        // this is deterministic without predicting next tick's petal angle.
+        // The MAX comes down with it: a kill is only credited to a flower
+        // that did 1% of the mob's health, and one body hit on whatever this
+        // map stocked need not be 1% of its spawned pool.
+        world.get<Transform>(mob).position = world.get<Transform>(player).position;
+        world.get<Health>(mob).max = 1.0;
+        world.get<Health>(mob).current = 1.0;
+        world.get<Health>(mob).invulnerableUntilMillis = 0;
+        world.get<Health>(player).current = world.get<Health>(player).max;
+        return false;
+    }, 200);
+    CHECK(credited);
+    if (!credited) return;
+    CHECK_EQ(client.profile().stars, starsBefore + 250.0);
+}

@@ -100,11 +100,11 @@ inline std::string oracleCooldownText(double remainingMillis) {
 /// The petal every trade hands back, at the tier of the petal traded for it.
 inline constexpr const char* kTraderCoinPetal = "coin";
 
-/// The tiers the trader takes, and so the tiers its coins come at: the whole
-/// ladder and Ascendant (shown as "Apex"). Never universal, admin or
-/// permanent hyper: a coin at one of those would be one nobody gave.
+/// The tiers the trader takes and returns as coins: the ladder, Permanent
+/// Hyper, and Ascendant (shown as "Apex").
 inline constexpr bool traderTakes(Rarity rarity) {
-    return rarityIndex(rarity) < kLadderRarityCount || rarity == Rarity::Ascendant;
+    return rarityIndex(rarity) < kLadderRarityCount ||
+           rarity == Rarity::PermanentHyper || rarity == Rarity::Ascendant;
 }
 
 /// How long an account waits between two trades: one a day. Kept exactly as

@@ -174,6 +174,39 @@ TEST(reading_the_notification_feed_leaves_the_stored_array_intact) {
     CHECK_EQ(db.storedTable("notifications").size(), static_cast<std::size_t>(2));
 }
 
+TEST(notification_feed_hides_retired_crafts_before_paging) {
+    Harness h("notices-retired", [](const std::string& path) {
+        seedUser(path, "reader", "password7");
+        seedNotifications(path, 7);
+        Json root;
+        std::string error;
+        if (!Json::parseFile(path, root, error)) return;
+        auto& notices = root["notifications"];
+        notices[1]["petalId"] = "light";
+        notices[2]["id"] = "n0";
+        notices[3]["type"] = "super_craft";
+        notices[4]["type"] = "super_craft";
+        notices[5]["type"] = "super_craft";
+        notices[6]["type"] = "unique_craft";
+        notices[6]["message"] = "The Eternal Rose has been forged by @smith";
+        root.writeFile(path, 2);
+    });
+    if (!h.ready) { CHECK(false); return; }
+    NetClient client;
+    CHECK(loginAs(h, client, "reader", "password7"));
+    client.requestNotifications(1, 0);
+    CHECK(h.stepUntil({&client}, [&] { return !client.notificationsPending(); }, 200));
+    CHECK_EQ(client.notifications().size(), std::size_t(1));
+    if (client.notifications().empty()) return;
+    CHECK_EQ(client.notifications().front().timestampMillis, 1002.0);
+    CHECK(client.notificationsHaveMore());
+    client.requestNotifications(10, client.notifications().back().timestampMillis);
+    CHECK(h.stepUntil({&client}, [&] { return !client.notificationsPending(); }, 200));
+    CHECK(!client.notificationsHaveMore());
+    CHECK_EQ(client.notifications().size(), std::size_t(2));
+    CHECK_EQ(client.notifications().back().petalId, std::string("light"));
+}
+
 TEST(a_guild_is_created_named_and_pushed_back_to_its_leader) {
     Harness h("guild-create", [](const std::string& path) {
         seedUser(path, "leader", "password7");
@@ -435,11 +468,49 @@ TEST(the_guild_roster_places_members_in_their_biome_and_drops_them_on_disconnect
     }, 200));
 
     // Gone without a word to the guild: the roster still notices.
+    const auto beforeDisconnect = h.server.database().nowMillis();
     member.disconnect();
     CHECK(h.stepUntil({&boss}, [&] {
         const GuildState::Member* entry = rosterEntry(boss, "member");
-        return entry != nullptr && !entry->online && entry->location.empty();
+        return entry != nullptr && !entry->online && entry->location.empty() &&
+            entry->lastSeenMillis >= static_cast<std::uint64_t>(beforeDisconnect);
     }, 200));
+    h.clock += 40000.0;
+    h.step(1, {&boss});
+    Database disk;
+    std::string error;
+    CHECK(disk.load(h.dbPath, error));
+    const auto* account = disk.findUser("member");
+    CHECK(account && account->lastActiveAtMillis >= beforeDisconnect);
+}
+
+TEST(the_guild_roster_leaves_offline_time_unknown_on_legacy_accounts) {
+    Harness h("guild-legacy-presence", [](const std::string& path) {
+        seedUser(path, "leader", "password7");
+        seedUser(path, "legacy", "password7");
+        Database db;
+        std::string error;
+        if (!db.load(path, error)) return;
+        db.findUser("legacy")->lastActiveAtMillis = 0;
+        auto& guild = db.rawTable("guilds")["TEST"];
+        guild["name"] = "TEST";
+        guild["leaderUsername"] = "leader";
+        guild["memberUsernames"] = Json::array();
+        guild["memberUsernames"].push("leader");
+        guild["memberUsernames"].push("legacy");
+        db.markDirty();
+        db.save();
+    });
+    CHECK(h.ready);
+    if (!h.ready) return;
+
+    NetClient boss;
+    CHECK(loginAs(h, boss, "leader", "password7"));
+    CHECK(h.stepUntil({&boss}, [&] { return rosterEntry(boss, "legacy") != nullptr; }));
+    const auto* legacy = rosterEntry(boss, "legacy");
+    CHECK(legacy && !legacy->online && legacy->lastSeenMillis == 0);
+    const auto* leader = rosterEntry(boss, "leader");
+    CHECK(leader && leader->online && leader->sameShard);
 }
 
 TEST(guild_chat_commands_take_a_display_name_and_a_description) {

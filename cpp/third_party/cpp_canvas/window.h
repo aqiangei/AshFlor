@@ -336,7 +336,7 @@ public:
     void setSoftKeyboardCaret(float x, float y);
     /// Bottom of the part of the canvas visible above the on-screen keyboard.
     /// Returns the full design height when the focused input is unobstructed.
-    double softKeyboardVisibleBottom() const;
+    double softKeyboardVisibleBottom(double clearanceCssPixels = 0.0) const;
 
     /// UTF-8 typed this frame, for text fields. Distinct from keyPressed:
     /// this is what the keyboard layout produced, not which key was struck.

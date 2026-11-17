@@ -740,6 +740,43 @@ MapData::TeleportStep MapData::stepTeleporters(Vec2 centre, double deltaSeconds,
     return step;
 }
 
+Vec2 MapData::arrivalOffTeleporters(Vec2 position, double radius, const Terrain& terrain) const {
+    const auto clearance = [radius](const MapElement& pad) {
+        return std::max(pad.padRadius + radius, kTeleporterSuctionRadius * pad.padScale()) + 8.0;
+    };
+    const auto nearPad = [&](Vec2 point, const MapElement& pad) {
+        if (pad.kind != MapElementKind::Teleporter || pad.targetMap.empty()) return false;
+        const double reach = clearance(pad);
+        return distanceSq(point, pad.centre()) <= reach * reach;
+    };
+    double searchRadius = 0.0;
+    for (const MapElement& pad : elements_) {
+        if (nearPad(position, pad)) {
+            searchRadius = std::max(searchRadius, 2.0 * clearance(pad) + kTileSize);
+        }
+    }
+    if (searchRadius == 0.0) return position;
+
+    const Vec2 extent = terrain.realmExtent(realm_);
+    const bool insideWall = terrain.blocked(position, realm_);
+    for (double distance = 8.0; distance <= searchRadius; distance += 8.0) {
+        for (int direction = 0; direction < 32; ++direction) {
+            const Vec2 candidate = position + Vec2::fromAngle(kTau * direction / 32, distance);
+            if (candidate.x < radius || candidate.y < radius ||
+                candidate.x > extent.x - radius || candidate.y > extent.y - radius) continue;
+            if (std::any_of(elements_.begin(), elements_.end(),
+                            [&](const MapElement& pad) { return nearPad(candidate, pad); })) continue;
+            if (bodyInsideWall(terrain, candidate, radius, realm_)) continue;
+            // A sewer rail can divide one tile into two walkable sides.
+            if (!insideWall && terrain.segmentTouchesBlockingTile(position, candidate, 0.0, realm_))
+                continue;
+            return candidate;
+        }
+    }
+    // Keep the original entrance if the map offers no reachable alternative.
+    return position;
+}
+
 bool MapData::findOpenPoint(const MapElement& area, Rng& rng, const Terrain& terrain, Vec2& out,
                             const std::vector<MobDisc>* mobs) const {
     const double width = area.bounds.w - kSpawnPadding * 2;
@@ -884,6 +921,8 @@ bool WorldMaps::load(const std::string& dataDir, Terrain* terrain, std::string& 
     // How many realms each file is loaded into: 1, or the entry's `copies`.
     std::vector<int> copies;
     std::vector<std::string> lateMaps;
+    std::vector<std::string> latePrestigeTwins;
+    std::vector<int> appendedCopies;
     // Whether the entry also loads a prestige twin (`"prestige": true`).
     std::vector<bool> prestigeTwins;
     Json manifest;
@@ -895,8 +934,16 @@ bool WorldMaps::load(const std::string& dataDir, Terrain* terrain, std::string& 
             return false;
         }
         for (const Json& entry : manifest["maps"].items()) {
+            const bool appendPrestige = entry.isObject() && entry["appendPrestige"].asBool();
+            if (appendPrestige && (entry["file"].asString().empty() || entry.contains("copies") ||
+                                   entry.contains("appendCopies") || entry["prestige"].asBool())) {
+                errorOut = dataDir + "/maps.json: appendPrestige requires one named map";
+                return false;
+            }
+            if (appendPrestige) latePrestigeTwins.push_back(entry["file"].asString());
             if (entry.isObject() && entry["appendAfterPrestige"].asBool()) {
                 if (entry["file"].asString().empty() || entry.contains("copies") ||
+                    entry.contains("appendCopies") ||
                     entry["prestige"].asBool()) {
                     errorOut = dataDir + "/maps.json: appendAfterPrestige requires one named map without a twin";
                     return false;
@@ -929,6 +976,13 @@ bool WorldMaps::load(const std::string& dataDir, Terrain* terrain, std::string& 
                 return false;
             }
             prestigeTwins.push_back(prestige);
+            const int extraCopies = entry.isObject() ? entry["appendCopies"].asInt(0) : 0;
+            if (extraCopies < 0 || extraCopies >= kMaxWorldMaps ||
+                (extraCopies != 0 && (count != 1 || prestige))) {
+                errorOut = dataDir + "/maps.json: invalid appendCopies for " + files.back();
+                return false;
+            }
+            appendedCopies.push_back(extraCopies);
         }
         if (files.empty()) {
             errorOut = dataDir + "/maps.json names no maps";
@@ -968,6 +1022,20 @@ bool WorldMaps::load(const std::string& dataDir, Terrain* terrain, std::string& 
     for (std::size_t i = 0; i < files.size(); ++i) {
         if (!prestigeTwins[i]) continue;
         slots.push_back(files[i]);
+        copyOf.push_back(-2);
+    }
+    // Extra private realms go last to preserve existing realm ids.
+    for (std::size_t i = 0; i < files.size(); ++i) {
+        for (int k = 1; k <= appendedCopies[i]; ++k) {
+            slots.push_back(files[i]);
+            copyOf.push_back(k);
+        }
+    }
+    // Adding a twin to a live map must not move any ordinary or prestige realm.
+    for (const auto& file : latePrestigeTwins) {
+        slots.push_back(file);
+        copyOf.push_back(-1);
+        slots.push_back(file);
         copyOf.push_back(-2);
     }
     if (static_cast<int>(slots.size()) > kMaxWorldMaps) {

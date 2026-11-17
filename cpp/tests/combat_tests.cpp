@@ -5,6 +5,7 @@
 #include "server/squads.h"
 #include "server/systems/combat.h"
 #include "server/systems/movement.h"
+#include "server/systems/spawning.h"
 #include "server/workers.h"
 #include "shared/core/world.h"
 #include "shared/game/components.h"
@@ -2135,16 +2136,47 @@ Entity equipPetal(Arena& a, Entity owner, std::uint16_t configIndex, Rarity rari
 
 } // namespace
 
-TEST(cancer_marks_only_bio_mobs_at_its_tier_or_below) {
+TEST(cancer_marks_ordinary_wild_mobs_at_its_tier_or_below) {
     const auto& registry = testsupport::shippedContent();
-    for (const auto rarity : {Rarity::Common, Rarity::Rare}) {
+    for (const char* id : {"bio_bacteria", "rock"}) {
+        for (const auto rarity : {Rarity::Common, Rarity::Uncommon, Rarity::Rare}) {
+            Arena a;
+            const Entity player = a.player({1000, 1000});
+            const Entity target = a.mob({1040, 1000}, 1000.0);
+            a.world.add<MobType>(target, MobType{registry.mobIndex(id), rarity, 1.0});
+            a.world.add<Armor>(target, Armor{10000.0});
+            equipPetal(a, player, registry.petalIndex("cancer"), Rarity::Uncommon, {1040, 1000});
+            a.step(0.0, registry);
+            CHECK_EQ(a.world.has<CancerSubdivision>(target), rarity <= Rarity::Uncommon);
+        }
+    }
+}
+
+TEST(cancer_lethal_contact_still_marks_while_challenge_mobs_remain_immune) {
+    const auto& registry = testsupport::shippedContent();
+    for (const bool challenge : {false, true}) {
         Arena a;
         const Entity player = a.player({1000, 1000});
-        const Entity target = a.mob({1040, 1000}, 1000.0);
-        a.world.add<MobType>(target, MobType{registry.mobIndex("bio_bacteria"), rarity, 1.0});
+        const Entity target = a.mob({1040, 1000}, 1.0);
+        a.world.add<MobType>(target, MobType{registry.mobIndex("rock"), Rarity::Common, 1.0});
+        if (challenge) a.world.add<WaveEnemy>(target);
         equipPetal(a, player, registry.petalIndex("cancer"), Rarity::Uncommon, {1040, 1000});
         a.step(0.0, registry);
-        CHECK_EQ(a.world.has<CancerSubdivision>(target), rarity == Rarity::Common);
+        CHECK(!isStanding(a.world, target));
+        CHECK_EQ(a.world.has<CancerSubdivision>(target), !challenge);
+        SpawnSystem spawning;
+        Terrain terrain;
+        Rng random{42};
+        spawning.answerDeaths(a.world, terrain, registry, {target}, random, 100, 0, a.commands);
+        int copies = 0;
+        Query<CancerSubdivision, Bounty>{a.world}.each([&](Entity e, CancerSubdivision& subdivision,
+                                                         Bounty& bounty) {
+            if (!subdivision.spawnedCopy) return;
+            ++copies;
+            CHECK_EQ(a.world.get<MobType>(e).configIndex, registry.mobIndex("rock"));
+            CHECK_EQ(bounty.xp, 0.0);
+        });
+        CHECK_EQ(copies, challenge ? 0 : 1);
     }
 }
 
@@ -2238,7 +2270,7 @@ TEST(a_petal_without_a_knockback_field_uses_the_game_default) {
     // Unlike damage, ordinary knockback does not use the rarity multiplier.
     CHECK_NEAR(f.registry.petalStats(f.sting, Rarity::Mythic).knockback, 2.0, 1e-9);
     // Jelly is the one TypeScript rarity-override table for this stat.
-    CHECK_NEAR(f.registry.petalStats(f.jelly, Rarity::Rare).knockback, 100.0, 1e-9);
+    CHECK_NEAR(f.registry.petalStats(f.jelly, Rarity::Rare).knockback, 90.0, 1e-9);
 
     Arena a;
     const Entity player = a.player({1000, 1000});
@@ -2248,6 +2280,65 @@ TEST(a_petal_without_a_knockback_field_uses_the_game_default) {
     a.step(0.0, f.registry);
     CHECK(a.world.has<Knockback>(mob));
     CHECK(a.world.get<Knockback>(mob).impulse.x > 0.0);
+}
+
+TEST(jelly_pushes_a_surviving_mob_even_when_the_contact_centres_match) {
+    const Fixture& f = fixture();
+    CHECK(f.ok);
+    if (!f.ok) return;
+    for (const double offset : {0.0, 5.0}) {
+        Arena a;
+        const Entity player = a.player({1000, 1000});
+        const Entity mob = a.mob({1040 + offset, 1000}, 1000.0);
+        a.world.get<Body>(mob).mass = 2.0;
+        equipPetal(a, player, f.jelly, Rarity::Rare, {1040, 1000});
+        a.step(0.0, f.registry);
+        CHECK(a.health(mob) > 0.0 && a.health(mob) < 1000.0);
+        const auto* knockback = a.world.tryGet<Knockback>(mob);
+        CHECK(knockback != nullptr);
+        if (knockback) {
+            CHECK_NEAR(knockback->impulse.x, 45.0, 1e-9);
+            CHECK_NEAR(knockback->impulse.y, 0.0, 1e-9);
+        }
+    }
+}
+
+TEST(jelly_keeps_a_small_push_against_higher_tier_bosses) {
+    const Fixture& f = fixture();
+    CHECK(f.ok);
+    if (!f.ok) return;
+    struct Case { Rarity petal; Rarity mob; double maxTiles; };
+    for (const auto& row : {Case{Rarity::Super, Rarity::Unique, 2.0},
+                            Case{Rarity::Unique, Rarity::Apex, 2.0},
+                            Case{Rarity::Unique, Rarity::Ascendant, 1.0}}) {
+        Arena a;
+        const Entity player = a.player({1000, 1000});
+        const Entity boss = a.mob({1045, 1000}, 1e9, 0.0, 80.0);
+        a.world.add<MobType>(boss, MobType{f.registry.mobIndex("grunt"), row.mob, 1.0});
+        a.world.get<Body>(boss).mass = 5.0;
+        equipPetal(a, player, f.jelly, row.petal, {1040, 1000});
+        a.step(0.0, f.registry);
+        CHECK(a.health(boss) > 0 && a.health(boss) < 1e9);
+        const auto* knockback = a.world.tryGet<Knockback>(boss);
+        CHECK(knockback != nullptr);
+        if (knockback) CHECK_NEAR(knockback->impulse.x, row.maxTiles * kTileSize, 1e-9);
+    }
+}
+
+TEST(heavy_has_a_normal_push_on_an_off_center_hit) {
+    const auto& registry = testsupport::shippedContent();
+    const auto heavy = registry.petalIndex("heavy");
+    CHECK(heavy != kInvalidIndex);
+    if (heavy == kInvalidIndex) return;
+    Arena a;
+    const Entity player = a.player({1000, 1000});
+    const Entity mob = a.mob({1045, 1000}, 1000.0);
+    a.world.get<Body>(mob).mass = 2.0;
+    equipPetal(a, player, heavy, Rarity::Rare, {1040, 1000});
+    a.step(0.0, registry);
+    const auto* knockback = a.world.tryGet<Knockback>(mob);
+    CHECK(knockback != nullptr);
+    if (knockback) CHECK_NEAR(knockback->impulse.x, 88.0, 1e-9);
 }
 
 TEST(a_popped_bubble_mob_throws_its_flower_as_far_as_a_bubble_petal) {

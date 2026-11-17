@@ -21,8 +21,12 @@ TEST(magic_petals_with_a_body_all_cost_mana) {
     for (std::size_t i = 0; i < registry.petalCount(); ++i) {
         const auto index = static_cast<std::uint16_t>(i);
         const PetalConfig& config = registry.petal(index);
-        if (config.id.rfind("magic_", 0) != 0 || config.count <= 0) continue;
+        if (config.id.rfind("magic_", 0) != 0) continue;
         ++magic;
+        if (config.count <= 0 || config.id == "magic_soil" ||
+            config.id == "magic_fang" ||
+            config.id == "magic_tooth" ||
+            config.id == "magic_leaf") continue;
         for (const Rarity tier : {Rarity::Common, Rarity::Apex}) {
             const PetalStats stats = registry.petalStats(index, tier);
             if (stats.requiredMana <= 0.0 && stats.petManaCost <= 0.0) {
@@ -35,6 +39,69 @@ TEST(magic_petals_with_a_body_all_cost_mana) {
     const auto rock = registry.petalIndex("magic_rock");
     CHECK_NEAR(registry.petalStats(rock, Rarity::Common).requiredMana, 1.4, 1e-9);
     CHECK_NEAR(registry.petalStats(rock, Rarity::Uncommon).requiredMana, 2.8, 1e-9);
+}
+
+TEST(zorr_magic_variants_have_distinct_stats_and_costs) {
+    const auto& registry = shippedContent();
+    const auto stats = [&](const char* id, Rarity tier = Rarity::Common) {
+        return registry.petalStats(registry.petalIndex(id), tier);
+    };
+    const auto rock = stats("magic_rock");
+    CHECK_NEAR(rock.health, 750.0, 1e-9);
+    CHECK_NEAR(rock.damage, 25.0, 1e-9);
+    CHECK_NEAR(rock.petalArmor, 5.0, 1e-9);
+    CHECK_NEAR(rock.reloadMillis, 2000.0, 1e-9);
+    const auto wing = stats("magic_wing");
+    CHECK_NEAR(wing.damage, 23.0, 1e-9);
+    CHECK_NEAR(wing.reloadMillis, 3000.0, 1e-9);
+    CHECK_EQ(wing.count, 1);
+    CHECK_EQ(stats("magic_wing", Rarity::Apex).count, 1);
+    CHECK_NEAR(stats("magic_bubble_bomb").reloadMillis, 200.0, 1e-9);
+    const auto soil = stats("magic_soil");
+    CHECK_NEAR(soil.maxMana, 13.2, 1e-9);
+    CHECK_NEAR(soil.passiveManaPerSecond, 1.0, 1e-9);
+    CHECK_NEAR(soil.requiredMana, 0.0, 1e-9);
+    CHECK_NEAR(soil.flowerHealthBonus, 0.0, 1e-9);
+    CHECK_NEAR(soil.modifiers.maxHealth, 1.1, 1e-9);
+    CHECK_NEAR(stats("magic_soil", Rarity::Ascendant).modifiers.maxHealth, 1.438, 0.001);
+    CHECK_NEAR(stats("magic_poo", Rarity::Super).summonRangeBonus, 54.0, 1e-9);
+    CHECK_NEAR(stats("magic_poo", Rarity::Super).passiveManaDrain, 102.4, 1e-9);
+}
+
+TEST(magic_poo_spends_mana_for_summon_reach_and_stops_when_unequipped) {
+    World world;
+    PetalSystem petals;
+    CommandBuffer commands{world};
+    const auto& registry = shippedContent();
+    const Entity player = world.create();
+    world.add<PlayerTag>(player);
+    world.add<Transform>(player, Transform{{900.0, 900.0}, 0.0});
+    world.add<Motion>(player);
+    world.add<Body>(player, Body{kPlayerBaseRadius, 1.0});
+    world.add<Health>(player, Health{100.0, 100.0});
+    world.add<Faction>(player, Faction{Team::Players, true});
+    world.add<PlayerInput>(player);
+    world.add<PlayerModifiers>(player);
+    world.add<PetalRing>(player);
+    auto& loadout = world.add<Loadout>(player);
+    loadout.slots[0] = {registry.petalIndex("magic_soil"), Rarity::Common};
+    loadout.slots[1] = {registry.petalIndex("magic_poo"), Rarity::Common};
+    const auto step = [&](double now) {
+        petals.run(world, registry, now, net::kTickSeconds, commands);
+        commands.flush();
+    };
+    step(1000.0);
+    CHECK_NEAR(world.get<ManaPool>(player).max, 13.2, 1e-9);
+    CHECK_NEAR(world.get<ManaPool>(player).current, 13.2 * .4 + .2 * net::kTickSeconds, 1e-9);
+    CHECK_NEAR(world.get<PlayerModifiers>(player).summonRangeBonus, 5.0, 1e-9);
+    world.get<Loadout>(player).slots[1].rarity = Rarity::Super;
+    world.get<ManaPool>(player).current = 0;
+    step(1050.0);
+    CHECK_NEAR(world.get<PlayerModifiers>(player).summonRangeBonus, 0.0, 1e-9);
+    world.get<Loadout>(player).slots[1] = {};
+    step(1100.0);
+    CHECK_NEAR(world.get<PlayerModifiers>(player).summonRangeBonus, 0.0, 1e-9);
+    CHECK_NEAR(world.get<ManaPool>(player).current, 2.0 * net::kTickSeconds, 1e-9);
 }
 
 TEST(magic_rock_waits_for_mana_then_pays_when_it_forms) {

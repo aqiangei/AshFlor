@@ -64,3 +64,24 @@ TEST(shard_presence_mob_announcements_are_ephemeral_and_hide_location) {
     CHECK(notices[0]["x"].isNull());
     CHECK(presence.exchange(state, destination, rows, 30000)["notices"].size() == 0);
 }
+
+TEST(shard_presence_keeps_prestige_spawn_flag_without_revealing_location) {
+    Presence presence;
+    const Json state = Json::object(), rows = Json::array();
+    const Node source{"one", "boot1", Role::Game}, destination{"two", "boot2", Role::Game};
+    Json event = Json::object(), batch = Json::array();
+    event["id"] = "123456789abcdef0123456789abcdef0";
+    event["mob"] = 7;
+    event["rarity"] = rarityIndex(Rarity::Super);
+    event["prestige"] = true;
+    event["realm"] = "test";
+    event["x"] = 1234;
+    batch.push(event);
+    CHECK(presence.exchange(state, source, rows, 0, batch)["notices"].size() == 0);
+    const auto received = presence.exchange(state, destination, rows, 10)["notices"];
+    CHECK_EQ(received.size(), 1u);
+    if (received.size() != 1) return;
+    CHECK(received[0]["prestige"].asBool());
+    CHECK(received[0]["realm"].isNull());
+    CHECK(received[0]["x"].isNull());
+}

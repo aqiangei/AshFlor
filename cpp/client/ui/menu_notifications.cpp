@@ -22,6 +22,7 @@
 #include <utility>
 #include <vector>
 
+#include "client/ui/chat_i18n.h"
 #include "client/ui/menu_theme.h"
 #include "client/ui/menus.h"
 #include "client/ui/text.h"
@@ -67,6 +68,7 @@ constexpr double kPagePrefetch = 100.0;
 struct NotificationLayout {
     double width = -1.0;
     std::uint32_t revision = 0;
+    Language language = Language::En;
     std::vector<std::vector<std::string>> lines;
     double height = 0;
 };
@@ -110,6 +112,16 @@ const std::set<std::string>& readMarks(const std::vector<std::string>& readIds) 
         state.mirrored = readIds.size();
     }
     return state.read;
+}
+
+void markNotificationRead(ClientSettings& settings, const std::string& id) {
+    auto& readIds = settings.readNotifications;
+    FeedState& state = feedState();
+    readMarks(readIds);
+    if (!state.read.insert(id).second) return;
+    readIds.push_back(id);
+    state.mirrored = readIds.size();
+    settings.notificationReadsDirty = true;
 }
 
 /// Thumb-drag state for the scrollbar.
@@ -240,9 +252,7 @@ void appendSplitOnNewlines(std::vector<std::string>& lines, const std::string& l
     }
 }
 
-/// Greedy word wrap at 14px. A first word wider than the line is emitted on
-/// its own and allowed to overflow, which is what the reference does rather
-/// than breaking mid-word.
+/// Greedy word wrap at 14px, with a character boundary for long runs of text.
 std::vector<std::string> wrapMessage(const std::string& message, double maxWidth) {
     std::vector<std::string> lines;
     if (message.find_first_not_of(" \t\r\n") == std::string::npos) {
@@ -268,20 +278,25 @@ std::vector<std::string> wrapMessage(const std::string& message, double maxWidth
         lines.emplace_back();
         return lines;
     }
-    if (measureMessage(words.front(), kMessageSize) > maxWidth) {
-        appendSplitOnNewlines(lines, words.front());
-        return lines;
-    }
-
-    std::string current = words.front();
-    for (std::size_t i = 1; i < words.size(); ++i) {
-        const std::string candidate = current + " " + words[i];
+    std::string current;
+    for (const auto& word : words) {
+        const std::string candidate = current.empty() ? word : current + " " + word;
         if (measureMessage(candidate, kMessageSize) <= maxWidth) {
             current = candidate;
-        } else {
-            appendSplitOnNewlines(lines, current);
-            current = words[i];
+            continue;
         }
+        if (!current.empty()) appendSplitOnNewlines(lines, current);
+        std::size_t start = 0;
+        for (std::size_t at = 0; at < word.size();) {
+            std::size_t next = at + 1;
+            while (next < word.size() && (static_cast<unsigned char>(word[next]) & 0xc0) == 0x80) ++next;
+            if (at > start && measureMessage(word.substr(start, next - start), kMessageSize) > maxWidth) {
+                appendSplitOnNewlines(lines, word.substr(start, at - start));
+                start = at;
+            }
+            at = next;
+        }
+        current = word.substr(start);
     }
     appendSplitOnNewlines(lines, current);
     return lines;
@@ -299,13 +314,14 @@ std::string timeAgo(double stampMillis, double nowMillis) {
     const long long minutes = seconds / 60;
     const long long hours = minutes / 60;
     const long long days = hours / 24;
-    const auto phrase = [](long long value, const char* unit) {
+    const auto phrase = [](long long value, const char* unit, const char* unitZh) {
+        if (language() == Language::Zh) return std::to_string(value) + unitZh + "前";
         return std::to_string(value) + " " + unit + (value > 1 ? "s ago" : " ago");
     };
-    if (days > 0) return phrase(days, "day");
-    if (hours > 0) return phrase(hours, "hour");
-    if (minutes > 0) return phrase(minutes, "minute");
-    return "Just now";
+    if (days > 0) return phrase(days, "day", "天");
+    if (hours > 0) return phrase(hours, "hour", "小时");
+    if (minutes > 0) return phrase(minutes, "minute", "分钟");
+    return trEnZh("Just now", "刚刚");
 }
 
 } // namespace
@@ -326,7 +342,7 @@ bool NotificationsPanel::render(MenuContext& ctx) {
     const Vec2 mouse = ctx.mouse();
     FeedState& state = feedState();
 
-    if (!state.requested && !ctx.net.notificationsPending()) {
+    if (!readingAll_ && !state.requested && !ctx.net.notificationsPending()) {
         state.requested = true;
         ctx.net.requestNotifications(kNotificationPage, 0);
     }
@@ -338,25 +354,22 @@ bool NotificationsPanel::render(MenuContext& ctx) {
     // The settings file's list is the record; this set is only a lookup over it.
     std::vector<std::string>& readIds = ctx.settings.readNotifications;
     const std::set<std::string>& read = readMarks(readIds);
-    const auto markRead = [&](const std::string& id) {
-        if (!state.read.insert(id).second) return;
-        readIds.push_back(id);
-        state.mirrored = readIds.size();
-    };
 
     const double viewport = panel.h - kHeaderHeight - kPadding;
     const double wideText = panel.w - kPadding * 2 - kTextInset * 2;
     const double narrowText = wideText - (kScrollbarWidth + 5.0);
 
     const auto measure = [&](NotificationLayout& layout, double width) {
-        if (layout.width == width && layout.revision == ctx.net.notificationsRevision()) return;
+        if (layout.width == width && layout.revision == ctx.net.notificationsRevision() &&
+            layout.language == language()) return;
         layout.width = width;
         layout.revision = ctx.net.notificationsRevision();
+        layout.language = language();
         layout.lines.clear();
         layout.lines.reserve(entries.size());
         layout.height = 2.0 * kPadding;
         for (const NotificationEntry& notice : entries) {
-            layout.lines.push_back(wrapMessage(notice.message, width));
+            layout.lines.push_back(wrapMessage(localizeNotificationText(notice.message, notice.petalId), width));
             layout.height += cardHeight(layout.lines.back().size()) + kCardGap;
         }
         if (hasMore) layout.height += 30.0;
@@ -415,7 +428,7 @@ bool NotificationsPanel::render(MenuContext& ctx) {
 
     // Neither header button has a hover or a press state in the reference.
     const Rect markAllRect{panel.right() - 180.0, panel.y + 10.0, 120.0, 30.0};
-    pillButton(canvas, markAllRect, "Mark All Read", kBodyBorder, 14.0);
+    pillButton(canvas, markAllRect, trEnZh("Mark All Read", "全部标为已读"), kBodyBorder, 14.0);
     const Rect closeRect = closeButtonRect(panel);
     panelClose(canvas, closeRect, closeRect.contains(mouse));
 
@@ -435,10 +448,11 @@ bool NotificationsPanel::render(MenuContext& ctx) {
     faint.fill = kPaper;
     faint.strokeWidth = 0;
 
-    if (entries.empty() && !loading) {
+    if (entries.empty()) {
         TextStyle empty = faint;
         empty.align = Align::Centre;
-        textAtAlpha(canvas, "No notifications yet", panel.x + panel.w * 0.5, contentY + 20.0,
+        textAtAlpha(canvas, loading ? trEnZh("Loading...", "加载中…") :
+                    trEnZh("No notifications yet", "暂无通知"), panel.x + panel.w * 0.5, contentY + 20.0,
                     empty, 0.7);
     } else {
         // The wall clock, not the render clock: a notice carries the Unix time
@@ -487,7 +501,8 @@ bool NotificationsPanel::render(MenuContext& ctx) {
         if (hasMore && contentY <= view.bottom()) {
             TextStyle footer = faint;
             footer.align = Align::Centre;
-            textAtAlpha(canvas, loading ? "Loading..." : "Scroll for more",
+            textAtAlpha(canvas, loading ? trEnZh("Loading...", "加载中…") :
+                        trEnZh("Scroll for more", "向下滚动查看更多"),
                         panel.x + panel.w * 0.5, contentY + 10.0, footer, 0.7);
         }
     }
@@ -511,19 +526,27 @@ bool NotificationsPanel::render(MenuContext& ctx) {
     if (!ctx.released()) return true;
     if (closeRect.contains(mouse)) return false;
     if (markAllRect.contains(mouse)) {
-        // Every LOADED id, not every id the server holds: the reference marks
-        // what it has, and a page never fetched was never shown as unread.
-        for (const NotificationEntry& notice : entries) markRead(notice.id);
+        readingAll_ = true;
+        updateReadAll(ctx.net, ctx.settings);
         return true;
     }
     if (!view.contains(mouse)) return true;
     for (const std::pair<Rect, std::string>& card : cards) {
         if (card.first.contains(mouse)) {
-            markRead(card.second);
+            markNotificationRead(ctx.settings, card.second);
             break;
         }
     }
     return true;
+}
+
+void NotificationsPanel::updateReadAll(const NetClient& net, ClientSettings& settings) {
+    if (!net.haveSession()) readingAll_ = false;
+    if (!readingAll_) return;
+    for (const auto& notice : net.notifications()) {
+        markNotificationRead(settings, notice.id);
+    }
+    if (!net.notificationsPending() && !net.notificationsHaveMore()) readingAll_ = false;
 }
 
 int notificationsUnread(const NetClient& net, const ClientSettings& settings) {

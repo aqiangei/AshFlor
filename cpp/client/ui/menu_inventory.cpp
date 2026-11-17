@@ -18,6 +18,7 @@
 
 #include "client/ease.h"
 #include "client/ui/content_i18n.h"
+#include "client/ui/gallery_drop_preview.h"
 #include "client/ui/item_tile.h"
 #include "client/ui/menu_theme.h"
 #include "client/ui/menus.h"
@@ -27,6 +28,7 @@
 #include "shared/game/config.h"
 #include "shared/game/dark_mark.h"
 #include "shared/game/domino.h"
+#include "shared/game/map_elements.h"
 #include "shared/game/rarity.h"
 
 namespace flix {
@@ -59,7 +61,7 @@ constexpr int kColumns = 5;
 
 /// The controls row and everything above it. Fixed, because the grid below
 /// scrolls and the header must not.
-constexpr double kHeaderHeight = 137.0;
+constexpr double kHeaderHeight = 173.0;
 constexpr double kControlsY = 91.0;
 constexpr double kControlsHeight = 33.0;
 constexpr double kToggleBoxSize = 29.0;
@@ -149,6 +151,57 @@ bool matchesSearch(std::uint16_t petalIndex, const std::string& needle) {
            std::string(petalNameZh(config.id)).find(needle) != std::string::npos;
 }
 
+std::vector<bool> mapDropTypes(const MapData& map) {
+    std::vector<bool> seen(content().mobCount(), false);
+    std::vector<std::uint16_t> mobs;
+    const auto addMob = [&](std::uint16_t mob) {
+        if (mob >= seen.size() || seen[mob]) return;
+        seen[mob] = true;
+        mobs.push_back(mob);
+    };
+    const auto addGroup = [&](std::uint16_t group) {
+        if (group == kInvalidIndex) return;
+        for (const auto& member : content().mobGroup(group).members)
+            if (member.weight > 0.0) addMob(member.mob);
+    };
+    bool useDefault = false;
+    for (const auto& element : map.elements()) {
+        if (!element.isSpawnBand() && !element.isMobRegion()) continue;
+        if (element.isSpawnBand() && element.mobDistribution.empty()) useDefault = true;
+        for (const auto& row : element.mobDistribution) {
+            if (!(row.weight > 0.0)) continue;
+            const auto group = content().mobGroupIndex(row.name);
+            if (group != kInvalidIndex) addGroup(group);
+            else addMob(content().mobIndex(row.name));
+        }
+    }
+    if (useDefault) addGroup(content().mobGroupIndex(map.defaultMobGroup()));
+
+    std::vector<bool> drops(content().petalCount(), false);
+    for (std::size_t i = 0; i < mobs.size(); ++i) {
+        const auto mob = mobs[i];
+        const auto& config = content().mob(mob);
+        for (const auto child : config.initialSpawns) addMob(child);
+        for (const auto& wave : config.spawnWaves)
+            for (const auto child : wave) addMob(child);
+        for (const auto& rung : config.hurtSpawn)
+            if (rung.count > 0) addMob(rung.mobIndex);
+        if (config.periodicSpawn.present) addMob(config.periodicSpawn.mobIndex);
+        const auto& brood = config.deathSpawn;
+        if (brood.present && brood.chance > 0.0 && brood.count > 0) addMob(brood.mobIndex);
+        for (const auto& rung : brood.byRarity)
+            if (rung.count > 0) addMob(rung.mobIndex);
+        for (int tier = 0; tier < kRarityCount; ++tier) {
+            const auto rarity = clampRarity(tier);
+            if (tier >= kLadderRarityCount && rarity != Rarity::Ascendant) continue;
+            for (const auto& drop : galleryDropPreview(mob, rarity, kRarityCount))
+                if (drop.petalIndex < drops.size() && drop.probability > 0.0)
+                    drops[drop.petalIndex] = true;
+        }
+    }
+    return drops;
+}
+
 /// Centre each row within the scrolling content area, including partial rows.
 void layoutRun(Grid& grid, const std::vector<Cell>& entries, double left, double innerWidth,
                double& y) {
@@ -178,9 +231,13 @@ void layoutRun(Grid& grid, const std::vector<Cell>& entries, double left, double
 /// build's speed boosts, health potions and shields became powder, roses and
 /// shells where an account loads (server/db.cpp).
 Grid buildGrid(const Profile& profile, double innerWidth, bool stacked,
-               const std::string& needle) {
+               const std::string& needle, const std::vector<bool>* dropTypes) {
     Grid grid;
     double y = kGridTopPad;
+    const auto visible = [&](std::uint16_t petal) {
+        return (!dropTypes || (petal < dropTypes->size() && (*dropTypes)[petal])) &&
+               matchesSearch(petal, needle);
+    };
 
     if (stacked) {
         // One cell per petal TYPE, shown at the best tier the account holds.
@@ -191,7 +248,7 @@ Grid buildGrid(const Profile& profile, double innerWidth, bool stacked,
         std::vector<Cell> entries;
         for (std::size_t i = 0; i < content().petalCount(); ++i) {
             const auto petalIndex = static_cast<std::uint16_t>(i);
-            if (!matchesSearch(petalIndex, needle)) continue;
+            if (!visible(petalIndex)) continue;
             for (int tier = kRarityCount - 1; tier >= 0; --tier) {
                 const Rarity rarity = clampRarity(tier);
                 const std::uint32_t count = profile.stackCount(petalIndex, rarity);
@@ -214,7 +271,7 @@ Grid buildGrid(const Profile& profile, double innerWidth, bool stacked,
         // same account's grid differently from the browser's.
         for (const Profile::Stack& stack : profile.inventory) {
             if (stack.rarity != rarity || stack.count == 0) continue;
-            if (!matchesSearch(stack.petalIndex, needle)) continue;
+            if (!visible(stack.petalIndex)) continue;
             entries.push_back({Rect{}, stack.petalIndex, stack.rarity, stack.count});
         }
         if (entries.empty()) continue;
@@ -313,6 +370,26 @@ std::string colourMarkup(const std::string& text, std::uint32_t rgb) {
 
 namespace ui {
 
+void showTimedHammerExpiry(std::vector<TooltipLine>& lines, const Profile& profile, int slot) {
+    const double now = renderClockMillis();
+    double soonest = 0.0;
+    int copies = 0;
+    for (const auto& lease : profile.timedHammerLeases) {
+        if (lease.slot != slot || lease.readyAtMillis <= now) continue;
+        if (soonest == 0.0 || lease.readyAtMillis < soonest) soonest = lease.readyAtMillis;
+        ++copies;
+    }
+    if (copies == 0) return;
+
+    const auto seconds = static_cast<unsigned>(std::ceil((soonest - now) / 1000.0));
+    char clock[32];
+    std::snprintf(clock, sizeof clock, "%u:%02u", seconds / 60, seconds % 60);
+    const char* label = copies > 1 ? trEnZh("Next hammer expires in ", "下一把到期还剩 ")
+                                   : trEnZh("Time left ", "剩余时间 ");
+    lines.insert(lines.begin() + std::min<std::size_t>(1, lines.size()),
+                 TooltipLine(std::string(label) + clock));
+}
+
 /// Name / tier / description / HP / damage, in the shared petal tooltip's
 /// order. HP and damage carry the account's skill tiers, since that is the
 /// number the player will actually see in the field, and the reload carries
@@ -327,7 +404,9 @@ std::vector<TooltipLine> equippedPetalTooltipLines(std::uint16_t originalIndex,
     auto lines = petalTooltipLines(equipped.configIndex, equipped.rarity, skills, reloadScale,
                                    slot, triangleBonus, showHyperTechnique, effectiveStats.reloadMillis);
     if (originalIndex != equipped.configIndex && !lines.empty()) {
-        lines.front().text = std::string(language() == Language::Zh ? "拟态 → " : "Mimic → ") + lines.front().text;
+        const auto& original = content().petal(originalIndex);
+        const std::string enName = titleCase(original.name);
+        lines.front().text = petalNameTr(original.id, enName.c_str());
     }
     return lines;
 }
@@ -597,6 +676,8 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
                 (kSoapMaxSpillRadiusScale - 1.0) * 100.0, "%");
     }
     if (stats.flowerRadiusBonus > 0) special("增加花朵半径：+", "Flower radius: +", stats.flowerRadiusBonus);
+    if (stats.summonRangeBonus > 0) special("召唤物追击范围：+", "Summon pursuit range: +", stats.summonRangeBonus);
+    if (stats.passiveManaDrain > 0) special("每秒法力消耗：", "Mana drain per second: ", stats.passiveManaDrain);
     if (!petalSharesFlowerDamage(config) && stats.modifiers.maxHealth != 1.0)
         special("最大生命：", "Max health: ", (stats.modifiers.maxHealth - 1.0) * 100.0, "%");
     if (stats.modifiers.speed != 1.0)
@@ -632,9 +713,7 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
             eggSummonCombatScale(config) * hyperSummonPromotionScale(config, summonRarity);
         TooltipLine pet{std::string(chinese ? "召唤：" : "Summons: ") +
             mobNameTr(content().mob(config.petMobIndex).id, content().mob(config.petMobIndex).name.c_str()) +
-            " x" + std::to_string((summonUsesDuplicator(config)
-                ? petalCopies(config.petCount,&skills,slot,petalTier(rarity),config.stackable)
-                : config.petCount)*(apex && !config.petSummonTiers ? 3 : 1)),12.0};lines.push_back(pet);
+            " x" + std::to_string(configuredSummonCount(config, rarity, &skills, slot)),12.0};lines.push_back(pet);
         special("召唤物生命：", "Summon health: ",summon.health*summonScale*summon.petHealthScale*kSummonedMobHealthScale*skills.healthScale(SkillId::Summoner)*eggSummonHealthScale(config)*ascendantSummonHealthScale(rarity));
         lines.push_back({std::string(chinese ? "召唤物稀有度：" : "Summon rarity: ") + rarityTr(summonRarity), 12.0});
         special("召唤物接触伤害：", "Summon contact damage: ",
@@ -646,7 +725,9 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         if (config.petSummonTiers)
             special("孵化等待：", "Hatch delay: ", stats.reloadMillis / 1000.0, "s");
         if (config.id == "egg" || config.id == "beetle_egg") special("孵化等待：", "Hatch delay: ", 1.0, "s");
-        if (config.petMobId != "sandstorm") lines.push_back({chinese ? "自动索敌优先主人600范围内的高阶怪，不超900；离主人700回跟，卡住会安全接回原召唤物。光标指挥优先。" : "Auto-targets high-tier mobs within 600 of the owner, capped at 900. Follows beyond 700; stuck summons recover. Cursor commands take priority.",12.0});
+        if (summon.ai != AiKind::Sandstorm) lines.push_back({chinese
+            ? "自动索敌优先主人 600 范围内的高阶怪。主人侧上限 1250，灯泡可提高。空闲离主人 900、战斗中 1650 后回跟。光标指挥优先。"
+            : "Prioritises high-tier mobs within 600 of the owner. The owner's range cap is 1250 before Bulb. Returns beyond 900 while idle or 1650 in combat. Cursor commands take priority.",12.0});
         if(config.id=="egg"||config.id=="beetle_egg")lines.push_back({chinese?"孵化准备的1秒内蛋壳受保护，不会被战斗打断。":"The shell is protected during its one-second incubation.",12.0});
     }
     if (config.projectile.summonMobIndex != kInvalidIndex) {
@@ -708,6 +789,17 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     }
     if (stats.spongeDamageDurationMillis > 0)
         special("伤害分摊时间：", "Damage spread duration: ", stats.spongeDamageDurationMillis / 1000.0, "s");
+    if (config.id == "chromosome") {
+        special("展开花瓣耐久回复：", "Deployed petal repair: ",
+                petalHealScale(rarity), chinese ? " / 秒" : " / s");
+    }
+    if (config.id == "magic_bone") {
+        TooltipLine stacking{chinese
+            ? "对野怪的伤害按未破损的同阶或更高阶魔法骨头计数，超凡与 Apex 算同一档。第 1 片无加成，从第 2 片起每片追加 24% ÷ 序号，合计最高 35%。"
+            : "Damage to wild mobs counts unbroken Magic Bones of this tier or higher. Hyper and Apex share a tier. Copy n adds 24% / n from the second onward, capped at 35% total.", 12.0};
+        stacking.maxWidth = 290.0;
+        lines.push_back(std::move(stacking));
+    }
     const double cameraZoom = config.id == "antennae" && !showHyperTechnique && isHyperPetal(rarity)
         ? petalCameraZoom(content(), petalIndex, Rarity::Unique) : stats.cameraZoom;
     if (cameraZoom != 1.0) {
@@ -725,6 +817,8 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     if (stats.modifiers.aggroRange != 1.0)
         special("怪物警觉范围变化：", "Mob detection range: ", (stats.modifiers.aggroRange - 1.0) * 100.0, "%");
     if (config.id == "bulb") {
+        special("单片召唤物索敌范围：", "Summon targeting range with one Bulb: ",
+                (bulbSummonTargetRangeScale(stats.modifiers.aggroRange - 1.0) - 1.0) * 100.0, "%");
         special("额外灯泡的引怪增量生效比例：", "Extra bulb aggro bonus retained: ",
                 kAdditionalBulbAggroScale * 100.0, "%");
         special("叠加上限（基础警觉范围）：", "Stack cap (base aggro range): ",
@@ -750,10 +844,25 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         special("最多连锁目标：", "Maximum lightning targets: ",
                 std::clamp(std::min(rarityIndex(rarity), rarityIndex(Rarity::Unique)) - 3, 1, 5));
     }
+    if (config.spill.kind != SpillKind::None)
+        special("基础流体半径：", "Base spill radius: ", config.spill.radius);
+    if (config.id == "blood")
+        special("基础血池半径：", "Base blood pool radius: ", bloodPoolRadius(rarity));
     if (config.radiation.present) {
+        if (config.id == "uranium")
+            special("基础辐射伤害/秒：", "Base radiation damage per second: ", uraniumRadiationDps(stats, rarity));
         if(config.id=="uranium")
             special("辐射自伤上限（每秒最大生命）：", "Self-radiation cap (% max HP/s): ", 4.0, "%");
-        special("辐射半径：", "Radiation radius: ", config.radiation.radius);
+        const double poison = config.radiation.burnDamage > 0.0 ? config.radiation.poisonDamage :
+            config.radiation.poisonPerSecond;
+        if (poison > 0.0)
+            special("基础辐射毒伤/秒：", "Base radiation poison per second: ", poison * petalStrengthScale(rarity));
+        if (config.radiation.burnDamage > 0.0)
+            special("基础辐射灼烧强度：", "Base radiation burn strength: ",
+                    config.radiation.burnDamage * petalStrengthScale(rarity));
+        if (config.id == "void_stardust")
+            special("中毒持续：", "Poison duration: ", config.radiation.poisonDurationMillis / 1000.0, "s");
+        special("基础辐射半径：", "Base radiation radius: ", baseRadiationRadius(config, rarity));
         special("辐射间隔：", "Radiation interval: ", config.radiation.intervalMillis / 1000.0, "s");
         if (config.radiation.selfPoisonScale > 0)
             special("自身中毒倍率：", "Self-poison multiplier: ", config.radiation.selfPoisonScale);
@@ -835,6 +944,9 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         bonus.labelColor = kStatHeal;
         lines.push_back(bonus);
     }
+
+    if (config.id == "magic_golden_leaf")
+        special("耗魔降低：", "Mana costs reduced: ", stats.reloadCut * 100.0 / kMagicGoldenLeafReloadShare, "%");
 
     // Golden leaf, florr's line: what it takes off the rest of the bar.
     if (stats.reloadCut > 0.0) {
@@ -1120,6 +1232,49 @@ bool InventoryPanel::render(MenuContext& ctx) {
                &searchField_);
     panelClose(canvas, closeRect, closeRect.contains(mouse));
 
+    std::vector<const MapData*> dropMaps;
+    const WorldMaps* maps = ctx.renderer.worldMaps();
+    if (maps && !riftBag) {
+        for (const auto& map : maps->maps()) {
+            if (map.id() != map.templateId() || map.id().rfind("rift_", 0) == 0) continue;
+            if (std::none_of(map.elements().begin(), map.elements().end(),
+                             [](const MapElement& e) { return e.isSpawnBand(); })) continue;
+            dropMaps.push_back(&map);
+        }
+    }
+    const std::vector<bool>* dropTypes = nullptr;
+    if (!dropMaps.empty()) {
+        if (dropMap_ > dropMaps.size()) dropMap_ = 0;
+        const Rect left{gridLeft, 132.0 + panel.y, 32.0, 30.0};
+        const Rect right{searchRect.right() - 32.0, left.y, 32.0, left.h};
+        if (ctx.pressed() && (left.contains(mouse) || right.contains(mouse))) {
+            const std::size_t options = dropMaps.size() + 1;
+            dropMap_ = (dropMap_ + (right.contains(mouse) ? 1 : options - 1)) % options;
+            scroll_.offset = 0.0;
+            tooltipDelay.reset();
+            touchInspect.reset();
+        }
+        drawSlotButton(canvas, left, "‹", kInventorySkin.fill, left.contains(mouse),
+                       left.contains(mouse) && ctx.pressed());
+        drawSlotButton(canvas, right, "›", kInventorySkin.fill, right.contains(mouse),
+                       right.contains(mouse) && ctx.pressed());
+        std::string label = chinese ? "地图掉落：全部" : "Map drops: All";
+        if (dropMap_ != 0) {
+            const auto& map = *dropMaps[dropMap_ - 1];
+            label = (chinese ? "地图掉落：" : "Map drops: ") +
+                    std::string(biomeTr(map.id(), map.displayName().c_str()));
+            auto found = mapDrops_.find(map.id());
+            if (found == mapDrops_.end())
+                found = mapDrops_.emplace(map.id(), mapDropTypes(map)).first;
+            dropTypes = &found->second;
+        }
+        TextStyle style;
+        style.size = 15.0;
+        style.align = Align::Centre;
+        style.baseline = Baseline::Middle;
+        text(canvas, label, (left.right() + right.x) * 0.5, left.y + left.h * 0.5, style);
+    }
+
     // --- content -----------------------------------------------------------
     const Rect view{panel.x + kMenuBorder, panel.y + kHeaderHeight, panel.w - kMenuBorder * 2,
                     std::max(0.0, panel.bottom() - (panel.y + kHeaderHeight) - kMenuBorder)};
@@ -1131,7 +1286,14 @@ bool InventoryPanel::render(MenuContext& ctx) {
     // empty. The shared trim takes spaces, tabs, CRs and LFs, which is every
     // blank this field can hold -- editText lets no other control byte into a
     // single-line field.
-    const Grid grid = buildGrid(profile, innerWidth, stacked_, trimmed(lowerCase(search_)));
+    const Grid grid = buildGrid(ctx.craftInventory ? *ctx.craftInventory : profile,
+                                innerWidth, stacked_, trimmed(lowerCase(search_)), dropTypes);
+    if (dropTypes && grid.cells.empty()) {
+        TextStyle hint;
+        hint.size = 14.0;
+        hint.align = Align::Centre;
+        text(canvas, trEnZh("No matching petals", "没有符合条件的花瓣"), centre, view.y + 26.0, hint);
+    }
 
     scroll_.contentHeight = grid.contentHeight;
     scroll_.viewHeight = visibleH;
@@ -1288,8 +1450,11 @@ bool InventoryPanel::render(MenuContext& ctx) {
         const double reloadScale =
             profile.skills.reloadScale() *
             (1.0 - barReloadCut(content(), [&](int i) { return profile.equipped(content(), i); }, &profile.skills));
-        const std::vector<TooltipLine> lines =
+        auto lines =
             petalTooltipLines(cell.petalIndex, cell.rarity, profile.skills, reloadScale);
+        if (cell.petalIndex == content().petalIndex("timed_mjolnir")) {
+            showTimedHammerExpiry(lines, profile, -1);
+        }
         const bool alt = ctx.altMode;
         const Vec2 size = measureTooltip(lines, 0.0, 0.0, alt);
         const Rect tipRect{originX+cell.rect.x,originY+cell.rect.y,cell.rect.w,cell.rect.h};
@@ -1341,6 +1506,8 @@ bool InventoryPanel::render(MenuContext& ctx) {
         if (drag.active || track.contains(mouse)) return true;
         if (hovered >= 0 && !ctx.drag.active()) {
             const Cell& cell = grid.cells[static_cast<std::size_t>(hovered)];
+            if (ctx.craftInventory != nullptr && ctx.craftInventory != &profile &&
+                profile.stackCount(cell.petalIndex, cell.rarity) == 0) return true;
             ctx.drag.source = DragState::Source::Inventory;
             ctx.drag.petalIndex = cell.petalIndex;
             ctx.drag.rarity = cell.rarity;

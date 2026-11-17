@@ -166,6 +166,7 @@ enum Toggle : int {
     kShowHitboxes,
     kShowStats,
     kShowExactValues,
+    kPetalRarityGlow,
     kDynamicSkybox,
     kMobDeathAnimation,
     kAntialiasing,
@@ -192,7 +193,7 @@ enum Toggle : int {
     kToggleCount,
 };
 
-enum Slider : int { kRenderScale, kMobFramerate, kInterpolation, kUiScale };
+enum Slider : int { kRenderScale, kMobFramerate, kInterpolation, kUiScale, kCameraZoom };
 
 enum Button : int {
     kSaveControls,
@@ -202,6 +203,9 @@ enum Button : int {
     kGrantAdmin,
     kLanguageZh,
     kLanguageEn,
+    kZoomLess,
+    kZoomDefault,
+    kZoomMore,
 };
 
 /// The Controls tab's rows are ControlAction's own order, and every binding
@@ -290,6 +294,7 @@ bool* toggleValue(PanelState& st, ClientSettings& settings, int id) {
         case kShowHitboxes: return &settings.render.hitboxes;
         case kShowStats: return &settings.showStats;
         case kShowExactValues: return &settings.showExactValues;
+        case kPetalRarityGlow: return &settings.render.rarityGlow;
         case kDebugMenuEnabled: return &settings.showDebugButton;
         case kClassicLoadoutBar: return &settings.classicLoadoutBar;
         case kUseMouseControls: return &settings.useMouseControls;
@@ -755,6 +760,24 @@ bool SettingsPanel::render(MenuContext& ctx) {
         }
 
         case Tab::Graphics: {
+            p.sliderRow(kCameraZoom, trEnZh("Camera zoom: ", "视野缩放："), "%", settings.zoom,
+                        kMinZoom, kMaxZoom, 0.05, 100.0, 0, kInk, 28.0);
+            if (st.dragging == kCameraZoom && ctx.released()) settings.zoomDirty = true;
+            if (ctx.window.coarsePointer() || settings.requestMobile) {
+                constexpr double gap = 8.0;
+                const double width = (contentW - 2.0 * gap) / 3.0;
+                const auto step = [&](int column, int id, const char* caption, double value) {
+                    if (p.button(Rect{contentX + column * (width + gap), p.cy, width, 34.0},
+                                 caption, kActionFill, 13.0, id)) {
+                        settings.zoom = clamp(value, kMinZoom, kMaxZoom);
+                        settings.zoomDirty = true;
+                    }
+                };
+                step(0, kZoomLess, trEnZh("Zoom out", "缩小"), settings.zoom - kZoomKeyStep);
+                step(1, kZoomDefault, trEnZh("Reset zoom", "默认视野"), 1.0);
+                step(2, kZoomMore, trEnZh("Zoom in", "放大"), settings.zoom + kZoomKeyStep);
+                p.cy += 44.0;
+            }
             p.sliderRow(kUiScale, tr(Msg::UiScale), "%", settings.uiScale,
                         ClientSettings::kMinUiScale, ClientSettings::kMaxUiScale, 0.05,
                         100.0, 0, kInk, 28.0);
@@ -776,6 +799,7 @@ bool SettingsPanel::render(MenuContext& ctx) {
             p.checkbox(kScreenShake, tr(Msg::ScreenShake));
             p.checkbox(kShowStats, tr(Msg::ShowStats));
             p.checkbox(kShowExactValues, tr(Msg::ShowExactValues));
+            p.checkbox(kPetalRarityGlow, trEnZh("Show petal rarity glow", "显示花瓣稀有度光晕"));
             {
                 const bool chinese = language() == Language::Zh;
                 const auto unit = static_cast<int>(settings.render.damageNumberUnit);
@@ -811,27 +835,6 @@ bool SettingsPanel::render(MenuContext& ctx) {
             p.sliderRow(kInterpolation, tr(Msg::Interpolation), "", settings.interpolation,
                         0.05, 0.5, 0.01, 1.0, 2, kTrackGrey, 30.0);
 
-            // Sits below the viewport until the list is scrolled, exactly as
-            // it does in the browser.
-            const bool armed =
-                st.tutorialResetArmed && ctx.timeSeconds < st.tutorialResetArmedUntil;
-            if (p.button(Rect{contentX, p.cy, 160.0, 30.0},
-                         armed ? tr(Msg::AreYouSure) : tr(Msg::ResetTutorial),
-                         armed ? kDangerFill : kNeutralFill, 13.0, kResetTutorial)) {
-                if (armed) {
-                    // What the browser's two localStorage.removeItem calls do.
-                    // Nothing happens to the game in progress: the reference
-                    // only ever starts a tutorial on a join, which is why its
-                    // own alert says "on your next game".
-                    settings.tutorialCompleted = false;
-                    settings.tutorialStep = 0;
-                    st.tutorialResetArmed = false;
-                } else {
-                    st.tutorialResetArmed = true;
-                    st.tutorialResetArmedUntil = ctx.timeSeconds + 4.0;
-                }
-            }
-            p.cy += 40.0;
             break;
         }
 
@@ -855,6 +858,26 @@ bool SettingsPanel::render(MenuContext& ctx) {
             p.checkbox(kDebugMenuEnabled, tr(Msg::EnableDebugMenu));
 
             p.cy += 14.0;
+            const bool armed =
+                st.tutorialResetArmed && ctx.timeSeconds < st.tutorialResetArmedUntil;
+            if (p.button(Rect{contentX, p.cy, contentW, 30.0},
+                         armed ? tr(Msg::AreYouSure) : trEnZh("Replay tutorial on next game", "下次入场重玩教程"),
+                         armed ? kDangerFill : kNeutralFill, 13.0, kResetTutorial)) {
+                if (armed) {
+                    // What the browser's two localStorage.removeItem calls do.
+                    // Nothing happens to the game in progress: the reference
+                    // only ever starts a tutorial on a join, which is why its
+                    // own alert says "on your next game".
+                    settings.tutorialCompleted = false;
+                    settings.tutorialStep = 0;
+                    st.tutorialResetArmed = false;
+                } else {
+                    st.tutorialResetArmed = true;
+                    st.tutorialResetArmedUntil = ctx.timeSeconds + 4.0;
+                }
+            }
+            p.cy += 40.0;
+
             // Offline only: the row is there when this build has a server of
             // its own to ask (see AppConfig::grantAdmin), which is the
             // single-file page and nothing else. A client dialling a real

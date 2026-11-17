@@ -38,6 +38,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include "client/ui/absorb_batch.h"
 
 #include "client/ui/item_tile.h"
 #include "client/ui/menu_style.h"
@@ -143,11 +144,6 @@ double settle(double keep, double dtMs) {
     return clamp(1.0 - std::pow(keep, dtMs * 0.06), 0.0, 1.0);
 }
 
-std::uint32_t stackKey(std::uint16_t petalIndex, Rarity rarity) {
-    return (static_cast<std::uint32_t>(petalIndex) << 8) |
-           static_cast<std::uint32_t>(rarityIndex(rarity));
-}
-
 /// florr's short number (f_dla in a wasm-decompile listing of the old client):
 /// whole below a thousand, then
 /// k, m and b, with one decimal until the figure reaches 100 of its unit --
@@ -210,6 +206,7 @@ Vec2 AbsorbPanel::size(const Profile& profile) {
 void AbsorbPanel::reset() {
     grid_.reset();
     staged_.clear();
+    bulkSelected_ = false;
     ring_.clear();
     fx_.clear();
     disc_ = 0.0;
@@ -312,13 +309,14 @@ bool AbsorbPanel::render(MenuContext& ctx) {
         }
         ring_.clear();
         staged_.clear();
+        bulkSelected_ = false;
     }
 
     // What is staged cannot outlive the petals behind it: a pickup, a craft or
     // the loadout change the stack. Never while an absorb is out, though --
     // those petals are the server's, and a profile landing a frame before the
     // answer would empty the ring under its own burst.
-    if (!waiting_) {
+    if (!waiting_ && !bulkSelected_) {
         for (Staged& s : staged_) {
             s.count = std::min(s.count, profile.stackCount(s.petalIndex, s.rarity));
         }
@@ -340,7 +338,7 @@ bool AbsorbPanel::render(MenuContext& ctx) {
     // last frame lands at the slot's centre and makes its way out to its place.
     for (auto it = ring_.begin(); it != ring_.end();) {
         const bool kept = std::any_of(staged_.begin(), staged_.end(), [&](const Staged& s) {
-            return stackKey(s.petalIndex, s.rarity) == it->key;
+            return absorbStackKey(s.petalIndex, s.rarity) == it->key;
         });
         if (kept) {
             ++it;
@@ -350,7 +348,8 @@ bool AbsorbPanel::render(MenuContext& ctx) {
         it = ring_.erase(it);
     }
     for (const Staged& s : staged_) {
-        const std::uint32_t key = stackKey(s.petalIndex, s.rarity);
+        if (bulkSelected_) break;  // A bulk preview uses a count, not a ring of hundreds of tiles.
+        const std::uint32_t key = absorbStackKey(s.petalIndex, s.rarity);
         const bool shown = std::any_of(ring_.begin(), ring_.end(),
                                        [&](const RingTile& t) { return t.key == key; });
         if (shown) continue;
@@ -361,7 +360,7 @@ bool AbsorbPanel::render(MenuContext& ctx) {
         ring_.push_back(tile);
     }
 
-    disc_ += ((staged_.size() > 1 ? 1.0 : 0.0) - disc_) * settle(0.8, dtMs);
+    disc_ += ((!bulkSelected_ && staged_.size() > 1 ? 1.0 : 0.0) - disc_) * settle(0.8, dtMs);
     if (waiting_) shudder_ = std::fmod(shudder_ + dtMs / 1000.0, 1.0);
     else if (staged_.empty()) shudder_ = 0.0;
     else shudder_ -= shudder_ * settle(0.7, dtMs);
@@ -434,6 +433,18 @@ bool AbsorbPanel::render(MenuContext& ctx) {
     outlinedText(canvas, trEnZh("Absorb", "吸收"), button.x + button.w * 0.5, button.y + button.h * 0.5,
                  panelLabel(kButtonLabelSize, Align::Centre, Baseline::Middle), 1.0);
 
+    const Rect batch{button.right() + 12.0, button.y, 145.0, button.h};
+    const Rect batchHit{batch.x - rim, batch.y - rim, batch.w + kButtonBorder,
+                        batch.h + kButtonBorder};
+    const bool canBatch = !waiting_ && (bulkSelected_ || staged_.empty());
+    const bool overBatch = canBatch && batchHit.contains(mouse);
+    drawFlorrButton(canvas, batch, canBatch ? 0x53888Bu : kButtonIdleFace, kButtonBorder,
+                    kButtonRadius, overBatch, overBatch && mouseDown);
+    outlinedText(canvas, bulkSelected_ ? trEnZh("Clear batch", "取消批量")
+                                      : trEnZh("Common–Rare spares", "批选普通至稀有"),
+                 batch.x + batch.w * 0.5, batch.y + batch.h * 0.5,
+                 panelLabel(13.0, Align::Centre, Baseline::Middle), 1.0);
+
     // --- the bar -------------------------------------------------------------------
     // The level the flower is playing at -- the body's, live, in the world, or
     // the account's on the title screen -- and never a flower this client is
@@ -500,7 +511,12 @@ bool AbsorbPanel::render(MenuContext& ctx) {
     // --- the lines ---------------------------------------------------------------
     std::string xpBreakdown = trEnZh("Absorb spare petals for XP; check the preview first",
                                         "吸收多余花瓣获得经验，请先查看经验预览");
-    if (!staged_.empty() && absorbXpScale(profile.skills) > 1.0) {
+    if (bulkSelected_) {
+        std::uint64_t count = 0;
+        for (const Staged& s : staged_) count += s.count;
+        xpBreakdown = std::string(trEnZh("Batch: ", "已批选：")) + stackCountText(count) +
+                      trEnZh(" petals, +", " 个花瓣，+") + florrShort(plannedXp) + " XP";
+    } else if (!staged_.empty() && absorbXpScale(profile.skills) > 1.0) {
         xpBreakdown = std::string(trEnZh("Base ", "基础 ")) + florrShort(units) +
                       trEnZh(" + talent ", " + 天赋 ") + florrShort(plannedXp - units) + " XP";
     }
@@ -559,7 +575,41 @@ bool AbsorbPanel::render(MenuContext& ctx) {
     }
     // Nothing moves in or out of the slot while an absorb is out.
     if (waiting_) return true;
+    if (overBatch) {
+        refusal_.clear();
+        heldPetal_ = kNoPetal;
+        if (bulkSelected_) {
+            staged_.clear();
+            bulkSelected_ = false;
+        } else {
+            const auto counts = bulkAbsorbCounts(profile, content());
+            if (counts.empty() || counts.size() > kMaxAbsorbStacks) {
+                refusal_ = counts.empty() ? trEnZh("No eligible spare petals.", "没有可批选的低品质重复花瓣。")
+                                          : trEnZh("Too many stacks for one batch.", "可选种类过多，请分开吸收。");
+                refusalUntil_ = nowMs + kRefusalMs;
+                return true;
+            }
+            for (const auto& stack : profile.inventory) {
+                const auto at = counts.find(absorbStackKey(stack.petalIndex, stack.rarity));
+                if (at != counts.end()) staged_.push_back({stack.petalIndex, stack.rarity, at->second});
+            }
+            bulkSelected_ = true;
+        }
+        return true;
+    }
     if (overButton) {
+        if (bulkSelected_) {
+            const auto counts = bulkAbsorbCounts(profile, content());
+            for (const Staged& s : staged_) {
+                const auto at = counts.find(absorbStackKey(s.petalIndex, s.rarity));
+                if (at != counts.end() && at->second >= s.count) continue;
+                staged_.clear();
+                bulkSelected_ = false;
+                refusal_ = trEnZh("Inventory changed. Select the batch again.", "库存或装备已变动，请重新批选。");
+                refusalUntil_ = nowMs + kRefusalMs;
+                return true;
+            }
+        }
         std::vector<NetClient::AbsorbStack> stacks;
         stacks.reserve(staged_.size());
         for (const Staged& s : staged_) stacks.push_back({s.petalIndex, s.rarity, s.count});
@@ -569,11 +619,12 @@ bool AbsorbPanel::render(MenuContext& ctx) {
         refusal_.clear();
         return true;
     }
+    if (bulkSelected_) return true;
     if (overTile) {
         // The whole stack back, florr's way.
         staged_.erase(std::remove_if(staged_.begin(), staged_.end(),
                                      [&](const Staged& s) {
-                                         return stackKey(s.petalIndex, s.rarity) == *overTile;
+                                         return absorbStackKey(s.petalIndex, s.rarity) == *overTile;
                                      }),
                       staged_.end());
         return true;

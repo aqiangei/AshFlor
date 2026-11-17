@@ -15,6 +15,7 @@
 #include "render_rig.h"
 #include "shared/game/config.h"
 #include "shared/game/map_elements.h"
+#include "shared/game/terrain.h"
 #include "test_data.h"
 
 #include <chrono>
@@ -57,6 +58,7 @@ int blackLines(const std::vector<std::uint8_t>& pixels, bool columns) {
 /// a 1280x720 canvas the way the app draws it.
 struct TerrainScene {
     WorldMaps maps;
+    Terrain terrain;
     SpriteCache sprites;
     WorldRenderer renderer;
     WorldView view;
@@ -64,7 +66,7 @@ struct TerrainScene {
     bool load() {
         std::string error;
         if (!loadContent(testsupport::dataDir(), error)) return false;
-        if (!maps.load(testsupport::dataDir(), nullptr, error)) return false;
+        if (!maps.load(testsupport::dataDir(), &terrain, error)) return false;
         sprites.build(content(), testsupport::dataDir());
         renderer.setSprites(&sprites);
         renderer.setWorldMaps(&maps);
@@ -99,6 +101,31 @@ using testsupport::differingPixels;
 constexpr int kFramesToBakeAll = 40;
 
 } // namespace
+
+TEST(map_edge_camera_paints_the_shipped_desert_to_all_four_screen_edges) {
+    TerrainScene scene;
+    CHECK(scene.load());
+    bool found = false;
+    const Realm desert = scene.maps.realmOfId("desert", found);
+    CHECK(found);
+    if (!found) return;
+    scene.view.setRealm(desert);
+    const Vec2 extent = scene.terrain.cameraExtent(desert);
+    const Vec2 middle = extent * 0.5;
+    const std::vector<Vec2> flowers = {
+        {25, middle.y}, {extent.x - 25, middle.y},
+        {middle.x, 25}, {middle.x, extent.y - 25},
+    };
+    Camera camera;
+    camera.setWorldExtent(extent);
+    const auto before = scene.frame(flowers[1], 1.0);
+    CHECK(blackLines(before, true) > 100);
+    for (Vec2 flower : flowers) {
+        const auto after = scene.frame(flower, camera);
+        CHECK_EQ(blackLines(after, true), 0);
+        CHECK_EQ(blackLines(after, false), 0);
+    }
+}
 
 TEST(terrain_chunks_look_the_same_before_and_after_their_bitmap_arrives) {
     // The first frame at a new view bakes a few chunks and paints the rest

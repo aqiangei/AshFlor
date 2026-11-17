@@ -50,6 +50,22 @@ TEST(magic_bone_takes_the_armour_bones_data_writes_for_a_tier) {
                shippedContent().petalStats(magic, Rarity::Unique).petalArmor, 1e-6);
 }
 
+TEST(magic_bone_contact_damage_justifies_its_mana_cost_across_the_ladder) {
+    const auto& registry = shippedContent();
+    const auto bone = registry.petalIndex("bone");
+    const auto magic = registry.petalIndex("magic_bone");
+    CHECK_NEAR(registry.petalStats(magic, Rarity::Common).requiredMana, 0.45, 1e-9);
+    CHECK_NEAR(registry.petalStats(magic, Rarity::Common).damage, 23.8, 1e-9);
+    for (const auto tier : {Rarity::Common, Rarity::Super, Rarity::Unique,
+                            Rarity::Apex, Rarity::PermanentHyper, Rarity::Ascendant}) {
+        const auto boneStats = registry.petalStats(bone, tier);
+        const auto magicStats = registry.petalStats(magic, tier);
+        CHECK(magicStats.damage > 1.6 * boneStats.damage);
+        CHECK(magicStats.requiredMana > 0.0);
+        CHECK_NEAR(magicStats.reloadMillis, boneStats.reloadMillis, 1e-9);
+    }
+}
+
 namespace {
 
 struct MagicBoneRing {

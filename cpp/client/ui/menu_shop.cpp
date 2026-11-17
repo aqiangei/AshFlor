@@ -103,7 +103,6 @@ constexpr double kCellWidth = 140.0;
 constexpr double kGridHeight = 320.0;
 constexpr double kPlateWidth = 120.0;
 constexpr double kPlateHeight = 140.0;
-constexpr double kPlateTop = kGridTop - 10.0 + (kGridHeight - kPlateHeight) * 0.5;
 constexpr double kPlateRadius = 5.0;
 constexpr double kTile = 80.0;
 constexpr double kTileLeft = 20.0;
@@ -193,12 +192,13 @@ struct StarChallenge {
     int stars;
 };
 
-const std::array<StarChallenge, 5> kChallenges = {{
+const std::array<StarChallenge, 6> kChallenges = {{
     {Rarity::Mythic, starsForKill(Rarity::Mythic)},
     {Rarity::Ultra, starsForKill(Rarity::Ultra)},
     {Rarity::Super, starsForKill(Rarity::Super)},
     {Rarity::Unique, starsForKill(Rarity::Unique)},
     {Rarity::Apex, starsForKill(Rarity::Apex)},
+    {Rarity::Ascendant, starsForKill(Rarity::Ascendant)},
 }};
 
 /// One of the stars that rain down the screen when a code is redeemed.
@@ -549,6 +549,44 @@ void stepDialog(ShopState& state, double dt) {
     }
 }
 
+void paintOfferTooltip(Canvas& canvas, Rect tile, const std::vector<TooltipLine>& lines, bool alt) {
+    constexpr double margin = 8.0;
+    constexpr double gap = 10.0;
+    const double right = canvas.width() - margin;
+    const double bottom = canvas.height() - margin;
+    if (right <= margin || bottom <= margin) return;
+
+    const Vec2 natural = measureTooltip(lines, 0.0, 0.0, alt);
+    const double scale = std::min({1.0, (right - margin) / natural.x,
+                                  (bottom - margin) / natural.y});
+    const Vec2 size{natural.x * scale, natural.y * scale};
+    const double maxX = std::max(margin, right - size.x);
+    const double maxY = std::max(margin, bottom - size.y);
+    const double besideY = std::clamp(tile.y, margin, maxY);
+    const double centredX = std::clamp(tile.x + (tile.w - size.x) * 0.5, margin, maxX);
+    const double after = tile.right() + gap;
+    const double before = tile.x - gap - size.x;
+    const double below = tile.bottom() + gap;
+    const double above = tile.y - gap - size.y;
+
+    // Prefer a side. On portrait or short displays try below or above
+    // before overlapping the tile. Every fallback stays inside the viewport.
+    Vec2 at{centredX, std::clamp(below, margin, maxY)};
+    if (after >= margin && after <= maxX) at = {after, besideY};
+    else if (before >= margin && before <= maxX) at = {before, besideY};
+    else if (below >= margin && below <= maxY) at = {centredX, below};
+    else if (above >= margin && above <= maxY) at = {centredX, above};
+    else if (tile.y - margin > bottom - tile.bottom()) {
+        at.y = std::clamp(above, margin, maxY);
+    }
+
+    canvas.save();
+    canvas.translate(static_cast<float>(at.x), static_cast<float>(at.y));
+    canvas.scale(static_cast<float>(scale), static_cast<float>(scale));
+    paintTooltip(canvas, 0.0, 0.0, lines, 0.0, 0.0, alt);
+    canvas.restore();
+}
+
 } // namespace
 
 double ShopPanel::preferredWidth() { return kWindowWidth; }
@@ -893,13 +931,16 @@ bool ShopPanel::render(MenuContext& ctx) {
         text(canvas, trEnZh("Earn Stars by Defeating Mythic+ Mobs", "击败神话及以上怪物获得星星"),
              panel.x + panel.w * 0.5, panel.y + kHeadingMiddle, shopText(kOffersHeadingSize));
         text(canvas,
-             trEnZh("Every kill at one of these tiers pays its stars to whoever helped.",
-                    "击杀这些稀有度的怪物时，参与者都会获得对应星星。"),
+             trEnZh("Contributors eligible for loot also earn the listed stars.",
+                    "有掉落资格的参与者会获得对应星星。"),
              panel.x + panel.w * 0.5, panel.y + kSubMiddle, shopText(kSubSize));
 
         for (std::size_t i = 0; i < kChallenges.size(); ++i) {
             const StarChallenge& challenge = kChallenges[i];
-            const Vec2 plateAt = at(kGridLeft + static_cast<double>(i) * kCellWidth, kPlateTop);
+            constexpr std::size_t columns = 3;
+            constexpr double rowWidth = (columns - 1) * kCellWidth + kPlateWidth;
+            const Vec2 plateAt = at((panel.w - rowWidth) * 0.5 + (i % columns) * kCellWidth,
+                                    kGridTop + (i / columns) * 151.0);
             fillQuadRound(canvas, {plateAt.x, plateAt.y, kPlateWidth, kPlateHeight}, kPlateRadius,
                           kWindowRim);
 
@@ -927,14 +968,6 @@ bool ShopPanel::render(MenuContext& ctx) {
         return -1;
     }, ctx.window.touchPan().active);
     const bool mouseTooltip = state.offerTooltip.update(hoveredOffer, ctx.timeSeconds, held || ctx.pressed());
-    if (touchTooltip || mouseTooltip) {
-        const auto index = static_cast<std::size_t>(touchTooltip ? state.touchOfferTooltip.target : hoveredOffer);
-        const ShopOffer& offer = state.offers[index];
-        const auto lines = petalTooltipLines(offer.petalIndex, offer.rarity, SkillSet{}, 1.0);
-        const Vec2 size = measureTooltip(lines, 0.0, 0.0, ctx.altMode);
-        const Vec2 anchor = tooltipAnchor(offerTiles[index], size, canvas.width(), canvas.height());
-        paintTooltip(canvas, anchor.x, anchor.y, lines, 0.0, 0.0, ctx.altMode);
-    }
 
     // --- dialog -------------------------------------------------------------
     // The window dims under it and one box stands on it, grown in about the
@@ -1079,6 +1112,15 @@ bool ShopPanel::render(MenuContext& ctx) {
 
     // Again over everything, as florr does, so nothing inside overruns it.
     drawFlorrRim(canvas, panel, kWindowRim);
+
+    // The tooltip is an overlay: in particular the shop rim must not paint
+    // through the text when the card straddles the panel's edge.
+    if (state.shown == ShopState::Modal::None && (touchTooltip || mouseTooltip)) {
+        const auto index = static_cast<std::size_t>(touchTooltip ? state.touchOfferTooltip.target : hoveredOffer);
+        const ShopOffer& offer = state.offers[index];
+        const auto lines = petalTooltipLines(offer.petalIndex, offer.rarity, SkillSet{}, 1.0);
+        paintOfferTooltip(canvas, offerTiles[index], lines, ctx.altMode);
+    }
 
     // The whole window has now been laid out, so this is the last word on what
     // the pointer is over.

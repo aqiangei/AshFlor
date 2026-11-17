@@ -323,6 +323,8 @@ private:
         double jurassicWoundBonus = 0.0;
         double featherCostPerSecond = 0.0;
         double jurassicShieldPerSecond = 0.0;
+        double summonRangeBonus = 0.0;
+        double summonRangeManaDrain = 0.0;
     };
 
     void bindTo(World& world);

@@ -322,6 +322,7 @@ bool TitanPanel::render(MenuContext& ctx) {
         std::any_of(profile.inventory.begin(), profile.inventory.end(), [&](const auto& stack) {
             if (stack.rarity != inputTier || !knownPetal(stack.petalIndex) ||
                 !canUse(stack.petalIndex)) return false;
+            if (permanentHyper_ && content().petal(stack.petalIndex).id == "fragment") return false;
             return stack.count >= static_cast<std::uint32_t>(costOf(stack.petalIndex)) &&
                 profile.stackCount(stack.petalIndex, outputTier) <
                     static_cast<std::uint32_t>(kMaxStackCount);
@@ -532,7 +533,8 @@ bool TitanPanel::render(MenuContext& ctx) {
             const auto& id=content().petal(hovered->petalIndex).id;
             refusal_=apexHammer_?"需要5个未装备的Apex碎片。":permanentHyper_?"需要 30 个未装备的同种永恒花瓣。雷神之锤和限时锤不参与兑换。":
                 hyper_&&(id=="timed_mjolnir"||id=="mjolnir")?"超凡锤子需10个永恒碎片，限时锤不能参与争夺。":
-                "材料不足或不可锻造；超凡需5个未装备的同种永恒。";
+                hyper_ ? "材料不足或不可锻造；超凡需5个未装备的同种永恒。" :
+                "材料不足或不可锻造。";
             refusalUntil_=now+kRefusalSeconds;
         }
     }

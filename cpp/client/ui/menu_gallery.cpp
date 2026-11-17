@@ -466,7 +466,7 @@ std::vector<DropRow> computeMobDrops(std::uint16_t mobIndex, Rarity mobRarity,
         usedTiers[static_cast<std::size_t>(column)] = true;
     };
 
-    if (rewardRarity != Rarity::Common && !content().mob(mobIndex).chainBody) {
+    if (rewardRarity != Rarity::Common) {
         // The special roll picks one row, independent of all ordinary trials.
         const auto& authored = mobDropTable(mobIndex, kRarityCount);
         const auto inPool = [rewardRarity](const DropDef& drop) {

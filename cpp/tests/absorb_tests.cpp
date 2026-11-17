@@ -1,6 +1,7 @@
 #include "test.h"
 
 #include "server_harness.h"
+#include "client/ui/absorb_batch.h"
 #include "shared/game/absorb.h"
 #include "shared/game/components.h"
 #include "shared/game/constants.h"
@@ -49,17 +50,20 @@ bool absorb(Harness& h, NetClient& client, const std::vector<NetClient::AbsorbSt
 TEST(absorb_curve_rewards_new_and_veteran_stock_without_replacing_hunting) {
     CHECK_EQ(absorbXpPerPetal(Rarity::Common),1.0);
     CHECK_EQ(absorbXpPerPetal(Rarity::Super),140000.0);
-    CHECK_EQ(absorbXpPerPetal(Rarity::Unique),840000.0);
+    CHECK_EQ(absorbXpPerPetal(Rarity::Unique),1200000.0);
     CHECK_EQ(absorbXpPerPetal(Rarity::Apex),0.0);
     // Veteran stock remains much more valuable than low-tier duplicates.
     for(int tier=1;tier<=8;++tier)
         CHECK(absorbXpPerPetal(clampRarity(tier))>=4*absorbXpPerPetal(clampRarity(tier-1)));
     // Even with the highest existing talent, one high-tier petal pays less
-    // than a same-tier standard kill, so drops supplement hunting.
+    // than a same-tier standard kill through Super, so drops supplement hunting.
     SkillSet max;max.set(SkillId::Absorbing,9);
-    const double killXp[]={32000,150000,1200000,6800000};
-    for(int tier=5;tier<=8;++tier)
+    const double killXp[]={32000,150000,1200000};
+    for(int tier=5;tier<=7;++tier)
         CHECK(absorbXpTotal(absorbUnits(clampRarity(tier)),max)<killXp[tier-5]);
+    CHECK_EQ(absorbXpTotal(absorbUnits(Rarity::Unique), max), 9600000.0);
+    SkillSet levelEight; levelEight.set(SkillId::Absorbing, 7);
+    CHECK_EQ(absorbXpTotal(absorbUnits(Rarity::Unique), levelEight), 6048000.0);
     // Buying and burning cannot turn one star into anything close to the XP
     // earned alongside that star (even a Mythic Rock grants 3,100 XP).
     std::string error;CHECK(loadContent(dataDir(),error));
@@ -308,5 +312,56 @@ TEST(absorbing_in_the_world_levels_the_flower_up_on_the_spot) {
     // Profile that followed already counts it.
     CHECK(awaitProfile(h, client, [&](const Profile& p) {
         return p.totalXp == before + earnedXp && p.stackCount(rose, Rarity::Legendary) == 0u;
+    }));
+}
+
+TEST(bulk_absorb_preserves_singletons_and_loadouts_on_the_server) {
+    Harness h("bulk-absorb", [](const std::string& path) {
+        seedUser(path, "eater", "password7");
+        seedStack(path, "eater", "petal_rose", Rarity::Rare, 12);
+        seedStack(path, "eater", "petal_light", Rarity::Uncommon, 7);
+        seedStack(path, "eater", "petal_light", Rarity::Common, 9);
+        seedStack(path, "eater", "petal_rose", Rarity::Common, 1);
+        seedStack(path, "eater", "petal_basic", Rarity::Common, 50);
+        seedStack(path, "eater", "petal_rose", Rarity::Unique, 3);
+        seedAbsorbing(path, "eater", Rarity::Super);
+    });
+    if (!h.ready) { CHECK(false); return; }
+    NetClient client;
+    const auto rose = content().petalIndex("rose");
+    const auto light = content().petalIndex("light");
+    CHECK(loginAs(h, client, "eater", "password7"));
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stackCount(rose, Rarity::Rare) == 12u &&
+               p.skills.florrLevel(SkillId::Absorbing) == 8;
+    }));
+
+    Profile preview = client.profile();
+    preview.loadout.push_back({light, Rarity::Common});
+    preview.presets[0].push_back({light, Rarity::Uncommon});
+    const auto plan = ui::bulkAbsorbCounts(preview, content());
+    const auto at = plan.find(ui::absorbStackKey(rose, Rarity::Rare));
+    CHECK_EQ(plan.size(), 1u);
+    CHECK(at != plan.end());
+    if (at == plan.end()) return;
+    CHECK_EQ(at->second, 11u);
+
+    AbsorbOutcome outcome;
+    CHECK(absorb(h, client, {{rose, Rarity::Rare, at->second}}, outcome));
+    CHECK(outcome.success);
+    CHECK_EQ(outcome.absorbed, 11u);
+    CHECK_EQ(outcome.reward, 887.0);
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stackCount(rose, Rarity::Rare) == 1u &&
+               p.stackCount(light, Rarity::Common) == 9u &&
+               p.stackCount(light, Rarity::Uncommon) == 7u &&
+               p.stackCount(rose, Rarity::Unique) == 3u;
+    }));
+
+    CHECK(absorb(h, client, {{rose, Rarity::Unique, 1}}, outcome));
+    CHECK(outcome.success);
+    CHECK_EQ(outcome.reward, 6048000.0);
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stackCount(rose, Rarity::Unique) == 2u && p.totalXp == 6048887.0;
     }));
 }

@@ -27,6 +27,7 @@
 #include "client/render/world_renderer.h"
 #include "client/ui/theme.h"
 #include "client/ui/i18n.h"
+#include "client/ui/menus.h"
 #include "client/world_view.h"
 #include "fixture_content.h"
 #include "server/db.h"
@@ -1356,6 +1357,7 @@ TEST(the_shipped_trader_stands_in_the_desert_and_takes_all_but_the_marked_petals
         if (content().mob(site.mobIndex).npc.service != NpcService::Trader) continue;
         // The prestige desert is the same map, trader and all.
         if (maps.isPrestige(site.realm)) {
+            CHECK_EQ(maps.forRealm(site.realm)->templateId(), "desert");
             ++prestigeTraders;
             continue;
         }
@@ -1368,9 +1370,21 @@ TEST(the_shipped_trader_stands_in_the_desert_and_takes_all_but_the_marked_petals
         const Vec2 placed = terrain.resolveCircle(site.position, radius, site.realm);
         CHECK_NEAR(placed.x, site.position.x, 1e-6);
         CHECK_NEAR(placed.y, site.position.y, 1e-6);
+        const auto* spawn = maps.forRealm(desert)->playerSpawn("spawn");
+        CHECK(spawn != nullptr);
+        if (spawn) {
+            CHECK(site.position.x > spawn->centre().x);
+            CHECK(distanceSq(site.position, spawn->centre()) <= 640.0 * 640.0);
+            CHECK(!terrain.segmentTouchesBlockingTile(spawn->centre(), site.position,
+                                                       kPlayerBaseRadius, desert));
+        }
     }
     CHECK_EQ(traders, 1);
-    CHECK_EQ(prestigeTraders, 1);
+    int prestigeDeserts = 0;
+    for (const auto& map : maps.maps()) {
+        if (map.prestige() && map.templateId() == "desert") ++prestigeDeserts;
+    }
+    CHECK_EQ(prestigeTraders, prestigeDeserts);
 }
 
 TEST(a_trade_is_one_petal_for_one_coin_of_the_same_tier) {
@@ -1500,16 +1514,13 @@ TEST(the_trader_takes_ascendant_for_an_ascendant_coin_that_can_be_worn) {
                p.stackCount(rose, Rarity::PermanentHyper) == 1u;
     }));
 
-    // Above the ladder only Ascendant trades: a permanent hyper or an admin
-    // coin would be one nobody gave, and a refusal starts no wait.
+    // A refused admin trade starts no wait.
     TradeOutcome outcome;
-    for (const Rarity refused : {Rarity::PermanentHyper, Rarity::Admin}) {
-        standBeside(h, client, "trader");
-        client.requestTrade(rose, refused);
-        CHECK(awaitTrade(h, client, outcome));
-        CHECK(!outcome.success);
-        CHECK_EQ(outcome.receivedIndex, kNoPetal);
-    }
+    standBeside(h, client, "trader");
+    client.requestTrade(rose, Rarity::Admin);
+    CHECK(awaitTrade(h, client, outcome));
+    CHECK(!outcome.success);
+    CHECK_EQ(outcome.receivedIndex, kNoPetal);
     CHECK_EQ(client.traderCooldownRemainingMillis(), 0.0);
 
     standBeside(h, client, "trader");
@@ -1532,6 +1543,36 @@ TEST(the_trader_takes_ascendant_for_an_ascendant_coin_that_can_be_worn) {
                p.loadout[0].rarity == Rarity::Ascendant &&
                p.stackCount(coin, Rarity::Ascendant) == 0u;
     }));
+    removeDataDir(dir);
+}
+
+TEST(the_trader_returns_a_permanent_hyper_coin_for_a_permanent_hyper_petal) {
+    const std::string dir = traderWorld("trader-permanent-hyper");
+    Harness h("trader-permanent-hyper", [](const std::string& path) {
+        seedAccount(path, "merchant");
+        seedStack(path, "merchant", "petal_rose", Rarity::PermanentHyper, 2);
+    }, dir, 0);
+    if (!h.ready) { CHECK(false); removeDataDir(dir); return; }
+    constexpr Rarity tier = Rarity::PermanentHyper;
+    const auto rose = content().petalIndex("rose");
+    const auto coin = content().petalIndex(kTraderCoinPetal);
+    NetClient client;
+    CHECK(joinAs(h, client, "merchant"));
+    CHECK(awaitProfile(h, client, [&](const Profile& p) { return p.stackCount(rose, tier) == 2u; }));
+    Profile onlyPermanent;
+    onlyPermanent.inventory.push_back({rose, tier, 2});
+    CHECK_EQ(SlotGrid::rows(onlyPermanent, SlotGridTiers::Trader), 1u);
+    CHECK_EQ(slotCardWidth(SlotGridTiers::Trader), slotCardColumnsWidth(kLadderRarityCount + 2));
+    standBeside(h, client, "trader");
+    client.requestTrade(rose, tier);
+    TradeOutcome outcome;
+    CHECK(awaitTrade(h, client, outcome));
+    CHECK(outcome.success && outcome.rarity == tier);
+    CHECK_EQ(outcome.receivedIndex, coin);
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stackCount(rose, tier) == 1u && p.stackCount(coin, tier) == 1u;
+    }));
+    CHECK(client.traderCooldownRemainingMillis() > 0.0);
     removeDataDir(dir);
 }
 
@@ -2205,8 +2246,8 @@ TEST(permanent_hyper_forge_all_respects_recipe_and_stack_space) {
     CHECK(awaitForge(h, clients, client, outcome));
     CHECK(outcome.success);
     CHECK_EQ(outcome.petalIndex, kNoPetal);
-    CHECK_EQ(outcome.quantity, 3u);
-    CHECK(outcome.reason.find("获得 6 个永久超凡") != std::string::npos);
+    CHECK_EQ(outcome.quantity, 2u);
+    CHECK(outcome.reason.find("获得 3 个永久超凡") != std::string::npos);
     const auto rose = content().petalIndex("rose");
     const auto wing = content().petalIndex("wing");
     const auto fragment = content().petalIndex("fragment");
@@ -2217,14 +2258,21 @@ TEST(permanent_hyper_forge_all_respects_recipe_and_stack_space) {
     const auto& profile = client.profile();
     CHECK_EQ(profile.stackCount(rose, Rarity::Unique), 29u);
     CHECK_EQ(profile.stackCount(wing, Rarity::Unique), 30u);
-    CHECK_EQ(profile.stackCount(fragment, Rarity::Unique), 0u);
-    CHECK_EQ(profile.stackCount(fragment, Rarity::PermanentHyper), 3u);
+    CHECK_EQ(profile.stackCount(fragment, Rarity::Unique), 90u);
+    CHECK_EQ(profile.stackCount(fragment, Rarity::PermanentHyper), 0u);
     CHECK_EQ(profile.loadout[0].petalIndex, rose);
     CHECK_EQ(profile.loadout[0].rarity, Rarity::Unique);
     client.requestPermanentHyperForge(kNoPetal);
     CHECK(awaitForge(h, clients, client, outcome));
     CHECK(!outcome.success);
     CHECK_EQ(client.profile().stackCount(rose, Rarity::PermanentHyper), 2u);
+    client.requestPermanentHyperForge(fragment);
+    CHECK(awaitForge(h, clients, client, outcome));
+    CHECK(outcome.success);
+    CHECK(awaitProfile(h, client, [&](const Profile& updated) {
+        return updated.stackCount(fragment, Rarity::Unique) == 60 &&
+               updated.stackCount(fragment, Rarity::PermanentHyper) == 1;
+    }));
     removeDataDir(dir);
 }
 
@@ -3301,6 +3349,9 @@ TEST(permanent_titan_eternal_forge_pays_without_global_chat) {
     h.step(10, both);
     for (std::size_t n = before; n < watcher.chat().size(); ++n)
         CHECK(watcher.chat()[n].text.find("has been forged by") == std::string::npos);
+    watcher.requestNotifications(50, 0);
+    CHECK(h.stepUntil(both, [&] { return !watcher.notificationsPending(); }));
+    CHECK(watcher.notifications().empty());
     ui::setLanguage(oldLanguage);
     removeDataDir(dir);
 }
@@ -3352,6 +3403,45 @@ TEST(feedback_expired_timed_hammer_is_removed_on_login_without_touching_permanen
     NetClient client;CHECK(joinAs(h,client,"lease"));
     CHECK_EQ(client.profile().stackCount(content().petalIndex("timed_mjolnir"),Rarity::Unique),0u);
     CHECK_EQ(client.profile().stackCount(content().petalIndex("mjolnir"),Rarity::Unique),1u);removeDataDir(dir);
+}
+
+TEST(timed_hammer_profile_reports_bag_and_equipped_deadlines) {
+    const auto dir = titanWorld("timed-hammer-profile");
+    Harness h("timed-hammer-profile", [](const std::string& path) {
+        seedAccount(path, "lease");
+        seedWorn(path, "lease", 0, "timed_mjolnir", kTitanOutputRarity);
+        seedStack(path, "lease", "petal_timed_mjolnir", kTitanOutputRarity, 1);
+        Database db;
+        std::string error;
+        CHECK(db.load(path, error));
+        const auto* user = db.findUser("lease");
+        CHECK(user != nullptr);
+        if (user == nullptr) return;
+        auto& leases = db.progress(user->id).extra["titanHammerLeases"];
+        leases = Json::array();
+        const double now = static_cast<double>(db.nowMillis());
+        for (int slot : {0, -1}) {
+            Json lease = Json::object();
+            lease["slot"] = slot;
+            lease["expiresAt"] = now + (slot == 0 ? 60000.0 : 120000.0);
+            leases.push(std::move(lease));
+        }
+        db.markDirty();
+        CHECK(db.save());
+    }, dir, 0);
+    CHECK(h.ready);
+    if (h.ready) {
+        NetClient client;
+        CHECK(joinAs(h, client, "lease"));
+        const auto& leases = client.profile().timedHammerLeases;
+        CHECK_EQ(leases.size(), 2u);
+        if (leases.size() == 2) {
+            CHECK_EQ(leases[0].slot, 0);
+            CHECK_EQ(leases[1].slot, -1);
+            CHECK_NEAR(leases[1].readyAtMillis - leases[0].readyAtMillis, 60000.0, 0.01);
+        }
+    }
+    removeDataDir(dir);
 }
 
 TEST(urgent_inventory_messages_do_not_run_bulk_crafting_or_consume_payload) {
@@ -3500,6 +3590,12 @@ TEST(hyper_forge_network_publishes_holder_protection_and_replaces_online_owner) 
     CHECK_EQ(beta.hyperInputCost(rose),5);
     beta.requestTitanForge(rose,true);CHECK(awaitForge(h,both,beta,out));CHECK(!out.success);
     CHECK_EQ(beta.profile().stackCount(rose,Rarity::Unique),5u);
+    constexpr int equippedSlot = 2;
+    alpha.setLoadoutSlot(equippedSlot, rose, Rarity::Apex);
+    CHECK(awaitProfile(h,alpha,[&](const Profile& p) {
+        return p.loadout.size() > equippedSlot && p.loadout[equippedSlot].petalIndex == rose &&
+               p.loadout[equippedSlot].rarity == Rarity::Apex && p.stackCount(rose,Rarity::Apex) == 0;
+    }));
     hyperForgeTestNow=1000+15LL*3600000;
     beta.requestTitanForge(rose,true);CHECK(awaitForge(h,both,beta,out));CHECK(out.success);
     {
@@ -3513,8 +3609,11 @@ TEST(hyper_forge_network_publishes_holder_protection_and_replaces_online_owner) 
             const auto* winner=reloaded.findProgress(betaAccount->id);
             CHECK(previous&&winner);
             if(previous&&winner) {
-                CHECK_EQ(previous->itemCount(Rarity::Unique,"petal_rose"),4);
+                CHECK_EQ(previous->itemCount(Rarity::Unique,"petal_rose"),3);
                 CHECK_EQ(previous->itemCount(Rarity::Apex,"petal_rose"),0);
+                CHECK(previous->loadout[equippedSlot] &&
+                      previous->loadout[equippedSlot]->petalType == "rose" &&
+                      previous->loadout[equippedSlot]->rarity == Rarity::Unique);
                 CHECK_EQ(winner->itemCount(Rarity::Unique,"petal_rose"),0);
                 CHECK_EQ(winner->itemCount(Rarity::Apex,"petal_rose"),1);
             }
@@ -3523,7 +3622,17 @@ TEST(hyper_forge_network_publishes_holder_protection_and_replaces_online_owner) 
             if(forges.size()==1) CHECK_EQ(forges[forges.keys().front()]["owner"].asString(),betaAccount->id);
         }
     }
-    CHECK(awaitProfile(h,alpha,[&](const Profile&p){return p.stackCount(rose,Rarity::Apex)==0&&p.stackCount(rose,Rarity::Unique)==4;}));
+    CHECK(awaitProfile(h,alpha,[&](const Profile& p) {
+        return p.stackCount(rose,Rarity::Apex)==0 && p.stackCount(rose,Rarity::Unique)==3 &&
+               p.loadout[equippedSlot].petalIndex==rose && p.loadout[equippedSlot].rarity==Rarity::Unique;
+    }));
+    const auto body = bodyNamed(h.server.world(),"alpha");
+    CHECK(body != NULL_ENTITY);
+    if (body != NULL_ENTITY) {
+        const auto slot = h.server.world().get<Loadout>(body).slots[equippedSlot];
+        CHECK_EQ(slot.configIndex,rose);
+        CHECK_EQ(slot.rarity,Rarity::Unique);
+    }
     CHECK(awaitProfile(h,beta,[&](const Profile&p){return p.stackCount(rose,Rarity::Apex)==1&&p.stackCount(rose,Rarity::Unique)==0;}));
     removeDataDir(dir);
 }

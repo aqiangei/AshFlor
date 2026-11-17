@@ -27,6 +27,8 @@
 
 namespace flix {
 
+class Terrain;
+
 class SpatialGrid;
 struct WireEvent;
 
@@ -315,6 +317,7 @@ public:
         std::uint32_t snapshotIndex = 0;
         double nowMillis = 0;
         const EventQueue* events = nullptr;
+        const Terrain* terrain = nullptr;
         /// Bodies streamed to this client however far away they are.
         ///
         /// The viewer's squadmates, and nothing else: the reference's own

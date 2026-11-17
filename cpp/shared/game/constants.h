@@ -758,15 +758,15 @@ inline constexpr double kPetTeleportDistance = 80.0;
 /// How close a pet walking back to its owner comes before it is home and goes
 /// back to idling or fighting. Well inside the screen, so a pet that gets home
 /// does not wander straight back off it.
-inline constexpr double kPetHomeDistance = 300.0;
-inline constexpr double kPetFollowDistance = 700.0;
+inline constexpr double kPetHomeDistance = 375.0;
+inline constexpr double kPetFollowDistance = 900.0;
 inline constexpr double kPetOwnerTargetRadius = 1250.0;
-inline constexpr double kPetCombatFollowDistance = 1300.0;
+inline constexpr double kPetCombatFollowDistance = 1650.0;
 inline constexpr double kPetOwnerPriorityRadius = 600.0;
 inline constexpr double kPetFollowSpeedFactor = 1.15;
 
 /// Past this distance, or across realms, recover the same pet near its owner.
-inline constexpr double kPetRecallDistance = 3000.0;
+inline constexpr double kPetRecallDistance = 3600.0;
 
 /// A returning pet making no progress is recovered, including behind walls.
 inline constexpr double kPetTrappedMillis = 5000.0;

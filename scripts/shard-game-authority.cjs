@@ -215,7 +215,7 @@ module.exports={
     if(input.action==='mobAnnouncement'){
       if(outgoingNotices.length===256)outgoingNotices.shift();
       outgoingNotices.push({id:crypto.randomBytes(16).toString('hex'),mob:input.mob,
-        rarity:input.rarity,summoned:input.summoned});
+        rarity:input.rarity,summoned:input.summoned,prestige:input.prestige===true});
       return {ok:true};
     }
     if(input.action==='presence') {

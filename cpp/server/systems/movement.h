@@ -285,6 +285,8 @@ private:
         Vec2 position;
         double radius = 0;
         Realm realm = Realm::Overworld;
+        Entity owner = NULL_ENTITY;
+        Entity entity = NULL_ENTITY;
     };
 
     /// One loose petal, flattened out of the ECS for the passes that shove it.
@@ -390,8 +392,8 @@ private:
     void collideLooseBodies(World& world, const Terrain& terrain);
     WorldPhaseTiming worldPhaseTiming_;
     void moveMobs(World& world, const Terrain& terrain, double nowMillis, double dt, double* joinMs);
-    bool stopMobAtMeteors(const Terrain& terrain, Realm realm, Vec2 from,
-                          Vec2& position, double radius, double wallRadius = kMobWallRadius) const;
+    bool stopMobAtMeteors(const Terrain& terrain, Realm realm, Vec2 from, Vec2& position,
+                          double radius, double wallRadius, Entity petOwner) const;
     void moveProjectiles(World& world, const Terrain& terrain, double dt);
 
     /// Pushes overlapping mobs apart. Runs once everything has moved, so a

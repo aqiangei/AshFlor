@@ -60,7 +60,7 @@ bool petPointer(World& world, Entity owner, Rarity petRarity, Vec2 ownerPosition
         return false;
     }
     const PlayerInput* input = world.tryGet<PlayerInput>(owner);
-    if (input == nullptr) return false;
+    if (input == nullptr || (input->current.flags & net::InputNoPetPointer)) return false;
     const PlayerLocation* location = world.tryGet<PlayerLocation>(owner);
     const Vec2 half = (location != nullptr ? location->viewport
                                            : Vec2{kViewportWidth, kViewportHeight}) * 0.5;
@@ -767,8 +767,11 @@ bool MobAiSystem::holdTarget(const World& world, const Terrain& terrain, Entity 
     // Another map is gone for good, as it is over there.
     if (transform->realm != realm) return false;
     const double gapSq = distanceSq(from, transform->position);
+    const MapData* map = worldMaps ? worldMaps->forRealm(realm) : nullptr;
+    const bool pyramid = map && map->biome() == "pyramid";
+    if (pyramid && terrain.segmentBlocked(from, transform->position, realm)) return false;
 
-    // gardn's neutral AI (tick_default_neutral) has no lose clause at all:
+    // In other biomes, gardn's neutral AI (tick_default_neutral) has no lose clause at all:
     // what hurt it is chased until it dies, walls or no walls. The five
     // viewports stand in for gardn's culling, which is what ends that chase
     // over there -- a mob nobody can see forgets its target.
@@ -794,7 +797,7 @@ bool MobAiSystem::holdTarget(const World& world, const Terrain& terrain, Entity 
     // ...and once a wall has hidden it for kMobSightGraceMillis straight, not
     // on the first ray that hits one: dropping at once made hugging a wall a
     // free escape from every mob in the game.
-    if (!terrain.segmentBlocked(from, transform->position, realm)) {
+    if (pyramid || !terrain.segmentBlocked(from, transform->position, realm)) {
         ai.unseenTarget = NULL_ENTITY;
         return true;
     }
@@ -998,7 +1001,16 @@ void MobAiSystem::fireVolley(World& world, Entity shooter, const MobType& type, 
     shot.speed = speed;
     shot.distance = reach;
     shot.damage = ammo.damage;
-    if (const auto* summoned = world.tryGet<Pet>(shooter)) shot.damage *= summoned->damageTalentScale;
+    const Pet* pet = world.tryGet<Pet>(shooter);
+    if (pet != nullptr) {
+        shot.damage *= pet->damageTalentScale;
+        if (shot.damage == 0.0 && registry.mob(type.configIndex).id == "void_unabomber" &&
+            registry.petal(spec.ammoPetalIndex).id == "bomb") {
+            // The bomb uses visual-only ammunition. The summon already
+            // carries the tier- and talent-scaled damage in its body stats.
+            if (const auto* contact = world.tryGet<ContactDamage>(shooter)) shot.damage = contact->amount;
+        }
+    }
     // Graded at the shooter's tier alongside the damage, so an apex hornet's
     // missiles punch through what a common hornet's are stopped by.
     shot.health = ammo.breakable && ammo.health > 0.0 ? ammo.health : kProjectileDefaultHealth;
@@ -1007,7 +1019,6 @@ void MobAiSystem::fireVolley(World& world, Entity shooter, const MobType& type, 
     shot.owner = shooter;
     // A pet's shot is fired by the pet and answerable to the player, so a kill
     // it lands credits the flower that summoned it.
-    const Pet* pet = world.tryGet<Pet>(shooter);
     shot.creditTo = pet != nullptr ? pet->owner : shooter;
     const Faction* own = world.tryGet<Faction>(shooter);
     shot.faction = own != nullptr ? *own : Faction{Team::Hostiles, false};
@@ -2053,6 +2064,11 @@ MobAiSystem::PetPreyTarget MobAiSystem::readPetPrey(const World& world, Entity c
     return {candidate, at->position, at->realm, tier, world.has<GhostTag>(candidate)};
 }
 
+static double summonRangeBonus(const World& world, const Pet* pet) {
+    const auto* mods = pet ? world.tryGet<PlayerModifiers>(pet->owner) : nullptr;
+    return mods ? mods->summonRangeBonus : 0.0;
+}
+
 MobAiSystem::PetPrey MobAiSystem::acquirePetPrey(const World& world, const Terrain& terrain,
                                                 const SpatialGrid& grid, Entity self, Vec2 from,
                                                 Realm realm, Entity previous, bool hasOwner,
@@ -2063,17 +2079,20 @@ MobAiSystem::PetPrey MobAiSystem::acquirePetPrey(const World& world, const Terra
     // was being measured by; an owned pet therefore scans as far as that screen
     // reaches, from where it actually stands. An ownerless one has only its own
     // range.
-    const double searchReach =
-        hasOwner ? std::max({range, kPetOwnerTargetRadius,
-                             std::hypot(kPetViewHalfWidth, kPetViewHalfHeight)})
-                 : range;
-    const double reachSq = searchReach * searchReach;
     const auto* pet = world.tryGet<Pet>(self);
     const auto* ownerAt = hasOwner && pet ? world.tryGet<Transform>(pet->owner) : nullptr;
     const auto* ownerVisuals = hasOwner && pet ? world.tryGet<PlayerVisuals>(pet->owner) : nullptr;
+    const auto* modifiers = ownerAt ? world.tryGet<PlayerModifiers>(pet->owner) : nullptr;
+    const double targetScale = modifiers ? modifiers->petTargetRangeScale : 1.0;
+    const double rangeBonus = modifiers ? modifiers->summonRangeBonus : 0.0;
+    const double ownerReach = kPetOwnerTargetRadius * targetScale + rangeBonus;
+    const double ownerReachSq = ownerReach * ownerReach;
+    const double searchReach = hasOwner
+        ? std::max({range, kPetOwnerTargetRadius, std::hypot(kPetViewHalfWidth, kPetViewHalfHeight)}) * targetScale + rangeBonus
+        : range;
+    const double reachSq = searchReach * searchReach;
     const auto withinLeash = [&](Vec2 position) {
-        return !ownerAt || distanceSq(position, ownerAt->position) <=
-            kPetOwnerTargetRadius * kPetOwnerTargetRadius;
+        return !ownerAt || distanceSq(position, ownerAt->position) <= ownerReachSq;
     };
 
     // Map training posts are NPCs, not MobTag entities. Keep an established
@@ -2090,7 +2109,11 @@ MobAiSystem::PetPrey MobAiSystem::acquirePetPrey(const World& world, const Terra
     // Scanned every tick rather than held: a pet that keeps a mob only until a
     // better one appears still has to see the field, and the scan is what says
     // whether a rarer one has come into reach.
-    grid.query(realm, from, searchReach, scratch.entities, scratch.query);
+    // Intersect the pet's reach with the owner's circle before reading candidates.
+    const double queryReach = ownerAt
+        ? std::min(searchReach, distance(from, ownerAt->position) + ownerReach)
+        : searchReach;
+    grid.query(realm, from, queryReach, scratch.entities, scratch.query);
     auto& candidates = scratch.candidates;
     candidates.clear();
     for (const Entity candidate : scratch.entities) {
@@ -2104,7 +2127,7 @@ MobAiSystem::PetPrey MobAiSystem::acquirePetPrey(const World& world, const Terra
         const double gapSq = distanceSq(from, target.position);
         if (!(gapSq < reachSq)) continue;
         const double ownerGapSq = ownerAt ? distanceSq(target.position, ownerAt->position) : gapSq;
-        if (ownerAt && !(ownerGapSq <= kPetOwnerTargetRadius * kPetOwnerTargetRadius)) continue;
+        if (ownerAt && !(ownerGapSq <= ownerReachSq)) continue;
         // The highest TIER in reach is the fight; distance decides only between
         // mobs of one tier. A Super across the clearing outranks a common at the
         // pet's feet, and a tier is worth more than any range a pet can have,
@@ -2210,8 +2233,9 @@ Vec2 MobAiSystem::volleyInPlace(World& world, Entity self, const MobType& type, 
                          nowMillis, dt, commands);
 }
 
-static double petFollowLimit(const MobAi& ai) {
-    return ai.target == NULL_ENTITY ? kPetFollowDistance : kPetCombatFollowDistance;
+static double petFollowLimit(const World& world, Entity self, const MobAi& ai) {
+    return ai.target == NULL_ENTITY ? kPetFollowDistance :
+        kPetCombatFollowDistance + summonRangeBonus(world, world.tryGet<Pet>(self));
 }
 
 bool MobAiSystem::walkToOwner(World& world, const Terrain& terrain, Entity self,
@@ -2220,7 +2244,7 @@ bool MobAiSystem::walkToOwner(World& world, const Terrain& terrain, Entity self,
     const Vec2 toOwner = ownerPosition - transform.position;
     const double gap = toOwner.length();
     if (!ai.petReturning) {
-        if (gap <= petFollowLimit(ai)) {
+        if (gap <= petFollowLimit(world, self, ai)) {
             return false;
         }
         // Off the owner's screen. The fight is DROPPED, not paused: a pet that
@@ -2333,7 +2357,12 @@ void MobAiSystem::steerPet(World& world, const Terrain& terrain, const SpatialGr
         }
         const Vec2 toPointer = pointer - transform.position;
         const double gap = toPointer.length();
-        const double pace = std::max(chaseSpeed, speed);
+        double pace = std::max(chaseSpeed, speed);
+        if (drive.ai == AiKind::Sandstorm && speed > 0.0) {
+            const auto* ownerMotion = world.tryGet<Motion>(owner);
+            const double ownerSpeed = ownerMotion ? ownerMotion->velocity.length() : 0.0;
+            pace = std::max(pace, std::max(ownerSpeed, kPlayerMaxSpeed) * kSandstormPetSpeedFactor * slow);
+        }
         // Full pace until it is close, then in proportion, so it settles on
         // the pointer rather than orbiting it.
         desired = gap > 1e-6 && pace > 0.0
@@ -2451,7 +2480,7 @@ void MobAiSystem::preparePetTargets(World& world, const Terrain& terrain,
             if (kind != AiKind::Hostile && kind != AiKind::Neutral) continue;
             const auto& at = *world.tryGet<Transform>(self);
             const auto& ai = *world.tryGet<MobAi>(self);
-            const double leash = ai.petReturning ? kPetHomeDistance : petFollowLimit(ai);
+            const double leash = ai.petReturning ? kPetHomeDistance : petFollowLimit(world, self, ai);
             if (distanceSq(owner->position, at.position) > leash * leash) continue;
             const double range = ai.aggroRange > 0.0 ? ai.aggroRange : kEnemyChaseRange;
             auto& plan = petTargetPlans_[index];
@@ -3078,9 +3107,12 @@ void MobAiSystem::run(World& world, const Terrain& terrain, const SpatialGrid& g
             continue;
         }
         // Honey is a local, visible decoy; never scan every player's bait for every mob.
+        const bool prefersHoney = ai->kind == AiKind::Passive || ai->kind == AiKind::Neutral;
+        const double baitChaseSpeed = prefersHoney && drive.chaseSpeed <= 0.0
+            ? drive.speed : drive.chaseSpeed;
         nearbyBaits_.clear();
         if (hasBaits && ai->kind != AiKind::Stationary && ai->kind != AiKind::Sandstorm &&
-            !world.has<Pet>(self) && drive.chaseSpeed > 0.0)
+            !world.has<Pet>(self) && baitChaseSpeed > 0.0)
             baitGrid_.query(transform->realm, transform->position, 600.0, nearbyBaits_);
         Entity lure = NULL_ENTITY; double nearest = 600.0 * 600.0;
         for (Entity candidate : nearbyBaits_) {
@@ -3091,13 +3123,13 @@ void MobAiSystem::run(World& world, const Terrain& terrain, const SpatialGrid& g
             }
         }
         const auto* previousTarget = lure != NULL_ENTITY ? world.tryGet<Transform>(ai->target) : nullptr;
-        if (lure != NULL_ENTITY && (ai->kind == AiKind::Passive ||
+        if (lure != NULL_ENTITY && (prefersHoney ||
             !previousTarget || world.has<HoneyBait>(ai->target) ||
             previousTarget->realm != transform->realm ||
             nearest * (.28 * .28) < distanceSq(transform->position, previousTarget->position))) {
             const Vec2 delta = world.get<Transform>(lure).position - transform->position;
             ai->target = lure;
-            motion->velocity = delta.normalized() * drive.chaseSpeed *
+            motion->velocity = delta.normalized() * baitChaseSpeed *
                 slowFactorOf(world, self, nowMillis) * 1.08;
             if (delta.lengthSq() > 1.0) transform->angle = delta.angle();
             continue;

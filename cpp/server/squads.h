@@ -28,6 +28,7 @@ namespace flix {
 /// The reference's MAX_SQUAD_SIZE. Quoted back in half the refusals below, so
 /// it is named rather than written out four times.
 inline constexpr std::size_t kMaxSquadSize = 4;
+inline constexpr int kAutoSquadMaxLevelGap = 10;
 
 /// An invitation lapses after thirty seconds, as the reference's does.
 inline constexpr std::int64_t kSquadInviteMillis = 30000;
@@ -77,6 +78,7 @@ public:
     /// Creates a squad led by `leader`. Null when they are already in one,
     /// which is the reference's "You are already in a squad."
     Squad* create(SquadMemberId leader, bool isPublic, Rng& rng);
+    Squad* createMatchedPair(SquadMemberId first, SquadMemberId second, Rng& rng);
 
     Squad* find(const std::string& id);
     Squad* forMember(SquadMemberId who);
@@ -127,11 +129,8 @@ public:
     std::string joinWithCode(const std::string& code, SquadMemberId who, Departure& leftPrevious);
 
     /// Answers the one pending invitation. On success `squadIdOut` names the
-    /// squad joined. If the target was in another squad, they leave it first
-    /// and `leftPrevious` (when non-null) describes that departure so the
-    /// caller can notify the old party.
-    std::string accept(SquadMemberId target, std::int64_t nowMillis, std::string& squadIdOut,
-                       Departure* leftPrevious = nullptr);
+    /// squad joined. The target must have no current squad.
+    std::string accept(SquadMemberId target, std::int64_t nowMillis, std::string& squadIdOut);
     bool decline(SquadMemberId target);
 
     Departure leave(SquadMemberId who);

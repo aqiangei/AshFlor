@@ -179,6 +179,9 @@ void DungeonSystem::evict(World& world, Instance& instance, Rng& rng) {
     });
     if (!moveToRealm) return;
     for (const auto& [player, radius] : inside) {
+        // This copy is about to be released. A mark must not leave its
+        // occupant behind when the normal realm-transfer guard runs.
+        if (auto* pads = world.tryGet<TeleporterState>(player)) pads->markHoldUntilMillis = 0.0;
         moveToRealm(player, instance.returnRealm, exitPoint(instance, rng, radius));
     }
 }
@@ -216,7 +219,6 @@ void DungeonSystem::release(World& world, Instance& instance, CommandBuffer& com
 }
 
 namespace {
-constexpr int kWaveMaxPlayers = 4;
 constexpr std::uint16_t kWaveLobbyMillis = 30000;
 constexpr std::uint16_t kWaveRoundMillis = 45000;
 constexpr double kWaveStallMillis = 180000.0;
@@ -318,36 +320,56 @@ double waveRadiusLimit(Rarity rarity, bool swarm) {
 }
 }
 
-bool DungeonSystem::inWave(const World& world, Entity player) const {
+const DungeonSystem::WaveRoom* DungeonSystem::waveRoomFor(const World& world, Entity player) const {
     const auto* at = world.tryGet<Transform>(player);
-    return !wave_.code.empty() && at && at->realm == wave_.realm &&
-        std::any_of(wave_.members.begin(), wave_.members.end(),
-                    [&](const auto& member) { return member.player == player; });
+    if (!at) return nullptr;
+    for (const auto& room : waveRooms_) {
+        if (!room.code.empty() && at->realm == room.realm &&
+            std::any_of(room.members.begin(), room.members.end(),
+                        [&](const auto& member) { return member.player == player; })) return &room;
+    }
+    return nullptr;
+}
+
+bool DungeonSystem::inWave(const World& world, Entity player) const {
+    return waveRoomFor(world, player) != nullptr;
+}
+
+std::uint8_t DungeonSystem::waveOccupancy() const {
+    return static_cast<std::uint8_t>(std::count_if(waveRooms_.begin(), waveRooms_.end(),
+        [](const auto& room) { return !room.code.empty(); }));
 }
 
 void DungeonSystem::switchWaveBody(Entity previous, Entity active) {
-    auto member = std::find_if(wave_.members.begin(), wave_.members.end(),
-                               [previous](const auto& entry) { return entry.player == previous; });
-    if (member == wave_.members.end()) return;
-    member->player = active;
-    for (auto& round : wave_.rounds) {
-        std::replace(round.participants.begin(), round.participants.end(), previous, active);
+    for (auto& room : waveRooms_) {
+        auto member = std::find_if(room.members.begin(), room.members.end(),
+                                   [previous](const auto& entry) { return entry.player == previous; });
+        if (member == room.members.end()) continue;
+        member->player = active;
+        for (auto& round : room.rounds) {
+            for (auto& participant : round.participants) {
+                if (participant == previous) participant = active;
+            }
+        }
+        return;
     }
 }
 
 net::WaveHud DungeonSystem::waveHudFor(const World& world, Entity player, double nowMillis) const {
-    if (!inWave(world, player)) return {};
-    const auto duration = wave_.round == 0 ? kWaveLobbyMillis : kWaveRoundMillis;
+    const auto* room = waveRoomFor(world, player);
+    if (!room) return {};
+    const auto duration = room->round == 0 ? kWaveLobbyMillis : kWaveRoundMillis;
     const auto remaining = static_cast<std::uint16_t>(
-        std::clamp(wave_.readyAtMillis - nowMillis, 0.0, static_cast<double>(duration)));
+        std::clamp(room->readyAtMillis - nowMillis, 0.0, static_cast<double>(duration)));
     const auto round = static_cast<std::uint32_t>(std::min<std::uint64_t>(
-        wave_.round, std::numeric_limits<std::uint32_t>::max()));
-    return {round, remaining, duration, waveTheme(wave_.round)};
+        room->round, std::numeric_limits<std::uint32_t>::max()));
+    return {round, remaining, duration, waveTheme(room->round)};
 }
 
 bool DungeonSystem::waveExterior(const World& world, Entity player, Realm& realm) const {
-    if (!inWave(world, player)) return false;
-    for (const auto& member : wave_.members) {
+    const auto* room = waveRoomFor(world, player);
+    if (!room) return false;
+    for (const auto& member : room->members) {
         if (member.player != player) continue;
         realm = member.returnRealm;
         return true;
@@ -359,12 +381,14 @@ std::string DungeonSystem::waveCommand(World& world, const Terrain& terrain, Ent
                                        const std::string& action, Rng& rng, double nowMillis) {
     if (!worldMaps || !moveToRealm) return "试炼房暂不可用。";
     if (action == "leave") {
-        for (auto it = wave_.members.begin(); it != wave_.members.end(); ++it) {
-            if (it->player != player) continue;
-            leaveWave(world, *it);
+        for (auto& room : waveRooms_) {
+            auto member = std::find_if(room.members.begin(), room.members.end(),
+                                       [&](const auto& entry) { return entry.player == player; });
+            if (member == room.members.end()) continue;
+            leaveWave(world, *member);
             if (inWave(world, player)) return "当前状态暂时无法离开试炼。";
-            summarizeWave(*it, "主动退出");
-            wave_.members.erase(it);
+            summarizeWave(room, *member, "主动退出");
+            room.members.erase(member);
             return "已离开试炼。";
         }
         return "你还没进入试炼。";
@@ -372,36 +396,53 @@ std::string DungeonSystem::waveCommand(World& world, const Terrain& terrain, Ent
     const bool start = action == "start";
     const bool join = action.rfind("join ", 0) == 0;
     if (!start && !join) return "/wave start 开房，/wave join 房号 加入，/wave leave 退出。";
-    if (inWave(world, player)) return "你已在 试炼房内，房号 " + wave_.code + "。";
+    if (const auto* room = waveRoomFor(world, player))
+        return "你已在 试炼房内，房号 " + room->code + "。";
     const auto* at = world.tryGet<Transform>(player);
-    if (!at || !isStanding(world, player) || world.has<RiftPlayer>(player) || at->realm == Realm::Arena ||
+    if (!at || !isStanding(world, player) || world.has<RiftPlayer>(player) ||
+        world.has<WavePlayer>(player) || at->realm == Realm::Arena ||
         at->realm == Realm::Maze || isInstance(at->realm)) return "请从主世界地图进入试炼。";
-    if (start && !wave_.code.empty()) return "试炼房正在使用，等本局结束后再开房。";
-    if (join && (wave_.code.empty() || action.substr(5) != wave_.code))
-        return "试炼房号无效。";
-    if (join && (wave_.round != 0 || nowMillis >= wave_.readyAtMillis))
-        return "本局已开始，下一局再加入。";
-    if (wave_.members.size() >= kWaveMaxPlayers) return "试炼房已满，最多四人。";
 
-    bool found = false;
-    const Realm realm = worldMaps->realmOfId("wave", found);
-    if (!found) return "试炼地图暂不可用。";
-    const WaveMember member{player, at->realm, at->position};
+    auto selected = waveRooms_.end();
     if (start) {
-        wave_.realm = realm;
-        wave_.code = std::to_string(100000u + rng.below(900000u));
-        wave_.readyAtMillis = nowMillis + kWaveLobbyMillis;
+        const auto realms = worldMaps->copiesOf("wave");
+        if (realms.empty()) return "试炼地图暂不可用。";
+        const auto end = waveRooms_.begin() + std::min(realms.size(), waveRooms_.size());
+        selected = std::find_if(waveRooms_.begin(), end,
+                                [](const auto& room) { return room.code.empty(); });
+        if (selected == end) return "所有试炼房均已占用，等一间释放后再开房。";
+        selected->realm = realms[static_cast<std::size_t>(selected - waveRooms_.begin())];
+        auto code = 100000u + rng.below(900000u);
+        do {
+            selected->code = std::to_string(code);
+            code = code == 999999u ? 100000u : code + 1;
+        } while (std::any_of(waveRooms_.begin(), waveRooms_.end(), [&](const auto& other) {
+            return &other != &*selected && other.code == selected->code;
+        }));
+        selected->readyAtMillis = nowMillis + kWaveLobbyMillis;
+    } else {
+        selected = std::find_if(waveRooms_.begin(), waveRooms_.end(), [&](const auto& room) {
+            return !room.code.empty() && action.compare(5, std::string::npos, room.code) == 0;
+        });
+        if (selected == waveRooms_.end()) return "试炼房号无效。";
+        if (selected->members.size() >= kWaveMaxPlayers) return "试炼房已满，最多四人。";
     }
+
+    auto& room = *selected;
+    const WaveMember member{player, at->realm, at->position};
     world.add<WavePlayer>(player);
-    wave_.members.push_back(member);
-    moveToRealm(player, realm, worldMaps->forRealm(realm)->defaultSpawn(rng, terrain));
+    room.members.push_back(member);
+    moveToRealm(player, room.realm, worldMaps->forRealm(room.realm)->defaultSpawn(rng, terrain));
     if (!inWave(world, player)) {
         world.remove<WavePlayer>(player);
-        wave_.members.pop_back();
-        if (start) wave_ = {};
+        room.members.pop_back();
+        if (start) room = {};
         return "当前状态暂时无法进入试炼。";
     }
-    return "已进入 试炼房 " + wave_.code + "，请看顶部准备倒计时。第 11 波起难度和通关星星提高。永恒／超凡每服分别每 6／12 分钟最多结算一次。";
+    if (room.round != 0)
+        return "已进入 试炼房 " + room.code + "，当前第 " + std::to_string(room.round) +
+               " 波。对当波任一怪物造成至少 1% 伤害即可参与该波结算。";
+    return "已进入 试炼房 " + room.code + "，请看顶部准备倒计时。第 11 波起难度和通关星星提高。永恒／超凡每服分别每 6／12 分钟最多结算一次。";
 }
 
 void DungeonSystem::leaveWave(World& world, const WaveMember& member) {
@@ -413,70 +454,70 @@ void DungeonSystem::leaveWave(World& world, const WaveMember& member) {
     }
 }
 
-void DungeonSystem::summarizeWave(const WaveMember& member, const std::string& reason) const {
+void DungeonSystem::summarizeWave(const WaveRoom& room, const WaveMember& member, const std::string& reason) const {
     if (!waveSummary) return;
-    std::string summary = "试炼结算\n通关 " + std::to_string(wave_.cleared) +
+    std::string summary = "试炼结算\n通关 " + std::to_string(room.cleared) +
         " 波 · 本局 +" + std::to_string(member.starsEarned) + " 星星";
     if (member.bonusHammers != 0) summary += " · +" + std::to_string(member.bonusHammers) + " 限时锤";
     summary += "\n" + reason;
-    if (member.dailyCapReached) summary += "\n已领满每日 150,000 星星";
+    if (member.dailyCapReached) summary += "\n已领满每日 200,000 星星";
     else if (member.starsEarned == 0) {
-        if (wave_.cleared == 0) summary += "\n本局未通关任何一波";
+        if (room.cleared == 0) summary += "\n本局未通关任何一波";
         else if (!member.qualifiedForStars) summary += "\n需对当波至少一只怪造成 1% 伤害";
         else summary += "\n星星暂未结算";
     }
     waveSummary(member.player, summary);
 }
 
-void DungeonSystem::closeWave(World& world, CommandBuffer& commands, const std::string& text) {
-    for (const auto& member : wave_.members) {
-        summarizeWave(member, text);
+void DungeonSystem::closeWave(WaveRoom& room, World& world, CommandBuffer& commands, const std::string& text) {
+    for (const auto& member : room.members) {
+        summarizeWave(room, member, text);
         if (auto* pads = world.tryGet<TeleporterState>(member.player)) pads->markHoldUntilMillis = 0.0;
         leaveWave(world, member);
     }
     Query<Transform>{world}.each([&](Entity e, Transform& at) {
-        if (at.realm == wave_.realm && !world.has<PlayerTag>(e)) commands.destroy(e);
+        if (at.realm == room.realm && !world.has<PlayerTag>(e)) commands.destroy(e);
     });
-    wave_ = {};
+    room = {};
 }
 
-void DungeonSystem::runWave(World& world, const Terrain& terrain, const ContentRegistry& content,
+void DungeonSystem::runWave(WaveRoom& room, World& world, const Terrain& terrain, const ContentRegistry& content,
                             SpawnSystem& spawning, Rng& rng, double nowMillis, CommandBuffer& commands) {
-    if (wave_.code.empty()) return;
-    wave_.members.erase(std::remove_if(wave_.members.begin(), wave_.members.end(), [&](const auto& member) {
+    if (room.code.empty()) return;
+    room.members.erase(std::remove_if(room.members.begin(), room.members.end(), [&](const auto& member) {
         const auto* at = world.tryGet<Transform>(member.player);
-        if (at && at->realm == wave_.realm) return false;
+        if (at && at->realm == room.realm) return false;
         if (world.has<WavePlayer>(member.player)) {
             world.remove<WavePlayer>(member.player);
             world.remove<TotemRegeneration>(member.player);
         }
         return true;
-    }), wave_.members.end());
+    }), room.members.end());
 
-    if (wave_.members.empty()) {
-        closeWave(world, commands, "队伍已结束挑战");
+    if (room.members.empty()) {
+        closeWave(room, world, commands, "队伍已结束挑战");
         return;
     }
 
     // Combat ran earlier this tick and the reaper has not removed the ledgers.
     bool clearedCurrent = false;
     int liveEnemies = 0;
-    const auto finished = std::remove_if(wave_.rounds.begin(), wave_.rounds.end(), [&](WaveRound& round) {
+    const auto finished = std::remove_if(room.rounds.begin(), room.rounds.end(), [&](WaveRound& round) {
         const auto defeated = std::remove_if(round.enemies.begin(), round.enemies.end(), [&](Entity e) {
             if (isStanding(world, e)) return false;
-            wave_.lastProgressMillis = nowMillis;
+            room.lastProgressMillis = nowMillis;
             const auto* bounty = world.tryGet<Bounty>(e);
             const auto* health = world.tryGet<Health>(e);
             if (bounty && health) {
                 for (const auto& share : bounty->contributors) {
                     if (share.damage < health->max * 0.01) continue;
-                    const auto member = std::find_if(wave_.members.begin(), wave_.members.end(),
+                    const auto member = std::find_if(room.members.begin(), room.members.end(),
                         [&](const auto& entry) {
                             if (entry.player == share.player) return true;
                             const auto* account = world.tryGet<PlayerAccount>(entry.player);
                             return share.owner != 0 && account && account->connection == share.owner;
                         });
-                    if (member == wave_.members.end()) continue;
+                    if (member == room.members.end()) continue;
                     for (auto& player : round.participants) {
                         if (player == member->player) break;
                         if (player != NULL_ENTITY) continue;
@@ -492,10 +533,10 @@ void DungeonSystem::runWave(World& world, const Terrain& terrain, const ContentR
         if (!round.enemies.empty()) return false;
         // An overdue wave may still be cleared if all its batches were issued.
         // Unissued batches expire at the deadline rather than building a backlog.
-        if (round.queued != round.size) return round.number != wave_.round;
-        ++wave_.cleared;
-        clearedCurrent |= round.number == wave_.round;
-        for (auto& member : wave_.members) {
+        if (round.queued != round.size) return round.number != room.round;
+        ++room.cleared;
+        clearedCurrent |= round.number == room.round;
+        for (auto& member : room.members) {
             if (std::find(round.participants.begin(), round.participants.end(), member.player) ==
                 round.participants.end()) continue;
             member.qualifiedForStars = true;
@@ -509,64 +550,64 @@ void DungeonSystem::runWave(World& world, const Terrain& terrain, const ContentR
         }
         return true;
     });
-    wave_.rounds.erase(finished, wave_.rounds.end());
+    room.rounds.erase(finished, room.rounds.end());
 
-    if (std::none_of(wave_.members.begin(), wave_.members.end(),
+    if (std::none_of(room.members.begin(), room.members.end(),
             [&](const auto& member) { return isStanding(world, member.player); })) {
-        closeWave(world, commands, "队伍已倒下");
+        closeWave(room, world, commands, "队伍已倒下");
         return;
     }
-    if (wave_.round != 0 && nowMillis - wave_.lastProgressMillis >= kWaveStallMillis) {
-        closeWave(world, commands, "连续 3 分钟未推进");
+    if (room.round != 0 && nowMillis - room.lastProgressMillis >= kWaveStallMillis) {
+        closeWave(room, world, commands, "连续 3 分钟未推进");
         return;
     }
 
-    const int players = static_cast<int>(wave_.members.size());
-    const Vec2 extent = terrain.realmExtent(wave_.realm);
+    const int players = static_cast<int>(room.members.size());
+    const Vec2 extent = terrain.realmExtent(room.realm);
     const Vec2 centre = extent * 0.5;
-    const bool timedOut = wave_.round != 0 && nowMillis >= wave_.readyAtMillis;
+    const bool timedOut = room.round != 0 && nowMillis >= room.readyAtMillis;
     if (!clearedCurrent && timedOut && liveEnemies > kWaveCleanupThreshold) {
-        if (wave_.cleanupUntilMillis == 0.0) {
-            wave_.cleanupUntilMillis = nowMillis + kWaveCleanupMillis;
-            for (const auto& active : wave_.rounds) {
+        if (room.cleanupUntilMillis == 0.0) {
+            room.cleanupUntilMillis = nowMillis + kWaveCleanupMillis;
+            for (const auto& active : room.rounds) {
                 for (const Entity enemy : active.enemies) {
                     world.get<WaveEnemy>(enemy).rushing = true;
                 }
             }
         }
-        if (nowMillis < wave_.cleanupUntilMillis) return;
+        if (nowMillis < room.cleanupUntilMillis) return;
     }
-    if (clearedCurrent || nowMillis >= wave_.readyAtMillis) {
-        if (wave_.round == 0) wave_.lastProgressMillis = nowMillis;
-        if (wave_.round == std::numeric_limits<std::uint64_t>::max()) {
-            closeWave(world, commands, "队伍已结束挑战");
+    if (clearedCurrent || nowMillis >= room.readyAtMillis) {
+        if (room.round == 0) room.lastProgressMillis = nowMillis;
+        if (room.round == std::numeric_limits<std::uint64_t>::max()) {
+            closeWave(room, world, commands, "队伍已结束挑战");
             return;
         }
         WaveRound next;
-        next.number = ++wave_.round;
-        next.size = wave_.round % 5 == 0 ? 1 : 12 + kWaveExtraEnemies + (players - 1) * 4 +
-            2 * static_cast<int>(std::min<std::uint64_t>(wave_.round - 1, 8));
+        next.number = ++room.round;
+        next.size = room.round % 5 == 0 ? 1 : 12 + kWaveExtraEnemies + (players - 1) * 4 +
+            2 * static_cast<int>(std::min<std::uint64_t>(room.round - 1, 8));
         if (waveBonusMob(waveTheme(next.number))) next.size += next.size / 2;
         next.enemies.reserve(next.size);
-        wave_.rounds.push_back(std::move(next));
-        wave_.readyAtMillis = nowMillis + kWaveRoundMillis;
-        wave_.nextBatchMillis = nowMillis;
-        wave_.cleanupUntilMillis = 0.0;
+        room.rounds.push_back(std::move(next));
+        room.readyAtMillis = nowMillis + kWaveRoundMillis;
+        room.nextBatchMillis = nowMillis;
+        room.cleanupUntilMillis = 0.0;
         if (clearedCurrent && waveRevived) {
-            for (const auto& member : wave_.members) {
+            for (const auto& member : room.members) {
                 if (isStanding(world, member.player)) continue;
                 waveRevived(member.player);
-                moveToRealm(member.player, wave_.realm, centre);
+                moveToRealm(member.player, room.realm, centre);
             }
         }
     }
 
-    if (wave_.rounds.empty()) return;
-    auto& round = wave_.rounds.back();
+    if (room.rounds.empty()) return;
+    auto& round = room.rounds.back();
     const int liveLimit = 48 + (players - 1) * 8;
-    if (round.queued == round.size || nowMillis < wave_.nextBatchMillis ||
+    if (round.queued == round.size || nowMillis < room.nextBatchMillis ||
         liveEnemies >= liveLimit || spawning.census().mobs >= spawning.mobCap) return;
-    wave_.nextBatchMillis = nowMillis + kWaveBatchMillis;
+    room.nextBatchMillis = nowMillis + kWaveBatchMillis;
 
     constexpr Rarity tiers[] = {Rarity::Rare, Rarity::Epic, Rarity::Legendary, Rarity::Mythic, Rarity::Ultra};
     const auto tier = tiers[std::min<std::uint64_t>(round.number - 1, 4)];
@@ -575,7 +616,7 @@ void DungeonSystem::runWave(World& world, const Terrain& terrain, const ContentR
     const double lateProgress = round.number > 10
         ? static_cast<double>(std::min<std::uint64_t>(round.number - 10, 20)) : 0.0;
     const auto theme = waveTheme(round.number);
-    const double elapsed = nowMillis - (wave_.readyAtMillis - kWaveRoundMillis);
+    const double elapsed = nowMillis - (room.readyAtMillis - kWaveRoundMillis);
     // Legacy Florr's waves build to a surge. The themed rounds put more of
     // their budget in each pack, while the Eternal and Hyper waves are solo bosses.
     const int batchSize = waveBonusMob(theme) ? waveSwarmBatch(elapsed) :
@@ -585,7 +626,7 @@ void DungeonSystem::runWave(World& world, const Terrain& terrain, const ContentR
     const char* rewardMob = waveBonusMob(theme);
     std::array<Vec2, kWaveMaxPlayers> anchors{};
     int standing = 0;
-    for (const auto& member : wave_.members) {
+    for (const auto& member : room.members) {
         if (isStanding(world, member.player))
             anchors[standing++] = world.get<Transform>(member.player).position;
     }
@@ -596,7 +637,7 @@ void DungeonSystem::runWave(World& world, const Terrain& terrain, const ContentR
     Query<PlantedMeteor, Transform, Body> planted{world};
     planted.without<Dead>();
     planted.each([&](Entity, PlantedMeteor&, Transform& at, Body& body) {
-        if (at.realm == wave_.realm)
+        if (at.realm == room.realm)
             meteors.emplace_back(at.position, sanitizeCollisionRadius(body.radius));
     });
     // Keep the average number of drop rolls per clear as the pack grows.
@@ -632,7 +673,7 @@ void DungeonSystem::runWave(World& world, const Terrain& terrain, const ContentR
             const int lane = index % lanes;
             const double angle = heading + kTau * (index / lanes + lane * 0.5) / sectors;
             const Vec2 at = anchor + Vec2::fromAngle(angle, inner + lane * step);
-            const auto wall = terrain.resolveWall(at, radius, wave_.realm);
+            const auto wall = terrain.resolveWall(at, radius, room.realm);
             if (wall.collided || wall.unresolved) continue;
             if (std::any_of(meteors.begin(), meteors.end(), [&](const auto& meteor) {
                     const double reach = radius + meteor.second;
@@ -641,13 +682,13 @@ void DungeonSystem::runWave(World& world, const Terrain& terrain, const ContentR
             const auto tooClose = [&](Entity other, double gap) {
                 const auto* transform = world.tryGet<Transform>(other);
                 const auto* body = world.tryGet<Body>(other);
-                if (!transform || !body || transform->realm != wave_.realm) return false;
+                if (!transform || !body || transform->realm != room.realm) return false;
                 const double reach = radius + body->radius + gap;
                 return distanceSq(transform->position, at) < reach * reach;
             };
-            if (std::any_of(wave_.members.begin(), wave_.members.end(),
+            if (std::any_of(room.members.begin(), room.members.end(),
                             [&](const auto& member) { return tooClose(member.player, 150.0); }) ||
-                std::any_of(wave_.rounds.begin(), wave_.rounds.end(), [&](const auto& active) {
+                std::any_of(room.rounds.begin(), room.rounds.end(), [&](const auto& active) {
                     return std::any_of(active.enemies.begin(), active.enemies.end(),
                                        [&](Entity e) { return tooClose(e, 20.0); });
                 })) continue;
@@ -656,7 +697,7 @@ void DungeonSystem::runWave(World& world, const Terrain& terrain, const ContentR
         }
         if (!position) break;
         const Entity enemy = spawning.spawnMob(world, terrain, content, type, rarity, *position,
-                                                wave_.realm, nowMillis, rng,
+                                                room.realm, nowMillis, rng,
                                                 SpawnSystem::MobSpawnScope::Wave);
         if (enemy == NULL_ENTITY) break;
         // Keep the standard hit ledger to check participation in this wave.
@@ -705,7 +746,8 @@ void DungeonSystem::run(World& world, const Terrain& terrain, const ContentRegis
                         SpawnSystem& spawning, CombatSystem& combat, Rng& rng, double nowMillis,
                         CommandBuffer& commands) {
     if (!indexed_) index(content);
-    runWave(world, terrain, content, spawning, rng, nowMillis, commands);
+    for (auto& room : waveRooms_)
+        runWave(room, world, terrain, content, spawning, rng, nowMillis, commands);
     if (instances_.empty()) return;
 
     // --- who is standing on a nest -----------------------------------------

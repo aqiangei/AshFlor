@@ -663,8 +663,8 @@
     "damage": 25,
     "size": 1.562,
     "visual_scale": 0.9603,
-    "speed": 0.1,
-    "chase_speed": 0.3,
+    "speed": 0.14,
+    "chase_speed": 0.38,
     "cooldown": 2000,
     "xp": {
       "common": 2,
@@ -1701,18 +1701,9 @@
       [
         "glitch",
         "glitch",
-        "glitch",
         "glitch_flower"
       ],
       [
-        "glitch",
-        "glitch",
-        "glitch",
-        "glitch",
-        "glitch_flower"
-      ],
-      [
-        "glitch",
         "glitch",
         "glitch",
         "glitch",
@@ -1722,18 +1713,9 @@
         "glitch",
         "glitch",
         "glitch",
-        "glitch",
         "glitch_flower"
       ],
       [
-        "glitch",
-        "glitch",
-        "glitch",
-        "glitch",
-        "glitch_flower"
-      ],
-      [
-        "glitch",
         "glitch",
         "glitch",
         "glitch",
@@ -1743,17 +1725,25 @@
         "glitch",
         "glitch",
         "glitch",
+        "glitch_flower"
+      ],
+      [
+        "glitch",
+        "glitch",
         "glitch",
         "glitch_flower"
       ],
       [
         "glitch",
         "glitch",
+        "glitch",
         "glitch_flower"
       ],
       [
         "glitch",
-        "glitch",
+        "glitch_flower"
+      ],
+      [
         "glitch",
         "glitch",
         "glitch",
@@ -2721,7 +2711,7 @@
     "damage": 10,
     "health": 85,
     "size": 0.7666666666666667,
-    "speed": 0.1,
+    "speed": 0.16,
     "chase_speed": 0.1,
     "cooldown": 2000,
     "xp": {
@@ -2878,8 +2868,8 @@
     "damage": 10,
     "health": 85,
     "size": 0.7666666666666667,
-    "speed": 0.1,
-    "chase_speed": 0.1,
+    "speed": 0.16,
+    "chase_speed": 0.26,
     "cooldown": 2000,
     "xp": {
       "common": 1,
@@ -5219,6 +5209,7 @@
     "color": "#a0d5db",
     "ai_type": "hostile",
     "gardn_ai": true,
+    "stinger": true,
     "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"382.5\" height=\"382.5\" viewBox=\"0 0 382.5 382.5\" data-motion=\"walk\"><defs><clipPath id=\"k0\"><path d=\"M640 512C640 556.2 582.7 592 512 592C441.3 592 384 556.2 384 512C384 467.8 441.3 432 512 432C582.7 432 640 467.8 640 512\"/></clipPath></defs><g transform=\"matrix(0.78125 0 0 0.78125 -208.75 -208.75)\"><g><animateTransform attributeName=\"transform\" type=\"rotate\" values=\"0 512 512;4 512 512;0 512 512;-4 512 512;0 512 512\" dur=\"6.2832s\" repeatCount=\"indefinite\"/><path d=\"M288 512Q298.1 508.6 308.2 505.2Q317.8 500.2 328.4 498.4Q339.6 498.3 348.7 491.6Q357.1 483.4 368.9 484.8Q381.2 487.9 389.1 478Q396.5 466.6 409.3 471.2L409.3 552.8Q402.5 539.6 389.1 546Q376.3 550.6 368.9 539.2Q361 529.3 348.7 532.4Q336.9 533.8 328.4 525.6Q319.4 519 308.2 518.8Q297.6 517 288 512L288 512\" fill=\"none\" stroke=\"#5fb1bf\" stroke-width=\"25.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/><path d=\"M288 512Q298.1 508.6 308.2 505.2Q317.8 500.2 328.4 498.4Q339.6 498.3 348.7 491.6Q357.1 483.4 368.9 484.8Q381.2 487.9 389.1 478Q396.5 466.6 409.3 471.2L409.3 552.8Q402.5 539.6 389.1 546Q376.3 550.6 368.9 539.2Q361 529.3 348.7 532.4Q336.9 533.8 328.4 525.6Q319.4 519 308.2 518.8Q297.6 517 288 512L288 512\" fill=\"#8ad3e3\"/><path d=\"M640 512C640 556.2 582.7 592 512 592C441.3 592 384 556.2 384 512C384 467.8 441.3 432 512 432C582.7 432 640 467.8 640 512\" fill=\"none\" stroke=\"#5fb1bf\" stroke-width=\"44.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/><path d=\"M640 512C640 556.2 582.7 592 512 592C441.3 592 384 556.2 384 512C384 467.8 441.3 432 512 432C582.7 432 640 467.8 640 512\" fill=\"#8ad3e3\"/><g clip-path=\"url(#k0)\"><path d=\"M409.6 352L409.6 672M489.6 352L489.6 672M569.6 352L569.6 672\" fill=\"none\" stroke=\"#acf1ff\" stroke-width=\"48\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></g><path d=\"M614.4 486.4Q678.4 486.4 742.4 438.4Q702.4 462.4 614.4 486.4M614.4 537.6Q678.4 537.6 742.4 585.6Q702.4 561.6 614.4 537.6\" fill=\"none\" stroke=\"#1a3339\" stroke-width=\"19.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></g></g></svg>",
     "projectile": {
       "count": 1,

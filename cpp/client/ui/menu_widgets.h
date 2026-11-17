@@ -31,7 +31,7 @@
 #include "shared/game/skills.h"
 #include "shared/net/protocol.h"
 
-namespace flix { struct EquippedPetal; }
+namespace flix { struct EquippedPetal; struct Profile; }
 
 namespace flix::ui {
 
@@ -116,6 +116,8 @@ struct TooltipLine {
 /// paint pass is given, or the box and its contents disagree.
 Vec2 measureTooltip(const std::vector<TooltipLine>&, double minWidth = 0, double extraHeight = 0,
                     bool alt = false);
+
+void showTimedHammerExpiry(std::vector<TooltipLine>& lines, const Profile& profile, int slot);
 
 /// Paints the box with its top-left at (x, y) and returns the content rect, so
 /// a caller can draw a drop table into the space `extraHeight` reserved.

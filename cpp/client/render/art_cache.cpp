@@ -15,9 +15,10 @@ namespace flix {
 
 namespace {
 
-/// A tile smaller than this is not worth a texture: the path work it saves is
-/// less than the blit costs to set up.
-constexpr int kMinSide = 8;
+/// At maximum antenna range, repeated terrain tiles can be only a few pixels
+/// wide. Cache those too so that range does not turn each tile into an SVG draw.
+constexpr int kMinArtSide = 2;
+constexpr int kMinPictureSide = 8;
 /// One bitmap's limit. The ground tile is 400 units at up to a 2x display
 /// scale and a 1.6x zoom, so ~1300 is the real ceiling; this leaves room and
 /// refuses anything that would be a surprise allocation.
@@ -109,6 +110,7 @@ namespace {
 /// unturned box.
 bool drawCached(Canvas& canvas, const void* owner, std::uint64_t variant, double x, double y,
                 double w, double h, bool snapToDevice, bool quarterTurns,
+                int minimumSide,
                 const std::function<void(Canvas&, int, int)>& paint) {
     if (!(w > 0.0) || !(h > 0.0)) return false;
     // A colour tint (a hit flash) is applied as the styles are set, and a blit
@@ -159,7 +161,7 @@ bool drawCached(Canvas& canvas, const void* owner, std::uint64_t variant, double
         phaseX = std::min(std::max(phaseX, 0), kPhaseBuckets - 1);
         phaseY = std::min(std::max(phaseY, 0), kPhaseBuckets - 1);
     }
-    if (bakeW < kMinSide || bakeH < kMinSide || bakeW > kMaxSide || bakeH > kMaxSide) {
+    if (bakeW < minimumSide || bakeH < minimumSide || bakeW > kMaxSide || bakeH > kMaxSide) {
         return false;
     }
 
@@ -231,7 +233,7 @@ bool drawCachedArt(Canvas& canvas, const SvgDocument& art, double x, double y, d
     if (art.animated()) return false;
     bool rendered = true;
     const bool drawn = drawCached(canvas, &art, 0, x, y, w, h, /*snapToDevice=*/false,
-                                  /*quarterTurns=*/true, [&](Canvas& bitmap, int bw, int bh) {
+                                  /*quarterTurns=*/true, kMinArtSide, [&](Canvas& bitmap, int bw, int bh) {
                                       rendered = art.renderFitted(bitmap, 0.0f, 0.0f,
                                                                   static_cast<float>(bw),
                                                                   static_cast<float>(bh), 0.0f);
@@ -243,7 +245,7 @@ bool drawCachedPicture(Canvas& canvas, const void* owner, std::uint64_t variant,
                        double y, double w, double h,
                        const std::function<void(Canvas&)>& paint) {
     return drawCached(canvas, owner, variant, x, y, w, h, /*snapToDevice=*/true,
-                      /*quarterTurns=*/false, [&](Canvas& bitmap, int bw, int bh) {
+                      /*quarterTurns=*/false, kMinPictureSide, [&](Canvas& bitmap, int bw, int bh) {
         // The callback draws in the BOX's user space, so the device scale the
         // bake was sized at goes on first.
         bitmap.save();

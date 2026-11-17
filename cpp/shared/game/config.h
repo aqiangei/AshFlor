@@ -489,6 +489,11 @@ struct RadiationSpec {
 inline constexpr double kAdditionalBulbAggroScale = 0.20;
 inline constexpr double kAdditionalBulbAggroCap = 0.30;
 
+/// Convert a share of the working Bulbs' existing notice bonus into pet reach.
+inline double bulbSummonTargetRangeScale(double bulbBonus) {
+    return 1.0 + std::clamp(0.08 * bulbBonus, 0.0, 0.20);
+}
+
 struct PetalModifiers {
     // Multiplicative, neutral at 1.0.
     double maxHealth = 1.0;
@@ -1275,6 +1280,8 @@ struct PetalStats {
     double passiveManaPerSecond = 0;
     /// What one spawn of this petal costs, this tier. See PetalConfig.
     double requiredMana = 0;
+    double summonRangeBonus = 0;
+    double passiveManaDrain = 0;
     /// What one timed summon costs, this tier. See PetalConfig::petManaCost.
     double petManaCost = 0;
     double knockback = 0;
@@ -1341,6 +1348,20 @@ inline double petalContactDamage(const PetalConfig& config, const PetalStats& st
         ? stats.lightningDamagePerHit : stats.damage;
     return config.id == "magic_peas" && ladderIndex(rarity) >= rarityIndex(Rarity::Unique)
         ? damage * 0.75 : damage;
+}
+
+inline double uraniumRadiationDps(const PetalStats& stats, Rarity rarity) {
+    return stats.damage * (isHyperPetal(rarity) ? 1.50 : 1.20);
+}
+
+inline double baseRadiationRadius(const PetalConfig& config, Rarity rarity) {
+    const double highTierStep = config.id == "arctic_plutonium" ? 200.0 :
+                                config.id == "arctic_corium" ? 150.0 : 0.0;
+    return config.radiation.radius + highTierStep * std::max(0, ladderIndex(rarity) - 7);
+}
+
+inline double bloodPoolRadius(Rarity rarity) {
+    return (32.0 + 7.0 * ladderIndex(rarity)) * 1.15;
 }
 
 /// Whether this petal DOES something when its slot is clicked on the bar.
@@ -1461,6 +1482,7 @@ inline bool petalBoostsHealing(const PetalConfig& config) { return config.id == 
 /// A golden leaf shortens the reload of every petal on its bar -- florr's
 /// "seems to allow you to use your other petals even more", and its tooltip's
 /// "Reload: -X%". Its own and other golden leaves' too (user's rule).
+inline constexpr double kMagicGoldenLeafReloadShare = 0.65;
 inline bool petalCutsReload(const PetalConfig& config) { return config.id == "golden_leaf" || config.id == "magic_golden_leaf"; }
 
 /// A disc blunts the collisions its flower takes -- florr's "Reduces damage
@@ -1512,7 +1534,23 @@ inline constexpr double soapSpillRadiusBonus(Rarity rarity) {
 /// Summons eligible for the Duplicator talent's extra copies.
 inline bool summonUsesDuplicator(const PetalConfig& config) {
     return config.id == "egg" || config.id == "beetle_egg" || config.id == "void_momy_egg" ||
-           config.id == "jurassic_ankylosaurus_egg" || config.id == "arctic_ice_dragon_egg";
+           config.id == "bio_cancer_egg" ||
+           config.id == "void_zatan_egg" || config.id == "jurassic_ankylosaurus_egg" ||
+           config.id == "arctic_ice_dragon_egg";
+}
+
+inline int summonSquadSize(int count, Rarity rarity) {
+    return std::max(0, count) * (ladderRarity(rarity) == Rarity::Apex ? 3 : 1);
+}
+
+/// Nominal brood size before local placement or the global pet cap.
+inline int configuredSummonCount(const PetalConfig& config, Rarity rarity,
+                                 const SkillSet* skills, int slot) {
+    if (config.petLifetimeMillis > 0.0) return summonSquadSize(config.petCount, rarity);
+    const int copies = summonUsesDuplicator(config)
+        ? petalCopies(config.petCount, skills, slot, petalTier(rarity), config.stackable)
+        : config.petCount;
+    return config.petSummonTiers ? copies : summonSquadSize(copies, rarity);
 }
 
 /// Ice dragons follow the egg's gameplay rarity, including the Apex tier
@@ -1531,6 +1569,7 @@ inline Rarity configuredSummonRarity(const PetalConfig& config, Rarity rarity) {
 /// The shell itself is a one-hit body with no contact damage; the summons are
 /// the egg's worth, so every egg's hatchlings get the bigger pool below.
 inline double eggSummonHealthScale(const PetalConfig& config) {
+    if (config.id == "void_zatan_egg") return 2.5 * 0.70;
     return petalIsEgg(config) ? 2.5 : 1.0;
 }
 /// And both halves of the summons' combat worth, pool and bite, climb together:
@@ -1962,17 +2001,20 @@ inline double triangleBonusDamage(Rarity rarity, const TriangleCounts& counts) {
 /// the server sizes every reload by it and the client sweeps the bar's wedge
 /// by it.
 template <class EquippedAt>
-double barReloadCut(const ContentRegistry& registry, EquippedAt&& equippedAt, const SkillSet* skills = nullptr) {
+double barReloadCut(const ContentRegistry& registry, EquippedAt&& equippedAt,
+                    const SkillSet* skills = nullptr, bool magicMana = false) {
     double cut = 0.0;
     bool adminLeaf = false;
     for (int i = 0; i < kLoadoutActiveSlots; ++i) {
         const EquippedPetal petal = equippedAt(i);
         if (petal.empty() || !petalCutsReload(registry.petal(petal.configIndex))) continue;
-        adminLeaf = adminLeaf || petal.rarity == Rarity::Admin;
         const auto& config = registry.petal(petal.configIndex);
+        if (magicMana && config.id != "magic_golden_leaf") continue;
+        adminLeaf = adminLeaf || petal.rarity == Rarity::Admin;
         const int copies = petalCopies(1, skills, i, petalTier(petal.rarity), config.stackable);
-        cut = 1.0 - (1.0 - cut) * std::pow(
-            1.0 - registry.petalStats(petal.configIndex, petal.rarity).reloadCut, copies);
+        double singleCut = registry.petalStats(petal.configIndex, petal.rarity).reloadCut;
+        if (magicMana) singleCut /= kMagicGoldenLeafReloadShare;
+        cut = 1.0 - (1.0 - cut) * std::pow(1.0 - singleCut, copies);
     }
     // Admin petals already reload twice as fast. Their leaves share a
     // ceiling so stacking them cannot erase the remaining cooldown.

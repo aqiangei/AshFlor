@@ -358,6 +358,7 @@ inline constexpr double kTargetMobDensity = 9000.0 / (kSpawnReferenceWidth * kSp
 /// difficulty-200 band is full of supers by design -- so this is a property of
 /// the spawn that happened rather than of a scheduler.
 inline constexpr Rarity kAnnouncedRarity = Rarity::Unique;
+inline constexpr Rarity kAnnouncedGhostRarity = Rarity::Apex; // The player-facing Hyper tier.
 
 /// The two tiers above super are not band difficulty's to hand out: a band's
 /// roll stops at super, and a wild unique or apex is a super spawn that a
@@ -456,6 +457,7 @@ public:
         /// a giant flower keeps every spawn the same visible distance away as
         /// a small one rather than having them appear inside it.
         double radius = kPlayerBaseRadius;
+        Vec2 viewportCentre;
     };
 
     /// The live-mob ceiling this pass will not spawn past.
@@ -798,7 +800,7 @@ private:
     /// it. The list stays the caller's -- it decides WHO the population is
     /// kept awake for -- and this only fills in what a bare coordinate cannot
     /// say.
-    void gatherViewers(World& world, const std::vector<RealmPoint>& players);
+    void gatherViewers(World& world, const Terrain& terrain, const std::vector<RealmPoint>& players);
 
     /// Counts what is alive, refreshes every mob's "last seen by somebody"
     /// stamp, and puts the ones nobody has been near for the grace period back

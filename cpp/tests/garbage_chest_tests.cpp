@@ -8,7 +8,7 @@
 using namespace flix;
 namespace {
 const ContentRegistry& garbageRegistry(){static ContentRegistry c;static bool loaded=false;if(!loaded){std::string e;CHECK(c.load(testsupport::dataDir(),e));loaded=true;}return c;}
-struct GarbageKill {std::vector<GarbagePetal> visible;std::vector<std::map<std::uint16_t,unsigned>> loot;unsigned entities=0;};
+struct GarbageKill {std::vector<GarbagePetal> visible;std::vector<std::map<std::uint16_t,unsigned>> loot;unsigned entities=0;std::set<Rarity> squareRarities;};
 GarbageKill openBag(const ContentRegistry& c,Rarity rarity,std::uint32_t seed,int people=1,int bonus=1,bool orb=false){
     World w;CommandBuffer commands{w};EventQueue events;SpatialGrid grid;Rng rng{713+seed};LootSystem loot;loot.bonusMultiplier=[bonus](Entity){return bonus;};
     std::vector<Entity> players;
@@ -17,7 +17,8 @@ GarbageKill openBag(const ContentRegistry& c,Rarity rarity,std::uint32_t seed,in
     Bounty bounty;for(auto p:players)bounty.credit(p,100);w.add<Bounty>(corpse,bounty);w.add<Dead>(corpse,Dead{players.front()});
     GarbageKill result;result.visible=garbageContents(garbageEligiblePetals(c,rarity),seed,at,&c);result.loot.resize(players.size());
     loot.run(w,grid,c,rng,1000,0,commands,events);commands.flush();
-    auto gather=[&](){std::vector<std::map<std::uint16_t,unsigned>> found(players.size());Query<DropTag,DropItem> drops{w};result.entities=0;drops.each([&](Entity,DropTag&,DropItem& item){++result.entities;CHECK(petalComesAt(c.petal(item.configIndex),item.rarity));CHECK(!c.petal(item.configIndex).isAdminPetal);for(std::size_t i=0;i<players.size();++i)if(LootSystem::mayPickUp(item,players[i],0))found[i][item.configIndex]+=item.quantity;});return found;};
+    const auto square = c.petalIndex("square");
+    auto gather=[&](){std::vector<std::map<std::uint16_t,unsigned>> found(players.size());Query<DropTag,DropItem> drops{w};result.entities=0;drops.each([&](Entity,DropTag&,DropItem& item){++result.entities;CHECK(petalComesAt(c.petal(item.configIndex),item.rarity));CHECK(!c.petal(item.configIndex).isAdminPetal);if(item.configIndex==square)result.squareRarities.insert(item.rarity);for(std::size_t i=0;i<players.size();++i)if(LootSystem::mayPickUp(item,players[i],0))found[i][item.configIndex]+=item.quantity;});return found;};
     result.loot=gather();loot.run(w,grid,c,rng,1100,0,commands,events);commands.flush();CHECK(gather()==result.loot);
     return result;
 }
@@ -104,6 +105,24 @@ TEST(garbage_every_visible_type_drops_and_no_hidden_types_appear_with_or_without
 TEST(garbage_bonus_adds_trials_without_changing_preview_or_removing_guarantees){
     const auto& c=garbageRegistry();
     for(const auto rarity:{Rarity::Ultra,Rarity::Super}){const auto base=openBag(c,rarity,271,1,1),bonus=openBag(c,rarity,271,1,3);unsigned a=0,b=0;CHECK_EQ(base.visible.size(),bonus.visible.size());for(std::size_t i=0;i<base.visible.size();++i)CHECK_EQ(base.visible[i].index,bonus.visible[i].index);for(const auto&[id,n]:base.loot[0])a+=n;for(const auto&[id,n]:bonus.loot[0])b+=n;CHECK(b>a);}
+}
+TEST(garbage_squares_drop_only_as_common_when_visible) {
+    const auto& content = garbageRegistry();
+    const auto square = content.petalIndex("square");
+    for (const auto rarity : {Rarity::Super, Rarity::Unique, Rarity::Apex, Rarity::Ascendant}) {
+        const auto pool = garbageEligiblePetals(content, rarity);
+        std::uint32_t seed = 1;
+        for (; seed <= 1000; ++seed) {
+            const auto visible = garbageContents(pool, seed, {1000, 1000}, &content);
+            if (std::any_of(visible.begin(), visible.end(), [square](const auto& item) {
+                return item.index == square;
+            })) break;
+        }
+        CHECK(seed <= 1000);
+        const auto result = openBag(content, rarity, seed, 2, 3);
+        CHECK(result.squareRarities == std::set{Rarity::Common});
+        for (const auto& items : result.loot) CHECK(items.count(square) == 1);
+    }
 }
 TEST(garbage_guarantee_pays_each_type_when_all_normal_trials_miss){
     const auto dir=std::filesystem::temp_directory_path()/"florr-garbage-guarantee";std::filesystem::create_directories(dir);

@@ -89,6 +89,21 @@ inline void sharePracticeScore(Database& db, const std::string& userId, std::uin
     }
 }
 
+inline void deletePracticeScore(Database& db, const std::string& userId, std::uint32_t id) {
+    if (id == 0) return;
+    const auto* record = db.findProgress(userId);
+    if (!record) return;
+    const auto& own = record->extra["practiceRecords"]["rows"].items();
+    const auto found = std::find_if(own.begin(), own.end(), [id](const Json& row) {
+        return row["id"].asDouble() == id;
+    });
+    if (found == own.end()) return;
+    const auto index = found - own.begin();
+    auto& rows = db.progress(userId).extra["practiceRecords"]["rows"].items();
+    rows.erase(rows.begin() + index);
+    db.markDirty();
+}
+
 inline Json practiceBoardView(const Database& db, const std::string& viewer, bool includeAdmins) {
     Json result = Json::object();
     result["own"] = Json::array();

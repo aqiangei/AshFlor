@@ -182,6 +182,48 @@ TEST(a_slot_the_content_does_not_know_is_skipped) {
     CHECK_NEAR(zoomOf(p), 0.92, 1e-12);
 }
 
+TEST(map_edge_camera_stops_at_each_edge_and_keeps_pointer_coordinates_aligned) {
+    Camera camera;
+    camera.setViewport(1200, 600);
+    camera.setWorldExtent({3000, 2000});
+    for (const auto flower : {Vec2{25, 25}, Vec2{2975, 25}, Vec2{25, 1975}, Vec2{2975, 1975}}) {
+        camera.snapTo(flower);
+        const Rect view = camera.visibleWorld();
+        CHECK(view.left() >= 0);
+        CHECK(view.top() >= 0);
+        CHECK(view.right() <= 3000);
+        CHECK(view.bottom() <= 2000);
+        const Vec2 onScreen = camera.worldToScreen(flower);
+        CHECK_NEAR(onScreen.x, flower.x < 1500 ? 25.0 : 1175.0, 1e-9);
+        CHECK_NEAR(onScreen.y, flower.y < 1000 ? 25.0 : 575.0, 1e-9);
+        CHECK(camera.screenToWorld(onScreen) == flower);
+    }
+    camera.snapTo({1500, 1000});
+    CHECK(camera.worldToScreen({1500, 1000}) == Vec2(600, 300));
+    camera.setWorldExtent({});
+    camera.snapTo({25, 25});
+    CHECK(camera.worldToScreen({25, 25}) == Vec2(600, 300));
+}
+
+TEST(map_edge_camera_fills_the_view_when_the_map_is_smaller_than_the_requested_view) {
+    Camera camera;
+    camera.setViewport(950, 380, 1.25);
+    camera.setWorldExtent({600, 520});
+    camera.loadoutZoom = 0.10;
+    camera.snapTo({580, 510});
+    CHECK_NEAR(camera.visibleWorld().left(), 0.0, 1e-9);
+    CHECK_NEAR(camera.visibleWorld().right(), 600.0, 1e-9);
+    CHECK_NEAR(camera.visibleWorld().bottom(), 520.0, 1e-9);
+    CHECK_NEAR(camera.zoom(), 950.0 / 600.0, 1e-9);
+
+    camera.setViewport(380, 950, 1.25);
+    camera.snapTo({20, 10});
+    CHECK_NEAR(camera.visibleWorld().left(), 0.0, 1e-9);
+    CHECK_NEAR(camera.visibleWorld().top(), 0.0, 1e-9);
+    CHECK_NEAR(camera.visibleWorld().bottom(), 520.0, 1e-9);
+    CHECK_NEAR(camera.zoom(), 950.0 / 520.0, 1e-9);
+}
+
 TEST(the_camera_multiplies_the_setting_by_what_the_loadout_asks) {
     Camera camera;
     camera.setViewport(1920, 1080);
