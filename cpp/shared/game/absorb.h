@@ -7,8 +7,8 @@
 //
 // The curve is sized for this game's levels. Low-tier duplicates always grant
 // at least one XP, including a new player's first Common. Upper tiers remain
-// useful to veterans, but even with the top Absorption talent M/U/S/E
-// each pay less than a same-tier Ladybug kill.
+// useful to veterans. Eternal gets a separate premium because absorbing
+// permanently spends a rare holding.
 // Every account uses the same table; account age and level never devalue stock.
 
 #include <cmath>
@@ -25,7 +25,7 @@ namespace flix {
 inline constexpr const char* kUnabsorbablePetalId = "basic";
 
 /// Common through Eternal. The craftable permanent tiers have separate values.
-inline constexpr double kAbsorbXpByTier[] = {1, 4, 16, 80, 500, 3000, 18500, 140000, 840000};
+inline constexpr double kAbsorbXpByTier[] = {1, 4, 16, 80, 500, 3000, 18500, 140000, 1200000};
 
 /// How many petal stacks one Absorb request may name. More than a grid holds:
 /// a type at every ladder tier for every petal there is.

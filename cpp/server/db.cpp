@@ -1,4 +1,5 @@
 #include "server/db.h"
+#include "shared/game/wave.h"
 #include "shared/game/daily_streak.h"
 #include "server/hyper_history.h"
 #include "server/timed_hammers.h"
@@ -2374,10 +2375,6 @@ PlayerRecord& Database::progress(const std::string& userId) {
 
 const PlayerRecord* Database::findProgress(const std::string& userId) const {
     return players_.find(userId);
-}
-
-namespace {
-constexpr int kWaveDailyStarCap = 150000;
 }
 
 bool Database::waveDailyStarCapReached(const std::string& userId) const {

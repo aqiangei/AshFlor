@@ -3159,6 +3159,30 @@ TEST(a_berry_reloads_on_its_own_short_cooldown_when_the_pool_can_pay) {
     CHECK(rig.world.get<ManaPool>(rig.player).current <= 100.0 - 40.0 + 1e-9);
 }
 
+TEST(bubbles_only_pop_from_defend_when_attack_is_released) {
+    if (!contentLoaded()) return;
+    for (const char* id : {"bubble", "magic_bubble"}) {
+        Rig rig;
+        rig.equip(0, "vessel");
+        rig.equip(1, id);
+        rig.settleEquips();
+        rig.setMove(0.0);
+        rig.setFlags(0);
+        rig.tick(3);
+        CHECK_EQ(rig.petals(1).size(), std::size_t(1));
+        rig.setFlags(net::InputAttack);
+        rig.tick(3);
+        CHECK_EQ(rig.petals(1).size(), std::size_t(1));
+        rig.setFlags(net::InputAttack | net::InputDefend);
+        rig.tick(3);
+        CHECK_EQ(rig.petals(1).size(), std::size_t(1));
+        CHECK_NEAR(rig.velocity(rig.player).length(), 0.0, 1e-9);
+        rig.setFlags(net::InputDefend);
+        rig.tick();
+        CHECK(rig.velocity(rig.player).length() > 1.0);
+    }
+}
+
 TEST(a_magic_bubble_is_paid_for_when_it_spawns_not_when_it_pops) {
     if (!contentLoaded()) return;
     Rig rig;
@@ -5201,6 +5225,29 @@ TEST(a_mirror_turns_a_missile_back_on_its_shooter_up_to_one_tier_above_it) {
     }
 }
 
+TEST(feedback_3625_ant_eggs_hatch_their_own_rarity_in_either_slot_order) {
+    if (!contentLoaded()) return;
+    const auto& registry = testsupport::shippedContent();
+    const auto ant = registry.mobIndex("soldier_ant");
+    for (const Rarity first : {Rarity::Super, Rarity::Unique}) {
+        const Rarity second = first == Rarity::Super ? Rarity::Unique : Rarity::Super;
+        Rig rig(registry);
+        rig.equip(0, "egg", first);
+        rig.equip(1, "egg", second);
+        CHECK(rig.tickUntil([&] { return rig.petCount() >= 8; }, 4000));
+        int slots[2] = {};
+        Query<Pet, MobType>{rig.world}.each([&](Entity, Pet& pet, MobType& mob) {
+            if (pet.owner != rig.player || mob.configIndex != ant) return;
+            CHECK(pet.slot < 2);
+            if (pet.slot >= 2) return;
+            ++slots[pet.slot];
+            CHECK(mob.rarity == (pet.slot == 0 ? first : second));
+        });
+        CHECK_EQ(slots[0], 4);
+        CHECK_EQ(slots[1], 4);
+    }
+}
+
 TEST(a_hatched_black_or_white_hole_does_not_give_to_a_shove) {
     if (!contentLoaded()) return;
     // Movement reads what anchors a mob off the process-wide registry.
@@ -6761,6 +6808,130 @@ TEST(magic_eye_is_worn_without_spawning_an_orbit_petal) {
              (EquipMagicEye | EquipThirdEye), EquipThirdEye);
 }
 
+TEST(large_black_hole_egg_hatches_in_a_corridor_crowded_by_moving_crabs) {
+    const auto& registry = testsupport::shippedContent();
+    const auto crab = registry.mobIndex("crab");
+    CHECK(registry.mob(crab).speed != 0.0);
+    for (const bool crowded : {false, true}) {
+        Rig rig(registry);
+        rig.useHatchTerrain = true;
+        constexpr int row = 10;
+        for (int col = 0; col < rig.terrain.tileCols(); ++col) {
+            rig.terrain.setTile(col, row - 1, Tile::Solid);
+            rig.terrain.setTile(col, row + 1, Tile::Solid);
+            if (col < 9 || col > 11) rig.terrain.setTile(col, row, Tile::Solid);
+        }
+        const Vec2 owner{10.5 * kTileSize, (row + 0.5) * kTileSize};
+        rig.world.get<Transform>(rig.player).position = owner;
+        if (crowded) {
+            for (const double offset : {-340.0, -170.0, 0.0, 170.0, 340.0}) {
+                const Entity blocker = addMob(rig, owner + Vec2{offset, 0}, "crab");
+                rig.world.add<Motion>(blocker, Motion{Vec2{40, 0}});
+                rig.world.get<Body>(blocker).radius = 180.0;
+            }
+        }
+        rig.equip(0, "void_black_hole_egg", Rarity::Unique);
+        const bool hatched = rig.tickUntil([&] { return rig.petCount() == 1; }, 1500);
+        CHECK(hatched);
+        Query<Pet, Transform, Body, MobType>{rig.world}.each(
+            [&](Entity, Pet& pet, Transform& at, Body& body, MobType& type) {
+                CHECK_EQ(pet.owner, rig.player);
+                CHECK_EQ(type.configIndex, registry.mobIndex("void_black_hole"));
+                CHECK(body.radius > 0.5 * kTileSize);
+                CHECK(!rig.terrain.segmentBlocked(owner, at.position, at.realm));
+                CHECK(!rig.terrain.resolveWall(at.position, kMobWallRadius, at.realm).collided);
+            });
+    }
+}
+
+TEST(large_black_hole_egg_still_needs_room_away_from_a_fixed_summon) {
+    const auto& registry = testsupport::shippedContent();
+    Rig rig(registry);
+    rig.useHatchTerrain = true;
+    constexpr int col = 10, row = 10;
+    for (int dy = -1; dy <= 1; ++dy) {
+        for (int dx = -1; dx <= 1; ++dx) {
+            if (dx != 0 || dy != 0) rig.terrain.setTile(col + dx, row + dy, Tile::Solid);
+        }
+    }
+    const Vec2 owner{(col + 0.5) * kTileSize, (row + 0.5) * kTileSize};
+    rig.world.get<Transform>(rig.player).position = owner;
+    const Entity whiteHole = addMob(rig, owner + Vec2{90, 0}, "void_white_hole");
+    rig.world.add<Pet>(whiteHole);
+    rig.world.add<Motion>(whiteHole);
+    rig.world.get<Body>(whiteHole).radius = 145.0;
+    CHECK(anchoredAgainstKnockback(rig.world, registry, whiteHole));
+
+    rig.equip(0, "void_black_hole_egg", Rarity::Unique);
+    rig.tick(1500);
+    CHECK_EQ(rig.petCount(), std::size_t(1));
+    CHECK_NEAR(distance(rig.position(whiteHole), owner + Vec2{90, 0}), 0.0, 1e-9);
+}
+
+TEST(hyper_sticks_can_summon_a_sandstorm_inside_a_wall_bounded_pocket) {
+    const auto& registry = testsupport::shippedContent();
+    const auto dir = testsupport::tempDir("flix-sandstorm-pocket");
+    const auto path = dir + "/pocket.tmj";
+    // An authored tile with eight wall shapes surrounding a round pocket.
+    // The flower fits, but every point on the first hatch ring lies outside.
+    auto shapes = Json::array();
+    const Vec2 centre{128, 128};
+    for (int edge = 0; edge < 8; ++edge) {
+        const auto ray = [](int vertex) { return Vec2::fromAngle(vertex * kTau / 8.0, 1.0); };
+        const Vec2 a = ray(edge), b = ray(edge + 1);
+        const auto rim = [&](Vec2 v) { return centre + v * (128.0 / std::max(std::abs(v.x), std::abs(v.y))); };
+        auto points = Json::array();
+        for (const Vec2 point : {rim(a), rim(b), centre + b * 30.0, centre + a * 30.0}) {
+            auto row = Json::object();
+            row["x"] = point.x;
+            row["y"] = point.y;
+            points.push(std::move(row));
+        }
+        auto shape = Json::object();
+        shape["x"] = 0;
+        shape["y"] = 0;
+        shape["polygon"] = std::move(points);
+        shapes.push(std::move(shape));
+    }
+    std::string error;
+    Json map;
+    CHECK(Json::parse(R"({"type":"map","orientation":"orthogonal","width":8,"height":8,
+        "tilewidth":256,"tileheight":256,"layers":[{"type":"tilelayer","name":"walls",
+        "width":8,"height":8,"properties":[{"name":"has_collision","type":"bool","value":true}]}],
+        "tilesets":[{"firstgid":1,"name":"walls","tilewidth":256,"tileheight":256,
+        "tilecount":1,"columns":0,"tiles":[{"id":0,"objectgroup":{}}]}]})", map, error));
+    auto data = Json::array();
+    for (int cell = 0; cell < 64; ++cell) data.push(cell == 36 ? 1 : 0);
+    map["layers"][0]["data"] = std::move(data);
+    map["tilesets"][0]["tiles"][0]["objectgroup"]["objects"] = std::move(shapes);
+    CHECK(testsupport::writeText(path, map.dump()));
+
+    for (const char* stick : {"mysterious_stick", "magic_stick"}) {
+        Rig rig(registry);
+        CHECK(rig.terrain.loadTiledMap(path, error));
+        rig.useHatchTerrain = true;
+        const Vec2 owner{4.5 * kTileSize, 4.5 * kTileSize};
+        rig.world.get<Transform>(rig.player).position = owner;
+        CHECK(!rig.terrain.resolveWall(owner, kPlayerBaseRadius, Realm::Overworld).collided);
+        CHECK(rig.terrain.resolveWall(owner, 80.0, Realm::Overworld).collided);
+        rig.equip(0, stick, Rarity::Apex);
+        rig.equip(1, "mana_orb", Rarity::Apex);
+        bool hatched = false;
+        for (int tick = 0; tick < 240 && !hatched; ++tick) {
+            if (auto* mana = rig.world.tryGet<ManaPool>(rig.player)) mana->current = mana->max;
+            rig.tick();
+            hatched = rig.petCount() > 0;
+        }
+        CHECK(hatched);
+        Query<Pet, Transform, MobType>{rig.world}.each([&](Entity, Pet& pet, Transform& at, MobType& type) {
+            CHECK_EQ(pet.owner, rig.player);
+            CHECK_EQ(type.configIndex, registry.mobIndex("sandstorm"));
+            CHECK_NEAR(distance(owner, at.position), 0.0, 1e-9);
+            CHECK(!rig.terrain.resolveWall(at.position, kMobWallRadius, at.realm).collided);
+        });
+    }
+}
+
 TEST(pharaoh_crown_summons_in_a_room_narrower_than_a_beetle) {
     const auto& registry = testsupport::shippedContent();
     Rig rig(registry);
@@ -6782,7 +6953,7 @@ TEST(pharaoh_crown_summons_in_a_room_narrower_than_a_beetle) {
             CHECK_EQ(type.configIndex, registry.mobIndex("mummy_beetle"));
             CHECK(type.rarity == Rarity::Super);
             CHECK(body.radius > kTileSize * 0.5);
-            CHECK_NEAR(distance(at.position, owner), 0.0, 1e-7);
+            CHECK(!rig.terrain.segmentBlocked(owner, at.position, at.realm));
             CHECK(!rig.terrain.resolveWall(at.position, kMobWallRadius, at.realm).collided);
             CHECK_NEAR(pet.expiresAtMillis, rig.now + 6000.0, 1e-7);
         });
@@ -7418,7 +7589,7 @@ TEST(hyper_technique_dahlia_returns_faster_and_honey_flies_further) {
             CHECK_NEAR(bait.travel + speed * net::kTickSeconds,
                        tier == Rarity::Apex ? 487.5 : 390.0, 1e-9);
             CHECK_NEAR(bait.travel / speed + net::kTickSeconds, 2.0, 1e-9);
-            CHECK_NEAR(life.remainingSeconds, 8.0, 1e-9);
+            CHECK_NEAR(life.remainingSeconds, 12.0, 1e-9);
         });
     }
 }
@@ -8306,4 +8477,32 @@ TEST(monstera_heals_wounded_flowers_once_per_second_with_range_and_faction_check
     const double healed = rig.world.get<Health>(ally).current;
     rig.tick(2);
     CHECK(rig.world.get<Health>(ally).current <= healed + 1);
+}
+
+TEST(summon_bulb_bonus_uses_active_stack_and_ignores_poo) {
+    const auto& content = testsupport::shippedContent();
+    Rig rig(content);
+    rig.equip(0, "bulb");
+    rig.settleEquips();
+    CHECK_NEAR(rig.modifiers().petTargetRangeScale, 1.0264, 1e-9);
+
+    rig.equip(1, "bulb");
+    rig.equip(2, "poo");
+    rig.settleEquips();
+    CHECK_NEAR(rig.modifiers().petTargetRangeScale, 1.03168, 1e-9);
+    CHECK(rig.modifiers().aggroRangeScale > 0.0);
+
+    rig.damage(rig.petals(1).front(), 1e9);
+    rig.tick();
+    CHECK(rig.slot(1).broken);
+    CHECK_NEAR(rig.modifiers().petTargetRangeScale, 1.0264, 1e-9);
+
+    rig.equip(0, "bulb", Rarity::Apex);
+    rig.settleEquips();
+    CHECK_NEAR(rig.modifiers().petTargetRangeScale, 1.20, 1e-9);
+
+    rig.unequip(0);
+    rig.unequip(1);
+    rig.tick();
+    CHECK_NEAR(rig.modifiers().petTargetRangeScale, 1.0, 1e-9);
 }

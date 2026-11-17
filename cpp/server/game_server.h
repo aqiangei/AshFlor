@@ -338,6 +338,7 @@ private:
     /// and removed, its temporary admin dropped, and nothing left that names
     /// the account. Touches no token -- revoking those is the caller's
     /// decision.
+    void noteAccountLastSeen(const Session&);
     void signOut(Session&);
     /// Called by a login, a registration and a resume once the credential has
     /// checked out, before `incomingUserId`'s state is installed on the socket.
@@ -616,7 +617,8 @@ private:
     /// are the three the browser build had, and they all come through here so
     /// that the row shape, the id format and the history cap cannot drift apart
     /// between them.
-    void addNotification(const std::string& type, const std::string& message);
+    void addNotification(const std::string& type, const std::string& message,
+                         const std::string& petalId = {});
     /// The global line and the feed row a super/unique/apex craft produces,
     /// and a universal forged at a titan. Silent for every tier below, which
     /// is where the reference draws the line too -- an ultra is crafted often
@@ -700,6 +702,7 @@ private:
     /// leadership or visibility change -- and after a member spawns or
     /// despawns, because the wire ids in it belong to bodies.
     void broadcastSquadUpdate(Squad&);
+    void serviceAutoSquads(double wallMillis);
     /// The squad's own notice, on its channel with no author, to every human
     /// member.
     void sendSquadSystem(const Squad&, const std::string& text);
@@ -1093,7 +1096,7 @@ private:
     Entity spawnPlayerNear(Session&, Realm realm, Vec2 around);
     /// Shared tail of spawnPlayer / spawnPlayerNear: settle realm, build body,
     /// arm respawn protection, publish session + squad.
-    Entity finishPlayerSpawn(Session&, Realm realm, Vec2 spawn);
+    Entity finishPlayerSpawn(Session&, Realm realm, Vec2 spawn, bool resolveGround = false);
     /// Assembles one player body in `realm` at `position` and writes the
     /// account onto it. Everything spawnPlayer does EXCEPT choosing where to
     /// stand, settling the session's realm and starting an arena run -- which
@@ -1212,7 +1215,8 @@ private:
     /// "somewhere". A summon, and a line from another server, say "somewhere".
     void announceBossSpawns();
     void announceMob(std::uint16_t mobIndex, Rarity rarity,
-                     std::optional<Realm> localRealm, bool summoned);
+                     std::optional<Realm> localRealm, bool summoned,
+                     bool remotePrestige = false);
 
     Session* sessionFor(net::ConnectionId id);
     Session* sessionForEntity(Entity e);
@@ -1639,6 +1643,8 @@ private:
     /// What serviceGuildPresence last saw: every authenticated account, keyed
     /// by lower-cased username, mapped to its guildLocation().
     std::unordered_map<std::string, std::string> guildPresence_;
+    std::unordered_map<std::string, std::string> guildRemoteLocations_;
+    std::unordered_map<std::string, std::int64_t> guildRemoteLastSeen_;
     double nextGuildPresenceMillis_ = 0;
     /// Last OnlineRoster payload fingerprint (concatenated rows); empty until
     /// the first send. Compared before any unicast so unchanged rosters cost
@@ -1674,6 +1680,7 @@ private:
     int botCountOverride_ = -1;
 
     std::unordered_map<net::ConnectionId, Session> sessions_;
+    double nextAutoSquadMillis_ = 0.0;
     // Account-keyed protection survives bodies/reconnects; never persisted.
     std::unordered_map<std::string, double> markProtectedUntil_;
     std::unordered_map<net::ConnectionId, ClientView> views_;

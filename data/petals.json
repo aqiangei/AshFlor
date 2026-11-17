@@ -1495,7 +1495,7 @@
     "cooldown": 2500,
     "requiredMana": 0.25,
     "price": 18,
-    "description": "Reduces reload time and mana costs for your petals: mana costs drop by the same share as the reload cut shown on it. Several Magic Golden Leaves multiply; a plain Golden Leaf cuts reload but not mana.",
+    "description": "Reduces your mana costs and the reload time of your equipped petals. Its reload reduction is 65% of a same-tier Golden Leaf; mana savings are calculated separately.",
     "color": "#000000",
     "count": 1,
     "image": "<svg width=\"32\" height=\"32\" viewBox=\"-21.5 -10.5 38 21\" xmlns=\"http://www.w3.org/2000/svg\">\n  <path d=\"M -20 0 \n           L -15 0 \n           C -10 -12, 5 -12, 15 0 \n           C 5 12, -10 12, -15 0\" \n        fill=\"#f4d44a\" \n        stroke=\"#269dae\" \n        stroke-width=\"3\" \n        stroke-linecap=\"round\" \n        stroke-linejoin=\"round\"/>\n  <path d=\"M -9 0 \n           Q 0 -1.5, 7.5 0\" \n        fill=\"none\" \n        stroke=\"#269dae\" \n        stroke-width=\"3\" \n        stroke-linecap=\"round\" \n        stroke-linejoin=\"round\"/>\n</svg>",
@@ -1779,10 +1779,10 @@
     "visual_scale": 1.755,
     "cooldown": 2500,
     "price": 10,
-    "description": "Spreads damage taken by the flower over a period of time.\nIf destroyed, deals remaining damage all at once.\nDoes not delay <c val=\"#CE76DB\">Poison</c> damage.",
+    "description": "Defers direct damage while the sponge is active. Stored damage continues to drain if it breaks. Poison is not deferred.",
     "color": "#000000",
     "count": 1,
-    "spongeDamageDuration": 1000,
+    "spongeDamageDuration": 1250,
     "defendOnly": true,
     "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"32\" height=\"32\" viewBox=\"-17.55 -17.55 35.1 35.1\"><path d=\"M12 0A5.207 5.207 0 0 1 7.482 9.382A5.207 5.207 0 0 1 -2.67 11.699A5.207 5.207 0 0 1 -10.812 5.207A5.207 5.207 0 0 1 -10.812 -5.207A5.207 5.207 0 0 1 -2.67 -11.699A5.207 5.207 0 0 1 7.482 -9.382A5.207 5.207 0 0 1 12 0Z\" fill=\"#efc99a\" stroke=\"#c2a37d\" stroke-width=\"3\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>",
     "isAdminPetal": false,
@@ -3552,7 +3552,7 @@
     "color": "#63bf2e",
     "count": 1,
     "radiation": {
-      "radius": 220,
+      "radius": 250,
       "intervalMs": 1000,
       "poisonDurationMs": 2000,
       "selfPoisonScale": 1
@@ -3995,7 +3995,7 @@
     "health": 12,
     "size": 1,
     "cooldown": 1800,
-    "requiredMana": 0.25,
+    "requiredMana": 0,
     "price": 10,
     "description": "Gathers mana from the environment passively.",
     "color": "#000000",
@@ -4376,7 +4376,7 @@
     "damage": 0,
     "health": 1,
     "size": 1,
-    "cooldown": 2000,
+    "cooldown": 2400,
     "price": 10,
     "secondaryCooldown": 700,
     "cooldownScale": "2000-250r",
@@ -4393,42 +4393,42 @@
       "0": {
         "damage": 0,
         "health": 1,
-        "reloadMillis": 2000
+        "reloadMillis": 2400
       },
       "1": {
         "damage": 0,
         "health": 1,
-        "reloadMillis": 1750
+        "reloadMillis": 2100
       },
       "2": {
         "damage": 0,
         "health": 1,
-        "reloadMillis": 1500
+        "reloadMillis": 1800
       },
       "3": {
         "damage": 0,
         "health": 1,
-        "reloadMillis": 1250
+        "reloadMillis": 1500
       },
       "4": {
         "damage": 0,
         "health": 1,
-        "reloadMillis": 1000
+        "reloadMillis": 1200
       },
       "5": {
         "damage": 0,
         "health": 1,
-        "reloadMillis": 750
+        "reloadMillis": 900
       },
       "6": {
         "damage": 0,
         "health": 1,
-        "reloadMillis": 500
+        "reloadMillis": 600
       },
       "7": {
         "damage": 0,
         "health": 1,
-        "reloadMillis": 250
+        "reloadMillis": 350
       },
       "8": {
         "damage": 0,
@@ -6076,6 +6076,88 @@
       }
     }
   },
+  "magic_basil": {
+    "name": "Magic Basil",
+    "damage": 0,
+    "health": 1,
+    "size": 1.3,
+    "cooldown": 2500,
+    "price": 0,
+    "visual_scale": 1.615,
+    "description": "Passively regenerates mana and increases the healing you receive.",
+    "color": "#4479ab",
+    "count": 1,
+    "defendOnly": true,
+    "ignoresMobs": true,
+    "minRarity": "mythic",
+    "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"32\" height=\"32\" viewBox=\"-21 -18.6 42 37.2\"><g transform=\"matrix(1 0 0 1 3 0)\"><path d=\"M 0 0 C 3 -10.5 11 -3.5 15.5 0 C 11 3.5 3 10.5 0 0 Z\" fill=\"none\" stroke=\"#288034\" stroke-width=\"5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/><path d=\"M 0 0 C 3 -10.5 11 -3.5 15.5 0 C 11 3.5 3 10.5 0 0 Z\" fill=\"#319e40\"/></g><g transform=\"matrix(-0.5 0.866025 -0.866025 -0.5 -1.5 2.598076)\"><path d=\"M 0 0 C 3 -10.5 11 -3.5 15.5 0 C 11 3.5 3 10.5 0 0 Z\" fill=\"none\" stroke=\"#288034\" stroke-width=\"5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/><path d=\"M 0 0 C 3 -10.5 11 -3.5 15.5 0 C 11 3.5 3 10.5 0 0 Z\" fill=\"#319e40\"/></g><g transform=\"matrix(-0.5 -0.866025 0.866025 -0.5 -1.5 -2.598076)\"><path d=\"M 0 0 C 3 -10.5 11 -3.5 15.5 0 C 11 3.5 3 10.5 0 0 Z\" fill=\"none\" stroke=\"#288034\" stroke-width=\"5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/><path d=\"M 0 0 C 3 -10.5 11 -3.5 15.5 0 C 11 3.5 3 10.5 0 0 Z\" fill=\"#319e40\"/></g><path d=\"M 3.5 0 Q 8 -2 13.5 0 M -1.75 3.031 Q -2.268 7.928 -6.75 11.691 M -1.75 -3.031 Q -5.732 -5.928 -6.75 -11.691\" fill=\"none\" stroke=\"#288034\" stroke-width=\"3\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>",
+    "zh": "魔法罗勒",
+    "invulnerable": true,
+    "rarityStats": {
+      "0": {
+        "damage": 0,
+        "health": 1,
+        "healBonus": 0.1,
+        "reloadMillis": 2500
+      },
+      "1": {
+        "damage": 0,
+        "health": 1,
+        "healBonus": 0.125,
+        "reloadMillis": 2500
+      },
+      "2": {
+        "damage": 0,
+        "health": 1,
+        "healBonus": 0.15,
+        "reloadMillis": 2500
+      },
+      "3": {
+        "damage": 0,
+        "health": 1,
+        "healBonus": 0.175,
+        "reloadMillis": 2500
+      },
+      "4": {
+        "damage": 0,
+        "health": 1,
+        "healBonus": 0.2,
+        "reloadMillis": 2500
+      },
+      "5": {
+        "damage": 0,
+        "health": 1,
+        "healBonus": 0.225,
+        "reloadMillis": 2500
+      },
+      "6": {
+        "damage": 0,
+        "health": 1,
+        "healBonus": 0.25,
+        "reloadMillis": 2500
+      },
+      "7": {
+        "damage": 0,
+        "health": 1,
+        "healBonus": 0.275,
+        "reloadMillis": 2500
+      },
+      "8": {
+        "damage": 0,
+        "health": 1,
+        "healBonus": 0.3,
+        "reloadMillis": 2500
+      },
+      "9": {
+        "damage": 0,
+        "health": 1,
+        "healBonus": 0.325,
+        "reloadMillis": 2500
+      }
+    },
+    "biomeDropOnly": true,
+    "passiveMana": 0.85
+  },
   "beetle_egg": {
     "name": "Beetle Egg",
     "zh": "Beetle Egg",
@@ -7075,6 +7157,7 @@
     "damage": 0,
     "health": 50,
     "size": 1,
+    "visual_scale": 1.25,
     "cooldown": 8000,
     "price": 10,
     "description": "超凡争夺成品：10个永恒碎片锻造，固定耗10、被夺返9；首保15小时，每次被夺减1小时，最低1小时。接触时落下单目标雷击，对野怪造成更高伤害，并减免接触反伤。",
@@ -8666,6 +8749,7 @@
     "damage": 0,
     "health": 50,
     "size": 1,
+    "visual_scale": 1.25,
     "cooldown": 8000,
     "price": 10,
     "description": "限时输出工具：15个超级碎片兑换1把限时永恒锤，兑换后1小时到期，离线照算；可持有多把，每把独立计时。不能用于超凡争夺。",
@@ -9120,9 +9204,9 @@
     "description": "Irradiates nearby enemies with poison and heat.",
     "zh": "堆芯",
     "radiation": {
-      "radius": 300,
+      "radius": 330,
       "intervalMs": 1000,
-      "poisonPerSecond": 150,
+      "poisonPerSecond": 168,
       "poisonDurationMs": 1000,
       "pulseDamage": 112.5
     }
@@ -9585,7 +9669,7 @@
     "price": 0,
     "color": "#977bb8",
     "count": 1,
-    "description": "A petal found in the Void.",
+    "description": "Hits on undead enemy flowers or wild mobs shorten their remaining undead time by 25% if Scar meets or exceeds the target tier. Once per undead state.",
     "zh": "疤痕"
   },
   "void_scythe": {
@@ -9687,9 +9771,9 @@
     "description": "Radiates poison around the petal.",
     "zh": "星尘",
     "radiation": {
-      "radius": 100,
+      "radius": 110,
       "intervalMs": 500,
-      "poisonPerSecond": 20,
+      "poisonPerSecond": 22.4,
       "poisonDurationMs": 500
     }
   },
@@ -10737,7 +10821,7 @@
     "description": "Hatches a Zatan ally.",
     "color": "#b29bc7",
     "count": 1,
-    "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 128 128\"><ellipse cx=\"64\" cy=\"64\" rx=\"40.19\" ry=\"54.00\" fill=\"#dddddd\"/><ellipse cx=\"64\" cy=\"64\" rx=\"35.16\" ry=\"48.98\" fill=\"none\" stroke=\"#d70909\" stroke-width=\"10.05\"/></svg>",
+    "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 128 128\"><ellipse cx=\"64\" cy=\"64\" rx=\"40.19\" ry=\"54.00\" fill=\"#dddddd\"/><ellipse cx=\"64\" cy=\"64\" rx=\"35.16\" ry=\"48.98\" fill=\"none\" stroke=\"#d70909\" stroke-width=\"10.05\"/><path d=\"M44 57L41 35l16 12h14l16-12-3 22c0 16-8 26-20 26S44 73 44 57z\" fill=\"#522267\" stroke=\"#301536\" stroke-width=\"4\"/><path d=\"M52 57l8 5m16-5-8 5\" stroke=\"#ffe585\" stroke-width=\"5\" stroke-linecap=\"round\"/></svg>",
     "petMobType": "void_zatan",
     "petMobRarity": "common",
     "rarityStats": {
@@ -10798,8 +10882,8 @@
     "spill": {
       "kind": "acid",
       "onHit": false,
-      "radius": 50,
-      "strength": 14,
+      "radius": 57.5,
+      "strength": 15.68,
       "chargeMs": 1000,
       "durationMs": 2100,
       "lingerMs": 0
@@ -10821,8 +10905,8 @@
     "spill": {
       "kind": "acid",
       "onHit": true,
-      "radius": 53,
-      "strength": 17,
+      "radius": 60.95,
+      "strength": 19.04,
       "chargeMs": 1000,
       "durationMs": 2100,
       "lingerMs": 0
@@ -10975,7 +11059,7 @@
     "spill": {
       "kind": "elixir",
       "onHit": false,
-      "radius": 54,
+      "radius": 62.1,
       "strength": 2.25,
       "chargeMs": 2000,
       "durationMs": 2100,
@@ -11043,8 +11127,8 @@
     "spill": {
       "kind": "lava",
       "onHit": false,
-      "radius": 39,
-      "strength": 8,
+      "radius": 44.85,
+      "strength": 8.96,
       "chargeMs": 1000,
       "durationMs": 2100,
       "lingerMs": 1400,
@@ -11067,8 +11151,8 @@
     "spill": {
       "kind": "lava",
       "onHit": false,
-      "radius": 50,
-      "strength": 11,
+      "radius": 57.5,
+      "strength": 12.32,
       "chargeMs": 1000,
       "durationMs": 2100,
       "lingerMs": 1900
@@ -11090,8 +11174,8 @@
     "spill": {
       "kind": "lava",
       "onHit": true,
-      "radius": 53,
-      "strength": 11.75,
+      "radius": 60.95,
+      "strength": 13.16,
       "chargeMs": 1000,
       "durationMs": 2100,
       "lingerMs": 1900
@@ -11126,7 +11210,7 @@
     "color": "#7c8567",
     "count": 1,
     "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 128 128\"><image x=\"14.1\" y=\"14.1\" width=\"99.8\" height=\"99.8\" href=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAADICAMAAACahl6sAAADAFBMVEURGS4AAAAMER5BSFkLER4OFSYNEyMMEiAMEiABATgwN0oMER48Q1ULER4aIjYMESAMEiAMER4MESAUGx0AAFUhKT0LEh4ODiMmLkENEx4AAH8ODh0AOTk/AD8AJycNDyEqKio3NzcAAP8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB8KaDEAAABAHRSTlP+AP7/0RQvdFIF/7D/kv/RjnCsDAP/TSr/LgIhBAQGUQYEAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAkRqorwAAB5VJREFUeNrtnWl3ozoMhhXXG3EoS9Kky9y2M///R16ytE3AJsZIxjDjL3NOmwaeeSWvsgQrzJZd/v2UWle5MbwAdmlQcGPySmv5u/VhnAYr3CYOWtWGNy/+jXDdjj/lplb6IJAfDJhSSJV/vW1fO/8+VxJTGCxFspfK3Edo45jqJUtJka02fAjDNQ03epsIiC6BBVFcWBiUenoQofgYii8WrsSUIO+6Zmit1u9TgWgEMW5k0VOANDaFSHFhGWFhgSCiAnSMcy9WiYgg25IG42xhpYgFougwzqqo1xggkpNinCeYmhxElCxKG2xfw0A+lW+HC87m6yrqNx2In1WBR/PqiyURyJ8SB8IfpiQBOdSAB+EHA+aAD/IB6BQeLPCBDLItiTDuopRbTJBeLweENt7nvUD2PU8CpNbzAI0Fougx+lVROCBuDkBuzucoBJDfJUTC6EGBfDcWRJiYHG6SejsORPCoGG4U4NsxIK5uF0ibY2ovw0FkdDn6SJgMA3ldiWISDCdKIVavQYpwmIrDsZXPgxTZGjYdh0MTsw0AyWFCDAcK5MNByqk5BpK4QKrpOewk1RCQXTPfTYDDTrJf7fwVkSwJDrvLS39FtraOFyANEsdkBXw7LIBkSEpfEM3S4bBal/YDkUlxWEmkD0jG0+KwkfDsLkhmcxCAxEiacTG7p4hOj8NGou8pYlkSAiRIwsUdkO6WCUCKJJ2NlRaIBDYPkE7PdQuSmUQ5LCQm6wHRkCqHxbj2bpCupwOkS3Lr73A9eVcwJ5BmaZLZFREsZQ6LmwiHaXVWtwBJk9xMg6Fvspg4yE0XDD8ekkcT5PF5vd4c23r9/DhGkvxn2QtuD6GiWG8erttm/RiuiegoknW7LCKMh27zR+lOVLK2Ip0xhISjpcaPKoEkvOsjMQSxyjFMFOfcEb43Tug5njYP7rZ5CpPk1rSy7oYDAcdDf3sKcnd98ZKLIv+1jwrjc4SRgPnvxrTeyAV53NwF2TyO6IHB7uoE/dXD/bYOMS51DfKLU4P4cHiStHdQf12BSHLDevBrIcYlv0F29Ja19gQJkUSdJlxnRagHEV9B/CRpDyW7b9Mit6y1N8g61LbANoFHB9l4g2wCbOu0fwqW+SJMZ1lB7n7ahTiCHKgt63kAyHOAbR0uIBqScZGwfktfQEwKo/qY0d1cQKhdZICve3o7dJdXEKHzJQc5dsCQRZgwUoMcl+7QOYyGOYBAJ0IFOovcGYKwJoYAOmsqmEOv1XaStwZkvwSQfQOi6Lez0Ef2DolqQGpyX8efa3W8vW5ADD0I9uy3C2KacYRHAFlju0gbhGcgo2xdo1tWZ2wHHeUsYY0tSJtEg4YohyLYgrRtS0MVBQRzX8sKUkEe6bhtjczRMq0cTKxzQ6y9X8faKhoI2m68C6SIdiL9hMrRnv8Cj3e0jnJi5QApACLGCCCcIbpPE2OCIJzqOle7scNPRp6z9yjCYoefjIp8SAlkTCxKaiBAEfP0D+QfCAkILAeELwOER5w0koIUUC8DpF4OSL4MkDzW5gMxSIOhlwGiI23QkZuWjrNlSj9DkfDOlwDC3+McK5C7iFktBKSOc/RGb1oqzmEova/v4xxP04O8xQkYoO+0jgEDEUI4yH09jxRUQ748PAfVzHFst4Q5xQg8I3eRWKGA1CAmVnAmtYvoWOGy1C7yFS4r+LxBvgKYs84l3ZlZVvkVUj67DtgR5N+E+fNZkVgvVUa6CEM7rP9chHmZsyLy+tYbn5Ek7Yyat9f32FxBbq/vRbvMTpBm4PZCZYQrrkSWdXvFNcqlYxpBWpeOo1wDJxlEsiku5hOc5XYu5kdKlYAuiJgqeQW6IFk3wQubH4glnUjUBC9oglgTvCwl5Y4t82f6gthBtnNLS7W1g2RzSxSmXInCusN72qnbtj3J9Nh8kum1cszegGS7OaU33GU9CSdf2GwSTr4sJAVo9bckZV1MmtzlJC5eSirpBSX3Xk669Z210kVCCfBzW3UFayZ/a02bZPQoxN9XJCKzjSaplO3Q9tL0MKTAWwocamhpmzzN0jbl4Bo9O5NisSGzlPJPIqQg14SFxVwFubK/vESabb04XdE6Flq07jQwFssoI9gkay0gkcKOxdu4UptZnUapTZONLX4at2io61H5FqEcbT59Odocp0BwNXGBYGehusElmys2ZclmVuEV0X6Zsoj2C2ZZczFdWXOBXGh+z6YoNM/2yIXmj6N8Dfgsd76xlit8kNWffvMaDHP/28o/KwoQdwXn4TA+X8PlkHcbBLL6VMznHXppPP+eqc8VHUjTfdUsSqvFwBcbCtJsqBZATQGFHvxaw0FWrwpIUQDU6yoGyHF4pEMBKEXIOwWBNCgVDQpAJcLeKBCkQVEcHQW4EqHvEwxycnuGyAIswMVxQBqUZvkIOBTM6FGvMg7kZGHjUYCNsCkkkOPEpRplYo1JVXL8WyCANAVlZBmoS6NFLn9hvAMKyInlo+ZsSJ/cfJbXHzgUeCDnXSepcmtmJWsCv1zJqz9NRpFv5z/osjb8NP21zomb035Tl/ogkB+MC/L1vyukrqoqN3VxSQQJUBS1yZsfailaH8Zp/wOdxpXal3B6NwAAAABJRU5ErkJggg==\"/></svg>",
-    "petalArmor": 5,
+    "petalArmor": 15,
     "biomeDropOnly": true
   },
   "oil": {
@@ -11144,8 +11228,8 @@
     "spill": {
       "kind": "oil",
       "onHit": false,
-      "radius": 47,
-      "strength": 10,
+      "radius": 54.05,
+      "strength": 11.2,
       "chargeMs": 1000,
       "durationMs": 2100,
       "lingerMs": 0
@@ -11182,8 +11266,8 @@
     "spill": {
       "kind": "lava",
       "onHit": false,
-      "radius": 135,
-      "strength": 6,
+      "radius": 155.25,
+      "strength": 6.72,
       "chargeMs": 1000,
       "durationMs": 2100,
       "lingerMs": 1200
@@ -11299,10 +11383,10 @@
     "biomeDropOnly": true
   },
   "magic_bone": {
-    "requiredMana": 0.65,
+    "requiredMana": 0.45,
     "name": "Magic Bone",
     "health": 13.44,
-    "damage": 16.1,
+    "damage": 23.8,
     "petalArmor": 12,
     "size": 1,
     "cooldown": 2500,
@@ -11352,10 +11436,10 @@
     "lifesteal": 0.35,
     "size": 1,
     "cooldown": 3500,
-    "requiredMana": 0.25,
+    "requiredMana": 0,
     "price": 29,
     "visual_scale": 1.5,
-    "description": "Costs mana to form. Heals based on damage dealt by this petal, and every bite on a mob restores mana.",
+    "description": "Heals based on damage dealt by this petal, and every bite on a mob restores mana.",
     "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 128 128\"><image x=\"40.9\" y=\"16.2\" width=\"45.2\" height=\"93.6\" href=\"data:image/png;base64,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\"/></svg>",
     "color": "#000000",
     "count": 1,
@@ -11398,61 +11482,59 @@
   },
   "magic_poo": {
     "name": "Magic Poo",
-    "damage": 5.75,
-    "health": 5.6,
+    "damage": 0,
+    "health": 0,
     "size": 1,
-    "cooldown": 2500,
-    "requiredMana": 0.8,
+    "cooldown": 1000,
     "price": 40,
     "visual_scale": 2,
-    "description": "Makes mobs less likely to want to attack you.",
+    "description": "While equipped, drains mana to extend the pursuit range of ordinary summons. The strongest equipped copy applies.",
     "color": "#8B4513",
-    "count": 1,
-    "playerModifiers": {
-      "aggroRange": 0.75
-    },
-    "defendOnly": true,
+    "count": 0,
     "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 128 128\"><image x=\"14.3\" y=\"18.8\" width=\"99.4\" height=\"88.5\" href=\"data:image/png;base64,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\"/></svg>",
     "isAdminPetal": false,
     "zh": "魔法便便",
     "stackable": false,
-    "biomeDropOnly": true
+    "biomeDropOnly": true,
+    "noPhysics": true
   },
   "magic_rock": {
     "name": "Magic Rock",
-    "damage": 25.3,
-    "health": 33.6,
+    "damage": 25,
+    "health": 750,
     "size": 1,
-    "cooldown": 3000,
+    "cooldown": 2000,
     "requiredMana": 1.4,
     "price": 29,
-    "description": "Extremely durable, but takes a bit longer to recharge.",
+    "description": "A durable armored petal. Consumes mana to form.",
     "color": "#8B0000",
     "count": 1,
     "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 128 128\"><image x=\"19.5\" y=\"19.0\" width=\"89.0\" height=\"89.0\" href=\"data:image/png;base64,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\"/></svg>",
     "zh": "魔法岩石",
-    "biomeDropOnly": true
+    "biomeDropOnly": true,
+    "petalArmor": 5
   },
   "magic_soil": {
     "name": "Magic Soil",
-    "damage": 11.5,
-    "health": 11.2,
+    "damage": 10,
+    "health": 20,
     "size": 1,
     "cooldown": 2500,
-    "requiredMana": 0.25,
     "price": 16,
-    "description": "Increases health, but also increases flower size and decreases movement speed.",
+    "description": "Increases health, size and maximum mana, and restores mana over time. Reduces movement speed.",
     "color": "#000000",
     "count": 1,
     "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 128 128\"><image x=\"16.7\" y=\"17.3\" width=\"94.6\" height=\"91.4\" href=\"data:image/png;base64,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\"/></svg>",
+    "isAdminPetal": false,
+    "zh": "魔法土壤",
+    "biomeDropOnly": true,
     "playerModifiers": {
       "maxHealth": 1.1,
       "playerRadius": 1.05,
       "speed": 0.95
     },
-    "isAdminPetal": false,
-    "zh": "魔法土壤",
-    "biomeDropOnly": true
+    "baseMaxMana": 13.2,
+    "passiveMana": 1
   },
   "magic_tomato": {
     "name": "Magic Tomato",
@@ -11478,13 +11560,13 @@
     "size": 0.88,
     "cooldown": 3100,
     "price": 38,
-    "description": "Costs mana to form. Bites restore health and return some mana.",
+    "description": "Bites restore health and return some mana.",
     "color": "#7c8567",
     "count": 1,
     "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 128 128\"><image x=\"39.8\" y=\"26.1\" width=\"48.5\" height=\"73.8\" href=\"data:image/png;base64,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\"/></svg>",
     "lifesteal": 0.075,
     "biomeDropOnly": true,
-    "requiredMana": 0.75
+    "requiredMana": 0
   },
   "magic_torch": {
     "name": "Magic Torch",
@@ -11506,14 +11588,14 @@
   },
   "magic_wing": {
     "name": "Magic Wing",
-    "damage": 23.0,
+    "damage": 23,
     "health": 11.2,
     "size": 1,
     "cooldown": 3000,
     "requiredMana": 0.6,
     "price": 37,
     "speed": 5,
-    "description": "It comes and goes.",
+    "description": "Swings out when attacking. Consumes mana to form.",
     "color": "#000000",
     "count": 1,
     "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 128 128\"><image x=\"14.3\" y=\"34.6\" width=\"99.4\" height=\"58.8\" href=\"data:image/png;base64,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\"/></svg>",
@@ -11591,7 +11673,7 @@
   },
   "jurassic_elasmosaurus_egg": {
     "name": "Elasmosaurus Egg",
-    "zh": "薄板龙蛋",
+    "zh": "蛇颈龙蛋",
     "damage": 0,
     "health": 5,
     "size": 0.85,
@@ -11804,7 +11886,7 @@
     "price": 35,
     "biomeDropOnly": true,
     "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 128 128\"><image x=\"10.5\" y=\"10.0\" width=\"107.5\" height=\"108.0\" href=\"data:image/png;base64,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\"/></svg>",
-    "description": "Marks Bio mobs of the same or lower rarity to split on death. Consume it after ten seconds, losing some maximum health until treated with Pill."
+    "description": "Marks wild mobs of the same or lower tier to split once on death. Ghosts and challenge enemies are immune. Copies grant no extra rewards. After ten seconds on the ring, Cancer is absorbed and reduces maximum health until treated with a Pill."
   },
   "chloroplast": {
     "name": "Chloroplast",
@@ -11893,34 +11975,34 @@
     "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 128 128\"><image x=\"12.9\" y=\"8.5\" width=\"102.2\" height=\"111.0\" href=\"data:image/png;base64,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\"/></svg>",
     "rarityStats": {
       "0": {
-        "healBonus": 0.035
+        "healBonus": 0.04
       },
       "1": {
-        "healBonus": 0.043
+        "healBonus": 0.12
       },
       "2": {
-        "healBonus": 0.051
+        "healBonus": 0.2
       },
       "3": {
-        "healBonus": 0.059
+        "healBonus": 0.28
       },
       "4": {
-        "healBonus": 0.067
+        "healBonus": 0.36
       },
       "5": {
-        "healBonus": 0.075
+        "healBonus": 0.44
       },
       "6": {
-        "healBonus": 0.083
+        "healBonus": 0.52
       },
       "7": {
-        "healBonus": 0.091
+        "healBonus": 0.6
       },
       "8": {
-        "healBonus": 0.099
+        "healBonus": 0.68
       },
       "9": {
-        "healBonus": 0.107
+        "healBonus": 0.76
       }
     }
   },
@@ -12930,9 +13012,9 @@
     "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 128 128\"><image x=\"-0.5\" y=\"0.0\" width=\"128.5\" height=\"128.0\" href=\"data:image/png;base64,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\"/></svg>",
     "description": "Found in the Arctic.",
     "radiation": {
-      "burnDamage": 175,
+      "burnDamage": 196,
       "poisonDamage": 0,
-      "radius": 400,
+      "radius": 440,
       "intervalMs": 1000
     }
   },
@@ -12977,9 +13059,9 @@
     "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 128 128\"><image x=\"-0.5\" y=\"0.0\" width=\"128.5\" height=\"128.0\" href=\"data:image/png;base64,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\"/></svg>",
     "description": "Found in the Arctic.",
     "radiation": {
-      "burnDamage": 98,
-      "poisonDamage": 130,
-      "radius": 300,
+      "burnDamage": 109.76,
+      "poisonDamage": 145.6,
+      "radius": 330,
       "intervalMs": 1000,
       "poisonDurationMs": 1000
     }
@@ -13159,7 +13241,7 @@
     "price": 2,
     "color": "#a0d5db",
     "count": 1,
-    "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 128 128\"><ellipse cx=\"64\" cy=\"64\" rx=\"46.14\" ry=\"62.00\" fill=\"#cbccf2\"/><ellipse cx=\"64\" cy=\"64\" rx=\"40.37\" ry=\"56.23\" fill=\"none\" stroke=\"#ee7a2a\" stroke-width=\"11.53\"/></svg>",
+    "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 128 128\"><ellipse cx=\"64\" cy=\"64\" rx=\"46.14\" ry=\"62.00\" fill=\"#cbccf2\"/><ellipse cx=\"64\" cy=\"64\" rx=\"40.37\" ry=\"56.23\" fill=\"none\" stroke=\"#ee7a2a\" stroke-width=\"11.53\"/><circle cx=\"64\" cy=\"77\" r=\"16\" fill=\"#fff\" stroke=\"#334a72\" stroke-width=\"5\"/><circle cx=\"64\" cy=\"51\" r=\"13\" fill=\"#fff\" stroke=\"#334a72\" stroke-width=\"5\"/><path d=\"M50 40h28v6H50zM54 30h20v13H54z\" fill=\"#334a72\"/></svg>",
     "description": "Hatches an Arctic ally.",
     "petMobType": "arctic_snowman",
     "petCount": 1,
@@ -13571,7 +13653,7 @@
     "health": 1,
     "size": 1,
     "price": 0,
-    "cooldown": 600,
+    "cooldown": 200,
     "requiredMana": 0.25,
     "count": 1,
     "knockback": 0,

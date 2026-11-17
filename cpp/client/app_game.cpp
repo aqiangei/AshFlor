@@ -54,9 +54,8 @@ std::string localizeKillerLabel(const std::string& label) {
 ///
 /// Laid out to death_ui_screenshot.png, which is 1:1 with design units (its
 /// loadout slots are this build's 70 across). Everything hangs off the dead
-/// flower, and the flower sits on the screen's centre -- exactly over the
-/// corpse the camera is pinned to -- so each row is an offset from it rather
-/// than a place in a stack. Text rows are given by the middle of their glyphs,
+/// flower's position on the death card, so each row is an offset from that
+/// spot. Text rows are given by the middle of their glyphs,
 /// which is where ui::text centres a line.
 struct DeathCard {
     Vec2 destroyedBy;   ///< centre of "You were destroyed by:"
@@ -257,6 +256,9 @@ void App::sendInputFrame(double dt, bool periodic) {
     const bool touchControls = touchControlsVisible();
     ui::MobileControls::Stick stick;
     const bool stickPushed = touchControls && mobile_.stick(stick);
+    if (!stickPushed && (touchControls || menuOpen || !window_.pointerInside())) {
+        input.flags |= net::InputNoPetPointer;
+    }
 
     if (keyboard.lengthSq() > 0) {
         const Vec2 direction = keyboard.normalized();
@@ -371,6 +373,47 @@ void App::sendInputFrame(double dt, bool periodic) {
 
 void App::updatePlaying(double dt) {
     updateMinimapControls();
+    const auto endPinch = [&] {
+        if (pinchDistance_ > 0.0) menus_.settings().zoomDirty = true;
+        pinchDistance_ = 0.0;
+    };
+    if (menus_.anyOpen() || minimapExpanded_ || minimapControlUsed_ || chatOpen_) {
+        zoomTouches_.clear();
+        endPinch();
+    } else {
+        for (const TouchEvent& event : window_.touchEvents()) {
+            const auto& point = event.point;
+            const auto touch = std::find_if(zoomTouches_.begin(), zoomTouches_.end(),
+                [&](const TouchPoint& live) { return live.id == point.id; });
+            switch (event.phase) {
+            case TouchPhase::Began:
+                if (!menus_.capturesMouse({point.x, point.y}) &&
+                    !tutorial_.capturesMouse({point.x, point.y}) &&
+                    (!touchControlsVisible() || !mobile_.hits(point.x, point.y))) {
+                    zoomTouches_.push_back(point);
+                }
+                endPinch();
+                break;
+            case TouchPhase::Moved:
+                if (touch != zoomTouches_.end()) *touch = point;
+                break;
+            case TouchPhase::Ended:
+                if (touch != zoomTouches_.end()) zoomTouches_.erase(touch);
+                endPinch();
+                break;
+            }
+        }
+        if (window_.touches().size() == 2 && zoomTouches_.size() == 2) {
+            const auto& a = zoomTouches_[0];
+            const auto& b = zoomTouches_[1];
+            const double span = std::max(8.0f, std::hypot(a.x - b.x, a.y - b.y));
+            auto& zoom = menus_.settings().zoom;
+            if (pinchDistance_ > 0.0) zoom = clamp(zoom * span / pinchDistance_, kMinZoom, kMaxZoom);
+            pinchDistance_ = span;
+        } else {
+            endPinch();
+        }
+    }
     // Mobile R: tap swaps rows; long-press arms a sticky L preset bank (stays
     // after release for one-finger load/save). Applied before handleKeys so a
     // same-frame drawLoadoutBar sees the pending swap / bank the way a real
@@ -419,6 +462,14 @@ void App::updatePlaying(double dt) {
     }
 }
 
+namespace {
+
+Rect closedDeathRespawnBox(double width) {
+    return {width * 0.5 - 72.0, 18.0, 144.0, 36.0};
+}
+
+} // namespace
+
 void App::updateDead(double dt) {
     (void)dt;
     // The transcript keeps drawing over the dimmed world, so it keeps
@@ -438,8 +489,6 @@ void App::updateDead(double dt) {
                boundKeyPressed(window_, menus_.settings().controlKey(ControlAction::Inventory))) {
         menus_.toggle(MenuId::Inventory);
     }
-    if (!deathCardVisible_) return;
-
     // The reference acts on the press, not the release, so the card is gone by
     // the time the button comes back up and a pressed state is never seen.
     if (!window_.mousePressed(MouseButton::Left)) return;
@@ -447,6 +496,13 @@ void App::updateDead(double dt) {
     const Vec2 mouse{window_.mouseX(), window_.mouseY()};
     // The tutorial box is painted over the death card and swallows the click.
     if (tutorial_.capturesMouse(mouse)) return;
+    if (!deathCardVisible_) {
+        if (deathCardSlide_ <= 0.01 && !menus_.anyOpen() && !minimapExpanded_ &&
+            !minimapControlUsed_ && hit(closedDeathRespawnBox(window_.width()), mouse)) {
+            net_.requestRespawn();
+        }
+        return;
+    }
     // The ANIMATED boxes, not the resting ones: a button is only where it is
     // painted, and during the slide-in that is on its way down the screen.
     const DeathCard card = deathCardLayout(window_.width(), window_.height(), deathCardSlide_);
@@ -503,6 +559,18 @@ void App::drawDeathCard(Canvas& canvas, double time) {
     closeStyle.radius = kDeathCloseRadius;
     closeStyle.textSize = kDeathCloseTextSize;
     button(canvas, card.closeBox, tr(Msg::Close), overClose, overClose && pressing, closeStyle);
+}
+
+void App::drawClosedDeathRespawn(Canvas& canvas) {
+    const Rect box = closedDeathRespawnBox(canvas.width());
+    const bool hover = hit(box, {window_.mouseX(), window_.mouseY()});
+    ButtonStyle style;
+    style.fill = kDeathContinueFill;
+    style.outlineWidth = kDeathContinueRim;
+    style.radius = kDeathContinueRadius;
+    style.textSize = 14.0;
+    button(canvas, box, trEnZh("Respawn here", "原地复活"), hover,
+           hover && window_.mouseDown(MouseButton::Left), style);
 }
 
 namespace {
@@ -614,7 +682,7 @@ bool App::connectionLost() const {
     return net_.status() == NetClient::Status::Failed || net_.reconnecting();
 }
 
-void App::drawMovementHelper(Canvas& canvas) {
+void App::drawMovementHelper(Canvas& canvas, Vec2 selfDrawn) {
     // AshFlor Rendering.cc antenna: thin ray from the flower toward the
     // cursor. Default on; skipped for touch HUD (no meaningful second pointer).
     const auto& settings = menus_.settings();
@@ -624,7 +692,7 @@ void App::drawMovementHelper(Canvas& canvas) {
     if (screen_ != Screen::Playing && screen_ != Screen::Dead) return;
 
     const Vec2 tip{window_.mouseX(), window_.mouseY()};
-    const Vec2 centre{window_.width() * 0.5, window_.height() * 0.5};
+    const Vec2 centre = renderer_.shakenCamera(camera_).worldToScreen(selfDrawn);
     const Vec2 delta = tip - centre;
     const double dist = delta.length();
 

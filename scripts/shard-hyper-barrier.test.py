@@ -5,7 +5,8 @@ with tempfile.TemporaryDirectory(prefix='hyper-barrier-') as work:
     folder=pathlib.Path(work)
     seed={'users':{},'players':{
         'a':{'inventory':{'unique':{'petal_rose':20}}},
-        'b':{'inventory':{'apex':{'petal_rose':1},'unique':{'petal_rose':2}}}},
+        'b':{'inventory':{'unique':{'petal_rose':2}},
+             'loadout':[None,{'type':'petal','petalType':'rose','rarity':'apex'}]}},
         'hyperForges':{'rose':{'owner':'b','claims':1,'paid':5}}}
     (folder/'seed.json').write_text(json.dumps(seed))
     def start():
@@ -42,7 +43,10 @@ with tempfile.TemporaryDirectory(prefix='hyper-barrier-') as work:
     assert after['record']['inventory']['apex']['petal_rose']==1
     assert status['hyperForges']['rose']['owner']=='a'
     loser=yes('two','hyper_status')['accounts']['b']
-    assert loser['record']['inventory']['unique']['petal_rose']==6
+    assert loser['record']['inventory']['unique']['petal_rose']==6  # stored count includes the equipped copy
+    assert loser['record']['loadoutInInventory'] is True
+    assert loser['record']['loadout'][1]['rarity']=='unique'
+    assert loser['record']['loadout'][1]['petalType']=='rose'
     assert loser['record']['inventory'].get('apex',{}).get('petal_rose',0)==0
     assert not call('two','hyper_thaw',transaction=tx,account='a',**fence(after))[0]['ok']
     # Restart after fsync but before either game has seen a result. The same

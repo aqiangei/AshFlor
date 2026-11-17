@@ -107,7 +107,8 @@
       "prestige": true
     },
     {
-      "file": "wave.tmj"
+      "file": "wave.tmj",
+      "appendCopies": 3
     },
     {
       "file": "pyramid_alt.tmj",
@@ -127,14 +128,17 @@
     },
     {
       "file": "zorr_void.tmj",
+      "appendPrestige": true,
       "appendAfterPrestige": true
     },
     {
       "file": "zorr_astral.tmj",
+      "appendPrestige": true,
       "appendAfterPrestige": true
     },
     {
       "file": "zorr_null.tmj",
+      "appendPrestige": true,
       "appendAfterPrestige": true
     },
     {
@@ -146,13 +150,16 @@
       "prestige": true
     },
     {
-      "file": "bio.tmj"
+      "file": "bio.tmj",
+      "appendPrestige": true
     },
     {
-      "file": "bio_micro.tmj"
+      "file": "bio_micro.tmj",
+      "appendPrestige": true
     },
     {
-      "file": "bio_lab.tmj"
+      "file": "bio_lab.tmj",
+      "appendPrestige": true
     },
     {
       "file": "rift_ant_hell.tmj",
@@ -200,6 +207,7 @@
     },
     {
       "file": "zorr_arctic.tmj",
+      "appendPrestige": true,
       "appendAfterPrestige": true
     },
     {

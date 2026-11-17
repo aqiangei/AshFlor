@@ -61,6 +61,7 @@ std::uint32_t biomePickerColor(const std::string& biome) {
     if (biome == "computer" || biome == "factory") return 0x687D83u;   // florrclone Factory
     if (biome == "hel") return 0x945648u;
     if (biome == "bio") return 0x456653u;
+    if (biome == "jurassic") return 0x344A38u;
     if (biome == "pyramid") return 0xAC925Eu;
     if (biome == "termite_mound") return 0x785744u;
     if (biome == "swarm") return 0x3B7057u;
@@ -76,7 +77,7 @@ bool biomeOnPicker(const std::string& biome) {
     return biome == "garden" || biome == "desert" || biome == "computer" ||
            biome == "factory" || biome == "ocean" || biome == "jungle" ||
            biome == "hel" || biome == "ant_hell" || biome == "sewers" || biome == "super" ||
-           biome == "pyramid" || biome == "cyberspace" || biome == "bio" ||
+           biome == "pyramid" || biome == "cyberspace" || biome == "bio" || biome == "jurassic" ||
            biome == "zorr_void" || biome == "zorr_arctic" || biome == "zorr_glacier" || biome == "zorr_polar";
 }
 

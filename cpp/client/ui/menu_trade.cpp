@@ -7,7 +7,7 @@
 // It is florr's trade window (menus.h), in the flower yellow. There is no
 // price to be short of, so a stack is counted the way the inventory counts
 // one ("x5" in the corner, nothing on a lone petal); and the grid runs on
-// through apex to Ascendant, every tier the trader takes (traderTakes).
+// through Permanent Hyper and Ascendant, every tier the trader takes.
 //
 // One trade a day (kTraderCooldownMillis): while the account waits, the line
 // turns red and says how long, and every stack sits on grey. A petal
@@ -45,8 +45,6 @@ using namespace flix::ui;
 
 namespace {
 
-constexpr const char* kLine = "You can trade a petal for a coin of the same rarity";
-
 /// The trade's spin: toward 10 rad/s while it is out, easing both ways at
 /// the same rate.
 constexpr double kSpinTarget = 10.0;
@@ -71,8 +69,8 @@ std::uint32_t tileKey(std::uint16_t petalIndex, Rarity rarity) {
 } // namespace
 
 Vec2 TradePanel::size(const Profile& profile) {
-    return {slotCardWidth(SlotGridTiers::Ascendant),
-            slotCardHeight(SlotGrid::rows(profile, SlotGridTiers::Ascendant))};
+    return {slotCardWidth(SlotGridTiers::Trader),
+            slotCardHeight(SlotGrid::rows(profile, SlotGridTiers::Trader))};
 }
 
 void TradePanel::reset() {
@@ -142,7 +140,8 @@ bool TradePanel::render(MenuContext& ctx) {
     motion_.stepRoll(dtMs, trading, coin, kSpinTarget, kSpinRate, kSpinRate);
 
     const SlotCardLayout card =
-        drawSlotCard(canvas, ctx.bounds, kTraderSkin, "Trade", "Trade", mouse);
+        drawSlotCard(canvas, ctx.bounds, kTraderSkin, trEnZh("Trader", "商人"),
+                     trEnZh("Trade", "兑换"), mouse);
     const Rect panel = card.panel;
 
     // --- the slot ----------------------------------------------------------
@@ -177,7 +176,7 @@ bool TradePanel::render(MenuContext& ctx) {
     // be traded.
     const bool canTrade = !waiting && phase_ == Phase::Idle && tradable(stagedPetal_);
     const bool overButton = card.button.contains(mouse);
-    drawSlotButton(canvas, card.button, "Trade",
+    drawSlotButton(canvas, card.button, trEnZh("Trade", "兑换"),
                    canTrade ? std::optional<std::uint32_t>(rarityColor(stagedRarity_))
                             : std::nullopt,
                    overButton, overButton && ctx.window.mouseDown(MouseButton::Left));
@@ -185,14 +184,15 @@ bool TradePanel::render(MenuContext& ctx) {
     if (waiting) {
         drawSlotLine(canvas, card, traderCooldownText(cooldown), kSlotCardWaitInk);
     } else {
-        drawSlotLine(canvas, card, kLine);
+        drawSlotLine(canvas, card, trEnZh("Trade a petal for a coin of the same rarity",
+                                         "用一片花瓣兑换一枚同品质硬币"));
     }
 
     // --- the grid ----------------------------------------------------------
     // On grey, and not clickable, while the trader is not taking trades and
     // for a petal it never takes. The petal and its count still show.
     const std::optional<SlotGrid::Pick> hovered = grid_.render(
-        ctx, card, kTraderSkin, SlotGridTiers::Ascendant,
+        ctx, card, kTraderSkin, SlotGridTiers::Trader,
         [&](std::uint16_t petalIndex, Rarity rarity, std::uint32_t owned) {
             SlotCell cell;
             cell.count = owned;

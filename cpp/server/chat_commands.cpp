@@ -1059,6 +1059,7 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
         help += "/squad-create [public|private] - Create a new squad (defaults to private)<br/>";
         help += "/squad-invite &lt;username&gt; - Invite a player to your squad<br/>";
         help += "/squad-find-public - List joinable public squads<br/>";
+        help += "/squad-auto on/off - 开启或取消自动组队<br/>";
         help += "/squad-join &lt;squadId&gt; - Join a public squad<br/>";
         help += "/squad-code [code] - 获取组队码，或按代码加入队伍（保留邀请功能）<br/>";
         help += "/squad-public / /squad-private - Toggle your squad's visibility (leader "
@@ -1164,6 +1165,28 @@ void GameServer::runSquadCommand(Session& session, net::Connection& connection,
     const auto out = [&](const std::string& text) { sendSystem(connection, text); };
     const SquadMemberId me = squadIdOf(session);
     const auto now = static_cast<std::int64_t>(wallClockMillis_);
+
+    if (sub == "auto") {
+        const std::string mode = lowerCase(argument);
+        if (mode == "on") {
+            if (squads_.forMember(me)) {
+                out("你已经在队伍里，离队后可以开启自动组队。");
+                return;
+            }
+            session.autoSquad = true;
+            out("自动组队已开启。寻找同地图、等级相差不超过 " +
+                std::to_string(kAutoSquadMaxLevelGap) + " 级且同意匹配的玩家。");
+        } else if (mode == "off") {
+            session.autoSquad = false;
+            out("已取消自动组队。");
+        } else if (mode.empty()) {
+            out(session.autoSquad ? "正在自动组队。输入 /squad-auto off 取消。"
+                                  : "输入 /squad-auto on 开启自动组队。");
+        } else {
+            out("用法：/squad-auto on 或 /squad-auto off");
+        }
+        return;
+    }
 
     const auto notifyDeparture = [&](const SquadRoster::Departure& left) {
         if (!left.wasMember) return;
@@ -1388,13 +1411,11 @@ void GameServer::runSquadCommand(Session& session, net::Connection& connection,
             }
         }
         std::string squadId;
-        SquadRoster::Departure leftPrevious;
-        const std::string error = squads_.accept(me, now, squadId, &leftPrevious);
+        const std::string error = squads_.accept(me, now, squadId);
         if (!error.empty()) {
             out(error);
             return;
         }
-        notifyDeparture(leftPrevious);
         Squad* squad = squads_.find(squadId);
         if (squad == nullptr) return;
         sendSquadSystem(*squad, squadDisplayName(me) + " has joined the squad.");
@@ -3004,7 +3025,7 @@ void GameServer::runAdminCommand(Session& session, net::Connection& connection,
         if (text.empty()) {
             out("Usage: notification <type> <message>");
             out("  Or: notify <type> <message> (shorthand)");
-            out("  Valid types: super_craft, unique_craft, apex_craft, star_code, universal_craft");
+            out("  Valid types: unique_craft, apex_craft, star_code, universal_craft");
             out("  Examples:");
             out("    notification star_code Special event starting now!");
             out("    notify unique_craft New unique petal discovered!");
@@ -3012,8 +3033,9 @@ void GameServer::runAdminCommand(Session& session, net::Connection& connection,
         }
         // The feed's own list of tags (notificationKind), so a tag the console
         // accepts is always one the feed can tell apart from Generic.
-        if (notificationKind(type) == net::NotificationKind::Generic) {
-            out("Invalid notification type. Valid types: super_craft, unique_craft, apex_craft, "
+        const auto kind = notificationKind(type);
+        if (kind == net::NotificationKind::Generic || kind == net::NotificationKind::SuperCraft) {
+            out("Invalid notification type. Valid types: unique_craft, apex_craft, "
                 "star_code, universal_craft");
             return;
         }

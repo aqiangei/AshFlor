@@ -7,6 +7,7 @@
 #include "server/systems/loot.h"
 #include "server/systems/petals.h"
 #include "shared/game/components.h"
+#include "shared/game/terrain.h"
 
 #include <cmath>
 #include <string>
@@ -32,6 +33,7 @@ struct Fixture {
     bool showAllVisibleLoot = false;
     std::uint8_t visibility = 0;
     bool keepTransientEffects = true;
+    const Terrain* terrain = nullptr;
     net::WaveHud wave;
     /// The viewer's squadmates (Replicator::Frame::alwaysVisible), if any.
     std::vector<Entity> squad;
@@ -79,6 +81,7 @@ struct Fixture {
         frame.tick = tickNumber;
         frame.nowMillis = nowMillis;
         frame.events = &events;
+        frame.terrain = terrain;
         frame.splitOther = splitOther;
         frame.loadShedding = loadShedding;
         frame.showAllVisibleLoot = showAllVisibleLoot;
@@ -641,6 +644,31 @@ TEST(a_camera_petals_view_is_streamed_edge_to_edge_and_only_a_screen_past_it) {
         f.tick(client, static_cast<std::uint32_t>(2 + i), 1040.0 + 40.0 * i);
         CHECK_NEAR(client.entities().at(netIdOf(f.world, corner)).targetPosition.x, moved.x, 0.05);
     }
+}
+
+TEST(map_edge_camera_streams_the_map_side_of_a_wide_view_under_load) {
+    Fixture f;
+    Terrain terrain;
+    const int cols = 40, rows = 30;
+    CHECK(terrain.setTiles(std::vector<std::uint8_t>(cols * rows, static_cast<std::uint8_t>(Tile::Open)),
+                           cols, rows));
+    f.loadShedding = true;
+    f.world.get<Transform>(f.viewer).position = {25, 500};
+    f.world.get<PlayerLocation>(f.viewer).viewport = {4000, 900};
+    const Entity mob = f.addMob({3900, 500});
+    const auto id = netIdOf(f.world, mob);
+    WorldView unbounded;
+    f.tick(unbounded, 1, 1000);
+    CHECK_EQ(unbounded.entities().count(id), 0u);
+
+    f.terrain = &terrain;
+    WorldView bounded;
+    f.tick(bounded, 2, 1050);
+    CHECK_EQ(bounded.entities().count(id), 1u);
+    if (bounded.entities().count(id) == 0) return;
+    f.world.get<Transform>(mob).position.x -= 25;
+    f.tick(bounded, 3, 1100);
+    CHECK_NEAR(bounded.entities().at(id).targetPosition.x, 3875.0, 0.05);
 }
 
 TEST(todo1107_manual_wide_view_keeps_distant_mobs_visible_under_load) {
@@ -1659,6 +1687,38 @@ TEST(snapshot_reports_the_viewers_reloading_slots) {
     // rather than in twenty steps a second.
     client.interpolate(2000, 0.2);
     CHECK_NEAR(client.self().slotReloadRemainingMillis[2], 1000.0, 1.0);
+}
+
+TEST(snapshot_reports_the_equipped_eggs_hatching_timer) {
+    std::string error;
+    if (!loadContent(testsupport::dataDir(), error)) {
+        CHECK(error.empty());
+        return;
+    }
+    Fixture f;
+    const auto eggIndex = content().petalIndex("arctic_spider_cave_egg");
+    CHECK(eggIndex != kNoPetal);
+    Loadout loadout;
+    loadout.slots[2] = LoadoutSlot{eggIndex, Rarity::Common, 0.0, false};
+    const Entity egg = f.world.create();
+    PetalInstance instance;
+    instance.slot = 2;
+    instance.configIndex = eggIndex;
+    instance.nextActionMillis = 3200.0;
+    f.world.add<PetalInstance>(egg, instance);
+    loadout.spawned.push_back(egg);
+    f.world.add<Loadout>(f.viewer, loadout);
+    f.world.add<PetalSlotState>(f.viewer, PetalSlotState{});
+
+    WorldView client;
+    f.tick(client, 1, 2000);
+    CHECK_NEAR(client.self().slotReloadRemainingMillis[2], 1200.0, 1.0);
+
+    const Entity spider = f.world.create();
+    f.world.add<MobType>(spider, MobType{content().petal(eggIndex).petMobIndex, Rarity::Common});
+    f.world.get<PetalSlotState>(f.viewer).slots[2].pets.push_back(spider);
+    f.tick(client, 2, 2100);
+    CHECK_EQ(client.self().slotReloadRemainingMillis[2], 0.0);
 }
 
 TEST(a_slot_that_finished_reloading_drops_off_the_wire) {

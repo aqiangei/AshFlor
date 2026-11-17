@@ -377,22 +377,29 @@ EM_JS(void, web_soft_caret, (const char* element, double x, double y, double fit
   if (!canvas || !node) return;
   const rect = canvas.getBoundingClientRect();
   // Fixed DOM coordinates use CSS pixels, never backing-store/DPR pixels.
-  node.style.left = Math.max(0, Math.min(innerWidth-28, rect.left+x*fit))+'px';
-  node.style.top = Math.max(0, Math.min(innerHeight-28, rect.top+y*fit))+'px';
+  const scaleX = canvas.clientWidth > 0 ? rect.width / canvas.clientWidth : 1;
+  const scaleY = canvas.clientHeight > 0 ? rect.height / canvas.clientHeight : 1;
+  node.style.left = Math.max(0, Math.min(innerWidth-28, rect.left+x*fit*scaleX))+'px';
+  node.style.top = Math.max(0, Math.min(innerHeight-28, rect.top+y*fit*scaleY))+'px';
 });
-EM_JS(double, web_soft_visible_bottom, (const char* element, double fit, double height), {
-  if (!navigator.maxTouchPoints || document.activeElement?.id !== '__flix_soft_keyboard' ||
+EM_JS(double, web_soft_visible_bottom, (const char* element, double fit, double height, double clearance), {
+  if (!(navigator.maxTouchPoints || matchMedia('(pointer: coarse)').matches) ||
+      document.activeElement?.id !== '__flix_soft_keyboard' ||
       !(fit > 0)) return height;
   const canvas = document.getElementById(UTF8ToString(element));
   if (!canvas) return height;
   const rect = canvas.getBoundingClientRect();
   const viewport = window.visualViewport;
   const keyboard = navigator.virtualKeyboard?.boundingRect;
-  const visibleBottom = Math.min(rect.bottom,
-      viewport ? viewport.offsetTop + viewport.height : innerHeight,
-      keyboard?.height > 0 && keyboard.width > 0 ? keyboard.top : rect.bottom);
+  const keyboardIntersects = keyboard?.height > 0 && keyboard.width > 0 &&
+      keyboard.left < rect.right && keyboard.right > rect.left;
+  const visibleBottom = Math.min(rect.bottom, innerHeight,
+      viewport ? viewport.offsetTop + viewport.height : rect.bottom,
+      keyboardIntersects ? keyboard.top : rect.bottom);
   if (rect.bottom - visibleBottom <= 1 || !(rect.height > 0)) return height;
-  return Math.max(0, Math.min(height, (visibleBottom - rect.top) * canvas.clientHeight / (rect.height * fit)));
+  const drawableHeight = Math.max(0, visibleBottom - Math.max(rect.top, viewport?.offsetTop || 0));
+  const safeBottom = visibleBottom - Math.min(clearance, drawableHeight / 2);
+  return Math.max(0, Math.min(height, (safeBottom - rect.top) * canvas.clientHeight / (rect.height * fit)));
 });
 EM_JS(int, web_ime_busy, (), {
   const node = document.getElementById('__flix_soft_keyboard');
@@ -1938,11 +1945,13 @@ void Window::setSoftKeyboardCaret(float x, float y) {
 #endif
 }
 
-double Window::softKeyboardVisibleBottom() const {
+double Window::softKeyboardVisibleBottom(double clearanceCssPixels) const {
 #ifdef __EMSCRIPTEN__
   if (impl_->softKeyboardUp) {
-    return web_soft_visible_bottom(impl_->elementId.c_str(), impl_->fit, height());
+    return web_soft_visible_bottom(impl_->elementId.c_str(), impl_->fit, height(), clearanceCssPixels);
   }
+#else
+  (void)clearanceCssPixels;
 #endif
   return height();
 }

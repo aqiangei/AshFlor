@@ -352,10 +352,10 @@ bool zoneInView(const Rect& bounds, Realm realm,
         // viewport test alone would wake a second map because somebody was
         // standing at the same numbers in the first.
         if (viewer.realm != realm) continue;
-        if (bounds.left() < viewer.position.x + viewer.half.x + margin &&
-            bounds.right() > viewer.position.x - viewer.half.x - margin &&
-            bounds.top() < viewer.position.y + viewer.half.y + margin &&
-            bounds.bottom() > viewer.position.y - viewer.half.y - margin) {
+        if (bounds.left() < viewer.viewportCentre.x + viewer.half.x + margin &&
+            bounds.right() > viewer.viewportCentre.x - viewer.half.x - margin &&
+            bounds.top() < viewer.viewportCentre.y + viewer.half.y + margin &&
+            bounds.bottom() > viewer.viewportCentre.y - viewer.half.y - margin) {
             return true;
         }
     }
@@ -777,6 +777,19 @@ Entity SpawnSystem::spawnMobAt(World& world, const Terrain& terrain, const Conte
     if (body.wideMobWallHull && terrain.resolveWall(at, wallRadius, realm).unresolved)
         return NULL_ENTITY;
 
+    // An ambush nest lets flowers walk across it, but its mouth still
+    // occupies space when placing another nest.
+    if (config.ambush.present) {
+        bool overlapsNest = false;
+        Query<AmbushNest, Transform, Body>{world}.without<Dead>().each(
+            [&](Entity, AmbushNest&, Transform& other, Body& otherBody) {
+                const double gap = radius + otherBody.radius;
+                if (other.realm == realm && distanceSq(at, other.position) < gap * gap)
+                    overlapsNest = true;
+            });
+        if (overlapsNest) return NULL_ENTITY;
+    }
+
     // Held rather than passed straight through: a centipede's body is laid out
     // along its head's facing, and the chain is built once the head is whole.
     // Rolled even when the caller chose it, so the stream stays the same.
@@ -1056,9 +1069,12 @@ void SpawnSystem::answerDeaths(World& world, const Terrain& terrain, const Conte
                                                        rarityIndex(Rarity::Unique)));
             const Entity child = spawnMobAt(world, terrain, content, mobIndex, next, at, realm,
                                             nowMillis, rng, 1, kInvalidIndex);
-            if (child != NULL_ENTITY) {
-                world.add<CancerSubdivision>(child, CancerSubdivision{true});
-                world.get<Bounty>(child).xp = 0.0;
+            for (Entity copy = child; copy != NULL_ENTITY;) {
+                const auto* link = world.tryGet<BodySegment>(copy);
+                const Entity nextSegment = link ? link->behind : NULL_ENTITY;
+                world.add<CancerSubdivision>(copy, CancerSubdivision{true});
+                world.get<Bounty>(copy).xp = 0.0;
+                copy = nextSegment;
             }
         }
         if (config.deathSpawn.present && rng.chance(config.deathSpawn.chance)) {
@@ -1176,7 +1192,7 @@ void SpawnSystem::run(World& world, const Terrain& terrain, const ContentRegistr
     latentPlacementGrid_.clear();
     indexedLatentZones_.assign(zones_.size(), false);
     scatterBossClocks(nowMillis);
-    gatherViewers(world, players);
+    gatherViewers(world, terrain, players);
 
     expireEscorts(dt, commands);
     runNests(world, terrain, content, rng, nowMillis);
@@ -1287,7 +1303,8 @@ void SpawnSystem::stockGhosts(World& world, const Terrain& terrain,
     }
 }
 
-void SpawnSystem::gatherViewers(World& world, const std::vector<RealmPoint>& players) {
+void SpawnSystem::gatherViewers(World& world, const Terrain& terrain,
+                                const std::vector<RealmPoint>& players) {
     // Every flower on an authored map, with the two facts a coordinate cannot
     // carry. A client that reported nothing keeps the default box, exactly as
     // the reference's `player.viewportWidth || VIEWPORT_WIDTH` does.
@@ -1343,6 +1360,8 @@ void SpawnSystem::gatherViewers(World& world, const std::vector<RealmPoint>& pla
             viewer.luck = candidate.luck;
             viewer.radius = candidate.radius;
         }
+        const Vec2 viewport = (viewer.half - Vec2{kViewportBuffer, kViewportBuffer}) * 2.0;
+        viewer.viewportCentre = boundedViewportCentre(position, viewport, terrain.cameraExtent(viewer.realm));
         viewers_.push_back(viewer);
     }
 }
@@ -1611,7 +1630,7 @@ bool SpawnSystem::seenBy(const std::vector<Viewer>& viewers, Realm realm, Vec2 p
                          double margin) const {
     for (const Viewer& viewer : viewers) {
         if (viewer.realm != realm) continue;
-        const Vec2 offset = position - viewer.position;
+        const Vec2 offset = position - viewer.viewportCentre;
         if (std::abs(offset.x) <= viewer.half.x + margin &&
             std::abs(offset.y) <= viewer.half.y + margin) {
             return true;
@@ -2593,7 +2612,7 @@ void SpawnSystem::stockHypers(World& world, const Terrain& terrain,
     for (const auto& map : worldMaps->maps()) {
         if (map.prestige() || inactiveLayoutRealms_[realmIndex(map.realm())]) continue;
         const auto& biome = map.biome();
-        if (biome == "jurassic" || biome == "zorr_void" || biome == "zorr_arctic" ||
+        if (biome == "bio" || biome == "jurassic" || biome == "zorr_void" || biome == "zorr_arctic" ||
             biome == "zorr_glacier" || biome == "zorr_polar") {
             expansionMaps.push_back(&map);
         } else if (map.usesReferenceSpawnCurve() &&
@@ -2611,6 +2630,20 @@ void SpawnSystem::stockHypers(World& world, const Terrain& terrain,
         std::rotate(expansionMaps.begin(), expansionMaps.begin() + first, expansionMaps.end());
     }
     candidatesByMap.insert(candidatesByMap.end(), expansionMaps.begin(), expansionMaps.end());
+    std::array<int, kMaxRealms> standingByRealm{};
+    ambient_->each([&](Entity e, MobTag&, Transform& at, Body&, MobType& type, AmbientMob& ambient) {
+        if (world.has<HoleTether>(e) || world.has<Dead>(e) || !isWholeAnimal(world, e)) return;
+        if (type.rarity == Rarity::Apex || (type.rarity == Rarity::Ascendant && ambient.zone != kInvalidIndex))
+            ++standingByRealm[realmIndex(at.realm)];
+    });
+    // Apply losses before selecting a map. Otherwise a sibling visited first
+    // can fill the shared slot before the map that lost it starts the cooldown.
+    for (auto& state : hyperPopulations_) {
+        const int standing = standingByRealm[realmIndex(state.realm)];
+        if (state.previousLiving > standing && bossCooldownLeft(Rarity::Apex, state.realm, nowMillis) == 0.0)
+            chargeBossClock(Rarity::Apex, state.realm, nowMillis);
+        state.previousLiving = standing;
+    }
     for (const auto* candidate : candidatesByMap) {
         const auto& map = *candidate;
         auto state=std::find_if(hyperPopulations_.begin(),hyperPopulations_.end(),
@@ -2618,15 +2651,7 @@ void SpawnSystem::stockHypers(World& world, const Terrain& terrain,
         if(state==hyperPopulations_.end()) {
             hyperPopulations_.push_back({map.realm(),0});state=std::prev(hyperPopulations_.end());
         }
-        int living=0;
-        ambient_->each([&](Entity e,MobTag&,Transform& at,Body&,MobType& type,AmbientMob& ambient){
-            if (world.has<HoleTether>(e) || at.realm != map.realm() ||
-                world.has<Dead>(e) || !isWholeAnimal(world,e)) return;
-            if (type.rarity == Rarity::Apex || (type.rarity == Rarity::Ascendant && ambient.zone != kInvalidIndex)) ++living;
-        });
-        if(state->previousLiving>living && bossCooldownLeft(Rarity::Apex,map.realm(),nowMillis)==0.0){
-            chargeBossClock(Rarity::Apex,map.realm(),nowMillis);
-        }
+        int living = standingByRealm[realmIndex(map.realm())];
         state->previousLiving=living;
         if(living>=kHyperPopulationTarget)continue;
         if (bossCooldownLeft(Rarity::Apex, map.realm(), nowMillis) > 0.0 ||
@@ -3111,7 +3136,7 @@ void SpawnSystem::wakeAhead(World& world, const Terrain& terrain, const ContentR
         bool covered = false;
         for (const Viewer& woken : wokenFrom_) {
             if (woken.realm != viewer.realm) continue;
-            const Vec2 offset = viewer.position - woken.position;
+            const Vec2 offset = viewer.viewportCentre - woken.viewportCentre;
             // A zoom or resize can expose unprepared ground without moving
             // the player. Reuse the old wake while it still covers the view.
             if (distanceSq(woken.position, viewer.position) <= movementAllowanceSq &&
@@ -3161,8 +3186,8 @@ void SpawnSystem::promoteLatent(World& world, const Terrain& terrain,
         return -1;
     };
     const auto inRoom = [&](const Viewer& viewer, Vec2 at) {
-        return std::abs(at.x - viewer.position.x) <= viewer.half.x &&
-               std::abs(at.y - viewer.position.y) <= viewer.half.y &&
+        return std::abs(at.x - viewer.viewportCentre.x) <= viewer.half.x &&
+               std::abs(at.y - viewer.viewportCentre.y) <= viewer.half.y &&
                !terrain.segmentBlocked(viewer.position, at, viewer.realm);
     };
     const auto inFactoryView = [&](Vec2 at) {
@@ -3225,8 +3250,8 @@ void SpawnSystem::promoteLatent(World& world, const Terrain& terrain,
         const auto inRefillRoom = [&](const Viewer& viewer, Vec2 at) {
             if (!inRoom(viewer, at)) return false;
             return !bioRoom ||
-                (std::abs(at.x - viewer.position.x) <= viewer.half.x - kViewportBuffer &&
-                 std::abs(at.y - viewer.position.y) <= viewer.half.y - kViewportBuffer);
+                (std::abs(at.x - viewer.viewportCentre.x) <= viewer.half.x - kViewportBuffer &&
+                 std::abs(at.y - viewer.viewportCentre.y) <= viewer.half.y - kViewportBuffer);
         };
         if (relocateBlocked && (bioRoom || deepJungle || isDeepPrestigeFactory(zone))) {
             const auto offset = (static_cast<std::size_t>(nowMillis / kPopulationIntervalMillis) + index)
@@ -3426,7 +3451,7 @@ void SpawnSystem::announceIfNotable(const ContentRegistry& content, Entity entit
                                     Realm realm) {
     if (mobIndex >= content.mobCount() || content.mob(mobIndex).neverAmbient) return;
     const bool ghost = content.mob(mobIndex).id == "ghost";
-    const Rarity threshold = ghost ? Rarity::Super : kAnnouncedRarity;
+    const Rarity threshold = ghost ? kAnnouncedGhostRarity : kAnnouncedRarity;
     if (rarityIndex(rarity) < rarityIndex(threshold)) return;
     // A prestige twin's supers are its bands' everyday stock, not events: the
     // server would announce one every few seconds.

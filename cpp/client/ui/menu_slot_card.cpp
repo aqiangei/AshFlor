@@ -142,7 +142,7 @@ std::size_t tierColumns(SlotGridTiers tiers) {
     switch (tiers) {
         case SlotGridTiers::PermanentHyper: return kUpgradeBaseColumns + 1;
         case SlotGridTiers::Absorption: return kUpgradeBaseColumns + 2;
-        case SlotGridTiers::Ascendant: return kLadderRarityCount + 1;
+        case SlotGridTiers::Trader: return kLadderRarityCount + 2;
         case SlotGridTiers::Hyper: break;
     }
     return kLadderRarityCount;
@@ -152,7 +152,9 @@ Rarity slotGridRarity(SlotGridTiers tiers, std::size_t column) {
     if ((tiers == SlotGridTiers::PermanentHyper || tiers == SlotGridTiers::Absorption) &&
         column == kUpgradeBaseColumns)
         return Rarity::PermanentHyper;
-    if ((tiers == SlotGridTiers::Ascendant && column == kLadderRarityCount) ||
+    if (tiers == SlotGridTiers::Trader && column == kLadderRarityCount)
+        return Rarity::PermanentHyper;
+    if ((tiers == SlotGridTiers::Trader && column == kLadderRarityCount + 1) ||
         (tiers == SlotGridTiers::Absorption && column == kUpgradeBaseColumns + 1))
         return Rarity::Ascendant;
     return static_cast<Rarity>(column);
@@ -165,8 +167,7 @@ bool slotGridShows(SlotGridTiers tiers, Rarity rarity) {
         case SlotGridTiers::Absorption:
             return rarityIndex(rarity) < kUpgradeBaseColumns || rarity == Rarity::PermanentHyper ||
                    rarity == Rarity::Ascendant;
-        case SlotGridTiers::Ascendant:
-            return rarityIndex(rarity) < kLadderRarityCount || rarity == Rarity::Ascendant;
+        case SlotGridTiers::Trader: return traderTakes(rarity);
         case SlotGridTiers::Hyper: break;
     }
     return rarityIndex(rarity) < kLadderRarityCount;
@@ -398,14 +399,16 @@ namespace {
 /// in id order -- florr's list is the inventory's petal ids, in order.
 template <typename Held>
 std::vector<std::uint16_t> heldTypes(const Profile& profile, Held held) {
-    std::vector<std::uint16_t> types;
+    std::vector<bool> present(content().petalCount(), false);
     for (const Profile::Stack& stack : profile.inventory) {
-        if (stack.count == 0 || !held(stack.rarity)) continue;
-        if (std::find(types.begin(), types.end(), stack.petalIndex) == types.end()) {
-            types.push_back(stack.petalIndex);
+        if (stack.count != 0 && stack.petalIndex < present.size() && held(stack.rarity)) {
+            present[stack.petalIndex] = true;
         }
     }
-    std::sort(types.begin(), types.end());
+    std::vector<std::uint16_t> types;
+    for (std::size_t i = 0; i < present.size(); ++i) {
+        if (present[i]) types.push_back(static_cast<std::uint16_t>(i));
+    }
     return types;
 }
 
@@ -444,10 +447,18 @@ std::optional<SlotGrid::Pick> SlotGrid::render(
     const std::function<SlotCell(std::uint16_t petalIndex, Rarity, std::uint32_t owned)>& look,
     bool showScrollbar, Pick* inspected) {
     Canvas& canvas = ctx.canvas;
-    const Profile& profile = ctx.net.profile();
+    const Profile& profile = ctx.craftInventory ? *ctx.craftInventory : ctx.net.profile();
     const Vec2 mouse = ctx.mouse();
     const std::size_t columns = tierColumns(tiers);
     const auto types = heldTypes(profile, [&](Rarity rarity) { return slotGridShows(tiers, rarity); });
+    // Index the bag once. Each visible row previously scanned the entire
+    // inventory again for every tier it displayed.
+    std::vector<std::array<std::uint32_t, kRarityCount>> counts(content().petalCount());
+    for (const auto& stack : profile.inventory) {
+        if (stack.petalIndex >= counts.size()) continue;
+        auto& count = counts[stack.petalIndex][rarityIndex(stack.rarity)];
+        if (count == 0) count = stack.count;
+    }
 
     const Rect clip = listClip(layout, columns);
     const double contentHeight = contentHeightFor(types.size(), layout.listInsetY);
@@ -509,7 +520,7 @@ std::optional<SlotGrid::Pick> SlotGrid::render(
             const Rarity rarity = slotGridRarity(tiers, column);
             const Rect rect{clip.x + kCellInsetX + static_cast<double>(column) * kGridPitch, y,
                             kGridCell, kGridCell};
-            const SlotCell cell = look(petalIndex, rarity, profile.stackCount(petalIndex, rarity));
+            const SlotCell cell = look(petalIndex, rarity, counts[petalIndex][rarityIndex(rarity)]);
             if (cell.count == 0) {
                 // A tier the account holds none of: a flat square in the
                 // shade. Not hoverable and not clickable.

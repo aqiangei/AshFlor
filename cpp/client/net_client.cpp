@@ -1,3 +1,4 @@
+#include "shared/game/wave.h"
 #include "client/net_client.h"
 
 #include <algorithm>
@@ -755,6 +756,7 @@ bool NetClient::inRiftMap() const {
 }
 
 void NetClient::requestNotifications(int limit, double beforeMillis) {
+    if (notificationsPending_) return;
     notificationsPending_ = true;
     notificationsPaging_ = beforeMillis > 0;
     ByteWriter w;
@@ -1345,7 +1347,7 @@ void NetClient::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ServerMessage::WaveRoomStatus: {
             const auto occupied = reader.u8();
             const bool capped = reader.u8() != 0;
-            if (reader.ok() && occupied <= 4) waveRoomStatus = {true, occupied, capped};
+            if (reader.ok() && occupied <= kWaveRoomCount) waveRoomStatus = {true, occupied, capped};
             break;
         }
         case net::ServerMessage::Leaderboard:  handleLeaderboard(reader); break;
@@ -1607,6 +1609,18 @@ void NetClient::handleProfile(ByteReader& reader) {
         const auto petal = reader.u16();
         const auto count = reader.u8();
         next.titanForgeCounts[petal] = std::min<unsigned>(count, 2);
+    }
+
+    const auto leaseCount = reader.u16();
+    if (leaseCount > reader.remaining() / 5) return;
+    const double receivedAt = renderClockMillis();
+    next.timedHammerLeases.reserve(leaseCount);
+    for (std::uint16_t i = 0; i < leaseCount; ++i) {
+        const auto slot = reader.u8();
+        const double remaining = reader.u32();
+        if (remaining > 0) {
+            next.timedHammerLeases.push_back({slot < kLoadoutSlots ? slot : -1, receivedAt + remaining});
+        }
     }
 
     // Replace wholesale only once the whole message decoded. A partially
@@ -1927,6 +1941,7 @@ void NetClient::handleNotifications(ByteReader& reader) {
         entry.kind = static_cast<net::NotificationKind>(reader.u8());
         entry.message = reader.str();
         entry.timestampMillis = reader.f64();
+        entry.petalId = reader.str();
         page.push_back(std::move(entry));
     }
     if (!reader.ok()) return;
@@ -2028,6 +2043,8 @@ void NetClient::handleGuildUpdate(ByteReader& reader) {
             member.name = reader.str();
             member.online = reader.boolean();
             member.location = reader.str();
+            member.lastSeenMillis = reader.u64();
+            member.sameShard = reader.boolean();
             next.members.push_back(std::move(member));
         }
     }

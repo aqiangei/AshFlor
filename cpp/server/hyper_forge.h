@@ -158,18 +158,51 @@ inline HyperForgePlan planHyperForge(const Database& db,const std::string& userI
     if(previous){
         auto& changed=plan.players.emplace(state.owner,*previous).first->second;int lost=0;
         rememberHyperHoldings(changed,static_cast<double>(now));
+        // Only reuse the slot this transfer actually clears. If the player
+        // already swapped the Hyper into the bag, their new loadout wins.
+        int vacatedSlot = -1;
         if(changed.itemCount(outputTier,key)>0){changed.addItem(outputTier,key,-1);lost=1;}
-        else for(auto& slot:changed.loadout)if(slot&&slot->rarity==outputTier&&slot->petalType==petal){slot.reset();lost=1;break;}
+        else {
+            for (int i = 0; i < static_cast<int>(changed.loadout.size()); ++i) {
+                auto& slot = changed.loadout[i];
+                if (!slot || slot->rarity != outputTier || slot->petalType != petal) continue;
+                slot.reset();
+                vacatedSlot = i;
+                lost = 1;
+                break;
+            }
+        }
         bool remaining=changed.itemCount(outputTier,key)>0;
         for(const auto& slot:changed.loadout)remaining=remaining||(slot&&slot->rarity==outputTier&&slot->petalType==petal);
         if(!remaining)for(auto& [name,slots]:changed.loadoutPresets)
             for(auto& slot:slots)if(slot&&slot->rarity==outputTier&&slot->petalType==petal)slot.reset();
         const int refund=static_cast<int>(std::min<std::int64_t>(
             static_cast<std::int64_t>(lost)*refundPerCopy,kMaxStackCount));
-        if(previousInput=="timed_mjolnir"){
-            expireHammerLeases(changed,static_cast<double>(now));
-            for(int n=0;n<refund;++n)addHammerLease(changed,static_cast<double>(now));
-        }else changed.addItem(materialTier,refundMaterial,refund);
+        const bool timedRefund = previousInput == "timed_mjolnir";
+        if (timedRefund) expireHammerLeases(changed, static_cast<double>(now));
+        const int beforeRefund = changed.itemCount(materialTier, refundMaterial);
+        if (timedRefund) {
+            for (int n = 0; n < refund; ++n) addHammerLease(changed, static_cast<double>(now));
+        } else {
+            changed.addItem(materialTier, refundMaterial, refund);
+        }
+
+        // Move one newly credited Eternal from the bag. Forge fragments are
+        // materials only, and a capped stack may not have received a refund.
+        if (materialTier == Rarity::Unique && previousInput != "fragment" &&
+            vacatedSlot >= 0 && vacatedSlot < kLoadoutSlots &&
+            vacatedSlot % kLoadoutActiveSlots < changed.skills.loadoutSlots() &&
+            changed.itemCount(materialTier, refundMaterial) > beforeRefund) {
+            StoredItem replacement;
+            replacement.petalType = previousInput;
+            replacement.rarity = materialTier;
+            changed.addItem(materialTier, refundMaterial, -1);
+            changed.loadout[vacatedSlot] = std::move(replacement);
+            if (timedRefund) {
+                auto& leases = changed.extra["titanHammerLeases"];
+                leases[leases.size() - 1]["slot"] = vacatedSlot;
+            }
+        }
         out.affected.push_back(state.owner);
     }
     auto& winner=plan.players.emplace(userId,std::move(available)).first->second;

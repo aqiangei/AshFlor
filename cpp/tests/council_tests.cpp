@@ -140,6 +140,27 @@ TEST(council_hyper_details_keep_history_without_presets_or_extra_copies) {
 }
 
 
+TEST(council_counts_permanent_hyper_and_apex_holdings_but_not_admin_items) {
+    Database db;
+    db.setPasswordCost(4);
+    auto account = db.createUser("holdingRanks", "password123");
+    CHECK(account.ok());
+    account.account->admin = false;
+    auto& record = db.progress(account.account->id);
+    record.totalXp = 1000;
+    record.setItemCount(Rarity::PermanentHyper, "petal_rose", 2);
+    record.setItemCount(Rarity::Admin, "petal_rose", 20);
+    StoredItem worn;
+    worn.petalType = "egg";
+    worn.rarity = Rarity::Ascendant;
+    record.loadout = {worn};
+    record.loadoutPresets["K1"] = record.loadout;
+
+    auto rows = council::weightInputs(db);
+    CHECK_EQ(rows.size(), 1u);
+    CHECK_NEAR(rows[0]["petals"].asDouble(), 13 * std::log(3.0) + 14 * std::log(2.0), 0.000001);
+}
+
 TEST(council_equal_level_time_budgets_and_low_inventory_budget) {
     Database db;std::string error;const std::string path="/tmp/florr-council-equal.json";std::remove(path.c_str());CHECK(db.load(path,error));db.setPasswordCost(4);
     auto a=db.createUser("equalA","password123"),b=db.createUser("equalB","password123");a.account->admin=false;b.account->admin=false;

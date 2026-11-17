@@ -226,31 +226,42 @@ void CraftingPanel::animate(double dtMs) {
     ease(show_, phase_ == Phase::Result && lastSuccess_ ? 1.0 : 0.0, kShowRate);
 }
 
-bool CraftingPanel::render(MenuContext& ctx) {
-    Canvas& canvas = ctx.canvas;
-    const Profile& profile = ctx.net.profile();
+void CraftingPanel::startRoll(NetClient& net, double timeSeconds) {
+    const Profile& profile = net.profile();
+    heldPetal_ = kNoPetal;
+    phase_ = Phase::Spinning;
+    phaseStarted_ = timeSeconds;
+    spinPetal_ = stagedPetal_;
+    spinRarity_ = stagedRarity_;
+    attemptsBeforeRoll_ = net.craftAttemptCount();
+    visibleRevision_.reset();
+    preCraftStacks_.clear();
+    const Rarity upgrade = upgradeRarity(spinRarity_);
+    for (std::size_t i = 0; i < profile.inventory.size(); ++i) {
+        const auto& stack = profile.inventory[i];
+        if (stack.petalIndex == spinPetal_ &&
+            (stack.rarity == spinRarity_ || stack.rarity == upgrade)) {
+            preCraftStacks_.emplace_back(i, stack);
+        }
+    }
+    rollBaseMillis_ = rollBaseMillis(profile, stagedPetal_, stagedRarity_);
+    rollMillis_ = rollBaseMillis_;
+    net.requestCraft(stagedPetal_, stagedRarity_, batches_ * kBatch);
+    stagedPetal_ = kNoPetal;
+    batches_ = 0;
+}
+
+void CraftingPanel::update(NetClient& net, double timeSeconds) {
+    const Profile& profile = net.profile();
+    if (!net.haveSession()) {
+        if (!account_.empty()) *this = CraftingPanel{};
+        return;
+    }
     if (account_ != profile.username) {
         *this = CraftingPanel{};
         account_ = profile.username;
     }
-    const Vec2 mouse = ctx.mouse();
-    const double nowMs = ctx.timeSeconds * 1000.0;
-    const bool inRift = ctx.net.inRiftMap();
-    if (inRift) bulkArmed_ = false;
-
-    // One click of the ring hands back one batch of five, not the whole
-    // staging area, so the slot badge counts down instead of vanishing.
-    const auto removeBatch = [this]() {
-        if (--batches_ <= 0) {
-            batches_ = 0;
-            stagedPetal_ = kNoPetal;
-        }
-    };
-
-    // A result the server sent while this panel was closed still has to land:
-    // reading it here rather than in the craft click is what makes the
-    // animation survive the player tabbing away mid-roll.
-    CraftOutcome& outcome = ctx.net.craftOutcome();
+    CraftOutcome& outcome = net.craftOutcome();
     if (outcome.pending) {
         outcome.pending = false;
         lastSuccess_ = outcome.success;
@@ -261,11 +272,13 @@ bool CraftingPanel::render(MenuContext& ctx) {
         // until fewer than five are left, and that tail is what the remaining
         // slots show. It is a count off the wire, not a constant -- a failure
         // hands back one to four, not always three.
-        survivors_ = outcome.petalsReturned;
+        survivors_ = outcome.attempts == 0 ? kBatch : outcome.petalsReturned;
         // A failure stops the roll short, by a random share of its length
         // that grows with what it cost.
         rollMillis_ = rollBaseMillis_;
-        if (!lastSuccess_) {
+        if (outcome.attempts == 0) {
+            rollMillis_ = 0.0;
+        } else if (!lastSuccess_) {
             const int lost = std::clamp(kBatch - survivors_, 1, 4);
             const double from = kRollLossStep * (lost - 1);
             rollMillis_ *= from + unitRandom() * kRollLossStep;
@@ -276,20 +289,66 @@ bool CraftingPanel::render(MenuContext& ctx) {
         if (phase_ == Phase::Spinning) {
             resultPending_ = true;
         } else {
+            spinPetal_ = kNoPetal;
             phase_ = Phase::Result;
-            phaseStarted_ = ctx.timeSeconds;
+            phaseStarted_ = timeSeconds;
         }
     }
     if (phase_ == Phase::Spinning) {
-        const double elapsed = (ctx.timeSeconds - phaseStarted_) * 1000.0;
+        const double elapsed = (timeSeconds - phaseStarted_) * 1000.0;
         if (elapsed >= rollMillis_ && resultPending_) {
             resultPending_ = false;
+            spinPetal_ = kNoPetal;
             phase_ = Phase::Result;
-            phaseStarted_ = ctx.timeSeconds;
+            phaseStarted_ = timeSeconds;
         } else if (elapsed >= kCraftTimeoutMillis) {
+            // Release the display hold, but wait for the outstanding reply
+            // before sending another roll on this session.
             phase_ = Phase::Idle;
         }
     }
+}
+
+const Profile& CraftingPanel::visibleInventory(const Profile& profile) {
+    if (phase_ != Phase::Spinning) return profile;
+    if (visibleRevision_ != profile.revision) {
+        auto& stacks = displayBag_.inventory;
+        stacks.clear();
+        const Rarity upgrade = upgradeRarity(spinRarity_);
+        for (const auto& stack : profile.inventory) {
+            if (stack.petalIndex == spinPetal_ &&
+                (stack.rarity == spinRarity_ || stack.rarity == upgrade)) continue;
+            stacks.push_back(stack);
+        }
+        for (const auto& [index, stack] : preCraftStacks_) {
+            stacks.insert(stacks.begin() + std::min(index, stacks.size()), stack);
+        }
+        visibleRevision_ = profile.revision;
+    }
+    return displayBag_;
+}
+
+bool CraftingPanel::render(MenuContext& ctx) {
+    Canvas& canvas = ctx.canvas;
+    const Profile& profile = ctx.net.profile();
+    const Vec2 mouse = ctx.mouse();
+    const double nowMs = ctx.timeSeconds * 1000.0;
+    const bool inRift = ctx.net.inRiftMap();
+    const CraftOutcome& outcome = ctx.net.craftOutcome();
+    const bool waiting = spinPetal_ != kNoPetal;
+    if (inRift) {
+        bulkArmed_ = false;
+        editingBlacklist_ = false;
+        fillAllMode_ = false;
+        heldPetal_ = kNoPetal;
+    }
+
+    const auto removeBatch = [this]() {
+        if (--batches_ <= 0) {
+            batches_ = 0;
+            stagedPetal_ = kNoPetal;
+        }
+    };
 
     // The staged batch cannot outlive the petals behind it: another window, a
     // pickup, or the craft that just consumed them all change the stack. Never
@@ -456,13 +515,20 @@ bool CraftingPanel::render(MenuContext& ctx) {
     auto attemptCard = card;
     attemptCard.chanceY += 20.0;
     drawSlotChance(canvas, attemptCard, std::string(language() == Language::Zh ?
-        "合成尝试次数：" : "Craft attempts: ") + std::to_string(ctx.net.craftAttemptCount()));
+        "合成尝试次数：" : "Craft attempts: ") +
+        std::to_string(waiting ? attemptsBeforeRoll_ : ctx.net.craftAttemptCount()));
 
-    if (outcome.attempts > 0) {
+    if (waiting) {
+        drawSlotLine(canvas, card, phase_ == Phase::Spinning
+            ? trEnZh("Crafting…", "合成中…")
+            : trEnZh("Waiting for the craft result…", "等待服务器返回合成结果…"));
+    } else if (outcome.attempts > 0) {
         const bool chinese = language() == Language::Zh;
         drawSlotLine(canvas, card, std::string(chinese ? "本次合成 ×" : "Crafted x") +
             std::to_string(outcome.crafted) + (chinese ? "，消耗 ×" : ", consumed x") +
             std::to_string(outcome.consumed));
+    } else if (phase_ == Phase::Result && !outcome.reason.empty()) {
+        drawSlotLine(canvas, card, outcome.reason);
     } else {
         drawSlotLine(canvas, card, trEnZh("Select 5 matching petals to craft",
                                            "选择 5 个相同花瓣进行合成"));
@@ -488,10 +554,10 @@ bool CraftingPanel::render(MenuContext& ctx) {
     const Rect bulkRun{bulkNext.right()+10,bulkPrev.y,std::max(100.0,panel.right()-12-bulkNext.right()-10),30};
     static const char* bulkZh[]={"普通","罕见","稀有","史诗","传说","神话","究极","超级","永恒","Hyper"};
     const bool bulkChinese=language()==Language::Zh;
-    drawSlotButton(canvas,bulkPrev,"<",std::nullopt,bulkPrev.contains(mouse),false);
+    drawSlotButton(canvas,bulkPrev,"<",std::nullopt,!inRift && bulkPrev.contains(mouse),false);
     const std::string bulkTargetLabel=std::string(bulkChinese?"合成至：":"Craft to: ")+(bulkChinese?bulkZh[bulkTarget_]:rarityLabel(static_cast<Rarity>(bulkTarget_)));
     drawSlotButton(canvas,bulkTarget,bulkTargetLabel.c_str(),rarityColor(static_cast<Rarity>(bulkTarget_)),false,false);
-    drawSlotButton(canvas,bulkNext,">",std::nullopt,bulkNext.contains(mouse),false);
+    drawSlotButton(canvas,bulkNext,">",std::nullopt,!inRift && bulkNext.contains(mouse),false);
     const char* bulkRunLabel = inRift ? (bulkChinese ? "裂隙内无法合成" : "Crafting unavailable in Rift")
         : bulkArmed_ ? (bulkChinese ? "确认消耗低阶材料" : "Confirm consuming lower tiers")
                      : (bulkChinese ? "一键合成全部低阶花瓣" : "Craft all lower tiers");
@@ -504,8 +570,10 @@ bool CraftingPanel::render(MenuContext& ctx) {
         std::to_string(ctx.settings.craftBlacklist.size()) + (bulkChinese ? "）：" : "): ") +
         (editingBlacklist_ ? (bulkChinese ? "点击花瓣切换，点此完成 · 自动保存" : "Click petals to toggle · Done")
                            : (bulkChinese ? "点击设置 · 批量合成跳过这些种类" : "Edit · bulk crafting skips these types"));
-    drawSlotButton(canvas, blacklistButton, blacklistLabel.c_str(), editingBlacklist_ ? 0xCC6644u : 0x5A9FDBu,
-                   blacklistButton.contains(mouse), false);
+    const auto blacklistTint = inRift ? std::nullopt
+        : std::optional<std::uint32_t>{editingBlacklist_ ? 0xCC6644u : 0x5A9FDBu};
+    drawSlotButton(canvas, blacklistButton, blacklistLabel.c_str(), blacklistTint,
+                   !inRift && blacklistButton.contains(mouse), false);
     if (editingBlacklist_) drawSlotButton(canvas, clearBlacklist, bulkChinese ? "清空名单" : "Clear list",
                                           0xCC6644u, clearBlacklist.contains(mouse), false);
     const auto isExcluded = [&](std::uint16_t index) {
@@ -537,7 +605,8 @@ bool CraftingPanel::render(MenuContext& ctx) {
     // Craft + Craft All toggle side by side, centred on the card's button
     // anchor. Craft All is a mode, not a one-shot: while on, a click on a
     // craftable petal stages every available batch (Shift-click's behaviour).
-    const char* craftLabel = tr(Msg::Craft);
+    const bool canSkipRoll = !inRift && phase_ == Phase::Spinning && resultPending_;
+    const char* craftLabel = canSkipRoll ? trEnZh("Skip animation", "跳过动画") : tr(Msg::Craft);
     const char* craftAllLabel = tr(Msg::CraftAll);
     const double craftW = measure(craftLabel, kCraftButtonLabelSize) + kCraftButtonPadX * 2.0;
     const double craftAllW = measure(craftAllLabel, kCraftButtonLabelSize) + kCraftButtonPadX * 2.0;
@@ -547,18 +616,21 @@ bool CraftingPanel::render(MenuContext& ctx) {
     const Rect craftAllRect{craftPairX + craftW + kCraftButtonGap, card.button.y, craftAllW,
                             card.button.h};
     const bool mouseDown = ctx.window.mouseDown(MouseButton::Left);
-    const bool canCraft = !inRift && phase_ == Phase::Idle && stagedPetal_ != kNoPetal && batches_ > 0;
+    const bool canCraft = !inRift && !waiting && phase_ == Phase::Idle &&
+                          stagedPetal_ != kNoPetal && batches_ > 0;
+    const bool craftActionEnabled = canCraft || canSkipRoll;
     const auto craftTint =
         canCraft ? std::optional<std::uint32_t>(rarityColor(upgradeRarity(stagedRarity_)))
-                 : std::nullopt;
+        : canSkipRoll ? std::optional<std::uint32_t>(kFillAllOnTint) : std::nullopt;
     const auto craftAllTint =
         fillAllMode_ ? std::optional<std::uint32_t>(kFillAllOnTint) : std::nullopt;
-    drawSlotButton(canvas, craftRect, craftLabel, craftTint, craftRect.contains(mouse),
-                   craftRect.contains(mouse) && mouseDown);
+    drawSlotButton(canvas, craftRect, craftLabel, craftTint,
+                   craftActionEnabled && craftRect.contains(mouse),
+                   craftActionEnabled && craftRect.contains(mouse) && mouseDown);
     // Toggle stays lit while on; hover/press still flash over the face.
     drawSlotButton(canvas, craftAllRect, craftAllLabel, craftAllTint,
-                   craftAllRect.contains(mouse) || fillAllMode_,
-                   (craftAllRect.contains(mouse) && mouseDown) || fillAllMode_);
+                   !inRift && (craftAllRect.contains(mouse) || fillAllMode_),
+                   !inRift && ((craftAllRect.contains(mouse) && mouseDown) || fillAllMode_));
 
     // Tiles on their way out go over everything.
     fx_.drawVanishing(canvas, ctx.sprites, ctx.dt * 1000.0);
@@ -605,7 +677,7 @@ bool CraftingPanel::render(MenuContext& ctx) {
     // On press, not release: the browser hit-tests in mousedown, so a press
     // that starts on a cell and drifts off must not still fire.
     const bool rightPressed = panel.contains(mouse) && ctx.window.mousePressed(MouseButton::Right);
-    if (phase_ == Phase::Idle && rightPressed) {
+    if (!inRift && phase_ == Phase::Idle && rightPressed) {
         removeBatch();
         heldPetal_ = kNoPetal;
         return true;
@@ -621,25 +693,8 @@ bool CraftingPanel::render(MenuContext& ctx) {
         switchPressed_ = true;
         return true;
     }
-
-    const auto beginCraft = [&]() {
-        if (!canCraft) return;
-        heldPetal_ = kNoPetal;
-        phase_ = Phase::Spinning;
-        phaseStarted_ = ctx.timeSeconds;
-        // Everything staged goes in ONE request, which the server crafts as
-        // a pool and answers with a single result.
-        spinPetal_ = stagedPetal_;
-        spinRarity_ = stagedRarity_;
-        // From the account as it stands before the craft lands.
-        rollBaseMillis_ = rollBaseMillis(profile, stagedPetal_, stagedRarity_);
-        rollMillis_ = rollBaseMillis_;
-        ctx.net.requestCraft(stagedPetal_, stagedRarity_, batches_ * kBatch);
-        // Handed over, so the staging area is empty from here: the ring is
-        // drawing the roll's copy, not something still takeable back.
-        stagedPetal_ = kNoPetal;
-        batches_ = 0;
-    };
+    // Rift materials remain inspectable, but no crafting input can change the panel.
+    if (inRift) return true;
 
     const auto stageAmount = [&]() -> std::uint32_t {
         return (fillAllMode_ || ctx.window.shiftHeld()) ? UINT32_MAX : 1u;
@@ -706,14 +761,20 @@ bool CraftingPanel::render(MenuContext& ctx) {
         return true;
     }
     if (phase_ == Phase::Idle && bulkRun.contains(mouse)) {
-        if (inRift) return true;
+        if (waiting) return true;
         if(!bulkArmed_){bulkArmed_=true;return true;}
         std::vector<std::uint16_t> excluded;
         for (std::uint16_t i = 0; i < content().petalCount(); ++i) if (isExcluded(i)) excluded.push_back(i);
         ctx.net.requestBulkCraft(static_cast<Rarity>(bulkTarget_), excluded);bulkArmed_=false;stagedPetal_=kNoPetal;batches_=0;return true;
     }
     if (craftRect.contains(mouse)) {
-        beginCraft();
+        if (canSkipRoll) {
+            // Reuse the regular reveal so inventory, attempts and result land together.
+            rollMillis_ = 0.0;
+            update(ctx.net, ctx.timeSeconds);
+        } else if (canCraft) {
+            startRoll(ctx.net, ctx.timeSeconds);
+        }
         return true;
     }
     if (craftAllRect.contains(mouse)) {

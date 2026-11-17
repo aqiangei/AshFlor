@@ -376,9 +376,9 @@ void MovementSystem::runWorldPhase(World& world, const Terrain& terrain,
     for (auto& discs : meteorDiscs_) discs.clear();
     Query<PlantedMeteor, Transform, Body> meteors{world};
     meteors.without<Dead>();
-    meteors.each([&](Entity, PlantedMeteor&, Transform& at, Body& body) {
+    meteors.each([&](Entity, PlantedMeteor& meteor, Transform& at, Body& body) {
         meteorDiscs_[realmIndex(at.realm)].push_back(
-            {at.position, sanitizeCollisionRadius(body.radius), at.realm});
+            {at.position, sanitizeCollisionRadius(body.radius), at.realm, meteor.owner});
     });
     const auto mobStepsStarted = timing ? Clock::now() : Clock::time_point{};
     moveMobs(world, terrain, nowMillis, dt, timing ? &timing->mobStepJoinMs : nullptr);
@@ -395,11 +395,13 @@ void MovementSystem::runWorldPhase(World& world, const Terrain& terrain,
     // still presses toward a training target, maintaining contact damage.
     collectNpcDiscs();
     queries_->mobBodies.each([&](Entity e, MobTag&, Transform& transform, Body& body, MobType& type) {
-        if (!world.has<Pet>(e)) return;
+        const auto* pet = world.tryGet<Pet>(e);
+        if (!pet) return;
         const Vec2 from = transform.position;
         const double radius = body.radius * mobBodyContactScale(content().mob(type.configIndex).id);
         pushOutOfNpcs(terrain, transform, radius);
-        stopMobAtMeteors(terrain, transform.realm, from, transform.position, radius);
+        stopMobAtMeteors(terrain, transform.realm, from, transform.position,
+                         radius, kMobWallRadius, pet->owner);
     });
     // And the loose petals after that, off the separation pass's own grid,
     // so what they are solid against is where the mobs finally stand.
@@ -408,8 +410,8 @@ void MovementSystem::runWorldPhase(World& world, const Terrain& terrain,
 
 void MovementSystem::collectNpcDiscs() {
     npcDiscs_.clear();
-    queries_->npcBodies.each([&](Entity, NpcTag&, Transform& transform, Body& body) {
-        npcDiscs_.push_back({transform.position, body.radius, transform.realm});
+    queries_->npcBodies.each([&](Entity e, NpcTag&, Transform& transform, Body& body) {
+        npcDiscs_.push_back({transform.position, body.radius, transform.realm, NULL_ENTITY, e});
     });
 }
 
@@ -653,6 +655,17 @@ void MovementSystem::collideLooseBodies(World& world, const Terrain& terrain) {
     constexpr double kFiledDrift = kMobSeparationMaxPushPerPair * kMobSeparationPushHeadroom;
 
     for (LooseDisc& disc : looseDiscs_) {
+        const auto* anchor = world.tryGet<RingAnchor>(disc.entity);
+        const auto* instance = anchor ? world.tryGet<PetalInstance>(disc.entity) : nullptr;
+        const auto* ownerFaction = instance ? world.tryGet<Faction>(instance->owner) : nullptr;
+        const auto alliedWithMoon = [&](Entity other) {
+            if (!ownerFaction) return false;
+            const auto* pet = world.tryGet<Pet>(other);
+            if (pet && pet->owner == instance->owner) return true;
+            const auto* side = world.tryGet<Faction>(pet ? pet->owner : other);
+            return side && side->team == ownerFaction->team &&
+                   (!side->friendlyFireEnabled || !ownerFaction->friendlyFireEnabled);
+        };
         // Mobs. The separation set is exactly the mobs worth colliding this
         // tick -- awake, finite, not flagged no_mob_collision (an ant hole is
         // a hole in the ground, and a slab slides over it as a mob does) --
@@ -666,7 +679,7 @@ void MovementSystem::collideLooseBodies(World& world, const Terrain& terrain) {
                 index < separationSlot_.size() ? separationSlot_[index] : kNoSeparationEntry;
             if (slot == kNoSeparationEntry) continue;
             const SeparationEntry& entry = separationSet_[slot];
-            if (entry.entity != mob || entry.noCollision) continue;
+            if (entry.entity != mob || entry.noCollision || alliedWithMoon(mob)) continue;
             Transform* transform = world.tryGet<Transform>(mob);
             if (transform == nullptr) continue;
 
@@ -692,13 +705,16 @@ void MovementSystem::collideLooseBodies(World& world, const Terrain& terrain) {
                              slabShare,
                              transform->position, entry.wallRadius, !anchored, out,
                              disc.wax ? reach - gap : loosePetalContactPush(reach - gap));
-            if (!anchored)
-                stopMobAtMeteors(terrain, disc.realm, from, transform->position, entry.radius, entry.wallRadius);
+            if (!anchored && !meteorDiscs_[realmIndex(disc.realm)].empty()) {
+                const auto* pet = world.tryGet<Pet>(mob);
+                stopMobAtMeteors(terrain, disc.realm, from, transform->position, entry.radius,
+                                 entry.wallRadius, pet ? pet->owner : NULL_ENTITY);
+            }
         }
 
         // NPCs never give way, to a flower or to anything else.
         for (ObstacleDisc& npc : npcDiscs_) {
-            if (npc.realm != disc.realm) continue;
+            if (npc.realm != disc.realm || alliedWithMoon(npc.entity)) continue;
             const double reach = npc.radius + disc.radius;
             const Vec2 offset = npc.position - disc.position;
             const double gapSq = offset.lengthSq();
@@ -812,12 +828,13 @@ void MovementSystem::stepTeleporters(World& world, double nowMillis, double dt) 
 }
 
 bool MovementSystem::stopMobAtMeteors(const Terrain& terrain, Realm realm, Vec2 from,
-                                      Vec2& position, double radius, double wallRadius) const {
+                                     Vec2& position, double radius, double wallRadius, Entity petOwner) const {
     const auto& meteors = meteorDiscs_[realmIndex(realm)];
     if (meteors.empty()) return false;
     const Vec2 intended = position - from;
     bool blocked = false;
     for (const auto& meteor : meteors) {
+        if (petOwner != NULL_ENTITY && petOwner == meteor.owner) continue;
         const double reach = meteor.radius + radius + kContactEpsilon;
         const Vec2 offset = from - meteor.position;
         if (offset.lengthSq() >= reach * reach) continue;
@@ -837,6 +854,7 @@ bool MovementSystem::stopMobAtMeteors(const Terrain& terrain, Realm realm, Vec2 
     double limit = 1.0;
     if (lengthSq > 0.0) {
         for (const auto& meteor : meteors) {
+            if (petOwner != NULL_ENTITY && petOwner == meteor.owner) continue;
             const double reach = meteor.radius + radius + kContactEpsilon;
             const Vec2 offset = from - meteor.position;
             const double toward = -(offset.x * delta.x + offset.y * delta.y);
@@ -863,7 +881,9 @@ void MovementSystem::moveMobs(World& world, const Terrain& terrain,
         if (anchored) motion.velocity = Vec2{0,0};
         const double wallRadius = mobWallRadius(&body);
         double barrierRadius = 0.0;
+        Entity petOwner = NULL_ENTITY;
         if (!anchored && !meteorDiscs_[realmIndex(transform.realm)].empty()) {
+            if (const auto* pet = world.tryGet<Pet>(e)) petOwner = pet->owner;
             const auto* type = world.tryGet<MobType>(e);
             barrierRadius = sanitizeCollisionRadius(body.radius) *
                 (type ? mobBodyContactScale(registry.mob(type->configIndex).id) : 1.0);
@@ -903,7 +923,7 @@ void MovementSystem::moveMobs(World& world, const Terrain& terrain,
                                                         transform.position, spend, wallRadius,
                                                         1.0, true, true);
                     const bool stopped = stopMobAtMeteors(terrain, transform.realm, from,
-                                                          transform.position, barrierRadius, wallRadius);
+                                                          transform.position, barrierRadius, wallRadius, petOwner);
                     kb->carry = out.blocked || stopped ? Vec2{0, 0} : kb->carry * kept;
                 }
             }
@@ -926,7 +946,7 @@ void MovementSystem::moveMobs(World& world, const Terrain& terrain,
         StepOutcome out = stepCollide(terrain, transform.realm, transform.position, attempted,
                                       wallRadius, dt, true, body.wideMobWallHull);
         if (!anchored && stopMobAtMeteors(terrain, transform.realm, from, transform.position,
-                                          barrierRadius, wallRadius)) {
+                                          barrierRadius, wallRadius, petOwner)) {
             out.blocked = true;
             out.displacement = transform.position - from;
         }
@@ -965,6 +985,7 @@ void MovementSystem::moveMobs(World& world, const Terrain& terrain,
 void MovementSystem::moveProjectiles(World& world, const Terrain& terrain, double dt) {
     spentProjectiles_.clear();
     const auto javascript = content().petalIndex("javascript");
+    const auto mechaMissile = content().petalIndex("mecha_missile");
     queries_->projectiles.each([&](Entity e, ProjectileTag&, Transform& transform,
                                    Motion& motion, Projectile& projectile) {
         if (!(projectile.remainingDistance > 0.0)) {
@@ -984,6 +1005,17 @@ void MovementSystem::moveProjectiles(World& world, const Terrain& terrain, doubl
         projectile.lastPosition = transform.position;
 
         Vec2 velocity = sanitizeMovementVelocity(motion.velocity);
+        // Mecha-wasp missiles have no stationary flight phase.
+        if (mechaMissile != kInvalidIndex && projectile.petalConfigIndex == mechaMissile &&
+            velocity.lengthSq() <= kMinProjectileSpeed * kMinProjectileSpeed) {
+            const auto* faction = world.tryGet<Faction>(e);
+            if (faction && faction->team == Team::Hostiles) {
+                projectile.remainingDistance = 0.0;
+                motion.velocity = {0, 0};
+                spentProjectiles_.push_back(e);
+                return;
+            }
+        }
 
         // Seeking is a LAUNCH correction, not a guidance system: the shot
         // snaps onto the nearest mob inside a cone around the bearing it was
@@ -1349,7 +1381,9 @@ void MovementSystem::separateMobs(World& world, const Terrain& terrain, WorldPha
                 continue;
             }
             if (other.emergingFrom == self.entity) continue;
-            if (!(distance > 0.0) && self.pet == other.pet) continue;
+            // A pair of summons can share a centre after following its owner.
+            // Use the stable opposite directions below to separate them.
+            if (!(distance > 0.0) && !self.pet && !other.pet) continue;
 
             const double pairCap = self.pet != other.pet
                 ? std::max(kMobSeparationMaxPushPerPair, std::min(self.radius, other.radius)*.12)
@@ -1399,7 +1433,11 @@ void MovementSystem::separateMobs(World& world, const Terrain& terrain, WorldPha
         Vec2 position = entry.position;
         stepCollide(terrain, entry.realm, position, entry.push.clampedLength(std::max(cap, entry.petPushCap)),
                     entry.wallRadius, 1.0, true, entry.wallRadius > kMobWallRadius);
-        stopMobAtMeteors(terrain, entry.realm, entry.position, position, entry.radius, entry.wallRadius);
+        if (!meteorDiscs_[realmIndex(entry.realm)].empty()) {
+            const auto* pet = world.tryGet<Pet>(entry.entity);
+            stopMobAtMeteors(terrain, entry.realm, entry.position, position, entry.radius,
+                             entry.wallRadius, pet ? pet->owner : NULL_ENTITY);
+        }
         transform->position = position;
     }
 }

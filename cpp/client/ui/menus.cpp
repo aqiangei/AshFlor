@@ -812,6 +812,7 @@ bool ClientSettings::load(const std::string& path) {
         }
         else if (key == "stats") showStats = number != 0;
         else if (key == "exactValues") showExactValues = number != 0;
+        else if (key == "petalRarityGlow") render.rarityGlow = number != 0;
         else if (key == "debugButton") showDebugButton = number != 0;
         else if (key == "adminsOnBoard") showAdminsOnLeaderboard = number != 0;
         else if (key == "changelogSeen") changelogSeen = number;
@@ -883,6 +884,7 @@ bool ClientSettings::save(const std::string& path) const {
          << "chatTabs " << static_cast<int>(chatChannels) << '\n'
          << "stats " << (showStats ? 1 : 0) << '\n'
          << "exactValues " << (showExactValues ? 1 : 0) << '\n'
+         << "petalRarityGlow " << (render.rarityGlow ? 1 : 0) << '\n'
          << "debugButton " << (showDebugButton ? 1 : 0) << '\n'
          << "adminsOnBoard " << (showAdminsOnLeaderboard ? 1 : 0) << '\n'
          << "changelogSeen " << changelogSeen << '\n'
@@ -1078,6 +1080,13 @@ bool MenuSystem::handleKeys(Window& window) {
     // Number keys and the classic bar's T action need the network client
     // below; title-screen loadout editing remains pointer-driven.
     if (inGame_) {
+        if (window.keyPressed(Key::Delete) && !unequipKeyHeld_) {
+            unequipKeyHeld_ = true;
+            if (loadoutHovered_ >= 0 && loadoutHovered_ < kLoadoutBarSlots) {
+                pendingUnequipSlot_ = loadoutHovered_;
+                return true;
+            }
+        }
         if (window.keyPressed(Key::Q)) { settings_.rotationStep = std::max(1, settings_.rotationStep - 1); return true; }
         if (window.keyPressed(Key::E)) { settings_.rotationStep = std::min(4, settings_.rotationStep + 1); return true; }
         if (loadoutMetrics(settings_.classicLoadoutBar).secondaryPicker) {
@@ -1672,6 +1681,7 @@ bool sameLoadout(const std::vector<Profile::Slot>& a, const std::vector<Profile:
 void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
                                 const SpriteCache& sprites, const WorldRenderer& renderer,
                                 double timeSeconds) {
+    if (!window.keyDown(Key::Delete)) unequipKeyHeld_ = false;
     const Profile& profile = net.profile();
     // Whether K or L (or mobile R long-press) is down this frame; see
     // presetBankShown_. Kept on loadoutPresetBank_ for the input pass.
@@ -1721,6 +1731,7 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
         pendingCycle_ = 0;
         pendingSwapSlot_ = -1;
         pendingSecondaryDelete_ = false;
+        pendingUnequipSlot_ = -1;
         pendingRowSwap_ = false;
         pendingPreset_ = -1;
         // And no boxes to ease from. gardn's on_render_skip does the same:
@@ -2123,7 +2134,10 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
         if (entry.slot < kLoadoutActiveSlots &&
             anim.petalIndex != kNoPetal && petalMimicsLeft(content().petal(anim.petalIndex))) {
             const auto copied = net.profile().equipped(content(), entry.slot);
-            if (!copied.empty()) tile.petalIndex = copied.configIndex;
+            if (!copied.empty()) {
+                tile.namePetalIndex = anim.petalIndex;
+                tile.petalIndex = copied.configIndex;
+            }
         }
         tile.rarity = anim.rarity;
         tile.loadoutSlot = entry.slot < kLoadoutActiveSlots ? entry.slot : -1;
@@ -2254,7 +2268,6 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
                insideInclusive(loadoutRects_[static_cast<std::size_t>(i)],point))return i;
         return -1;
     });
-    if(touchTip && drag_.source==DragState::Source::LoadoutSlot)drag_.clear();
     const int tipIndex=touchTip?loadoutTouchInspect_.target:hovered;
     const bool showTip = tipIndex >= 0 && tipIndex < owned &&
         tipIndex % kLoadoutBarPrimary < visibleSlots &&
@@ -2285,8 +2298,14 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
             }
             triangleBonus = triangleBonusDamage(equipped.rarity, counts);
         }
-        const auto lines = equippedPetalTooltipLines(slot.petalIndex, equipped, profile.skills,
+        auto lines = equippedPetalTooltipLines(slot.petalIndex, equipped, profile.skills,
                                                     reloadScale, tipIndex, triangleBonus);
+        if (expectedLoadout_.empty() && slot.petalIndex == content().petalIndex("timed_mjolnir")) {
+            showTimedHammerExpiry(lines, profile, tipIndex);
+        }
+        if (inGame_)
+            lines.push_back({touchTip ? trEnZh("Drag off the bar to unequip", "拖出装备栏卸下")
+                                      : trEnZh("Delete to unequip", "按 Delete 卸下"), 12.0});
         const bool alt = altMode_;
         const Vec2 size = measureTooltip(lines, 0.0, 0.0, alt);
         // Slot boxes are laid out in screen space; the slide only moves the
@@ -2386,6 +2405,8 @@ void MenuSystem::clickLoadoutSlot(NetClient& net, double timeSeconds, int slot) 
 }
 
 void MenuSystem::updateLoadoutInput(Window& window, NetClient& net, double timeSeconds) {
+    const int unequipSlot = pendingUnequipSlot_;
+    pendingUnequipSlot_ = -1;
     if (rotationDial_.w > 0 && !drag_.active()) {
         const auto adjustRotation = [&](Vec2 point) {
             if (!rotationDial_.contains(point) || panelRect_.contains(point)) return false;
@@ -2422,6 +2443,14 @@ void MenuSystem::updateLoadoutInput(Window& window, NetClient& net, double timeS
     const int owned = static_cast<int>(shown.size());
     const int hovered = loadoutHovered_;
     const bool mouseDown = window.mouseDown(MouseButton::Left);
+
+    if (unequipSlot >= 0 && unequipSlot == hovered && hovered < owned &&
+        !drag_.active() && !mouseDown && !window.pointerIsTouch() &&
+        (loadoutPresetBank_ < 0 || hovered < kLoadoutBarPrimary) &&
+        !shown[static_cast<std::size_t>(hovered)].empty()) {
+        clearLoadoutSlot(net, timeSeconds, hovered);
+        return;
+    }
 
     // Picking a petal up off the bar. Nothing is sent yet: a drag that ends
     // back where it started must not have unequipped anything on the way.
@@ -2466,8 +2495,13 @@ void MenuSystem::updateLoadoutInput(Window& window, NetClient& net, double timeS
         loadoutPressSaved_ = true;
     }
 
-    if (window.mouseReleased(MouseButton::Left) && loadoutTouchInspect_.consumedRelease) {
-        drag_.clear(); loadoutPressSlot_=-1; loadoutPressSaved_=false; return;
+    const bool movedFromSlot = (mouse - loadoutGrabAt_).length() > kLoadoutClickSlop;
+    if (window.mouseReleased(MouseButton::Left) && loadoutTouchInspect_.consumedRelease &&
+        !(drag_.source == DragState::Source::LoadoutSlot && movedFromSlot)) {
+        drag_.clear();
+        loadoutPressSlot_ = -1;
+        loadoutPressSaved_ = false;
+        return;
     }
     if (!window.mouseReleased(MouseButton::Left)) {
         if (!mouseDown) {
@@ -2511,8 +2545,7 @@ void MenuSystem::updateLoadoutInput(Window& window, NetClient& net, double timeS
     // finger lifts a little way from where it landed: a tap that drifted into
     // a gap used to take the petal off the bar, and one that drifted onto the
     // next slot swapped the two.
-    if (drag_.source == DragState::Source::LoadoutSlot && drag_.slot < owned &&
-        (Vec2{window.mouseX(), window.mouseY()} - loadoutGrabAt_).length() <= kLoadoutClickSlop) {
+    if (drag_.source == DragState::Source::LoadoutSlot && drag_.slot < owned && !movedFromSlot) {
         clickLoadoutSlot(net, timeSeconds, drag_.slot);
         drag_.clear();
         return;
@@ -3060,6 +3093,10 @@ void MenuSystem::renderOpenPanel(Canvas& canvas, Window& window, NetClient& net,
     ctx.profiling = profiling_;
     ctx.altMode = altMode_;
     ctx.shardSelection = &shardSelection_;
+    if (!net.inRiftMap() && (drawn_ == MenuId::Inventory ||
+        (drawn_ == MenuId::Crafting && nearbyNpc_ == NpcService::None && !absorbMode_))) {
+        ctx.craftInventory = &crafting_.visibleInventory(net.profile());
+    }
     // As the strip last laid it out, which on the title screen is the frame
     // before -- settings is painted under the strip there -- and the gear
     // never moves between two frames.
@@ -3162,6 +3199,7 @@ MenuSystem::OpCounts MenuSystem::takeOpCounts() {
 void MenuSystem::render(Canvas& canvas, Window& window, NetClient& net, const SpriteCache& sprites,
                         const WorldRenderer& renderer, double timeSeconds, double dt,
                         const OverlayFn& overStripUnderBar) {
+    crafting_.update(net, timeSeconds);
     const bool enterDungeon=pendingDungeonEntry_;pendingDungeonEntry_=false;
     wantsText_ = false;
     dungeonEntryRect_ = Rect{};
@@ -3197,15 +3235,20 @@ void MenuSystem::render(Canvas& canvas, Window& window, NetClient& net, const Sp
     // stopped being useful. The browser fetches on construction instead, so
     // the first frame that holds an account does the same here. Cleared with
     // the account, so a reconnect asks again on the socket it came back on.
-    notificationsUnread_ = net.haveSession() ? notificationsUnread(net, settings_) : 0;
+    notifications_.updateReadAll(net, settings_);
+    const int countedUnread = notificationsUnread(net, settings_);
     if (!net.haveSession()) {
+        notificationsUnread_ = 0;
         notificationsPrimed_ = false;
         nextNotificationBadgePage_ = 0;
-    } else if (!notificationsPrimed_) {
+    } else if (!net.notificationsHaveMore() || countedUnread >= 100) {
+        notificationsUnread_ = countedUnread;
+    }
+    if (net.haveSession() && !notificationsPrimed_) {
         notificationsPrimed_ = true;
         nextNotificationBadgePage_ = timeSeconds + 0.35;
         net.requestNotifications(kNotificationPage, 0);
-    } else if (notificationsUnread_ < 100 && net.notificationsHaveMore() &&
+    } else if (net.haveSession() && countedUnread < 100 && net.notificationsHaveMore() &&
                !net.notificationsPending() && !net.notifications().empty() &&
                timeSeconds >= nextNotificationBadgePage_) {
         // Fetch enough to distinguish an exact count below the badge's 99+ cap.
@@ -3251,7 +3294,9 @@ void MenuSystem::render(Canvas& canvas, Window& window, NetClient& net, const Sp
     if (drawn_ == MenuId::Crafting) {
         // Its size is the account's: the grid's columns set the width and its
         // rows the height, and the card is the one being drawn.
-        craftSize_ = craftWindowSize(nearbyNpc_, absorbMode_, net.profile());
+        const Profile& bag = nearbyNpc_ == NpcService::None && !absorbMode_ && !net.inRiftMap()
+            ? crafting_.visibleInventory(net.profile()) : net.profile();
+        craftSize_ = craftWindowSize(nearbyNpc_, absorbMode_, bag);
         panelRect_ = craftPanelBounds(canvas.width(), canvas.height());
         const double below = static_cast<double>(canvas.height()) + kSlotCardClosedDrop;
         panelRect_.y += (1.0 - clamp(craftOpen_, 0.0, 1.0)) * (below - panelRect_.y);
@@ -3513,11 +3558,11 @@ double MenuSystem::stripRight() const {
     return right;
 }
 
-double MenuSystem::feedbackRight() const {
+Rect MenuSystem::feedbackButton() const {
     for (std::size_t i = 0; i < stripRects_.size(); ++i) {
-        if (strip()[i].action == StripAction::Feedback) return stripRects_[i].right();
+        if (strip()[i].action == StripAction::Feedback) return stripRects_[i];
     }
-    return 0;
+    return {};
 }
 
 bool MenuSystem::capturesMouse(Vec2 mouse) const {

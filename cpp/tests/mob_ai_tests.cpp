@@ -274,19 +274,25 @@ struct Sim {
 /// Middle of the map, well away from the world edge that reads as wall.
 const Vec2 kOrigin{30000.0, 30000.0};
 
-TEST(baby_ant_switches_from_a_nearby_flower_to_visible_honey) {
+TEST(baby_ant_and_neutral_bee_switch_from_a_nearby_flower_to_visible_honey) {
     if (!contentReady()) return;
     Sim sim;
     const Entity ant = sim.spawnMob("baby_ant", kOrigin);
+    const Entity bee = sim.spawnMob("bee", kOrigin, Rarity::Rare);
     const Entity flower = sim.spawnPlayer(kOrigin + Vec2{-60.0, 0.0});
+    CHECK(sim.brainOf(ant).kind == AiKind::Passive);
+    CHECK(sim.brainOf(bee).kind == AiKind::Neutral);
     sim.brainOf(ant).target = flower;
+    sim.brainOf(bee).target = flower;
     const Entity bait = sim.world.create();
     sim.world.add<Transform>(bait, Transform{kOrigin + Vec2{400.0, 0.0}, 0.0});
     sim.world.add<Health>(bait, Health{1000.0, 1000.0});
     sim.world.add<HoneyBait>(bait, HoneyBait{flower});
     sim.tick();
     CHECK_EQ(sim.brainOf(ant).target, bait);
+    CHECK_EQ(sim.brainOf(bee).target, bait);
     CHECK(sim.velocityOf(ant).x > 0.0);
+    CHECK(sim.velocityOf(bee).x > 0.0);
 }
 
 /// Attaches `self` to the chain behind `ahead`.
@@ -1989,6 +1995,16 @@ TEST(a_worn_cursor_walks_pets_below_its_tier_to_the_pointer) {
     sim.tick(300);
     CHECK(distance(sim.positionOf(below), kOrigin + Vec2{0, 300}) < 15.0);
     CHECK(sim.velocityOf(below).length() < 15.0);
+
+    // Losing the pointer leaves ordinary aim intact but returns control to the pet AI.
+    auto& input = sim.world.get<PlayerInput>(owner).current;
+    input.flags |= net::InputNoPetPointer;
+    sim.tick(90);
+    CHECK_EQ(sim.brainOf(below).target, prey);
+
+    input.flags &= static_cast<std::uint8_t>(~net::InputNoPetPointer);
+    sim.tick();
+    CHECK_EQ(sim.brainOf(below).target, NULL_ENTITY);
 }
 
 TEST(a_cursor_pointer_is_held_to_the_screen_its_owner_claims) {
@@ -2222,6 +2238,37 @@ TEST(a_stinger_shooter_comes_round_before_it_fires) {
     CHECK(launch.x > 0.0);
     // Measured against the shooter AFTER it has rocked back, so the gap is the
     // muzzle offset plus however much of the recoil cap the volley spent.
+    const Vec2 muzzle = sim.world.get<Transform>(shot).position - sim.positionOf(hornet);
+    const double radius = sim.world.get<Body>(hornet).radius + sim.world.get<Body>(shot).radius;
+    CHECK(muzzle.length() >= radius - 1e-9);
+    CHECK(muzzle.length() <= radius + kProjectileMaxRecoil + 1e-9);
+    CHECK(muzzle.x > 0.0);
+}
+
+TEST(an_ice_hornet_turns_its_tail_to_the_target_before_firing) {
+    CHECK(contentReady());
+    Sim sim;
+    const Entity hornet = sim.spawnMob("arctic_ice_hornet", kOrigin);
+    const Entity player = sim.spawnPlayer(kOrigin + Vec2{250, 0});
+
+    int ticksTurning = 0;
+    Entity shot = NULL_ENTITY;
+    for (int i = 0; i < 200 && shot == NULL_ENTITY; ++i) {
+        sim.tickIntent();
+        shot = firstShot(sim);
+        if (shot == NULL_ENTITY) ++ticksTurning;
+    }
+    CHECK(shot != NULL_ENTITY);
+    if (shot == NULL_ENTITY) return;
+
+    CHECK(ticksTurning > 1);
+    const double bearing = (sim.positionOf(player) - sim.positionOf(hornet)).angle();
+    const double tail = wrapAngle(sim.angleOf(hornet) + kPi);
+    CHECK(std::fabs(angleDelta(tail, bearing)) <= kStingerAimTolerance + 1e-9);
+    CHECK(std::cos(sim.angleOf(hornet)) < 0.0);
+    CHECK_EQ(sim.world.get<Projectile>(shot).petalConfigIndex,
+             content().petalIndex("arctic_electron_missile"));
+
     const Vec2 muzzle = sim.world.get<Transform>(shot).position - sim.positionOf(hornet);
     const double radius = sim.world.get<Body>(hornet).radius + sim.world.get<Body>(shot).radius;
     CHECK(muzzle.length() >= radius - 1e-9);
@@ -2636,6 +2683,42 @@ TEST(a_glitch_volley_carries_the_infection_and_a_hornets_does_not) {
         CHECK(shot != NULL_ENTITY);
         if (shot != NULL_ENTITY) CHECK(!sim.world.get<Projectile>(shot).glitchInfecting);
     }
+}
+
+TEST(unabomber_pet_bombs_deal_damage_and_credit_their_summoner) {
+    CHECK(contentReady());
+    Sim sim;
+    const auto owner = sim.spawnPlayer(kOrigin - Vec2{100, 0});
+    const auto pet = sim.spawnMob("void_unabomber", kOrigin);
+    sim.world.add<Pet>(pet, Pet{owner, 0, 0, 1.5});
+    sim.world.get<Faction>(pet) = Faction{Team::Players, false};
+    sim.world.get<ContactDamage>(pet).amount *= 1.5;
+    const auto victim = sim.spawnMob("soldier_ant", kOrigin + Vec2{200, 0});
+    auto& health = sim.world.get<Health>(victim);
+    health.current = health.max = 200.0;
+    const auto shot = fireAndCatch(sim);
+    CHECK(shot != NULL_ENTITY);
+    if (shot == NULL_ENTITY) return;
+    const auto& projectile = sim.world.get<Projectile>(shot);
+    CHECK_EQ(projectile.petalConfigIndex, content().petalIndex("bomb"));
+    CHECK_EQ(projectile.creditTo, owner);
+    CHECK_NEAR(projectile.damage, sim.world.get<ContactDamage>(pet).amount, 1e-9);
+
+    const double before = sim.world.get<Health>(victim).current;
+    sim.world.get<Transform>(shot).position = sim.positionOf(victim);
+    sim.world.get<Projectile>(shot).lastPosition = sim.positionOf(victim);
+    CHECK(CombatSystem::canDamage(sim.world, shot, victim));
+    sim.grid.clear();
+    Query<Transform, Body> bodies{sim.world};
+    bodies.without<ProjectileTag>();
+    bodies.each([&](Entity e, Transform& at, Body& body) {
+        sim.grid.insert(e, at.realm, at.position, body.radius);
+    });
+    CombatSystem combat;
+    EventQueue events;
+    combat.beginTick(sim.world, content(), sim.now, sim.dt, events);
+    combat.runWorldPhase(sim.world, sim.grid, content(), sim.now, sim.dt, true);
+    CHECK(sim.world.get<Health>(victim).current < before);
 }
 
 TEST(pet_damage_talent_scales_hornet_projectiles_without_changing_fire_rate) {
@@ -4270,6 +4353,21 @@ TEST(large_egg_summons_push_large_wild_mobs_in_proportion_to_body_size) {
  CHECK(sim.positionOf(wild).x>kOrigin.x+200+kMobSeparationMaxPushPerPair);
 }
 
+TEST(magic_poo_extends_pet_targeting_only_while_the_bonus_is_active) {
+    CHECK(contentReady());
+    Sim sim;
+    const auto owner = sim.spawnPlayer(kOrigin);
+    sim.world.ensure<PlayerModifiers>(owner).summonRangeBonus = 54;
+    const auto pet = sim.spawnMob("soldier_ant", kOrigin + Vec2{100, 0});
+    sim.world.add<Pet>(pet, Pet{owner, 0});
+    const auto enemy = sim.spawnMob("rock", kOrigin + Vec2{kPetOwnerTargetRadius + 30, 0});
+    sim.tickIntent();
+    CHECK_EQ(sim.brainOf(pet).target, enemy);
+    sim.world.get<PlayerModifiers>(owner).summonRangeBonus = 0;
+    sim.tickIntent();
+    CHECK_EQ(sim.brainOf(pet).target, NULL_ENTITY);
+}
+
 TEST(a_pet_does_not_chase_a_high_tier_past_its_return_boundary) {
     CHECK(contentReady()); Sim sim;
     const auto owner=sim.spawnPlayer(kOrigin);
@@ -4288,7 +4386,7 @@ TEST(a_pet_guards_nearby_high_tier_mobs_before_a_distant_boss) {
     const auto near = sim.spawnMob("ladybug", kOrigin + Vec2{550,0}, Rarity::Epic);
     sim.spawnMob("ladybug", kOrigin + Vec2{850,0}, Rarity::Unique);
     sim.tickIntent(); CHECK_EQ(sim.brainOf(pet).target, near);
-    sim.world.get<Transform>(owner).position.x -= 700;
+    sim.world.get<Transform>(owner).position.x -= kPetCombatFollowDistance;
     sim.tickIntent(); CHECK(sim.brainOf(pet).petReturning);
     CHECK_EQ(sim.brainOf(pet).target, NULL_ENTITY);
     CHECK(sim.velocityOf(pet).x < 0);
@@ -4367,6 +4465,25 @@ TEST(deep_bulb_limits_notice_to_lit_bulbs_and_ordinary_enemies_in_deep_prestige_
     CHECK(!check(deep, at, true, Rarity::Common, false, 1400, 1840));
 }
 
+TEST(the_slowest_ordinary_mobs_move_at_their_new_paces) {
+    CHECK(contentReady());
+    struct Case { const char* id; double patrol; double chase; };
+    for (const Case& sample : {Case{"desert_ladybug", 48.0, 30.0},
+                               Case{"jungle_ladybug", 48.0, 78.0},
+                               Case{"jellyfish", 42.0, 114.0}}) {
+        const auto stats = content().mobStats(content().mobIndex(sample.id), Rarity::Common);
+        CHECK_NEAR(stats.speed, sample.patrol, 1e-6);
+        CHECK_NEAR(stats.chaseSpeed, sample.chase, 1e-6);
+    }
+    Sim sim;
+    const auto mob = sim.spawnMob("jungle_ladybug", kOrigin);
+    const auto player = sim.spawnPlayer(kOrigin + Vec2{200, 0});
+    sim.hurt(mob, player);
+    for (int i = 0; i < 120; ++i) sim.tickIntent();
+    CHECK(sim.world.get<MobAi>(mob).target == player);
+    CHECK_NEAR(sim.velocityOf(mob).x, 101.4, 1e-3);
+}
+
 TEST(a_wild_mob_rooted_by_its_speed_scale_never_moves) {
     CHECK(contentReady());
     for (const char* id : {"arctic_nuke", "bio_barrel", "bio_virus"}) {
@@ -4428,5 +4545,104 @@ TEST(a_summoned_mob_ignores_the_wild_speed_scale) {
         sim.tickIntent(120);
         CHECK(sim.brainOf(pet).petReturning);
         CHECK(sim.velocityOf(pet).x < -chaseSpeedOf(id) * 0.9);
+    }
+}
+
+TEST(summon_wider_leash_uses_hysteresis_and_keeps_sandstorm_rules) {
+    CHECK(contentReady());
+    Sim sim;
+    const Entity owner = sim.spawnPlayer(kOrigin);
+    const Entity pet = sim.spawnMob("soldier_ant", kOrigin + Vec2{850, 0});
+    sim.world.add<Pet>(pet, Pet{owner, 0});
+    sim.tickIntent();
+    CHECK(!sim.brainOf(pet).petReturning);
+    sim.world.get<Transform>(pet).position = kOrigin + Vec2{901, 0};
+    sim.tickIntent();
+    CHECK(sim.brainOf(pet).petReturning);
+    sim.world.get<Transform>(pet).position = kOrigin + Vec2{376, 0};
+    sim.tickIntent();
+    CHECK(sim.brainOf(pet).petReturning);
+    sim.world.get<Transform>(pet).position = kOrigin + Vec2{374, 0};
+    sim.tickIntent();
+    CHECK(!sim.brainOf(pet).petReturning);
+
+    const auto prey = sim.spawnMob("rock", kOrigin + Vec2{1100, 0});
+    sim.brainOf(pet).target = prey;
+    sim.world.get<Transform>(pet).position = kOrigin + Vec2{1550, 0};
+    sim.tickIntent();
+    CHECK(!sim.brainOf(pet).petReturning);
+    CHECK_EQ(sim.brainOf(pet).target, prey);
+    sim.world.get<Transform>(pet).position = kOrigin + Vec2{1651, 0};
+    sim.tickIntent();
+    CHECK(sim.brainOf(pet).petReturning);
+    CHECK_EQ(sim.brainOf(pet).target, NULL_ENTITY);
+
+    sim.world.get<PlayerModifiers>(owner).petTargetRangeScale = 1.20;
+    const Entity storm = sim.spawnMob("sandstorm", kOrigin + Vec2{601, 0});
+    sim.world.add<Pet>(storm, Pet{owner, 0});
+    sim.tickIntent();
+    CHECK(sim.brainOf(storm).petReturning);
+    CHECK_EQ(sim.brainOf(storm).target, NULL_ENTITY);
+}
+TEST(summon_bulb_extra_reach_leads_to_a_real_hit_but_respects_walls) {
+    CHECK(contentReady());
+    const auto hitDamage = [](double rangeScale, double preyGap, bool wall) {
+        Sim sim;
+        MovementSystem movement;
+        CombatSystem combat;
+        EventQueue events;
+        const Entity owner = sim.spawnPlayer(kOrigin);
+        sim.world.get<PlayerModifiers>(owner).petTargetRangeScale = rangeScale;
+        const Entity pet = sim.spawnMob("soldier_ant", kOrigin + Vec2{125, 0}, Rarity::Common);
+        sim.world.add<Pet>(pet, Pet{owner, 0});
+        sim.world.get<Faction>(pet).team = Team::Players;
+        sim.world.get<Health>(pet) = Health{1e6, 1e6};
+        const Entity prey = sim.spawnMob("rock", kOrigin + Vec2{preyGap, 0});
+        sim.world.get<Health>(prey) = Health{1e6, 1e6};
+        if (wall) {
+            const int x = Terrain::toTileCoord(kOrigin.x + 800);
+            for (int y = 0; y < kTilesPerAxis; ++y) sim.terrain.setTile(x, y, Tile::Solid);
+        }
+        double damage = 0.0;
+        for (int tick = 0; tick < 480 && damage == 0.0; ++tick) {
+            sim.tickIntent();
+            movement.runWorldPhase(sim.world, sim.terrain, sim.now, sim.dt);
+            sim.rebuildGrid();
+            combat.beginTick(sim.world, content(), sim.now, sim.dt, events);
+            combat.runContactPhase(sim.world, sim.grid, content(), sim.now);
+            damage = 1e6 - sim.world.get<Health>(prey).current;
+            events.clear();
+        }
+        return damage;
+    };
+    CHECK_EQ(hitDamage(1.0, 1400.0, false), 0.0);
+    const double boosted = hitDamage(1.20, 1400.0, false);
+    CHECK(boosted > 0.0);
+    CHECK_EQ(hitDamage(1.20, 1510.0, false), 0.0);
+    CHECK_EQ(hitDamage(1.20, 1400.0, true), 0.0);
+    std::printf("    pet first-hit damage at 1,400 without/with Bulb on open ground: 0/%.2f\n", boosted);
+}
+
+TEST(summon_bulb_targeting_matches_between_serial_and_workers) {
+    CHECK(contentReady());
+    for (bool parallel : {false, true}) {
+        Sim sim;
+        ServerWorkers workers(2);
+        if (parallel) {
+            sim.ai.workers = &workers;
+            sim.ai.workerLimit = workers.count();
+        }
+        const Entity owner = sim.spawnPlayer(kOrigin);
+        sim.world.get<PlayerModifiers>(owner).petTargetRangeScale = 1.20;
+        std::vector<Entity> pets;
+        for (int i = 0; i < 72; ++i) {
+            const auto pet = sim.spawnMob("soldier_ant", kOrigin + Vec2{150, 2.0 * i - 72});
+            sim.world.add<Pet>(pet, Pet{owner, 0});
+            sim.world.get<Faction>(pet).team = Team::Players;
+            pets.push_back(pet);
+        }
+        const Entity prey = sim.spawnMob("rock", kOrigin + Vec2{1400, 0});
+        sim.tickIntent();
+        for (const Entity pet : pets) CHECK_EQ(sim.brainOf(pet).target, prey);
     }
 }

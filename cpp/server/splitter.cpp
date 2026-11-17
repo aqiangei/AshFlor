@@ -88,6 +88,7 @@ void GameServer::parkBody(Entity body) {
         input->current.sequence = previous.sequence;
         input->current.aimAngle = previous.aimAngle;
         input->current.aimDistance = previous.aimDistance;
+        input->current.flags = net::InputNoPetPointer;
     }
     if (Motion* motion = world_.tryGet<Motion>(body)) motion->velocity = {0, 0};
     if (Knockback* knockback = world_.tryGet<Knockback>(body)) *knockback = Knockback{};
@@ -418,7 +419,8 @@ void GameServer::serviceSplitters(double nowMillis) {
             const auto* activeInput = world_.tryGet<PlayerInput>(session.entity);
             auto* spareInput = world_.tryGet<PlayerInput>(session.splitOther);
             if (activeInput && spareInput) {
-                spareInput->current.flags = activeInput->current.flags & (net::InputAttack | net::InputDefend);
+                spareInput->current.flags = (activeInput->current.flags & (net::InputAttack | net::InputDefend))
+                                          | net::InputNoPetPointer;
                 spareInput->current.aimAngle = activeInput->current.aimAngle;
                 spareInput->current.aimDistance = activeInput->current.aimDistance;
             }

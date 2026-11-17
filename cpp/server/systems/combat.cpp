@@ -166,6 +166,16 @@ bool isWildMob(const World& world, Entity entity) {
 /// corrupted is enough. Nothing here looks at distance: the caller only
 /// reaches it after an overlap test, and the arena sits far enough from the
 /// world that no pair spanning the two could ever touch.
+void shortenUndeadWithScar(World& world, Entity victim, Rarity rarity, double nowMillis) {
+    auto* undead = world.tryGet<Undead>(victim);
+    if (!undead || undead->shortenedByScar || undead->untilMillis <= nowMillis) return;
+    const auto* mob = world.tryGet<MobType>(victim);
+    const int targetTier = mob ? rarityIndex(mob->rarity) : undead->bandageTier;
+    if (petalTier(rarity) < targetTier) return;
+    undead->untilMillis -= 0.25 * (undead->untilMillis - nowMillis);
+    undead->shortenedByScar = true;
+}
+
 bool canPetalsDamagePlayer(const World& world, Entity attacker, Entity victim) {
     if (world.has<WavePlayer>(attacker) || world.has<WavePlayer>(victim)) return false;
     if (isCorrupted(world, attacker) || isCorrupted(world, victim) ||
@@ -1802,7 +1812,7 @@ bool CombatSystem::tryUndead(World& world, Entity victim, Entity source, double 
     const PlayerModifiers* modifiers = world.tryGet<PlayerModifiers>(victim);
     if (modifiers == nullptr || !(modifiers->undeadMillis > 0.0)) return false;
     const Undead undead{nowMillis + modifiers->undeadMillis, attributedSource(world, source),
-                        modifiers->unrevivableMillis, modifiers->undeadBodyDamageScale};
+                        modifiers->unrevivableMillis, modifiers->undeadBodyDamageScale, modifiers->undeadBandageTier};
     // `modifiers` dangles from here: adding the component relocates the row.
     world.add<Undead>(victim, undead);
     world.get<Health>(victim).current = 1.0;
@@ -3247,6 +3257,7 @@ void CombatSystem::gatherPetals(World& world, const ContentRegistry& content, do
         }
         source.hitIntervalMillis = stats.damageIntervalMillis;
         source.petalBreakable = stats.breakable;
+        source.jellyKnockback = config.id == "jelly";
         source.knockback = stats.knockback;
         source.poisonPerSecond = stats.poisonPerSecond * petal.combinationStrength;
         source.poisonDurationMillis = stats.poisonDurationMillis;
@@ -3278,6 +3289,7 @@ void CombatSystem::gatherPetals(World& world, const ContentRegistry& content, do
         source.owner = petal.owner;
         source.rarity = petal.rarity;
         source.isPetal = true;
+        source.shortensUndead = config.id == "void_scar";
         source.isLoose = loose;
         if (config.lightningDamage) source.hitKind = DamageKind::Lightning;
         // A tomato hits harder the longer it has been out; a reload starts it
@@ -3766,6 +3778,8 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
                 if (auto* health = world.tryGet<Health>(source.attacker)) health->current = 0.0;
                 break;
             }
+            if (landed && !hit.killed && wild && source.shortensUndead)
+                shortenUndeadWithScar(world, victim, source.rarity, nowMillis);
             if (landed && wild && source.isPetal) {
                 const auto* petal = world.tryGet<PetalInstance>(source.attacker);
                 const auto* mob = world.tryGet<MobType>(victim);
@@ -3791,9 +3805,16 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
                     } else if (id == "job_application" && !hit.killed) {
                         if (auto* ai = world.tryGet<MobAi>(victim))
                             ai->aggroSuppressedUntilMillis = nowMillis + 5000.0;
-                    } else if (id == "cancer" && !world.has<CancerSubdivision>(victim) &&
-                               registry.mob(mob->configIndex).id.compare(0, 4, "bio_") == 0) {
-                        world.add<CancerSubdivision>(victim);
+                    } else if (id == "cancer") {
+                        const Entity target = poolOwner(world, victim);
+                        const auto* segment = world.tryGet<BodySegment>(target);
+                        if ((!segment || segment->head) &&
+                            !world.has<GhostTag>(target) && !world.has<WaveEnemy>(target) &&
+                            !world.has<DungeonDweller>(target) && !world.has<DungeonEntrance>(target) &&
+                            !world.has<RiftPlayer>(source.owner) &&
+                            !world.has<CancerSubdivision>(target)) {
+                            world.add<CancerSubdivision>(target);
+                        }
                     }
                 }
             }
@@ -3818,8 +3839,41 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
                         const auto* armor = world.tryGet<Armor>(poolOwner(world, victim));
                         if (armor && armor->amount > 0.0) shove *= technique->amount;
                     }
-                    const double push = source.knockback * shove;
-                    applyKnockback(world, victim, push < 0.0 ? offset * -1.0 : offset, std::abs(push));
+                    double push = source.knockback * shove;
+                    Vec2 direction = offset;
+                    if (source.jellyKnockback && push != 0.0) {
+                        const auto* mob = wild ? world.tryGet<MobType>(victim) : nullptr;
+                        if (mob) {
+                            const auto grade = [](Rarity rarity) {
+                                return rarity == Rarity::Ascendant ? kLadderRarityCount
+                                                                    : petalTier(rarity);
+                            };
+                            const int mobTier = grade(mob->rarity);
+                            const int gap = mobTier - grade(source.rarity);
+                            if (gap > 0) {
+                                const double resistance = std::ldexp(1.0, -gap);
+                                push *= resistance;
+                                if (mobTier >= rarityIndex(Rarity::Unique)) {
+                                    // Upper tiers may still be nudged. The ceiling is in
+                                    // world distance, after applyKnockback divides by mass.
+                                    const double limit = 4.0 * kTileSize * resistance *
+                                                         massOf(world, victim);
+                                    push = std::clamp(push, -limit, limit);
+                                }
+                            }
+                        }
+                        if (direction.lengthSq() <= 1e-12) {
+                            // A centre-on-centre hit still pushes outward from the flower.
+                            if (const auto* owner = world.tryGet<Transform>(source.owner))
+                                direction = source.position - owner->position;
+                            if (direction.lengthSq() <= 1e-12) {
+                                const auto* at = world.tryGet<Transform>(source.attacker);
+                                direction = Vec2::fromAngle(at ? at->angle : 0.0, 1.0);
+                            }
+                        }
+                    }
+                    applyKnockback(world, victim, push < 0.0 ? direction * -1.0 : direction,
+                                   std::abs(push));
                 } else if (wild && source.isPlayerBody) {
                     const auto* input = world.tryGet<PlayerInput>(source.attacker);
                     if (input && input->current.attacking() && !input->current.defending()) {
@@ -4230,6 +4284,8 @@ void CombatSystem::resolvePetalPvp(World& world, const MeleeSource& source, Enti
     // yggdrasil at once. Gated on the same refusal the shove is -- a swing at
     // an invulnerable flower locks nothing, and neither does one it dodged.
     if (!hit.refused && !hit.dodged) {
+        if (!hit.killed && source.shortensUndead)
+            shortenUndeadWithScar(world, victim, source.rarity, nowMillis);
         applyNoHeal(world, victim, source.noHealDurationMillis, nowMillis);
     }
 
@@ -4620,7 +4676,13 @@ void CombatSystem::tickProjectiles(World& world, const SpatialGrid& grid,
                 if (victimIsMob) {
                     pushFromImpact(world, impact.victim, impact.offset, shot.mass, shot.speed);
                 } else {
-                    applyKnockback(world, impact.victim, impact.offset, stats.knockback);
+                    const auto& ammo = content.petal(petalIndex).id;
+                    const bool wildStinger = !hit.refused && world.has<PlayerTag>(impact.victim) &&
+                        isWildMob(world, owner) && (ammo == "hornet_missile" || ammo == "wasp_missile");
+                    // A short fixed shove keeps a high-tier volley from throwing
+                    // flowers across an entire corridor.
+                    const double strength = wildStinger ? 48.0 : stats.knockback;
+                    applyKnockback(world, impact.victim, impact.offset, strength);
                 }
                 applyPoison(world, impact.victim, shot.entity, stats.poisonPerSecond,
                             stats.poisonDurationMillis, nowMillis);

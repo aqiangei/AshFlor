@@ -723,6 +723,14 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
             life && life->remainingSeconds > 0) indexStack(e, item, at, false);
     });
     bool hyperKill=false,hyperEternalRoll=false;
+    Rarity bossFloor = Rarity::Common;
+    std::vector<std::string> bossFloorPaid;
+    const auto markBossFloorPaid = [&](Entity player) {
+        const auto* account = world.tryGet<PlayerAccount>(player);
+        if (account && !account->userId.empty() &&
+            std::find(bossFloorPaid.begin(), bossFloorPaid.end(), account->userId) == bossFloorPaid.end())
+            bossFloorPaid.push_back(account->userId);
+    };
     std::vector<Entity> reducedClaimants;
     std::vector<Entity> filteredClaimants;
     const auto stackDrop = [&](std::uint16_t petal, Rarity rarity, Vec2 at, Realm realm,
@@ -743,6 +751,8 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
         }
         const auto& eligible = reducedClaimants.empty() ? claimants : filteredClaimants;
         if (eligible.empty()) return;
+        if (bossFloor != Rarity::Common && rarityIndex(rarity) >= rarityIndex(bossFloor))
+            for (const Entity player : eligible) markBossFloorPaid(player);
         StackEntry* merge = nullptr;
         std::size_t first = stackOrder;
         const int cellX=static_cast<int>(std::floor(at.x/150.0));
@@ -866,6 +876,10 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
         // it leaves one of every drop it has, from the merged table.
         std::vector<DropTables::Entry> garbageTable;
         const bool visibleGarbage = content.mob(mobIndex).id == "garbage" && !content.garbageDropRates().empty();
+        const auto square = visibleGarbage ? content.petalIndex("square") : kInvalidIndex;
+        const auto isBagSquare = [square](std::uint16_t petal) {
+            return square != kInvalidIndex && petal == square;
+        };
         if (visibleGarbage) {
             const auto* id = world.tryGet<NetId>(corpse);
             const auto contents = garbageContents(garbageEligiblePetals(content,mobRarity),id ? id->value : 0,at,&content);
@@ -873,8 +887,14 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
                 DropTables::Entry entry;entry.petalIndex=item.index;entry.probability=1;
                 entry.rates=content.garbageDropRates();
                 const auto minimum=content.petal(item.index).minRarity;
-                for(auto& rates:entry.rates)rates.erase(std::remove_if(rates.begin(),rates.end(),
-                    [&](const DropRate& r){return rarityIndex(r.rarity)<rarityIndex(minimum);}),rates.end());
+                for (auto& rates : entry.rates) {
+                    if (isBagSquare(item.index)) {
+                        // Keep the bag's odds and guaranteed payout, grading every Square as Common.
+                        for (auto& rate : rates) rate.rarity = Rarity::Common;
+                    }
+                    rates.erase(std::remove_if(rates.begin(), rates.end(),
+                        [&](const DropRate& r) { return rarityIndex(r.rarity) < rarityIndex(minimum); }), rates.end());
+                }
                 garbageTable.push_back(std::move(entry));
             }
         }
@@ -912,18 +932,33 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
         // from everybody else. kRarityCount is "no orb worn", which is almost
         // every flower in the game, and then nothing splits.
         const auto baseEligible=eligible_;
+        bossFloorPaid.clear();
+        bossFloor = hyperKill && !wave && !visibleGarbage &&
+                    !world.has<InheritedLootClaims>(corpse) &&
+                    allowsBossParticipationFloor && allowsBossParticipationFloor(realm)
+            ? (apexKill ? Rarity::Unique : Rarity::Super) : Rarity::Common;
+        const double personalDamageFloor = lootDamageFloor(maxHealth);
+        const auto qualifiesPersonally = [&](Entity claimant, const PlayerAccount& account) {
+            const auto* location = world.tryGet<Transform>(claimant);
+            return account.connection != 0 && !account.userId.empty() && location &&
+                location->realm == realm && std::any_of(ranked_.begin(), ranked_.end(),
+                    [&](const Bounty::Share& share) {
+                        return (share.owner == account.connection || share.player == claimant) &&
+                               share.damage >= personalDamageFloor;
+                    });
+        };
         const Rarity rewardRarity = personalBossRewardRarity(apexKill ? Rarity::Ascendant : mobRarity);
         if (rewardRarity != Rarity::Common && !table.empty()) {
             std::vector<const DropTables::Entry*> rewardPool;
             for (const auto& entry : table) {
                 if (entry.kind == DropTables::Kind::RandomPetal ||
                     (entry.petalIndex < content.petalCount() &&
+                     !isBagSquare(entry.petalIndex) &&
                      allowsAuthoredApexReward(content.petal(entry.petalIndex)) &&
                      petalComesAt(content.petal(entry.petalIndex), rewardRarity))) {
                     rewardPool.push_back(&entry);
                 }
             }
-            const double personalDamageFloor = lootDamageFloor(maxHealth);
             std::vector<Entity> rewardEligible;
             if (!apexKill && !rewardPool.empty()) {
                 selectLootRecipients(ranked_, lootSlotsForRarity(mobRarity), squads, rewardEligible,
@@ -934,17 +969,9 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
             for (const Entity claimant : (apexKill ? baseEligible : rewardEligible)) {
                 if (rewardPool.empty()) break;
                 const auto* account = world.tryGet<PlayerAccount>(claimant);
-                const auto* location = world.tryGet<Transform>(claimant);
-                if (!account || account->connection == 0 || account->userId.empty() ||
-                    !location || location->realm != realm ||
+                if (!account || !qualifiesPersonally(claimant, *account) ||
                     std::find(paidAccounts.begin(), paidAccounts.end(), account->userId) != paidAccounts.end())
                     continue;
-                const bool contributed = std::any_of(ranked_.begin(), ranked_.end(),
-                    [&](const Bounty::Share& share) {
-                        return (share.owner == account->connection || share.player == claimant) &&
-                               share.damage >= personalDamageFloor;
-                    });
-                if (!contributed) continue;
                 paidAccounts.push_back(account->userId);
                 if (!rng.chance(kApexPetalDropChance)) continue;
                 // One personal roll per kill. Magic conversion only changes the
@@ -963,6 +990,7 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
                     auto& item = world.get<DropItem>(drop);
                     item.humansOnly = true;
                     item.singleCopy = true;
+                    if (bossFloor != Rarity::Common) markBossFloorPaid(claimant);
                     fresh_.push_back(drop);
                 }
             }
@@ -970,7 +998,7 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
         std::vector<std::uint16_t> hyperEternalPool;
         std::vector<HyperEternalDropWeight> hyperWeights;
         if(hyperKill)for(const auto& entry:table)
-            if(entry.petalIndex!=kInvalidIndex&&petalComesAt(content.petal(entry.petalIndex),Rarity::Unique)&&
+            if(entry.petalIndex!=kInvalidIndex&&!isBagSquare(entry.petalIndex)&&petalComesAt(content.petal(entry.petalIndex),Rarity::Unique)&&
                std::find(hyperEternalPool.begin(),hyperEternalPool.end(),entry.petalIndex)==hyperEternalPool.end())
             {
                 hyperEternalPool.push_back(entry.petalIndex);
@@ -1132,6 +1160,58 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
                 }
             }
         }
+        if (bossFloor != Rarity::Common) {
+            // Use the mob's own eligible items. Random jackpot rows and
+            // ordinary rows with no chance at this grade cannot supply a floor.
+            std::vector<std::pair<const DropTables::Entry*, double>> floorPool;
+            double total = 0.0;
+            for (const auto& entry : table) {
+                if (entry.kind == DropTables::Kind::RandomPetal ||
+                    entry.petalIndex >= content.petalCount() ||
+                    !petalComesAt(content.petal(entry.petalIndex), bossFloor)) continue;
+                double weight = 0.0;
+                if (apexKill) {
+                    const auto found = std::find(hyperEternalPool.begin(), hyperEternalPool.end(), entry.petalIndex);
+                    if (found != hyperEternalPool.end())
+                        weight = eternalChances[static_cast<std::size_t>(found - hyperEternalPool.begin())];
+                } else {
+                    weight = entry.rates.empty() ? entry.probability : hyperSuperChance(entry.rates);
+                }
+                if (weight <= 0.0) continue;
+                floorPool.emplace_back(&entry, weight);
+                total += weight;
+            }
+            // The fallback must not shift the normal or jackpot RNG stream
+            // for subsequent bosses, even on a tick that awards several kills.
+            Rng floorRng = rng;
+            for (const Entity claimant : baseEligible) {
+                if (floorPool.empty()) break;
+                const auto* account = world.tryGet<PlayerAccount>(claimant);
+                if (!account || !qualifiesPersonally(claimant, *account) ||
+                    std::find(bossFloorPaid.begin(), bossFloorPaid.end(), account->userId) != bossFloorPaid.end())
+                    continue;
+                double roll = floorRng.unit() * total;
+                const auto* selected = floorPool.back().first;
+                for (const auto& [entry, weight] : floorPool) {
+                    if ((roll -= weight) < 0.0) { selected = entry; break; }
+                }
+                auto petal = selected->petalIndex;
+                const auto magic = selected->magicPetal != kNoPetal
+                    ? selected->magicPetal : content.magicFormOf(petal);
+                const int orbTier = wornOrbTier(world, content, claimant, magicOrb);
+                if (magic < content.petalCount() && orbTier != kRarityCount &&
+                    orbTier >= rarityIndex(bossFloor) && petalComesAt(content.petal(magic), bossFloor))
+                    petal = magic;
+                const Entity drop = spawnDrop(world, petal, bossFloor, at, realm, {claimant});
+                if (drop == NULL_ENTITY) continue;
+                auto& item = world.get<DropItem>(drop);
+                item.humansOnly = true;
+                item.singleCopy = true;
+                markBossFloorPaid(claimant);
+                fresh_.push_back(drop);
+            }
+        }
+
         // Each visible type is guaranteed once for each entitled account. The
         // ordinary 30/60/90 (high-tier 30/45/60) trials run first. Only a type
         // that missed every trial gets one conditional, normally graded copy.

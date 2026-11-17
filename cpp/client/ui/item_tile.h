@@ -186,6 +186,9 @@ struct ItemTile {
     /// which is what lifts a drop off the terrain.
     bool shadow = false;
 
+    // The equipped petal's name when the icon depicts a copied petal.
+    std::uint16_t namePetalIndex = kNoPetal;
+
     double alpha = 1.0;
     double timeSeconds = 0.0;
 };

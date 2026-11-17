@@ -214,9 +214,12 @@ TEST(arctic_plutonium_burn_lingers_and_accelerates_after_leaving_cloud) {
     CHECK(active.size()==1);
     if (active.empty()) return;
     const auto centre=rig.world.get<Transform>(active[0]).position;
-    const auto near=rig.mob(centre+Vec2{80,0});
+    const auto near=rig.mob(centre+Vec2{425,0});
+    const auto outside=rig.mob(centre+Vec2{460,0});
     rig.combatTick(6000);
     CHECK(rig.world.has<Burn>(near));
+    if (const auto* burn = rig.world.tryGet<Burn>(near)) CHECK_NEAR(burn->damage, 196.0, 1e-6);
+    CHECK(!rig.world.has<Burn>(outside));
     CHECK(!rig.world.has<Afflictions>(near));
     rig.world.get<Transform>(near).position += Vec2{700,0};
     rig.combatTick(6500);
@@ -400,6 +403,15 @@ TEST(zorr_soap_expands_liquid_fields_without_scaling_damage) {
     sample(4450, 87.0);
     rig.equip(1, "void_soap", Rarity::Ascendant);
     sample(4500, 90.0);
+    auto& skills = rig.world.add<PlayerSkillTree>(rig.player).skills;
+    skills.set(SkillId::FluidReach, 0);
+    sample(4550, 99.0);
+    skills.set(SkillId::FluidReach, 1);
+    sample(4600, 108.0);
+    skills.set(SkillId::FluidReach, 2);
+    sample(4650, 117.0);
+    skills.set(SkillId::FluidReach, -1);
+    sample(4700, 90.0);
 }
 
 TEST(arctic_nuke_egg_apex_hatches_hyper_and_detonates_once_when_defeated) {
@@ -567,9 +579,10 @@ TEST(zorr_mechanic_soap_widens_pyrite_burn_while_idle) {
 }
 
 TEST(zorr_mechanic_soap_expands_blood_without_changing_shred) {
-    for (bool soap : {false, true}) {
+    for (bool soap : {false, true}) for (bool talent : {false, true}) {
         ArcticBlast rig("blood");
         if (soap) rig.equip(1, "void_soap");
+        if (talent) rig.world.add<PlayerSkillTree>(rig.player).skills.set(SkillId::FluidReach, 2);
         rig.world.get<PlayerInput>(rig.player).current.flags = net::InputAttack;
         rig.tickPetals(5000);
         rig.tickPetals(6000);
@@ -577,13 +590,27 @@ TEST(zorr_mechanic_soap_expands_blood_without_changing_shred) {
         Query<GroundEffect>{rig.world}.each([&](Entity, GroundEffect& field) {
             if (field.kind != GroundEffectKind::Blood) return;
             ++patches;
-            CHECK_NEAR(field.radius, soap ? 38.4 : 32.0, 1e-6);
+            CHECK_NEAR(field.radius, (soap ? 44.16 : 36.8) * (talent ? 1.30 : 1.0), 1e-6);
             CHECK_NEAR(field.armorReduction,
                        rig.registry.petalStats(rig.registry.petalIndex("blood"), Rarity::Common).armorReduction,
                        1e-6);
         });
         CHECK(patches == 1);
     }
+}
+
+TEST(acid_spill_hits_the_new_radius_with_the_tuned_damage) {
+    ArcticBlast rig("basic");
+    const auto& acid = rig.registry.petal(rig.registry.petalIndex("acid")).spill;
+    CHECK_NEAR(acid.radius, 57.5, 1e-6);
+    CHECK_NEAR(acid.strength, 15.68, 1e-6);
+    const Vec2 center{5500, 5500};
+    CombatSystem::createSpill(rig.world, rig.player, center, Rarity::Common, acid, 1.0, 0);
+    const auto near = rig.mob(center + Vec2{58, 0});
+    const auto far = rig.mob(center + Vec2{70, 0});
+    rig.combatTick(4050);
+    CHECK(rig.world.get<Health>(near).current < 1000.0);
+    CHECK_EQ(rig.world.get<Health>(far).current, 1000.0);
 }
 
 TEST(zorr_mechanic_soap_applies_to_all_configured_liquid_fields) {
@@ -827,4 +854,72 @@ TEST(zorr_reference_mask_powder_and_slime_use_the_standard_combat_stats) {
     CHECK_EQ(rig.liveIn(0).size(),std::size_t(2));
     CHECK_NEAR(rig.registry.petalStats(slime,Rarity::Rare).knockback,20.0,1e-6);
     CHECK_NEAR(rig.registry.petalStats(slime,Rarity::Apex).knockback,148.0,1e-6);
+}
+
+TEST(feedback_scar_shortens_each_eligible_undead_window_only_once) {
+    ArcticBlast rig("void_scar", Rarity::Rare);
+    rig.tickPetals(65000.0);
+    const auto petals = rig.liveIn(0);
+    CHECK(!petals.empty());
+    if (petals.empty()) return;
+    const auto at = rig.world.get<Transform>(petals.front()).position;
+
+    const auto beetle = rig.mob(at + Vec2{2,0});
+    rig.world.add<MobType>(beetle, MobType{rig.registry.mobIndex("mummy_beetle"), Rarity::Rare});
+    rig.world.add<Undead>(beetle, Undead{70000.0});
+    rig.combatTick(66000.0);
+    CHECK_NEAR(rig.world.get<Undead>(beetle).untilMillis, 69000.0, 1e-6);
+    CHECK(rig.world.get<Undead>(beetle).shortenedByScar);
+
+    rig.world.get<Health>(petals.front()).current = 1e6;
+    rig.world.get<Transform>(beetle).position = at + Vec2{2,0};
+    rig.combatTick(67000.0);
+    CHECK_NEAR(rig.world.get<Undead>(beetle).untilMillis, 69000.0, 1e-6);
+
+    rig.world.destroy(beetle);
+    rig.world.get<Faction>(rig.player).friendlyFireEnabled = true;
+    const auto enemy = rig.world.create();
+    rig.world.add<PlayerTag>(enemy);
+    rig.world.add<Faction>(enemy, Faction{Team::Players,true});
+    rig.world.add<Health>(enemy, Health{10000.0,10000.0});
+    rig.world.add<Transform>(enemy, Transform{at+Vec2{2,0},0});
+    rig.world.add<Body>(enemy, Body{5,1});
+    rig.world.add<Undead>(enemy, Undead{72000.0,NULL_ENTITY,0.0,1.0,rarityIndex(Rarity::Epic)});
+    rig.combatTick(68000.0);
+    CHECK_NEAR(rig.world.get<Undead>(enemy).untilMillis,72000.0,1e-6);
+    rig.world.get<Undead>(enemy).bandageTier = rarityIndex(Rarity::Rare);
+    rig.world.get<Transform>(enemy).position = at + Vec2{2,0};
+    rig.combatTick(69000.0);
+    CHECK_NEAR(rig.world.get<Undead>(enemy).untilMillis,71250.0,1e-6);
+}
+
+TEST(feedback_wild_stingers_push_flowers_without_changing_hit_damage) {
+    for (const char* ammo : {"hornet_missile","wasp_missile","stinger"}) {
+        for (const bool wild : {false,true}) {
+            ArcticBlast rig("basic");
+            const auto shooter = rig.world.create();
+            if (wild) rig.world.add<MobTag>(shooter);
+            rig.world.add<Faction>(shooter, Faction{Team::Hostiles,false});
+            rig.world.add<Transform>(shooter, Transform{{4900,5000},0});
+            const auto shot = rig.world.create();
+            Projectile projectile;
+            projectile.owner = shooter;
+            projectile.damage = 10.0;
+            projectile.remainingDistance = 1000.0;
+            projectile.petalConfigIndex = rig.registry.petalIndex(ammo);
+            projectile.lastPosition = {4965,5000};
+            rig.world.add<ProjectileTag>(shot);
+            rig.world.add<Projectile>(shot, projectile);
+            rig.world.add<Transform>(shot, Transform{{4980,5000},0});
+            rig.world.add<Motion>(shot, Motion{{400,0}});
+            rig.world.add<Body>(shot, Body{4,1});
+            rig.world.add<Health>(shot, Health{1000,1000});
+            rig.world.add<Faction>(shot, Faction{Team::Hostiles,false});
+            rig.combatTick(5000.0);
+            CHECK_NEAR(rig.world.get<Health>(rig.player).current, 100.0, 1e-6);
+            const auto* kb = rig.world.tryGet<Knockback>(rig.player);
+            const double push = kb ? kb->impulse.x : 0.0;
+            CHECK_NEAR(push, wild && std::string_view(ammo) != "stinger" ? 48.0 : 5.0, 1e-6);
+        }
+    }
 }

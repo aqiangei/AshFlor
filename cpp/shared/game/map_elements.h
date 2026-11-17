@@ -437,6 +437,9 @@ public:
     /// standing there.
     Vec2 defaultSpawn(Rng&, const Terrain&, const std::vector<MobDisc>* mobs = nullptr) const;
 
+    // Keep a map arrival near its entrance and clear of nearby portal art and suction.
+    Vec2 arrivalOffTeleporters(Vec2 position, double radius, const Terrain&) const;
+
     /// Where a player who asked for `spawnId` should appear, or false when this
     /// map has no such spawn point with room to drop someone into.
     bool spawnAt(const std::string& spawnId, Rng&, const Terrain&, Vec2& out,

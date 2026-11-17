@@ -82,6 +82,67 @@ TEST(hyper_one_per_regular_map_preserves_supers_eternals_and_waits_thirty_minute
     w.destroy(boss);step(9000999);CHECK_EQ(hyperSlot(w,garden),0);
     for(int i=0;i<20;++i)step(9001000+i*500);CHECK_EQ(hyperSlot(w,garden),1);
 }
+
+TEST(expansion_biomes_stock_natural_hypers_and_share_the_bio_slot) {
+    WorldMaps maps;
+    Terrain terrain;
+    std::string error;
+    const bool loaded = maps.load(testsupport::dataDir(), &terrain, error);
+    CHECK(loaded);
+    if (!loaded) return;
+
+    World world;
+    CommandBuffer commands{world};
+    SpawnSystem spawn;
+    spawn.worldMaps = &maps;
+    Rng rng{88113};
+    const auto step = [&](double now) {
+        spawn.run(world, terrain, data(), std::vector<RealmPoint>{}, rng, now, net::kTickSeconds, commands);
+        commands.flush();
+    };
+    step(1000.0);
+    for (auto& clock : spawn.bossClocks()) clock.apexReadyMillis = 0.0;
+    step(2000.0);
+    for (const std::string_view biome : {"bio", "jurassic", "zorr_void", "zorr_arctic",
+                                          "zorr_glacier", "zorr_polar"}) {
+        int found = 0;
+        for (const auto& map : maps.maps()) {
+            if (map.biome() == biome && !map.prestige())
+                found += hyperSlot(world, map.realm());
+        }
+        if (found != 1) std::fprintf(stderr, "Expansion boss slots in %s: %d\n", biome.data(), found);
+        CHECK_EQ(found, 1);
+    }
+
+    std::vector<Realm> seen;
+    bool sawApex = false;
+    double now = 2000.0;
+    for (int round = 0; round < 36 && (seen.size() < 3 || !sawApex); ++round) {
+        Entity boss = NULL_ENTITY;
+        Query<MobTag, MobType, Transform, AmbientMob>{world}.without<Dead>().each(
+            [&](Entity e, MobTag&, MobType& mob, Transform& at, AmbientMob& ambient) {
+                const auto* map = maps.forRealm(at.realm);
+                const auto* segment = world.tryGet<BodySegment>(e);
+                if (!map || map->biome() != "bio" || map->prestige() || ambient.zone == kInvalidIndex ||
+                    (segment && segment->chainHead != e) ||
+                    (mob.rarity != Rarity::Apex && mob.rarity != Rarity::Ascendant)) return;
+                CHECK(boss == NULL_ENTITY);
+                boss = e;
+                sawApex |= mob.rarity == Rarity::Ascendant;
+                if (std::find(seen.begin(), seen.end(), at.realm) == seen.end()) seen.push_back(at.realm);
+            });
+        if (boss == NULL_ENTITY) break;
+        world.destroy(boss);
+        now += 1000.0;
+        step(now);
+        for (const auto& map : maps.maps())
+            if (map.biome() == "bio" && !map.prestige()) CHECK_EQ(hyperSlot(world, map.realm()), 0);
+        now += kApexSpawnCooldownMillis;
+        step(now);
+    }
+    CHECK_EQ(seen.size(), std::size_t(3));
+    CHECK(sawApex);
+}
 TEST(hyper_top_contributor_gets_thirty_nine_trials_of_materials_below_hyper){
     World w;CommandBuffer commands{w};EventQueue events;SpatialGrid grid;LootSystem loot;Rng rng{81927};
     const auto player=w.create();w.add<PlayerTag>(player);w.add<Transform>(player,Transform{{10000,10000},0});
@@ -140,9 +201,7 @@ TEST(super_farm_respects_map_caps_and_refills_the_deepest_sewer_room){
     }
     CHECK(mapsChecked>=10);CHECK(victim!=NULL_ENTITY);
     CHECK(deepSewers.size() >= static_cast<std::size_t>(kSuperFarmPopulation / 3));
-    for (const auto& event : spawn.bossSpawns) {
-        if (event.rarity == Rarity::Super) CHECK_EQ(c.mob(event.mobIndex).id, "ghost");
-    }
+    for (const auto& event : spawn.bossSpawns) CHECK(event.rarity != Rarity::Super);
     auto count=[&](){int n=0;Query<SuperFarmMob,Transform> q{w};q.without<Dead>();q.each([&](Entity,SuperFarmMob&,Transform& at){if(at.realm==garden)++n;});return n;};
     const auto deepCount=[&](){int n=0;if(!sewerMap)return n;Query<SuperFarmMob,Transform> q{w};q.without<Dead>();
         q.each([&](Entity,SuperFarmMob&,Transform& at){if(at.realm!=sewerMap->realm())return;

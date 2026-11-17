@@ -255,7 +255,10 @@ void GameServer::serviceRift(bool settle) {
     std::vector<std::uint16_t> pool;
     for (std::size_t i = 0; i < content().petalCount(); ++i) {
         const auto& petal = content().petal(i);
-        if (petal.isAdminPetal || petalHasOwnSource(petal) || !petalComesAt(petal, kRiftPrizeRarity)) continue;
+        // The permanent hammer is a Titan forge item. Rolling it at Eternal
+        // would produce a hammer whose description promises a different tier.
+        if (petal.isAdminPetal || petal.id == "mjolnir" || petalHasOwnSource(petal) ||
+            !petalComesAt(petal, kRiftPrizeRarity)) continue;
         pool.push_back(static_cast<std::uint16_t>(i));
     }
     Json rolled = Json::array();

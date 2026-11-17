@@ -91,6 +91,7 @@ enum Field : int {
     kLoginName,
     kLoginPassword,
     kQQ,
+    kConfirmQQ,
     kFieldCount,
 };
 
@@ -108,6 +109,8 @@ std::size_t fieldCap(int field) {
         case kNewPassword:
         case kConfirmPassword: return kMaxNewPasswordBytes;
         case kLoginName:       return kMaxLoginNameBytes;
+        case kQQ:
+        case kConfirmQQ:       return 100;
         default:               return kMaxTypedPasswordBytes;
     }
 }
@@ -206,6 +209,12 @@ bool confirm(PanelState& st, int button, bool ask, double timeSeconds) {
 // --- the requests -----------------------------------------------------------
 //
 // Each shared by its button and by Enter in its boxes, so the two cannot drift.
+
+void submitQQ(MenuContext& ctx, PanelState& st) {
+    if (!ctx.net.haveSession() || ctx.net.accountQQPending ||
+        st.values[kQQ] == ctx.net.accountQQ || st.values[kQQ] != st.values[kConfirmQQ]) return;
+    ctx.net.requestAccountQQ(true, st.values[kQQ]);
+}
 
 void submitUsername(MenuContext& ctx, PanelState& st) {
     const Profile& profile = ctx.net.profile();
@@ -498,6 +507,7 @@ bool AccountPanel::render(MenuContext& ctx) {
     }
     if (st.qqRevision != ctx.net.accountQQRevision) {
         st.qqRevision = ctx.net.accountQQRevision;
+        if (ctx.net.accountQQSaved) st.values[kConfirmQQ].clear();
         if (st.focused != kQQ) st.values[kQQ] = ctx.net.accountQQ;
     }
 
@@ -525,7 +535,7 @@ bool AccountPanel::render(MenuContext& ctx) {
             // Enter submits the form the box belongs to.
             if (st.focused == kUsername) submitUsername(ctx, st);
             else if (st.focused <= kConfirmPassword) submitPassword(ctx, st);
-            else if (st.focused == kQQ) ctx.net.requestAccountQQ(true, st.values[kQQ]);
+            else if (st.focused == kQQ || st.focused == kConfirmQQ) submitQQ(ctx, st);
             else submitLogin(ctx, st);
         } else if (masked(st.focused)) {
             TextEditOptions typing;
@@ -543,7 +553,7 @@ bool AccountPanel::render(MenuContext& ctx) {
             typing.maxBytes = fieldCap(st.focused);
             // Account names are letters, digits and underscore; a pasted emoji
             // is dropped here rather than refused after a round trip.
-            typing.asciiOnly = st.focused != kQQ;
+            typing.asciiOnly = st.focused != kQQ && st.focused != kConfirmQQ;
             editText(ctx.window, value, st.caret, ctx.timeSeconds, typing);
         }
     }
@@ -602,6 +612,10 @@ bool AccountPanel::render(MenuContext& ctx) {
         p.cy += 30.0;
         // --- another account ------------------------------------------------------
         p.heading(trEnZh("Log In to Another Account", "登录其他账户"));
+        if (profile.guest) {
+            p.note(trEnZh("To keep this guest's progress, set its username and password below.",
+                          "要保留当前游客进度，请在下方设置用户名和密码。"));
+        }
         if (!profile.hasPassword) {
             p.note(trEnZh("Switching accounts signs you out of this passwordless account.",
                           "切换账号后，将退出当前无密码账号。"),
@@ -646,9 +660,15 @@ bool AccountPanel::render(MenuContext& ctx) {
         p.heading(trEnZh("QQ record", "QQ 绑定记录"));
         p.note(trEnZh("Private save note only; no QQ login or verification.", "仅保存在账号存档中，不接入 QQ，不验证号码。"));
         p.field(kQQ, trEnZh("QQ (optional)", "QQ 号（可留空）"));
-        if (p.button(trEnZh("Save QQ", "保存 QQ"), kActionFill, kSaveQQ, ctx.net.accountQQPending))
-            ctx.net.requestAccountQQ(true, st.values[kQQ]);
+        const bool changed = st.values[kQQ] != ctx.net.accountQQ;
+        const bool matches = st.values[kQQ] == st.values[kConfirmQQ];
+        p.field(kConfirmQQ, trEnZh("Confirm QQ", "确认 QQ 号"));
+        if (p.button(trEnZh("Save QQ", "保存 QQ"), kActionFill, kSaveQQ,
+                     ctx.net.accountQQPending || !changed || !matches))
+            submitQQ(ctx, st);
         if (ctx.net.accountQQPending) p.note(trEnZh("Waiting for server...", "等待服务器确认…"));
+        else if (changed && !st.values[kConfirmQQ].empty() && !matches)
+            p.note(trEnZh("The QQ entries do not match.", "两次填写的 QQ 号不一致。"), kGuestBadge);
         else if (ctx.net.accountQQSaved && st.values[kQQ] == ctx.net.accountQQ)
             p.note(trEnZh("Saved.", "已保存。"));
         p.cy += kSectionGap;

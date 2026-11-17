@@ -221,6 +221,8 @@ public:
     std::function<void(const Pickup&)> onPickup;
     // A Rift prize must be credited to the account before its drop is consumed.
     std::function<bool(const Pickup&)> collectRiftPrize;
+    /// Maps allowed to offer a participation floor on a natural boss kill.
+    std::function<bool(Realm)> allowsBossParticipationFloor;
     std::function<int(Entity)> bonusMultiplier; // claimant-specific independent trials; Super+ uses 1.5x / 2x.
 
     /// Loads the shared JSON table during server startup. A missing or invalid

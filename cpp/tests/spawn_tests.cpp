@@ -35,6 +35,16 @@ bool inSpawnPoint(const MapData& map, const std::string& spawnId, Vec2 at) {
     return point != nullptr && point->contains(at);
 }
 
+bool clearOfTeleporters(const MapData& map, Vec2 at, double radius) {
+    for (const MapElement& pad : map.elements()) {
+        if (pad.kind != MapElementKind::Teleporter || pad.targetMap.empty()) continue;
+        const double reach = std::max(pad.padRadius + radius,
+                                      kTeleporterSuctionRadius * pad.padScale());
+        if (distanceSq(at, pad.centre()) <= reach * reach) return false;
+    }
+    return true;
+}
+
 /// True when a band over `at` is DANGEROUS ground -- difficulty
 /// kDangerousGroundDifficulty or above, which is where the curve's blend first
 /// CAN produce a rare (difficulty 16.61, the top of pure uncommon), or the
@@ -809,27 +819,81 @@ TEST(paired_teleporters_lead_to_each_other_and_do_not_bounce) {
     CHECK(body != NULL_ENTITY);
     if (body == NULL_ENTITY) { flix::testsupport::removeDataDir(dir); return; }
 
-    // Through the meadow's pad, and out of its partner.
+    // Through the meadow's pad, and out beside its partner.
     world.get<Transform>(body).position = meadowPad;
     CHECK(h.stepUntil({&client}, [&] { return world.get<Transform>(body).realm == warren; }, 120));
-    CHECK(distanceSq(world.get<Transform>(body).position, warrenPad) < 10.0 * 10.0);
+    const Vec2 arrival = world.get<Transform>(body).position;
+    const double radius = world.get<Body>(body).radius;
+    CHECK(clearOfTeleporters(*h.server.worldMaps().forRealm(warren), arrival, radius));
+    CHECK(distanceSq(arrival, warrenPad) < kTileSize * kTileSize);
 
-    // Left standing on the pad it came out of, well past the cooldown and the
-    // dwell, it stays where it is: the arrival pad does not charge.
+    // The far end's suction cannot pull an idle arrival back in after cooldown.
     const int idle = static_cast<int>((kTeleporterCooldownMillis + kTeleporterDwellMillis * 3) /
                                       net::kTickMillis);
     h.step(idle, {&client});
     CHECK(world.get<Transform>(body).realm == warren);
+    CHECK(distanceSq(world.get<Transform>(body).position, arrival) < 1.0);
 
-    // Off it and back on, and it is an ordinary pad again.
-    world.get<Transform>(body).position = warrenPad + Vec2{kTeleporterSuctionRadius * 2, 0};
-    h.step(2, {&client});
+    // Stepping onto it again makes the return trip.
     world.get<Transform>(body).position = warrenPad;
     CHECK(h.stepUntil({&client}, [&] {
         return world.get<Transform>(body).realm == Realm::Overworld;
     }, 120));
-    CHECK(distanceSq(world.get<Transform>(body).position, meadowPad) < 10.0 * 10.0);
+    const Vec2 returned = world.get<Transform>(body).position;
+    CHECK(clearOfTeleporters(*h.server.worldMaps().forRealm(Realm::Overworld), returned, radius));
+    CHECK(distanceSq(returned, meadowPad) < kTileSize * kTileSize);
     flix::testsupport::removeDataDir(dir);
+}
+
+TEST(shipped_map_arrivals_can_clear_every_portal) {
+    Terrain terrain;
+    WorldMaps maps;
+    std::string error;
+    if (!maps.load(dataDir(), &terrain, error)) {
+        ::testing::reportFailure(__FILE__, __LINE__, error);
+        return;
+    }
+    Rng rng{3608};
+    int routes = 0;
+    int overlapping = 0;
+    const auto verify = [&](const MapData& map, Vec2 hint, const std::string& label) {
+        constexpr double radius = kPlayerBaseRadius;
+        const Vec2 landing = map.arrivalOffTeleporters(hint, radius, terrain);
+        if (!clearOfTeleporters(map, hint, radius)) ++overlapping;
+        if (clearOfTeleporters(map, hint, radius) && distanceSq(hint, landing) == 0.0) return;
+        if (!clearOfTeleporters(map, landing, radius) ||
+            terrain.resolveWall(landing, radius, map.realm()).collided ||
+            (!terrain.blocked(hint, map.realm()) &&
+             terrain.segmentTouchesBlockingTile(hint, landing, 0.0, map.realm()))) {
+            ::testing::reportFailure(__FILE__, __LINE__, "unsafe arrival: " + label);
+        }
+    };
+    for (const MapData& source : maps.maps()) {
+        for (int sample = 0; sample < 32; ++sample) {
+            verify(source, source.defaultSpawn(rng, terrain), source.id() + " default");
+            for (const MapElement* door : source.playerSpawns()) {
+                Vec2 position;
+                if (source.spawnAt(door->spawnId, rng, terrain, position)) {
+                    verify(source, position, source.id() + ":" + door->spawnId);
+                }
+            }
+        }
+        for (const MapElement& pad : source.elements()) {
+            if (pad.kind != MapElementKind::Teleporter || pad.targetMap.empty()) continue;
+            // Cover the actual portal footprint as well as configured routes.
+            verify(source, pad.centre(), source.id() + ":" + pad.padId);
+            WorldMaps::Destination arrival;
+            if (!maps.resolveTeleporter(pad, rng, terrain, arrival) ||
+                arrival.realm == source.realm()) continue;
+            ++routes;
+            verify(*maps.forRealm(arrival.realm), arrival.position,
+                   source.id() + ":" + pad.padId + " -> " + pad.targetMap);
+        }
+    }
+    std::printf("Checked portal clearance across %zu realms, %d cross-map routes, "
+                "%d overlapping samples\n", maps.maps().size(), routes, overlapping);
+    CHECK(routes >= 22);
+    CHECK(overlapping >= 22);
 }
 
 TEST(shipped_cross_map_portals_land_at_their_reciprocal_entrances) {

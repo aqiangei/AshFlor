@@ -928,8 +928,8 @@ TEST(the_database_editor_edits_a_raw_table) {
     NetClient boss;
     CHECK(loginAs(h, boss, "boss", "password7"));
     CHECK(unlock(h, boss));
-    CHECK(say(h, boss, "/admin notification super_craft first"));
-    CHECK(say(h, boss, "/admin notification super_craft second"));
+    CHECK(say(h, boss, "/admin notification apex_craft first"));
+    CHECK(say(h, boss, "/admin notification apex_craft second"));
 
     boss.adminDbTables();
     CHECK(h.stepUntil({&boss}, [&] {

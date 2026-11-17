@@ -29,6 +29,8 @@
 #include "client/ui/menu_theme.h"
 #include "client/ui/menu_widgets.h"
 #include "client/ui/menus.h"
+
+#include <chrono>
 #include "client/ui/text.h"
 #include "client/ui/text_input.h"
 #include "client/ui/text_select.h"
@@ -625,7 +627,7 @@ bool GuildPanel::render(MenuContext& ctx) {
             const bool isSelf = sameName(member.name, me);
             const bool isLeader = sameName(member.name, guild.leader);
             const bool isDeputy = isGuildDeputy(member.name);
-            const bool canSquad = !isSelf && member.online;
+            const bool canSquad = !isSelf && member.online && member.sameShard;
             const bool canKick = leaderIsMe && !isSelf;
             const bool hovered = pointing && row.contains(mouse) && (canSquad || canKick);
 
@@ -665,18 +667,35 @@ bool GuildPanel::render(MenuContext& ctx) {
                                       : isDeputy ? (zh ? "（副会长）" : " (Deputy)") : "";
             const double nameWidth = labelWidth - measure(badge, kNameTextSize);
             text(canvas, ellipsize(member.name, kNameTextSize, nameWidth) + badge,
-                 nameX, textY - (member.online ? kRosterLineOffset : 0.0), cardText(kNameTextSize));
+                 nameX, textY - kRosterLineOffset, cardText(kNameTextSize));
+            std::string status;
             if (member.online) {
                 std::string location = member.location.empty()
                     ? (zh ? "大厅" : "Lobby") : member.location;
                 if (zh && location.rfind("Prestige ", 0) == 0) {
                     location.replace(0, sizeof("Prestige ") - 1, "声望 ");
                 }
-                const double mapSize = kDetailTextSize * std::min(1.0,
-                    labelWidth / std::max(1.0, measure(location, kDetailTextSize)));
-                textAtAlpha(canvas, location, nameX, textY + kRosterLineOffset,
-                            cardText(mapSize), 0.9);
+                status = (zh ? "在线 · " : "Online · ") + location;
+            } else if (member.lastSeenMillis == 0) {
+                status = zh ? "离线 · 时长未知" : "Offline · Duration unknown";
+            } else {
+                using namespace std::chrono;
+                const auto now = duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
+                const auto minutes = now > 0 && static_cast<std::uint64_t>(now) > member.lastSeenMillis
+                    ? (static_cast<std::uint64_t>(now) - member.lastSeenMillis) / 60000 : 0;
+                if (minutes == 0) {
+                    status = zh ? "刚刚离线" : "Just went offline";
+                } else {
+                    const auto amount = minutes >= 1440 ? minutes / 1440 : minutes >= 60 ? minutes / 60 : minutes;
+                    const auto unit = minutes >= 1440 ? (zh ? "天" : "d")
+                                    : minutes >= 60 ? (zh ? "小时" : "h") : (zh ? "分钟" : "m");
+                    status = (zh ? "离线 " : "Offline ") + std::to_string(amount) + unit;
+                }
             }
+            const double statusSize = kDetailTextSize * std::min(1.0,
+                labelWidth / std::max(1.0, measure(status, kDetailTextSize)));
+            textAtAlpha(canvas, status, nameX, textY + kRosterLineOffset,
+                        cardText(statusSize), 0.9);
         }
         contentHeight = kRowLead * 2 + static_cast<double>(sorted.size()) * kRowPitch;
     }

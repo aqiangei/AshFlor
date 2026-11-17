@@ -146,10 +146,60 @@ TEST(hyper_forge_removes_equipped_and_preset_copies_without_duplicate_refunds){
     Fixture f;f.give(f.a,"rose");f.give(f.b,"rose",6);CHECK(forgeHyper(f.db,f.a,"rose",0).ok);
     auto& record=f.db.progress(f.a);record.addItem(Rarity::Apex,"petal_rose",-1);
     StoredItem item;item.petalType="rose";item.rarity=Rarity::Apex;
-    record.loadout.resize(20);record.loadout[0]=item;record.loadoutPresets["K1"]={item};
+    record.loadout.resize(kLoadoutSlots);
+    const int slot = kLoadoutActiveSlots + 1;
+    record.loadout[slot] = item;
+    record.loadoutPresets["K1"] = {item};
     CHECK(forgeHyper(f.db,f.b,"rose",15LL*3600000).ok);
-    CHECK(!f.db.progress(f.a).loadout[0]);CHECK(!f.db.progress(f.a).loadoutPresets["K1"][0]);
-    CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Unique,"petal_rose"),4);
+    const auto verify = [&](const PlayerRecord& saved) {
+        CHECK(saved.loadout[slot] && saved.loadout[slot]->petalType == "rose" &&
+              saved.loadout[slot]->rarity == Rarity::Unique);
+        CHECK(!saved.loadoutPresets.at("K1")[0]);
+        CHECK_EQ(saved.itemCount(Rarity::Unique,"petal_rose"),3);
+        CHECK_EQ(saved.itemCount(Rarity::Apex,"petal_rose"),0);
+    };
+    verify(f.db.progress(f.a));
+    Database reloaded;
+    std::string error;
+    CHECK(reloaded.load(f.path,error));
+    if (const auto* saved = reloaded.findProgress(f.a)) verify(*saved);
+    else CHECK(false);
+}
+
+TEST(hyper_refund_leaves_a_changed_slot_and_credits_the_complete_bag_refund) {
+    Fixture f;
+    f.give(f.a,"rose");
+    f.give(f.b,"rose");
+    CHECK(forgeHyper(f.db,f.a,"rose",0).ok);
+    auto& previous = f.db.progress(f.a);
+    previous.loadout.resize(kLoadoutSlots);
+    previous.loadout[2] = StoredItem{"petal", Rarity::Rare, "leaf"};
+    CHECK(forgeHyper(f.db,f.b,"rose",15LL*3600000).ok);
+    CHECK(previous.loadout[2] && previous.loadout[2]->petalType == "leaf" &&
+          previous.loadout[2]->rarity == Rarity::Rare);
+    CHECK_EQ(previous.itemCount(Rarity::Unique,"petal_rose"),4);
+    CHECK_EQ(previous.itemCount(Rarity::Apex,"petal_rose"),0);
+}
+
+TEST(hyper_legacy_timed_refund_attaches_one_lease_to_the_vacated_slot) {
+    Fixture f;
+    f.give(f.b,"fragment",10);
+    auto& previous = f.db.progress(f.a);
+    previous.loadout.resize(kLoadoutSlots);
+    previous.loadout[1] = StoredItem{"petal", Rarity::Apex, "mjolnir"};
+    auto& claim = f.db.rawTable("hyperForges")["mjolnir"];
+    claim["owner"] = f.a;
+    claim["input"] = "timed_mjolnir";
+    claim["paid"] = 5;
+    const std::int64_t now = 15LL * 3600000;
+    CHECK(forgeHyper(f.db,f.b,"fragment",now).ok);
+    CHECK(previous.loadout[1] && previous.loadout[1]->petalType == "timed_mjolnir" &&
+          previous.loadout[1]->rarity == Rarity::Unique);
+    CHECK_EQ(previous.itemCount(Rarity::Unique,"petal_timed_mjolnir"),3);
+    CHECK_EQ(previous.extra["titanHammerLeases"].size(), std::size_t{4});
+    CHECK_EQ(expireHammerLeases(previous, now + 3600000),4);
+    CHECK(!previous.loadout[1]);
+    CHECK_EQ(previous.itemCount(Rarity::Unique,"petal_timed_mjolnir"),0);
 }
 TEST(hyper_forge_persists_owner_counter_and_protection_across_restart){
     Fixture f;f.give(f.a,"rose");f.give(f.b,"rose",6);CHECK(forgeHyper(f.db,f.a,"rose",1000).ok);

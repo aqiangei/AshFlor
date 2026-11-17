@@ -168,8 +168,7 @@ constexpr double kProfileCheckFloorMillis = net::kProfileCheckMillis * 0.5;
 constexpr double kStaleProfileRepairMillis = 4 * net::kProfileCheckMillis;
 
 constexpr bool isAnnouncedGhost(Rarity rarity) {
-    // Hyper is the player-facing tier below Apex.
-    return rarityIndex(rarity) >= rarityIndex(Rarity::Apex);
+    return rarityIndex(rarity) >= rarityIndex(kAnnouncedGhostRarity);
 }
 
 // The database stores petals by NAME, because that is the shape real accounts
@@ -886,6 +885,11 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     movement_->takesTeleporters = [this](Entity entity) { return botForEntity(entity) == nullptr; };
     loot_->terrain = terrain_.get();
     loot_->immutableWorldTerrain = true;
+    loot_->allowsBossParticipationFloor = [this](Realm realm) {
+        if (isRiftRealm(realm)) return false;
+        const auto* map = worldMaps_.forRealm(realm);
+        return map && map->templateId() != "computer" && map->templateId() != "cyberspace";
+    };
     loot_->bonusMultiplier = [this](Entity player) {
         const auto* session=sessionForEntity(player);
         return session && session->authenticated() ? activeDropBonus(database_.progress(session->userId),dropBonusNow()) : 1;
@@ -1829,6 +1833,7 @@ void GameServer::tick(double wallMillis, double nowMillis) {
     // BODY changes on every death: cached against the roster it would go stale
     // without the roster ever moving.
     squads_.expire(static_cast<std::int64_t>(wallMillis));
+    serviceAutoSquads(wallMillis);
     rebuildSquadIndex();
     markSessionPhase("squads");
 
@@ -2302,7 +2307,8 @@ void GameServer::announceBossSpawns() {
 }
 
 void GameServer::announceMob(std::uint16_t mobIndex, Rarity rarity,
-                             std::optional<Realm> localRealm, bool summoned) {
+                             std::optional<Realm> localRealm, bool summoned,
+                             bool remotePrestige) {
     if (mobIndex >= content().mobCount()) return;
     char color[16];
     std::snprintf(color, sizeof color, "#%06x", rarityColor(rarity));
@@ -2323,10 +2329,12 @@ void GameServer::announceMob(std::uint16_t mobIndex, Rarity rarity,
             " style=\"color: " + color + ";\">A " + rarityLabel(rarity) + " " + mob.name +
             (summoned ? " has been summoned" : " has spawned");
     };
+    const bool prestigeSpawn = !summoned &&
+        (localRealm ? worldMaps_.isPrestige(*localRealm) : remotePrestige);
     const std::string prefix = opening(nullptr);
     const std::string remoteText = map != nullptr
         ? opening(map) + " in " + escapedMarkup(map->displayName()) + "!</b>"
-        : prefix + " somewhere!</b>";
+        : prefix + (prestigeSpawn ? " somewhere in Prestige!</b>" : " somewhere!</b>");
     for (auto& entry : sessions_) {
         Session& session = entry.second;
         if (!session.authenticated()) continue;
@@ -2335,7 +2343,7 @@ void GameServer::announceMob(std::uint16_t mobIndex, Rarity rarity,
         const Transform* transform = world_.tryGet<Transform>(session.entity);
         const bool here = localRealm && transform && transform->realm == *localRealm;
         sendChatTo(*connection, net::ChatChannel::System, "",
-                   here ? prefix + "!</b>" : remoteText);
+                   here ? prefix + (prestigeSpawn ? " in Prestige!</b>" : "!</b>") : remoteText);
     }
     chatHistory_.push_back({net::ChatChannel::System, "", remoteText, database_.nowMillis()});
     while (chatHistory_.size() > kChatHistoryLines) chatHistory_.pop_front();
@@ -2346,6 +2354,7 @@ void GameServer::announceMob(std::uint16_t mobIndex, Rarity rarity,
         event["mob"] = int(mobIndex);
         event["rarity"] = rarityIndex(rarity);
         event["summoned"] = summoned;
+        event["prestige"] = prestigeSpawn;
         config_.authorityAuth(event);
     }
 }
@@ -2510,6 +2519,7 @@ void GameServer::replicate(double nowMillis, double wallMillis) {
     frame.nowMillis = nowMillis;
     frame.wallMillis = wallMillis;
     frame.events = &events_;
+    frame.terrain = terrain_.get();
     frame.loadShedding = config_.loadShedding;
     frame.showAllVisibleLoot = config_.fullMobSimulation;
 
@@ -2663,6 +2673,7 @@ void GameServer::endSession(net::ConnectionId id) {
         Json finish=Json::object();finish["action"]="finishAuth";finish["attempt"]=static_cast<double>(id);config_.authorityAuth(finish);
     }
     if (Session* session = sessionFor(id)) {
+        noteAccountLastSeen(*session);
         // Before the body is destroyed, so the line the squad is told still
         // knows what this flower was called.
         departSquad(*session, nullptr, squadDisplayName(squadIdOf(*session)));
@@ -3636,7 +3647,20 @@ void GameServer::replaceOtherSessions(const Session& incoming, const std::string
     }
 }
 
+void GameServer::noteAccountLastSeen(const Session& session) {
+    if (!session.authenticated()) return;
+    if (Account* account = database_.findUserById(session.userId)) {
+        const auto now = database_.nowMillis();
+        if (now > account->lastActiveAtMillis) {
+            account->lastActiveAtMillis = now;
+            database_.markDirty();
+        }
+    }
+}
+
 void GameServer::signOut(Session& session) {
+    noteAccountLastSeen(session);
+    session.autoSquad = false;
     // The squad first, while the session still has the name the squad knows
     // it by: a squad is keyed by connection, and an anonymous socket left in
     // one would be handed to whoever signs in on it next, as a disconnect
@@ -3795,6 +3819,20 @@ void GameServer::sendProfile(Session& session, net::Connection& connection) {
         w.u16(i); w.u8(static_cast<std::uint8_t>(completed)); ++ledgerSize;
     }
     w.patchU16(ledgerAt, ledgerSize);
+
+    const auto leaseCountAt = w.reserveU16();
+    std::uint16_t leaseCount = 0;
+    const auto& leases = std::as_const(record.extra)["titanHammerLeases"];
+    const double wallNow = static_cast<double>(database_.nowMillis());
+    for (std::size_t i = 0; i < leases.size() && leaseCount < std::numeric_limits<std::uint16_t>::max(); ++i) {
+        const double remaining = leases[i]["expiresAt"].asDouble() - wallNow;
+        if (!(remaining > 0)) continue;
+        const int slot = leases[i]["slot"].asInt(-1);
+        w.u8(slot >= 0 && slot < kLoadoutSlots ? static_cast<std::uint8_t>(slot) : 255);
+        w.u32(static_cast<std::uint32_t>(clamp(std::ceil(remaining), 1.0, 4294967295.0)));
+        ++leaseCount;
+    }
+    w.patchU16(leaseCountAt, leaseCount);
 
     connection.send(w);
     clearProfileDue(session);
@@ -4418,15 +4456,15 @@ void GameServer::sendLocalChat(const Session& speaker, const std::string& text,
             // its bubble can be seen.
             const Transform* at = world_.tryGet<Transform>(viewpointOf(listener));
             if (at == nullptr || at->realm != from->realm) continue;
-            // The listener's own screen, as the client reported it, centred
-            // on the body it is watching from -- the box replication streams
-            // and the speech bubble is drawn inside.
+            // Use the same framed screen as the snapshot and bubble renderer.
             Vec2 viewport{kViewportWidth, kViewportHeight};
             if (const PlayerLocation* location = world_.tryGet<PlayerLocation>(listener.entity)) {
                 viewport = location->viewport;
             }
-            const double dx = std::abs(from->position.x - at->position.x);
-            const double dy = std::abs(from->position.y - at->position.y);
+            const Vec2 centre = boundedViewportCentre(at->position, viewport,
+                                                       terrain_->cameraExtent(at->realm));
+            const double dx = std::abs(from->position.x - centre.x);
+            const double dy = std::abs(from->position.y - centre.y);
             if (dx > viewport.x * 0.5 + margin || dy > viewport.y * 0.5 + margin) continue;
         }
         if (net::Connection* peer = listener_.find(listener.connection)) peer->send(w);
@@ -5298,7 +5336,8 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
             const auto& petal = content().petal(index);
             const auto& id = petal.id;
             const bool eligible = permanentHyper
-                ? permanentHyperForgeEligible(id) && !petal.isAdminPetal && petalComesAt(petal, inputTier)
+                ? id != "fragment" && permanentHyperForgeEligible(id) &&
+                    !petal.isAdminPetal && petalComesAt(petal, inputTier)
                 : titanForgeEligible(id);
             if (!eligible) continue;
             const auto key = inventoryKey(index);
@@ -5743,7 +5782,7 @@ void GameServer::announceRareCraft(const Session& session, std::uint16_t petalIn
     // universal is never crafted -- it is forged at a titan, one at a time --
     // and says so.
     const bool forged = titanForge || made == Rarity::Universal;
-    if (made == Rarity::Super) return;
+    if (made == Rarity::Super || made == Rarity::Unique) return;
     if (made != Rarity::Unique && made != Rarity::Apex && made != Rarity::Ascendant && !forged) return;
     if (petalIndex >= content().petalCount()) return;
 
@@ -5760,7 +5799,7 @@ void GameServer::announceRareCraft(const Session& session, std::uint16_t petalIn
     const std::string article =
         forged && made != Rarity::PermanentHyper ? "The"
                : std::string("AEIOUaeiou").find(tier[0]) != std::string::npos ? "An" : "A";
-    const std::string petal = content().petal(petalIndex).name;
+    const auto& petal = content().petal(petalIndex);
     const std::string playerName =
         session.displayName.empty() ? session.username : session.displayName;
 
@@ -5769,12 +5808,12 @@ void GameServer::announceRareCraft(const Session& session, std::uint16_t petalIn
     // no parser to hand a tag to.
     const std::string details = std::string(forged ? " (forged x" : " (crafted x") + std::to_string(quantity) +
         (consumed ? ", consumed x" + std::to_string(consumed) : "") + ")";
-    const std::string plain = article + " " + tier + " " + petal + verb + "@" +
+    const std::string plain = article + " " + tier + " " + petal.name + verb + "@" +
                               session.username + " [" + playerName + "]" + details;
-    const std::string marked = std::string("<b style=\"color: ") + tierColor + ";\">" +
-        article + " " + tier + " " + petal + verb + "<b style=\"color: #00ff00;\">@" +
+    const std::string marked = "<b data-petal='" + petal.id + "' style=\"color: " + tierColor + ";\">" +
+        article + " " + tier + " " + petal.name + verb + "<b style=\"color: #00ff00;\">@" +
         session.username + "</b> [<b style=\"color: yellow;\">" + playerName + "</b>]</b>" + details;
-    if (broadcast && made != Rarity::Unique)
+    if (broadcast)
         broadcastChat(net::ChatChannel::System, "", marked);
 
     addNotification(made == Rarity::PermanentHyper ? "permanent_hyper_forge"
@@ -5782,7 +5821,7 @@ void GameServer::announceRareCraft(const Session& session, std::uint16_t petalIn
                     : made == Rarity::Ascendant ? "ascendant_craft"
                     : made == Rarity::Apex   ? "apex_craft"
                                              : "unique_craft",
-                    plain);
+                    plain, petal.id);
 }
 
 void GameServer::bankKills() {
@@ -7070,6 +7109,9 @@ void GameServer::handlePracticeBoard(Session& session, net::Connection& connecti
         case net::PracticeBoardAction::Hide:
             sharePracticeScore(database_, session.userId, id, action == net::PracticeBoardAction::Publish);
             break;
+        case net::PracticeBoardAction::Delete:
+            deletePracticeScore(database_, session.userId, id);
+            break;
         case net::PracticeBoardAction::Read:
             break;
         default:
@@ -7208,7 +7250,8 @@ void GameServer::refreshLeaderboard(LeaderboardCache& cache, bool includeAdmins)
 // Notifications
 // ---------------------------------------------------------------------------
 
-void GameServer::addNotification(const std::string& type, const std::string& message) {
+void GameServer::addNotification(const std::string& type, const std::string& message,
+                                 const std::string& petalId) {
     // rawArrayTable, never rawTable: this is the one unmodelled table stored
     // as an ARRAY, the shape the browser build gave it, and coercing it would
     // replace the whole feed with an empty object.
@@ -7218,6 +7261,7 @@ void GameServer::addNotification(const std::string& type, const std::string& mes
     entry["id"] = std::to_string(now) + "-" + std::to_string(++notificationSequence_);
     entry["type"] = type;
     entry["message"] = message;
+    if (!petalId.empty()) entry["petalId"] = petalId;
     entry["timestamp"] = static_cast<double>(now);
     feed.push(std::move(entry));
 
@@ -7250,15 +7294,24 @@ void GameServer::handleNotifications(net::Connection& connection, ByteReader& re
     if (table.isArray()) {
         rows.reserve(table.size());
         for (const Json& entry : table.items()) {
+            const auto type = entry["type"].asString();
+            if (type == "super_craft") continue;
+            if (type == "unique_craft") {
+                const auto message = entry["message"].asString();
+                if (message.find(" has been forged by ") != std::string::npos ||
+                    message.find(" has been crafted by ") != std::string::npos) continue;
+            }
             const double stamp = entry["timestamp"].asDouble();
-            // `before` is exclusive, which is what lets a page request start
-            // exactly at the oldest entry the client already holds.
-            if (before > 0 && stamp >= before) continue;
             rows.push_back({&entry, stamp});
         }
     }
     std::sort(rows.begin(), rows.end(),
               [](const Row& a, const Row& b) { return a.stamp > b.stamp; });
+    std::unordered_set<std::string> ids;
+    rows.erase(std::remove_if(rows.begin(), rows.end(), [&](const Row& row) {
+        const auto id = (*row.entry)["id"].asString();
+        return id.empty() || !ids.insert(id).second || (before > 0 && row.stamp >= before);
+    }), rows.end());
 
     const std::size_t want = std::min<std::size_t>(limit == 0 ? 50 : limit, 200);
     std::size_t shown = std::min(want, rows.size());
@@ -7275,6 +7328,7 @@ void GameServer::handleNotifications(net::Connection& connection, ByteReader& re
         w.u8(static_cast<std::uint8_t>(notificationKind(entry["type"].asString())));
         w.str(entry["message"].asString());
         w.f64(rows[i].stamp);
+        w.str(entry["petalId"].asString());
     }
     connection.send(w);
 }
@@ -7347,8 +7401,20 @@ ByteWriter GameServer::guildRosterMessage(const Json& guild) {
         const auto found = signedIn.find(lowerCase(member));
         const Session* session = found != signedIn.end() ? found->second : nullptr;
         w.str(member);
-        w.boolean(session != nullptr);
-        w.str(session != nullptr ? guildLocation(*session) : std::string());
+        const Account* account = std::as_const(database_).findUser(member);
+        const auto remote = account ? guildRemoteLocations_.find(account->id) : guildRemoteLocations_.end();
+        const bool remoteOnline = remote != guildRemoteLocations_.end();
+        const bool online = session || remoteOnline;
+        w.boolean(online);
+        w.str(session ? guildLocation(*session) : remoteOnline ? remote->second : std::string());
+        std::int64_t lastSeen = 0;
+        if (!online && account) {
+            lastSeen = std::max<std::int64_t>(0, account->lastActiveAtMillis);
+            const auto observed = guildRemoteLastSeen_.find(account->id);
+            if (observed != guildRemoteLastSeen_.end()) lastSeen = std::max(lastSeen, observed->second);
+        }
+        w.u64(static_cast<std::uint64_t>(lastSeen));
+        w.boolean(session || !remoteOnline);
     }
     return w;
 }
@@ -7366,6 +7432,10 @@ void GameServer::serviceGuildPresence(double nowMillis) {
     nextGuildPresenceMillis_ = nowMillis + kIntervalMillis;
 
     std::unordered_map<std::string, std::string> now;
+    for (const auto& [accountId, location] : guildRemoteLocations_) {
+        const auto* account = std::as_const(database_).findUserById(accountId);
+        if (account) now[lowerCase(account->username)] = "remote:" + location;
+    }
     for (const auto& [id, session] : sessions_) {
         if (!session.authenticated() || session.username.empty()) continue;
         now[lowerCase(session.username)] = guildLocation(session);
@@ -7490,11 +7560,23 @@ void GameServer::serviceOnlineRoster(double nowMillis) {
             const int tier = notice["rarity"].asInt(-1);
             if (mob < 0 || mob >= kInvalidIndex || tier < 0 || tier >= kRarityCount) continue;
             announceMob(static_cast<std::uint16_t>(mob), static_cast<Rarity>(tier),
-                        std::nullopt, notice["summoned"].asBool());
+                        std::nullopt, notice["summoned"].asBool(), notice["prestige"].asBool());
         }
         for(auto& row:rows)row.shard=local=="one"?1:local=="two"?2:0;
+        guildRemoteLocations_.clear();
+        const auto observedAt = database_.nowMillis();
+        constexpr std::int64_t retention = 30LL * 24 * 60 * 60 * 1000;
+        for (auto it = guildRemoteLastSeen_.begin(); it != guildRemoteLastSeen_.end();) {
+            if (observedAt - it->second > retention) it = guildRemoteLastSeen_.erase(it);
+            else ++it;
+        }
         for(const auto& item:shared["rows"].items()) {
             const auto shard=item["shard"].asString();if(shard==local||(shard!="one"&&shard!="two"))continue;
+            const auto accountId = item["account"].asString();
+            if (!accountId.empty() && std::as_const(database_).findUserById(accountId)) {
+                guildRemoteLocations_[accountId] = item["location"].asString();
+                guildRemoteLastSeen_[accountId] = observedAt;
+            }
             Row row;row.account=item["account"].asString();
             if(std::any_of(rows.begin(),rows.end(),[&](const Row& r){return r.account==row.account;}))continue;
             row.name=item["name"].asString();row.guild=publicGuildTag(item["guild"].asString());row.location=item["location"].asString();
@@ -8326,6 +8408,48 @@ void GameServer::sendSquadUpdate(net::Connection& connection, Squad* squad) {
     connection.send(w);
 }
 
+void GameServer::serviceAutoSquads(double wallMillis) {
+    if (wallMillis < nextAutoSquadMillis_) return;
+    nextAutoSquadMillis_ = wallMillis + 1000.0;
+    struct Candidate {
+        Session* session;
+        Realm realm;
+        int level;
+    };
+    std::vector<Candidate> candidates;
+    for (auto& [id, session] : sessions_) {
+        if (!session.autoSquad) continue;
+        const auto member = squadIdOf(session);
+        if (squads_.forMember(member)) {
+            session.autoSquad = false;
+            continue;
+        }
+        if (!session.authenticated() || !session.playing() || session.split() || session.inRift ||
+            session.arena || session.controlling != 0 || session.controlledBy != 0 ||
+            !isStanding(world_, session.entity) ||
+            squads_.pendingInviteSquad(member, static_cast<std::int64_t>(wallMillis))) continue;
+        const auto* position = world_.tryGet<Transform>(session.entity);
+        const auto* progress = world_.tryGet<PlayerProgress>(session.entity);
+        if (position && progress) candidates.push_back({&session, position->realm, progress->level});
+    }
+    std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) {
+        if (a.realm != b.realm) return realmIndex(a.realm) < realmIndex(b.realm);
+        if (a.level != b.level) return a.level < b.level;
+        return a.session->connection < b.session->connection;
+    });
+    for (std::size_t i = 1; i < candidates.size(); ++i) {
+        const auto& a = candidates[i - 1];
+        const auto& b = candidates[i];
+        if (a.realm != b.realm || b.level - a.level > kAutoSquadMaxLevelGap) continue;
+        if (Squad* squad = squads_.createMatchedPair(squadIdOf(*a.session), squadIdOf(*b.session), rng_)) {
+            a.session->autoSquad = b.session->autoSquad = false;
+            broadcastSquadUpdate(*squad);
+            sendSquadSystem(*squad, "已与同地图、等级相近的玩家自动组队。");
+            ++i;
+        }
+    }
+}
+
 void GameServer::broadcastSquadUpdate(Squad& squad) {
     for (const SquadMemberId& member : squad.members) {
         if (net::Connection* peer = squadConnection(member)) sendSquadUpdate(*peer, &squad);
@@ -9052,16 +9176,12 @@ Entity GameServer::spawnPlayerNear(Session& session, Realm realm, Vec2 around) {
         endSplit(session, clockMillis_, false);
     }
 
-    const Entity entity = finishPlayerSpawn(session, realm, around);
     // The new body's level determines its hull; the base radius can leave a
     // high-level flower embedded and eject it through a rail on the next tick.
-    auto& at = world_.get<Transform>(entity);
-    at.position = playerRespawnPosition(*terrain_, at.realm, at.position,
-                                        world_.get<Body>(entity).radius);
-    return entity;
+    return finishPlayerSpawn(session, realm, around, true);
 }
 
-Entity GameServer::finishPlayerSpawn(Session& session, Realm realm, Vec2 spawn) {
+Entity GameServer::finishPlayerSpawn(Session& session, Realm realm, Vec2 spawn, bool resolveGround) {
     const Realm requestedRealm = realm;
     routePyramidEntrance(realm, spawn);
     routeJurassicEntrance(realm, spawn);
@@ -9072,9 +9192,13 @@ Entity GameServer::finishPlayerSpawn(Session& session, Realm realm, Vec2 spawn) 
     if (realm == Realm::Arena) session.arena = startArenaRun(database_.progress(session.userId));
 
     const Entity entity = createPlayerBody(session, realm, spawn);
-    if (realm != requestedRealm) {
-        world_.get<Transform>(entity).position =
-            playerRespawnPosition(*terrain_, realm, spawn, world_.get<Body>(entity).radius);
+    auto& position = world_.get<Transform>(entity).position;
+    const double radius = world_.get<Body>(entity).radius;
+    if (resolveGround || realm != requestedRealm) {
+        position = playerRespawnPosition(*terrain_, realm, position, radius);
+    }
+    if (const auto* map = worldMaps_.forRealm(realm)) {
+        position = map->arrivalOffTeleporters(position, radius, *terrain_);
     }
 
     // A FRESH body only: full health and the respawn window. createPlayerBody
@@ -9365,6 +9489,11 @@ void GameServer::moveEntityToRealm(Entity entity, Realm realm, Vec2 position) {
     const Realm from = transform->realm;
     const bool sameRealm = from == realm;
     if (!sameRealm) {
+        const auto* body = world_.tryGet<Body>(entity);
+        const auto* map = worldMaps_.forRealm(realm);
+        if (body && map && world_.has<PlayerTag>(entity)) {
+            position = map->arrivalOffTeleporters(position, body->radius, *terrain_);
+        }
         if (auto* pads = world_.tryGet<TeleporterState>(entity)) pads->markReturnAvailable = false;
     }
     transform->realm = realm;

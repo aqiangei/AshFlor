@@ -598,7 +598,7 @@ void App::drawMinimap(Canvas& canvas, bool expanded) {
         caption.baseline = Baseline::Alphabetic;
         const std::string& captionText =
             named->displayName().empty() ? named->id() : named->displayName();
-        const auto& id = named->id();
+        const auto& id = named->templateId();
         const bool useTranslation = named->biome() == "bio" || named->biome() == "jurassic" ||
                                     id == "wave" || id.rfind("rift_", 0) == 0;
         const char* localized = useTranslation ? ui::biomeTr(id, captionText.c_str()) : captionText.c_str();

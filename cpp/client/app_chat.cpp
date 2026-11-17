@@ -93,6 +93,7 @@ constexpr std::uint32_t kChatCheckFill = 0xDDDDDDu;
 /// and the strip sit on top of it, so a change to its height moves them too.
 constexpr double kChatFieldX = 100.0;
 constexpr double kChatFieldUp = 44.0;         ///< top of the input, from the bottom edge
+constexpr double kChatImeClearanceCss = 48.0; ///< room for the IME candidate row above a reported keyboard
 constexpr double kChatFieldWidth = 257.0;
 constexpr double kChatFieldHeight = 24.0;
 
@@ -274,6 +275,7 @@ constexpr ChatCommand kChatCommands[] = {
     {"/squad-create", "Create a new squad ([public|private])", false},
     {"/squad-invite", "Invite a player to your squad", false},
     {"/squad-find-public", "List joinable public squads", false},
+    {"/squad-auto", "自动组队：/squad-auto on 开启，off 取消", false},
     {"/squad-join", "Join a public squad by its ID", false},
     {"/squad-code", "获取组队码，或输入 /squad-code 代码 加入队伍", false},
     {"/squad-public", "Make your squad public (leader only)", false},
@@ -1066,7 +1068,7 @@ void App::drawTitleChat(Canvas& canvas, double time) {
     // The slot stays either way, since Enter still opens it here. The region
     // shrinks to just the slot, so the lobby does not keep a transcript that
     // is no longer on screen as a place a press may land without closing it.
-    const double visibleBottom = chatOpen_ ? window_.softKeyboardVisibleBottom() : canvas.height();
+    const double visibleBottom = chatOpen_ ? window_.softKeyboardVisibleBottom(kChatImeClearanceCss) : canvas.height();
     const Rect box = titleChatBox(canvas.width(), canvas.height(), visibleBottom);
     chatRegion_ = box;
     drawChatField(canvas, box, time);
@@ -1172,7 +1174,7 @@ void App::drawChat(Canvas& canvas, double time) {
     const double bottom = canvas.height();
     Rect panel{kChatX, bottom - kChatPanelUp, kChatPanelWidth,
                kChatPanelUp - kChatPanelDown};
-    const double visibleBottom = chatOpen_ ? window_.softKeyboardVisibleBottom() : bottom;
+    const double visibleBottom = chatOpen_ ? window_.softKeyboardVisibleBottom(kChatImeClearanceCss) : bottom;
     const Rect field = titleChatBox(canvas.width(), canvas.height(), visibleBottom);
     const bool keyboardChat = visibleBottom < bottom;
     const bool mobileChat = touchControlsVisible() && mobile_.stickHitRadius() > 0.0;

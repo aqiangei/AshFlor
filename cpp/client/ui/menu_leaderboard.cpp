@@ -4,6 +4,7 @@
 // is a record of progress and not a snapshot of the lobby. The server answers
 // on request; the panel asks once when it opens and again only when told to.
 
+#include "shared/game/wave.h"
 #include <algorithm>
 #include <cstdio>
 #include <ctime>
@@ -98,6 +99,8 @@ void LeaderboardPanel::reset() {
     chartRecord_ = 0;
     chartPlayer_.clear();
     chartSource_ = 0;
+    pendingDeleteRecord_ = 0;
+    pendingDeleteUntil_ = 0;
     barDrag() = {};
 }
 
@@ -292,7 +295,8 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
                 label.size = 11.0;
                 label.fill = kPaper;
                 textAtAlpha(canvas, practiceDate(row.atMillis), left, top + 29.0, label, 0.75);
-                const Rect share{right - 72.0, top + 7.0, 72.0, 24.0};
+                const Rect remove{right - 78.0, top + 7.0, 78.0, 24.0};
+                const Rect share{remove.x - 80.0, top + 7.0, 72.0, 24.0};
                 const double scoreRight = own ? share.x - 9.0 : right;
                 label.align = Align::Right;
                 label.size = 14.0;
@@ -300,6 +304,20 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
                      scoreRight, top + 18.0, label);
                 if (own) {
                     pillButton(canvas, share, row.published ? "设为私密" : "公开", kLeaderboardSkin.border);
+                    const bool confirm = pendingDeleteRecord_ == row.id && ctx.timeSeconds < pendingDeleteUntil_;
+                    pillButton(canvas, remove, confirm ? "确认删除" : "删除",
+                               confirm ? 0xB74A40u : kLeaderboardSkin.border);
+                    if (!pending && ctx.pressed() && view.contains(mouse) && remove.contains(mouse)) {
+                        if (confirm) {
+                            ctx.net.requestPracticeBoard(ctx.settings.showAdminsOnLeaderboard,
+                                net::PracticeBoardAction::Delete, row.id);
+                            pendingDeleteRecord_ = 0;
+                            if (chartPlayer_.empty() && chartRecord_ == row.id) chartRecord_ = 0;
+                        } else {
+                            pendingDeleteRecord_ = row.id;
+                            pendingDeleteUntil_ = ctx.timeSeconds + 4.0;
+                        }
+                    }
                     if (!pending && ctx.pressed() && view.contains(mouse) && share.contains(mouse))
                         ctx.net.requestPracticeBoard(ctx.settings.showAdminsOnLeaderboard,
                             row.published ? net::PracticeBoardAction::Hide : net::PracticeBoardAction::Publish, row.id);
@@ -489,8 +507,8 @@ bool WavePanel::render(MenuContext& ctx) {
     const bool valid = code_.size() == 6 &&
         std::all_of(code_.begin(), code_.end(), [](char c) { return c >= '0' && c <= '9'; });
     const auto& status = ctx.net.waveRoomStatus;
-    const bool occupied = status.known && status.occupied > 0;
-    if (!occupied && ctx.pressed() && start.contains(mouse)) {
+    const bool full = status.known && status.occupied >= kWaveRoomCount;
+    if (!full && ctx.pressed() && start.contains(mouse)) {
         ctx.net.sendChat("/wave start");
         return false;
     }
@@ -514,16 +532,15 @@ bool WavePanel::render(MenuContext& ctx) {
         fillQuadRound(canvas, {left, y + 49.0, 10.0, 10.0}, 5.0, colour);
         text(canvas, label, left + 16.0, y + 54.0, info);
     };
-    lamp(x, !status.known ? "查询房间中" : occupied
-             ? "已占用 " + std::to_string(status.occupied) + "/4" : "可创建房间",
-         !status.known ? 0x9BA4AAu : status.occupied == 4 ? 0xF47776u :
-         status.occupied > 0 ? 0xFAD66Fu : 0x8EE26Au);
+    lamp(x, !status.known ? "查询房间中" :
+             "房间已占用 " + std::to_string(status.occupied) + "/" + std::to_string(kWaveRoomCount),
+         !status.known ? 0x9BA4AAu : full ? 0xF47776u : 0x8EE26Au);
     lamp(panel.x + panel.w * .46,
          !status.known ? "查询奖励中" : status.dailyCapReached ? "今日星星已达上限" : "今日还可获得星星",
          !status.known ? 0x9BA4AAu : status.dailyCapReached ? 0xFAD66Fu : 0x8EE26Au);
-    text(canvas, occupied ? "每服一间，等本局结束后即可开房。" : "房号发到个人聊天，开房 30 秒后开打。",
+    text(canvas, full ? "所有房间已占用，释放后可开房。" : "每间最多 4 人，开房 30 秒后开打。",
          x, y + 74.0, info);
-    pillButton(canvas, start, "创建房间", occupied ? 0x767676u : kLeaderboardSkin.border);
+    pillButton(canvas, start, "创建房间", full ? 0x767676u : kLeaderboardSkin.border);
     pillButton(canvas, leave, "离开房间", kLeaderboardSkin.border);
     inputField(canvas, field, code_, "六位房号", typing, ctx.timeSeconds, &field_);
     pillButton(canvas, join, "加入", valid ? kLeaderboardSkin.border : 0x767676u);

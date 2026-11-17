@@ -281,7 +281,7 @@ private:
     /// AshFlor 移动辅助: thin aim ray from the flower toward the cursor.
     /// Over the world, under the HUD. Off when the setting is off or touch
     /// controls own the pointer.
-    void drawMovementHelper(Canvas&);
+    void drawMovementHelper(Canvas&, Vec2 selfDrawn);
     /// The edges of the screen going dark as the flower runs out of health.
     /// Over the world and under the HUD, like the death wash.
     void drawLowHealthVignette(Canvas&);
@@ -368,6 +368,7 @@ private:
     /// rebakes anything.
     const Canvas* minimapStatic(bool rarityGlow);
     void drawDeathCard(Canvas&, double time);
+    void drawClosedDeathRespawn(Canvas&);
     /// The "Collected this run" panel the death card puts over the minimap.
     void drawRunLoot(Canvas&, double time);
     void drawChat(Canvas&, double time);
@@ -885,6 +886,8 @@ private:
     /// no direction to give, and the alternative -- the pointer, which on a
     /// phone is wherever the last tap landed -- would swing the petals at it.
     double lastAimAngle_ = 0;
+    std::vector<TouchPoint> zoomTouches_;
+    double pinchDistance_ = 0.0;
     /// The pointer's distance that went with it, held by the same rule.
     std::uint16_t lastAimDistance_ = 0;
     std::uint32_t inputSequence_ = 0;

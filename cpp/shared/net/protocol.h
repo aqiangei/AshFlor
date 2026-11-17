@@ -27,7 +27,7 @@ using ConnectionId = std::uint32_t;
 // Version 128: snapshot update records are smaller. The mask is a varint with
 // the common fields in its low seven bits, a short move is two bytes, and the
 // state byte carries only the bits a client draws from.
-inline constexpr std::uint16_t kProtocolVersion = 128; // Smaller snapshot update records.
+inline constexpr std::uint16_t kProtocolVersion = 133; // Notifications carry an optional petal id.
 
 /// "Not one of the rotating store's cards": a purchase at the full ladder
 /// price. Any other value is a slot index the server checks against the offers
@@ -62,7 +62,7 @@ enum class PracticeSource : std::uint8_t { Petal, Summon, Poison, Reflect, Field
 inline constexpr int kPracticeWindowSeconds = 10;
 inline constexpr std::uint8_t kPracticeBoardRows = 20;
 inline constexpr std::uint8_t kPracticeHistoryLimit = 12;
-enum class PracticeBoardAction : std::uint8_t { Read, Start, Publish, Hide };
+enum class PracticeBoardAction : std::uint8_t { Read, Start, Publish, Hide, Delete };
 
 enum class ClientMessage : std::uint8_t {
     Hello = 1,          ///< u16 protocolVersion, u32 contentHash
@@ -267,6 +267,7 @@ enum class ServerMessage : std::uint8_t {
                         ///< { u16 itemType, u8 rarity }* }* -- the saved
                         ///< loadouts (loadoutPresetName), only those that exist
                         ///< then u16 count, {u16 petal, u8 completed (0..2)}* titan ledger (v73).
+                        ///< then u16 count, {u8 loadout slot (255 = bag), u32 remaining millis}*.
     JoinAccepted,       ///< u32 selfNetId, f32 x, f32 y, u32 tick, i64 mazeDay,
                         ///< MapGrid (see below). `mazeDay` is the maze the
                         ///< server is playing, so the client builds the same
@@ -316,12 +317,12 @@ enum class ServerMessage : std::uint8_t {
     SkinDeleted,        ///< str skinId -- broadcast
     Notifications,      ///< u8 more, u16 count,
                         ///< { str id, u8 kind(NotificationKind), str message,
-                        ///<   f64 timestampMillis }*, newest first.
+                        ///<   f64 timestampMillis, str petalId }*, newest first.
                         ///< `more` is set when the page filled the requested
                         ///< limit, which is the TypeScript build's `hasMore`.
     GuildUpdate,        ///< u8 joined, str tag, str displayName, str description,
                         ///< str leader, u8 deputyCount, { str deputy }*, u16 memberCount,
-                        ///< { str username, u8 online, str location }*.
+                        ///< { str username, u8 online, str location, u64 lastSeenMillis, u8 sameShard }*.
                         ///< `joined` 0 is the TypeScript build's
                         ///< `guildUpdate null` and carries no rest.
                         ///< `location` names the biome an online member's
@@ -480,7 +481,7 @@ enum class ServerMessage : std::uint8_t {
                         ///< u32 until next claim, i64 locked rotation, locked offers, i64 current rotation, current offers. Each list: u8 count, {u16 petal,u8 rarity,f64 price,u8 discount,u16 remaining (65535 unlimited)}.
     AccountQQ,          ///< bool saved, str current value; only to the authenticated owner.
     PracticeBoard,      ///< u32 own rank, then private and public ranked record lists.
-    WaveRoomStatus,     ///< u8 occupied seats, bool personal daily star cap reached.
+    WaveRoomStatus,     ///< u8 occupied rooms, bool personal daily star cap reached.
     SkinReviewQueue,    ///< u8 count, followed by CustomSkin rows awaiting review.
     RiftStatus,         ///< bool admissionOpen.
 };
@@ -601,6 +602,7 @@ enum InputFlags : std::uint8_t {
     InputDefend  = 1 << 1,
     InputHideForeignPetals = 1 << 2,
     InputHideForeignPets   = 1 << 3,
+    InputNoPetPointer      = 1 << 4,
 };
 inline constexpr std::uint8_t kInputVisibilityMask = InputHideForeignPetals | InputHideForeignPets;
 

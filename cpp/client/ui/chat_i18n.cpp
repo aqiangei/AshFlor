@@ -234,7 +234,7 @@ constexpr Pair kNameTr[] = {
     {"Leech Body Egg", "水蛭身体蛋"},
     {"Leech Egg", "水蛭蛋"},
     {"Lentil", "扁豆"},
-    {"Light", "光"},
+    {"Light", "轻"},
     {"Lightning", "闪电"},
     {"Lightning Cutter", "闪电切割器"},
     {"Lotus", "莲花"},
@@ -439,6 +439,7 @@ std::string localizePlain(std::string text) {
         {"That player already has a pending invite.", "该玩家已有待处理邀请。"},
         {"You are already in a squad.", "你已在小队中。"},
         {"No pending invite.", "没有待处理的邀请。"},
+        {"Leave your current squad before accepting an invite.", "请先退出当前小队，再接受邀请。"},
         {"Squad invite declined.", "已拒绝小队邀请。"},
         {"You have left the squad.", "你已离开小队。"},
         {"You are not in a squad.", "你不在小队中。"},
@@ -524,12 +525,36 @@ std::string mapNameTr(std::string id, const std::string& english) {
     return english;
 }
 
-/// Translate entity phrase "Rarity Name" using rarity + name tables.
-std::string trEntity(const std::string& rarityAndName, const std::string& mobId, bool mobAnnouncement) {
+std::string announcedPetalName(const std::string& id, const std::string& name) {
+    if (!id.empty()) {
+        const auto index = content().petalIndex(id);
+        if (index < content().petalCount()) {
+            const auto& petal = content().petal(index);
+            if (petal.name == name) return petalNameTr(petal.id, petal.name.c_str());
+        }
+        return nameTr(name);
+    }
+    // Old chat history has only the English name. Treat a shared name as
+    // ambiguous rather than choosing a different petal's translation.
+    const PetalConfig* match = nullptr;
+    for (std::size_t i = 0; i < content().petalCount(); ++i) {
+        const auto& petal = content().petal(static_cast<std::uint16_t>(i));
+        if (petal.name != name) continue;
+        if (match) return name;
+        match = &petal;
+    }
+    return match ? petalNameTr(match->id, match->name.c_str()) : nameTr(name);
+}
+
+/// Translate entity phrase "Rarity Name" using the relevant content table.
+std::string trEntity(const std::string& rarityAndName, const std::string& mobId, bool mobAnnouncement,
+                     const std::string& petalId, bool petalAnnouncement) {
     std::string rarity, name;
     if (!splitRarityName(rarityAndName, rarity, name)) {
         return std::string(nameTr(rarityAndName));
     }
+    if (petalAnnouncement)
+        return std::string(rarityTrEn(rarity)) + " " + announcedPetalName(petalId, name);
     if (!mobId.empty()) {
         const auto index = content().mobIndex(mobId);
         if (index < content().mobCount()) {
@@ -578,15 +603,16 @@ std::string localizeMarkupAware(std::string text) {
 
     // Boss / sacrifice: A {Rarity} {Name} has spawned[ somewhere]!
     // Also defeated / summoned / crafted / forged / collected.
-    auto findClose = [&](std::size_t from) {
-        return text.find("</b>", from);
-    };
-
     // Pattern inside coloured <b>: ARTICLE RARITY NAME VERB...
     const std::size_t open = text.find("\">");
     if (open != std::string::npos) {
         const std::size_t bodyStart = open + 2;
-        const std::size_t close = findClose(bodyStart);
+        // Names in announcements have their own coloured bold tags.
+        std::size_t close = text.find("</b>", bodyStart);
+        for (auto nested = text.find("<b ", bodyStart); close != std::string::npos && nested < close;
+             nested = text.find("<b ", nested + 3)) {
+            close = text.find("</b>", close + 4);
+        }
         if (close != std::string::npos) {
             std::string body = text.substr(bodyStart, close - bodyStart);
             std::string prefix = text.substr(0, bodyStart);
@@ -605,6 +631,12 @@ std::string localizeMarkupAware(std::string text) {
                 const auto end = prefix.find('\'', from);
                 if (end != std::string::npos) mapId = prefix.substr(from, end - from);
             }
+            std::string petalId;
+            constexpr std::string_view petalTag = "<b data-petal='";
+            if (prefix.compare(0, petalTag.size(), petalTag) == 0) {
+                const auto end = prefix.find('\'', petalTag.size());
+                if (end != std::string::npos) petalId = prefix.substr(petalTag.size(), end - petalTag.size());
+            }
             auto tryVerb = [&](const char* enVerb, const char* zhVerbTpl) -> bool {
                 // zhVerbTpl uses %e for entity and optional trailing bits handled outside
                 const std::size_t at = body.find(enVerb);
@@ -615,13 +647,18 @@ std::string localizeMarkupAware(std::string text) {
                 const std::string_view verb = enVerb;
                 const bool mobAnnouncement = verb == " has spawned" ||
                     verb == " has been summoned" || verb == " has been defeated";
-                const std::string entity = trEntity(head, mobId, mobAnnouncement);
+                const bool petalAnnouncement = verb == " has been crafted by " ||
+                    verb == " has been forged by ";
+                const std::string entity = trEntity(head, mobId, mobAnnouncement, petalId, petalAnnouncement);
                 const std::string rest = body.substr(at + std::char_traits<char>::length(enVerb));
                 // rest may be "!", " somewhere!", " in MAP!", " by MARKUP", " by MARKUP!</b>" already cut
                 std::string zhBody;
                 if (std::string(enVerb) == " has spawned") {
                     if (startsWith(rest, " somewhere")) {
-                        zhBody = entity + " 已在某处生成！";
+                        zhBody = entity + (startsWith(rest, " somewhere in Prestige")
+                            ? " 已在声望层的某处生成！" : " 已在某处生成！");
+                    } else if (startsWith(rest, " in Prestige!")) {
+                        zhBody = entity + " 已在声望层生成！";
                     } else if (startsWith(rest, " in ")) {
                         const std::size_t bang = rest.find('!', 4);
                         const std::string english =
@@ -735,6 +772,41 @@ std::string localizeChatText(std::string text) {
         }
     }
     return localizeMarkupAware(std::move(text));
+}
+
+std::string localizeNotificationText(const std::string& text, const std::string& petalId) {
+    if (!zh()) return text;
+    for (const auto& verb : {Pair{" has been crafted by ", " 合成了 "},
+                            Pair{" has been forged by ", " 锻造了 "}}) {
+        const auto at = text.find(verb.en);
+        if (at == std::string::npos) continue;
+        const auto subject = dropArticle(text.substr(0, at));
+        std::string rarity, petalName;
+        if (!splitRarityName(subject, rarity, petalName)) continue;
+        const auto from = at + std::char_traits<char>::length(verb.en);
+        const auto details = text.rfind(" (");
+        const auto detailFrom = details != std::string::npos && details >= from ? details : text.size();
+        const std::string translated = std::string(rarityTrEn(rarity)) + " " +
+            announcedPetalName(petalId, petalName);
+        return text.substr(from, detailFrom - from) + verb.zh + translated +
+            localizeChatText(text.substr(detailFrom));
+    }
+    if (startsWith(text, "Star code \"") && endsWith(text, " Stars")) {
+        constexpr std::string_view codePrefix = "Star code ";
+        constexpr std::string_view redeemedBy = "\" redeemed by ";
+        constexpr std::string_view rewardSuffix = " Stars";
+        const auto redeemed = text.find(redeemedBy);
+        const auto reward = text.rfind("! +");
+        if (redeemed != std::string::npos && reward != std::string::npos) {
+            const auto playerFrom = redeemed + redeemedBy.size();
+            if (reward > playerFrom) {
+                return text.substr(playerFrom, reward - playerFrom) + " 兑换了星币码 " +
+                    text.substr(codePrefix.size(), redeemed + 1 - codePrefix.size()) + "，获得 " +
+                    text.substr(reward + 2, text.size() - reward - 2 - rewardSuffix.size()) + " 星币";
+            }
+        }
+    }
+    return text;
 }
 
 } // namespace ui

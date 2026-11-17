@@ -43,6 +43,7 @@ enum class SessionStage : std::uint8_t {
 struct Session {
     net::ConnectionId connection = 0;
     SessionStage stage = SessionStage::Greeting;
+    bool autoSquad = false;  ///< Seeking one match on this connection.
     /// Inventory credits since joining the world, shared by both split bodies.
     std::map<std::pair<std::uint16_t, Rarity>, std::uint32_t> runLoot;
     /// Where the connection really comes from, worked out once when it opened:

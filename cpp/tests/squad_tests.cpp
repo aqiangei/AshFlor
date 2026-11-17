@@ -64,36 +64,34 @@ TEST(any_member_invites_and_only_once_per_target) {
     // Non-leaders may invite too (AshFlor).
     CHECK(roster.invite(human(2), human(3), 0).empty());
     CHECK(roster.invite(human(9), human(3), 0) == "You are not in a squad.");
-    // Already in *this* squad: refused. Other parties can still be invited.
+    // Players who are already in a squad cannot be invited.
     CHECK(roster.invite(human(1), human(2), 0) == "That player is already in a squad.");
     CHECK(roster.invite(human(2), human(3), 0) == "That player already has a pending "
                                                          "invite.");
 }
 
-TEST(accepting_an_invite_switches_from_another_squad) {
+TEST(squad_invites_do_not_remove_players_from_their_current_squad) {
     Rng rng(21);
     SquadRoster roster;
-    Squad* a = roster.create(human(1), false, rng);
-    Squad* b = roster.create(human(10), false, rng);
-    CHECK(a != nullptr);
-    CHECK(b != nullptr);
-
-    // 2 joins A; B invites 2 while they are still in A.
+    auto* inviter = roster.create(human(1), false, rng);
+    CHECK(inviter != nullptr);
     CHECK(roster.invite(human(1), human(2), 0).empty());
-    std::string joined;
-    CHECK(roster.accept(human(2), 0, joined).empty());
-    CHECK(joined == a->id);
 
-    CHECK(roster.invite(human(10), human(2), 0).empty());
-    SquadRoster::Departure left;
-    CHECK(roster.accept(human(2), 0, joined, &left).empty());
-    CHECK(joined == b->id);
-    CHECK(left.wasMember);
-    CHECK(left.squadId == a->id);
-    CHECK(roster.forMember(human(2)) == b);
-    CHECK(roster.forMember(human(1)) == a);
-    CHECK(a->members.size() == 1);
-    CHECK(b->contains(human(2)));
+    // The player can form a squad while an invitation is already pending.
+    auto* current = roster.create(human(2), false, rng);
+    CHECK(current != nullptr);
+    CHECK(roster.invite(human(1), human(2), 0) == "That player is already in a squad.");
+    std::string joined;
+    CHECK(roster.accept(human(2), 0, joined) == "Leave your current squad before accepting an invite.");
+    CHECK(joined.empty());
+    CHECK(roster.forMember(human(2)) == current);
+    CHECK(current->leader == human(2));
+    CHECK(inviter->members.size() == 1);
+
+    CHECK(roster.leave(human(2)).wasMember);
+    CHECK(roster.invite(human(1), human(2), 0).empty());
+    CHECK(roster.accept(human(2), 0, joined).empty());
+    CHECK(joined == inviter->id);
 }
 
 TEST(an_invitation_lapses_after_thirty_seconds) {

@@ -639,6 +639,25 @@ TEST(everything_is_clamped_inside_the_world) {
     }
 }
 
+TEST(map_edge_camera_player_stops_at_the_map_edge_under_held_input) {
+    Fixture fx;
+    const int cols = 10, rows = 8;
+    CHECK(fx.terrain.setTiles(std::vector<std::uint8_t>(cols * rows, static_cast<std::uint8_t>(Tile::Open)),
+                             cols, rows));
+    const Vec2 extent = fx.terrain.realmExtent(Realm::Overworld);
+    const Entity player = fx.spawnPlayer({extent.x - 100, extent.y * 0.5});
+    fx.drive(player, 0, 1);
+    fx.step(80);
+    const Vec2 edge = fx.positionOf(player);
+    CHECK_NEAR(edge.x, extent.x - kPlayerBaseRadius, 0.05);
+    fx.step(80);
+    CHECK_NEAR(fx.positionOf(player).x, edge.x, 0.05);
+    CHECK_NEAR(fx.positionOf(player).y, edge.y, 0.05);
+    fx.drive(player, kPi, 1);
+    fx.step(20);
+    CHECK(fx.positionOf(player).x < edge.x - 30);
+}
+
 TEST(a_dead_body_stops_moving) {
     Fixture fx;
     const Entity player = fx.spawnPlayer({3000, 3000});
@@ -743,6 +762,24 @@ TEST(egg_pet_can_separate_from_a_mob_spawned_at_the_exact_same_position) {
     fx.step(16);
     const double contact = 120 * mobBodyContactScale("soldier_ant");
     CHECK_NEAR(distance(fx.positionOf(pet), fx.positionOf(mob)), contact + kMobCollisionBuffer, 1e-6);
+}
+
+TEST(feedback_3621_coincident_roach_and_friendly_summon_separate) {
+    std::string error;
+    CHECK(loadContent(testsupport::dataDir(), error));
+    if (!error.empty()) return;
+    Fixture fx;
+    const Entity owner = fx.spawnPlayer({4700, 5000});
+    const Entity roach = fx.spawnMob({5000, 5000}, 55);
+    const Entity ant = fx.spawnMob({5000, 5000}, 55);
+    fx.world.add<MobType>(roach, MobType{content().mobIndex("roach"), Rarity::Super, 1});
+    fx.world.add<MobType>(ant, MobType{content().mobIndex("soldier_ant"), Rarity::Unique, 1});
+    fx.world.add<Pet>(roach, Pet{owner, 0});
+    fx.world.add<Pet>(ant, Pet{owner, 1});
+    fx.step(40);
+    const double reach = 55 * (mobBodyContactScale("roach") + mobBodyContactScale("soldier_ant"));
+    CHECK_NEAR(distance(fx.positionOf(roach), fx.positionOf(ant)),
+               reach + kMobCollisionBuffer, 1e-5);
 }
 
 TEST(a_centipede_collides_with_its_own_beads_everywhere_but_its_joints) {
@@ -1481,6 +1518,25 @@ TEST(a_planted_meteor_blocks_heavy_mobs_even_when_a_step_would_cross_it) {
     }
 }
 
+TEST(a_sandstorm_passes_its_owners_meteor_but_other_summons_stop) {
+    const auto& registry = testsupport::shippedContent();
+    for (bool sameOwner : {true, false}) {
+        Fixture fx;
+        const Entity owner = fx.spawnPlayer({5000, 5000});
+        const Entity other = fx.spawnPlayer({5500, 5000});
+        const Entity meteor = fx.spawnLoose({3000, 3000}, 180.0);
+        fx.world.add<PlantedMeteor>(meteor, PlantedMeteor{owner});
+        const Entity storm = fx.spawnMob({2200, 3000}, 60.0, 1e9);
+        fx.world.add<MobType>(storm, MobType{registry.mobIndex("sandstorm"), Rarity::Apex, 1.0});
+        fx.world.add<Pet>(storm, Pet{sameOwner ? owner : other, 0});
+        fx.world.get<Motion>(storm).velocity = {2000, 0};
+        fx.step(1, 1.0);
+
+        if (sameOwner) CHECK(fx.positionOf(storm).x > 3240.0);
+        else CHECK(fx.positionOf(storm).x < 2820.0);
+    }
+}
+
 TEST(an_npc_never_gives_way_to_a_loose_petal_and_two_slabs_split_evenly) {
     Fixture fx;
     const auto npcAt = [](Fixture& f, Vec2 at, double radius) {
@@ -1677,5 +1733,35 @@ TEST(feedback1105_respawn_full_hull_stays_on_corpse_side) {
         const auto wall=fx.terrain.resolveWall(p,radius,Realm::Overworld);
         CHECK(!wall.unresolved);CHECK(distanceSq(wall.position,p)<1e-8);
         CHECK(!fx.terrain.segmentTouchesBlockingTile(corpse,p,0,Realm::Overworld));
+    }
+}
+
+TEST(feedback_moon_contacts_hostile_mobs_and_passes_allied_pets) {
+    const auto& registry = testsupport::shippedContent();
+    for (const bool ally : {false, true}) {
+        Fixture fixture;
+        const Vec2 rockAt{3000, 3000};
+        const auto owner = fixture.spawnPlayer(rockAt);
+        const auto rock = fixture.spawnLoose(rockAt, 30.0);
+        fixture.world.add<RingAnchor>(rock);
+        fixture.world.get<Body>(rock).mass = moonMassForRadius(30.0);
+        auto& instance = fixture.world.add<PetalInstance>(rock);
+        instance.owner = owner;
+        instance.configIndex = registry.petalIndex("moon_rock");
+        const Vec2 mobAt = rockAt + Vec2{40,0};
+        const auto mob = fixture.spawnMob(mobAt, 30, 20);
+        fixture.world.add<MobType>(mob, MobType{registry.mobIndex("ladybug"), Rarity::Common});
+        if (ally) {
+            fixture.world.add<Pet>(mob).owner = owner;
+            fixture.world.get<Faction>(mob).team = Team::Players;
+        }
+        fixture.step(1, 0);
+        if (ally) {
+            CHECK_NEAR(distance(fixture.positionOf(mob), mobAt), 0.0, 1e-8);
+            CHECK_NEAR(distance(fixture.positionOf(rock), rockAt), 0.0, 1e-8);
+        } else {
+            CHECK(fixture.positionOf(mob).x > mobAt.x);
+        }
+        CHECK_NEAR(distance(fixture.positionOf(owner), rockAt), 0.0, 1e-8);
     }
 }

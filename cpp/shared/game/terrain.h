@@ -484,6 +484,12 @@ public:
     /// whatever the file said, so the answer belongs to the loaded Terrain.
     Vec2 realmExtent(Realm realm) const;
 
+    /// Bounds for a viewport over a rectangular floor. The circular arena
+    /// intentionally shows the space surrounding its ring.
+    Vec2 cameraExtent(Realm realm) const {
+        return realm == Realm::Maze || hasMap(realm) ? realmExtent(realm) : Vec2{};
+    }
+
     /// The longer axis of realmExtent(). What the broadphase sizes a square
     /// layer to.
     double realmSize(Realm realm) const;

@@ -522,11 +522,13 @@ private:
         /// The default 50ms hit throttle does not grant immunity to wear.
         /// Only petals without a breakable health pool skip contact damage.
         bool petalBreakable = false;
+        bool jellyKnockback = false;
         /// A petal that is a body on the ground -- the moon -- rather than a
         /// place on the ring. It hits mobs as a ring petal does, but leaves
         /// flowers alone, meets mobs with the slack a loose victim gets, and
         /// pays no recoil: mobs already bite it on their own contact clock.
         bool isLoose = false;
+        bool shortensUndead = false;
         bool isMobBody = false;
         bool isHostileBody = false;
         bool swallows = false;

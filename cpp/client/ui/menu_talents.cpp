@@ -74,7 +74,7 @@ constexpr double kBadgeTipSize = 16.0;
 /// florrclone talent-wheel stage is an 880×880 viewBox. Nodes are projected
 /// with Nv(tier, phase, camera); only |phase−camera|<3 are shown.
 constexpr double kWheelSize = 880.0;
-constexpr double kCameraMax = 27.25;
+constexpr double kCameraMax = 29.0;
 constexpr double kPhaseVisible = 3.0;
 constexpr double kFlowerX = 440.0;
 constexpr double kFlowerY = 777.0;
@@ -214,6 +214,7 @@ const std::vector<Branch>& branches() {
           {9, 23.25}, {9, 24.25}, {8, 24.75}, {7, 24.75}}},
         {SkillId::MovementSpeed, {{4, 25.5}, {5.5, 26}, {7, 25.5}}},
         {SkillId::Prestige, {{4, 26.25}, {5, 26.75}}},
+        {SkillId::FluidReach, {{4, 28}, {5.5, 28.5}, {7, 28}}},
     };
     return kBranches;
 }
@@ -355,6 +356,11 @@ std::vector<TipRow> description(SkillId skill, int tier) {
                  {fromTo(kManaRegenTalentScale, tier), kStatDamage}});
             row({{cn ? "提升持续回蓝和花瓣回蓝量，不增加魔力上限。" : "Boosts passive and petal mana recovery, without increasing capacity."}});
             break;
+        case SkillId::FluidReach:
+            row({{cn ? "溢液与血池半径：" : "Spill and blood pool radius: "},
+                 {fromTo(kFluidReachTalentScale, tier), kStatDamage}});
+            break;
+
         case SkillId::PetDamage:
             row({{cn ? "宠物伤害：" : "Pet damage: "},
                  {fromTo(kPetDamageTalentScale, tier), kStatDamage}});
@@ -362,7 +368,7 @@ std::vector<TipRow> description(SkillId skill, int tier) {
             break;
         case SkillId::Prestige:
             row({{tier == 1 ? (cn ? "解锁二级声望：普通怪物提高两个稀有度，最高永恒。" : "Unlock Prestige II: ordinary enemies rise two rarities, up to Eternal.")
-                            : (cn ? "解锁声望地图：普通怪物提高一个稀有度，最高为超级。" : "Unlock Prestige worlds: ordinary enemies rise one rarity, up to Super.")}});
+                            : (cn ? "解锁声望地图：通常提升一个稀有度，最高超级；自然刷新的究极怪有 75% 晋升。" : "Unlock Prestige worlds: enemies usually rise a tier, up to Super. Ambient Ultra mobs have a 75% chance to rise.")}});
             row({{cn ? "不提高经验档位；重置天赋会退出声望地图。" : "XP tiers stay unchanged; resetting talents returns you to ordinary worlds."}});
             break;
         case SkillId::Damage:
@@ -512,6 +518,7 @@ void drawIcon(Canvas& canvas, SkillId id, int /*tier*/, Vec2 at, double size) {
     const char* svg = talentSvg(id == SkillId::MovementSpeed ? SkillId::Rotation : id);
     if (id == SkillId::PetDamage) svg = talentSvg(SkillId::Summoner);
     if (id == SkillId::ManaRegen) svg = talentSvg(SkillId::Medic);
+    if (id == SkillId::FluidReach) svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'><path d='M40 8C35 22 19 35 19 48a21 21 0 0 0 42 0C61 35 45 22 40 8Z' fill='#72d9ed' stroke='#28677e' stroke-width='4'/><path d='M29 49q1 9 10 11' fill='none' stroke='#d7f6ff' stroke-width='4' stroke-linecap='round'/></svg>";
     if (id == SkillId::Prestige) svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'><path d='M40 5L50 27L75 30L57 47L61 73L40 61L19 73L23 47L5 30L30 27Z' fill='#ffd43b' stroke='#8e7019' stroke-width='4'/><circle cx='34' cy='40' r='3' fill='#735c18'/><circle cx='46' cy='40' r='3' fill='#735c18'/><path d='M33 48Q40 55 47 48' fill='none' stroke='#735c18' stroke-width='3'/></svg>";
     if (svg == nullptr || *svg == '\0') return;
     static std::array<std::shared_ptr<SvgDocument>, kSkillCount> cache{};

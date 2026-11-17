@@ -2122,10 +2122,11 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
     // -- a flat amount off each hit the wearer takes -- so a bone and a mob
     // of one tier are as hard to scratch as each other.
     s.petalArmor = c.petalArmor * kMobArmorScale[static_cast<std::size_t>(rarityIndex(tier))];
-    // The geometric armour and Magic Bone follow Bone, not the wild mob armour plateau.
+    // Geometric armour, Obsidian and Magic Bone use the petal curve, not the mob plateau.
     // The reference Mirror's armour is a fixed fifteenth of its health, so it
     // rides the health ladder too.
-    if (c.id == "icosahedron" || c.id == "magic_bone" || c.id == "void_mirror")
+    if (c.id == "icosahedron" || c.id == "obsidian" || c.id == "magic_bone" ||
+        c.id == "void_mirror" || c.id == "magic_rock")
         s.petalArmor = c.petalArmor * stat;
     s.petalEvasion = c.petalEvasion;
     s.petalPoisonImmune = c.petalPoisonImmune;
@@ -2173,6 +2174,13 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
     s.manaChargeMillis = c.burstManaChargeMillis;
     s.passiveManaPerSecond = c.passiveMana * mana;
     s.requiredMana = c.requiredMana * mana;
+    if (c.id == "magic_poo") {
+        static constexpr std::array<double, kLadderRarityCount> range = {
+            5, 6, 9, 14, 21, 30, 41, 54, 69, 86,
+        };
+        s.summonRangeBonus = range[ladderIndex(tier)];
+        s.passiveManaDrain = 0.8 * mana;
+    }
     s.petManaCost = c.petManaCost * mana;
     // TypeScript keeps ordinary petal knockback flat across rarities. Jelly is
     // the one intentional exception: its per-rarity values are literal
@@ -2193,7 +2201,10 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
     // mythic and 50% at ultra, the two tiers florr makes it at.
     if (petalBoostsHealing(c)) s.healBonus = 0.2 + 0.05 * rarityIndex(tier);
     // Golden leaf: florr's Reload -2.5% at common and 2.5% more a tier.
-    if (petalCutsReload(c)) s.reloadCut = 0.025 * (rarityIndex(tier) + 1);
+    if (petalCutsReload(c)) {
+        s.reloadCut = 0.025 * (rarityIndex(tier) + 1);
+        if (c.id == "magic_golden_leaf") s.reloadCut *= kMagicGoldenLeafReloadShare;
+    }
     // Disc: florr's Collision Damage Resistance, 1 - 0.91^(tier+1) -- one more
     // 0.91 of the hit kept back a tier, so no tier ever reaches immunity.
     if (petalResistsCollisions(c)) s.collisionResist = 1.0 - std::pow(0.91, rarityIndex(tier) + 1);
@@ -2368,6 +2379,7 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
         if (row.luck) s.modifiers.luck = *row.luck;
         if (row.magnetism) s.modifiers.magnetism = *row.magnetism;
     }
+    if (c.id == "jelly") s.knockback *= 0.9;
     // Hyper utility/defence stays bounded; direct offensive stats get a real
     // twofold upgrade over Eternal (1106 balance feedback).
     if (c.id == "domino") s.damage *= 9.0; // mean of two independent 0..6 ends

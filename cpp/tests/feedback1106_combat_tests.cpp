@@ -283,14 +283,17 @@ TEST(real_mjolnir_contact_receives_the_equipped_ruby_bonus) {
 }
 
 TEST(uranium_has_real_enemy_poison_and_bounded_self_poison_at_every_tier) {
-    for(auto rarity:{Rarity::Common,Rarity::Unique,Rarity::Apex}) {
+    for(auto rarity:{Rarity::Common,Rarity::Unique,Rarity::Apex,Rarity::PermanentHyper,Rarity::Ascendant}) {
         CombatFeedback r; r.equip(0,"uranium",rarity);r.prepare();
         Entity cloud=NULL_ENTITY; Query<GroundEffect> q{r.w};
         q.each([&](Entity e,GroundEffect& f){if(f.kind==GroundEffectKind::Radiation)cloud=e;});
         CHECK(cloud!=NULL_ENTITY); if(cloud==NULL_ENTITY)continue;
         const auto f=r.w.get<GroundEffect>(cloud);
-        CHECK(f.damagePerSecond>0);CHECK(f.ownerPoisonPerSecond>0);
-        CHECK(f.ownerPoisonPerSecond<=r.w.get<Health>(r.player).max*.04);
+        const double base = r.c.petalStats(r.c.petalIndex("uranium"), rarity).damage;
+        CHECK_NEAR(f.damagePerSecond, base * (isHyperPetal(rarity) ? 1.50 : 1.20), 1e-6);
+        if (rarity == Rarity::PermanentHyper) CHECK_NEAR(f.damagePerSecond, 78732.0, 1e-6);
+        if (rarity == Rarity::Ascendant) CHECK_NEAR(f.damagePerSecond, 98415.0, 1e-6);
+        CHECK_NEAR(f.ownerPoisonPerSecond, std::min(base, r.w.get<Health>(r.player).max * .04), 1e-6);
         auto mob=r.mob(r.w.get<Transform>(cloud).position);
         const double before=r.w.get<Health>(r.player).current; r.hit(10000);r.hit(10050);
         CHECK(r.w.get<Health>(mob).current<1e12);
@@ -308,8 +311,8 @@ TEST(todo1106_uranium_reaches_new_outer_radius_without_hitting_beyond_it) {
     q.each([&](Entity e,GroundEffect& f){if(f.kind==GroundEffectKind::Radiation&&e!=cloud)older.push_back(e);});
     for(const auto e:older)r.w.destroy(e);
     const auto centre=r.w.get<Transform>(cloud).position;
-    CHECK_NEAR(r.w.get<GroundEffect>(cloud).radius,220,1e-6);
-    const auto inside=r.mob(centre+Vec2{200,0}),outside=r.mob(centre+Vec2{250,0});
+    CHECK_NEAR(r.w.get<GroundEffect>(cloud).radius,250,1e-6);
+    const auto inside=r.mob(centre+Vec2{240,0}),outside=r.mob(centre+Vec2{285,0});
     r.hit(10000);r.hit(10050);
     CHECK(r.w.get<Health>(inside).current<1e12);
     CHECK_EQ(r.w.get<Health>(outside).current,1e12);

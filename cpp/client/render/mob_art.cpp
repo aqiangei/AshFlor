@@ -263,6 +263,7 @@ MobArt mobArtFor(const std::string& image) {
         {"centipede_desert", MobArt::CentipedeDesert},
         {"centipede_desert_body", MobArt::CentipedeDesertBody},
         {"centipede_arctic", MobArt::CentipedeArctic},
+        {"centipede_arctic_body", MobArt::CentipedeArcticBody},
         {"bubble", MobArt::Bubble},
         {"bumble_bee", MobArt::BumbleBee},
         {"shell", MobArt::Shell},
