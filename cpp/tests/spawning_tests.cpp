@@ -6130,9 +6130,6 @@ TEST(restored_termite_mound_map_allows_entry_and_returns_to_its_entrance) {
     CHECK(mound!=NULL_ENTITY);if(mound==NULL_ENTITY)return;w.get<Transform>(player).position=w.get<Transform>(mound).position;
     double now = 1000;
     dungeons.moveToRealm = [&](Entity entity, Realm realm, Vec2 position) {
-        // Match the server's ordinary cross-realm transfer guard.
-        const auto* pads = w.tryGet<TeleporterState>(entity);
-        if (pads && now < pads->markHoldUntilMillis) return;
         auto& transform = w.get<Transform>(entity);
         transform.realm = realm;
         transform.position = position;
@@ -6158,7 +6155,6 @@ TEST(restored_termite_mound_map_allows_entry_and_returns_to_its_entrance) {
     commands.flush();
     CHECK(w.get<Transform>(player).realm == inside);
 
-    w.ensure<TeleporterState>(player).markHoldUntilMillis = now + 30000.0;
     now += kDungeonClearedLingerMillis;
     dungeons.run(w, terrain, shipped(), spawn, combat, rng, now, commands);
     commands.flush();

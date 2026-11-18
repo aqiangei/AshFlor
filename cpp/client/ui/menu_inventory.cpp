@@ -19,6 +19,7 @@
 #include "client/ease.h"
 #include "client/ui/content_i18n.h"
 #include "client/ui/gallery_drop_preview.h"
+#include "client/ui/gallery_map_mobs.h"
 #include "client/ui/item_tile.h"
 #include "client/ui/menu_theme.h"
 #include "client/ui/menus.h"
@@ -152,45 +153,8 @@ bool matchesSearch(std::uint16_t petalIndex, const std::string& needle) {
 }
 
 std::vector<bool> mapDropTypes(const MapData& map) {
-    std::vector<bool> seen(content().mobCount(), false);
-    std::vector<std::uint16_t> mobs;
-    const auto addMob = [&](std::uint16_t mob) {
-        if (mob >= seen.size() || seen[mob]) return;
-        seen[mob] = true;
-        mobs.push_back(mob);
-    };
-    const auto addGroup = [&](std::uint16_t group) {
-        if (group == kInvalidIndex) return;
-        for (const auto& member : content().mobGroup(group).members)
-            if (member.weight > 0.0) addMob(member.mob);
-    };
-    bool useDefault = false;
-    for (const auto& element : map.elements()) {
-        if (!element.isSpawnBand() && !element.isMobRegion()) continue;
-        if (element.isSpawnBand() && element.mobDistribution.empty()) useDefault = true;
-        for (const auto& row : element.mobDistribution) {
-            if (!(row.weight > 0.0)) continue;
-            const auto group = content().mobGroupIndex(row.name);
-            if (group != kInvalidIndex) addGroup(group);
-            else addMob(content().mobIndex(row.name));
-        }
-    }
-    if (useDefault) addGroup(content().mobGroupIndex(map.defaultMobGroup()));
-
     std::vector<bool> drops(content().petalCount(), false);
-    for (std::size_t i = 0; i < mobs.size(); ++i) {
-        const auto mob = mobs[i];
-        const auto& config = content().mob(mob);
-        for (const auto child : config.initialSpawns) addMob(child);
-        for (const auto& wave : config.spawnWaves)
-            for (const auto child : wave) addMob(child);
-        for (const auto& rung : config.hurtSpawn)
-            if (rung.count > 0) addMob(rung.mobIndex);
-        if (config.periodicSpawn.present) addMob(config.periodicSpawn.mobIndex);
-        const auto& brood = config.deathSpawn;
-        if (brood.present && brood.chance > 0.0 && brood.count > 0) addMob(brood.mobIndex);
-        for (const auto& rung : brood.byRarity)
-            if (rung.count > 0) addMob(rung.mobIndex);
+    for (const auto mob : mapMobIndices(map)) {
         for (int tier = 0; tier < kRarityCount; ++tier) {
             const auto rarity = clampRarity(tier);
             if (tier >= kLadderRarityCount && rarity != Rarity::Ascendant) continue;
@@ -407,6 +371,9 @@ std::vector<TooltipLine> equippedPetalTooltipLines(std::uint16_t originalIndex,
         const auto& original = content().petal(originalIndex);
         const std::string enName = titleCase(original.name);
         lines.front().text = petalNameTr(original.id, enName.c_str());
+        if (copiedSawblade) {
+            lines.emplace_back(trEnZh("Effective copy: Sawblade", "实际复制效果：锯片"));
+        }
     }
     return lines;
 }
@@ -749,21 +716,31 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     }
     if (config.id == "dark_mark") {
         special("印记蓄力：", "Mark delay: ", darkMarkDelayMillis(rarity) / 1000.0, "s");
-        lines.push_back({chinese ? "按攻击将印记放在倒下的玩家身上，蓄力后送往地狱；被救起或印记被打破则取消。" : "Attack over a fallen flower to place a mark. After charging, sends them to Hel; revival or breaking the mark cancels it.",12.0});
+        lines.push_back({chinese ? "靠近倒下的玩家并按攻击放置印记，蓄力后将其送往地狱。被救起或印记被打破则取消。" : "Attack near a fallen flower to place a mark. After charging, sends them to Hel. Revival or breaking the mark cancels it.",12.0});
         lines.push_back({chinese ? "双方需20级；不作用于更高阶装备、分身、副本或已在地狱的玩家。成功后目标5分钟免疫Mark。" : "Both flowers must be level 20+. Cannot target higher-tier equipment, split flowers, dungeon runs or flowers in Hel. Target gains 5 minutes of Mark immunity.",12.0});
-        if (ladderRarity(rarity) == Rarity::Apex) {
-            special("地狱滞留：", "Hel hold: ", kHyperMarkHoldMillis / 1000.0, "s");
-            lines.push_back({chinese ? "期间可正常移动战斗；死亡或返回菜单解除。到时可用 /mark-return 返回原处，不能叠加滞留。" : "Movement and combat remain available. Death or leaving ends the hold. Use /mark-return when it expires; holds cannot stack.",12.0});
-        } else lines.push_back({chinese ? "无强制滞留，可立即用 /mark-return 返回原处。" : "No forced hold; /mark-return is immediately available.",12.0});
+    }
+    if (config.id == "dark_mark" || config.id == "void_mark" ||
+        config.id == "void_void_mark" || config.id == "arctic_frozen_mark") {
+        lines.push_back({chinese ? "传送后可立即使用 /mark-return 返回原处。" : "Use /mark-return immediately after transport to go back.",12.0});
+    }
+    if (config.id == "magic_bubble") {
+        lines.push_back({chinese ? "按住防御并移动时向该方向冲刺，攻击与防御可以同时按住。" : "Hold defend and move to dash in that direction. You can hold attack at the same time.",12.0});
     }
     if (config.id == "corruption") {
         if (ladderRarity(rarity)==Rarity::Apex) {
             special("腐化光环半径：", "Corruption aura radius: ", kHyperCorruptionRadius);
             lines.push_back({chinese ? "装备时影响同地图范围内20级及以上玩家；离开即解除，不连锁传播。" : "While worn, affects nearby level 20+ flowers in the same realm; ends on leaving, never chains.",12.0});
-            lines.push_back({chinese ? "使用者和光环影响者均可使用绷带。" : "Wearer and aura recipients can still use Bandage.",12.0});
-        } else lines.push_back({chinese ? "腐化期间无法触发或维持绷带续命。" : "Corruption prevents and ends Bandage's Undead effect.",12.0});
+        }
+        if (rarity == Rarity::Ascendant) {
+            lines.push_back({chinese ? "装备 Apex 腐化时仍可使用绷带续命。" : "Bandage can still work while wearing Apex Corruption.",12.0});
+        } else {
+            lines.push_back({chinese ? "装备后无法触发或维持绷带续命。" : "Wearing this prevents and ends Bandage's Undead effect.",12.0});
+        }
     }
-    if (config.id == "bandage") lines.push_back({chinese ? "普通或随机腐化会阻止并终止续命；H腐化及其光环不受此限制。" : "Ordinary or random corruption prevents and ends Undead; H Corruption and its aura are exempt.",12.0});
+    if (config.id == "bandage") {
+        lines.push_back({chinese ? "随机腐化会阻止并终止续命。装备腐化时，只有 Apex 腐化可保持续命。单独受到光环影响仍可续命。" :
+                                   "Random corruption prevents and ends Undead. Apex Corruption is the only Corruption petal compatible with Bandage. The aura alone allows Bandage.",12.0});
+    }
     if ((config.id == "sawblade" && ladderRarity(rarity) >= Rarity::Unique) ||
         (config.id == "rock" && isHyperPetal(rarity))) {
         lines.push_back({chinese ? "对野怪接触命中且花瓣未碎时，追加半伤害并承受半反伤。" :
@@ -790,8 +767,11 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     if (stats.spongeDamageDurationMillis > 0)
         special("伤害分摊时间：", "Damage spread duration: ", stats.spongeDamageDurationMillis / 1000.0, "s");
     if (config.id == "chromosome") {
-        special("展开花瓣耐久回复：", "Deployed petal repair: ",
-                petalHealScale(rarity), chinese ? " / 秒" : " / s");
+        TooltipLine repair{std::string(chinese ? "展开花瓣耐久回复：" : "Deployed petal repair: ") +
+                               oneDecimal(petalHealScale(rarity)) + (chinese ? " / 秒" : " / s"), 12.0};
+        repair.alpha = 0.72;
+        repair.labelColor = kStatGeneric;
+        lines.push_back(std::move(repair));
     }
     if (config.id == "magic_bone") {
         TooltipLine stacking{chinese
@@ -1134,17 +1114,16 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         const double cycle = stats.reloadMillis + stats.manaChargeMillis * chargeScale;
         if (cycle > 0.0) {
             TooltipLine average{std::string(chinese ? "完整周期平均回蓝/秒：" : "Full-cycle Mana/s: ") +
-                                exactNumber(stats.mana * manaTalent * 1000.0 / cycle), 12.0};
+                                oneDecimal(stats.mana * manaTalent * 1000.0 / cycle), 12.0};
             average.alpha = 0.56;
             average.labelColor = kStatMana;
             lines.push_back(average);
         }
     }
     if (stats.passiveManaPerSecond > 0.0) {
-        TooltipLine regen{std::string(chinese ? "魔法恢复/秒：" : "Mana/s: ") + abbreviate(stats.passiveManaPerSecond * manaTalent), 12.0};
+        TooltipLine regen{std::string(chinese ? "魔法恢复/秒：" : "Mana/s: ") + oneDecimal(stats.passiveManaPerSecond * manaTalent), 12.0};
         regen.alpha = 0.56;
         regen.labelColor = kStatMana;
-        regen.altText = std::string(chinese ? "魔法恢复/秒：" : "Mana/s: ") + exactNumber(stats.passiveManaPerSecond * manaTalent);
         lines.push_back(regen);
     }
 
@@ -1178,6 +1157,80 @@ void InventoryPanel::reset() {
     tooltipDelay.reset();
     touchInspect.reset();
     thumbDrag() = {};
+    showRunLoot_ = false;
+    runLootScroll_ = {};
+}
+
+bool InventoryPanel::renderRunLoot(MenuContext& ctx) {
+    auto& canvas = ctx.canvas;
+    const Rect panel = ctx.bounds;
+    const Vec2 mouse = ctx.mouse();
+    const bool zh = language() == Language::Zh;
+    panelCard(canvas, panel, kInventorySkin);
+    panelTitle(canvas, panel, tr(Msg::CollectedThisRun),
+               zh ? "已拾取并计入本局的花瓣" : "Petals collected in this run");
+
+    const Rect close = closeButtonRect(panel);
+    panelClose(canvas, close, close.contains(mouse));
+    if (ctx.pressed() && close.contains(mouse)) {
+        showRunLoot_ = false;
+        return true;
+    }
+    const Rect back{panel.x + kControlsPad, panel.y + kControlsY, 124.0, kControlsHeight};
+    drawSlotButton(canvas, back, zh ? "返回背包" : "Back to bag", kInventorySkin.fill,
+                   back.contains(mouse), back.contains(mouse) && ctx.pressed());
+    if (ctx.pressed() && back.contains(mouse)) {
+        showRunLoot_ = false;
+        return true;
+    }
+    if (const auto& loot = ctx.net.runLootOverview(); loot && !loot->empty()) {
+        constexpr double kRowHeight = 48.0;
+        const Rect view{panel.x + kGridPadding, back.bottom() + 12.0,
+                        panel.w - kGridPadding - kGridGutter,
+                        std::max(0.0, panel.bottom() - back.bottom() - 22.0)};
+        runLootScroll_.viewHeight = view.h;
+        runLootScroll_.contentHeight = static_cast<double>(loot->size()) * kRowHeight;
+        if (view.contains(mouse)) runLootScroll_.offset -= ctx.window.wheelDelta() * kRowHeight;
+        runLootScroll_.offset -= touchScroll(ctx.window, view, runLootScroll_.maxOffset() > 0);
+        runLootScroll_.offset = clamp(runLootScroll_.offset, 0.0, runLootScroll_.maxOffset());
+
+        canvas.save();
+        canvas.beginPath();
+        canvas.rect(view.x, view.y, view.w, view.h);
+        canvas.clip();
+        TextStyle nameStyle;
+        nameStyle.size = 16.0;
+        TextStyle countStyle = nameStyle;
+        countStyle.align = Align::Right;
+        const auto first = static_cast<std::size_t>(runLootScroll_.offset / kRowHeight);
+        for (std::size_t i = first; i < loot->size(); ++i) {
+            const double y = view.y + static_cast<double>(i) * kRowHeight - runLootScroll_.offset;
+            if (y >= view.bottom()) break;
+            const auto& stack = (*loot)[i];
+            const auto& petal = content().petal(stack.petalIndex);
+            ItemTile tile;
+            tile.petalIndex = stack.petalIndex;
+            tile.rarity = stack.rarity;
+            tile.timeSeconds = ctx.timeSeconds;
+            drawItemTile(canvas, ctx.sprites, {view.x + 3.0, y + 4.0, 40.0, 40.0}, tile);
+            const std::string label = std::string(rarityTr(stack.rarity)) + " " +
+                                      petalNameTr(petal.id, petal.name.c_str());
+            text(canvas, ellipsize(label, nameStyle.size, std::max(0.0, view.w - 128.0)),
+                 view.x + 54.0, y + kRowHeight * 0.5, nameStyle);
+            text(canvas, "x" + stackCountText(stack.count), view.right() - 12.0,
+                 y + kRowHeight * 0.5, countStyle);
+        }
+        canvas.restore();
+        scrollbar(canvas, view, runLootScroll_.contentHeight, runLootScroll_.offset, kPaper);
+    } else {
+        TextStyle style;
+        style.size = 16.0;
+        style.align = Align::Centre;
+        const char* status = loot ? (zh ? "本局还没有收集到花瓣" : "No petals collected yet")
+                                  : (zh ? "正在读取本局收集…" : "Loading collected petals…");
+        text(canvas, status, panel.x + panel.w * 0.5, back.bottom() + 40.0, style);
+    }
+    return true;
 }
 
 bool InventoryPanel::render(MenuContext& ctx) {
@@ -1185,6 +1238,16 @@ bool InventoryPanel::render(MenuContext& ctx) {
     const Profile& profile = ctx.net.profile();
     const Rect panel = ctx.bounds;
     const Vec2 mouse = ctx.mouse();
+    const bool canViewRunLoot = ctx.net.status() == NetClient::Status::Playing && !ctx.net.dead();
+    if (!canViewRunLoot) showRunLoot_ = false;
+    if (showRunLoot_) return renderRunLoot(ctx);
+    // Leave the drag live while the bag is hidden so the loadout can still
+    // receive it. Returning to the bag or releasing restores the same view.
+    if (ctx.drag.source == DragState::Source::Inventory &&
+        ctx.window.mouseDown(MouseButton::Left) && !panel.contains(mouse)) {
+        return true;
+    }
+
     // The grid's own span, and its centre. Not the panel's: the scroll thumb
     // takes a strip off the right, so the cells -- and the tier headings and
     // rules that introduce them -- sit slightly left of the card's middle.
@@ -1208,9 +1271,24 @@ bool InventoryPanel::render(MenuContext& ctx) {
     const Rect toggleHit{panel.x + kControlsPad, panel.y + kControlsY, kToggleHitWidth,
                          kControlsHeight};
     const double searchX = panel.x + kControlsPad + kToggleHitWidth;
+    const double controlsRight = panel.right() - kControlsRightPad;
+    const Rect runLootButton{controlsRight - 132.0, panel.y + kControlsY, 132.0, kControlsHeight};
+    const double searchRight = canViewRunLoot ? runLootButton.x - 6.0 : controlsRight;
     const Rect searchRect{searchX, panel.y + kControlsY,
-                          std::max(60.0, panel.right() - kControlsRightPad - searchX),
-                          kControlsHeight};
+                          std::max(60.0, searchRight - searchX), kControlsHeight};
+    if (canViewRunLoot) {
+        const bool hovered = runLootButton.contains(mouse);
+        drawSlotButton(canvas, runLootButton, tr(Msg::CollectedThisRun), kInventorySkin.fill,
+                       hovered, hovered && ctx.pressed());
+        if (hovered && ctx.pressed()) {
+            searchField_.blur();
+            ctx.drag.clear();
+            runLootScroll_ = {};
+            showRunLoot_ = true;
+            ctx.net.requestRunLoot();
+            return renderRunLoot(ctx);
+        }
+    }
 
     // Eased rather than snapped: the toggle is the only animated control on
     // the panel and a hard flip reads as a redraw glitch. The rate matches the
@@ -1246,7 +1324,7 @@ bool InventoryPanel::render(MenuContext& ctx) {
     if (!dropMaps.empty()) {
         if (dropMap_ > dropMaps.size()) dropMap_ = 0;
         const Rect left{gridLeft, 132.0 + panel.y, 32.0, 30.0};
-        const Rect right{searchRect.right() - 32.0, left.y, 32.0, left.h};
+        const Rect right{controlsRight - 32.0, left.y, 32.0, left.h};
         if (ctx.pressed() && (left.contains(mouse) || right.contains(mouse))) {
             const std::size_t options = dropMaps.size() + 1;
             dropMap_ = (dropMap_ + (right.contains(mouse) ? 1 : options - 1)) % options;

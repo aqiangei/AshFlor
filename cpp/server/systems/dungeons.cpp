@@ -181,7 +181,6 @@ void DungeonSystem::evict(World& world, Instance& instance, Rng& rng) {
     for (const auto& [player, radius] : inside) {
         // This copy is about to be released. A mark must not leave its
         // occupant behind when the normal realm-transfer guard runs.
-        if (auto* pads = world.tryGet<TeleporterState>(player)) pads->markHoldUntilMillis = 0.0;
         moveToRealm(player, instance.returnRealm, exitPoint(instance, rng, radius));
     }
 }
@@ -472,7 +471,6 @@ void DungeonSystem::summarizeWave(const WaveRoom& room, const WaveMember& member
 void DungeonSystem::closeWave(WaveRoom& room, World& world, CommandBuffer& commands, const std::string& text) {
     for (const auto& member : room.members) {
         summarizeWave(room, member, text);
-        if (auto* pads = world.tryGet<TeleporterState>(member.player)) pads->markHoldUntilMillis = 0.0;
         leaveWave(world, member);
     }
     Query<Transform>{world}.each([&](Entity e, Transform& at) {

@@ -374,7 +374,7 @@ void App::sendInputFrame(double dt, bool periodic) {
 void App::updatePlaying(double dt) {
     updateMinimapControls();
     const auto endPinch = [&] {
-        if (pinchDistance_ > 0.0) menus_.settings().zoomDirty = true;
+        if (pinchDistance_ > 0.0) menus_.settings().settingsDirty = true;
         pinchDistance_ = 0.0;
     };
     if (menus_.anyOpen() || minimapExpanded_ || minimapControlUsed_ || chatOpen_) {
@@ -420,7 +420,7 @@ void App::updatePlaying(double dt) {
     // R / L key would.
     if (touchControlsVisible()) {
         menus_.noteMobileLoadoutGestures(mobile_.consumeSwapRowsTap(),
-                                         mobile_.presetsHeld());
+                                         mobile_.presetsHeld(), mobile_.consumePresetTap());
     }
 
     // Chat swallows the keyboard while open, or typing would also drive the

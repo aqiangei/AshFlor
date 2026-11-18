@@ -50,6 +50,7 @@
 #include "server/chat_moderation.h"
 #include "server/guilds.h"
 #include "server/hyper_forge.h"
+#include "server/loot_eligibility.h"
 #include "server/systems/npcs.h"
 #include "server/systems/spawning.h"
 #include "server/text.h"
@@ -535,6 +536,22 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
         handleRiftCommand(session, connection, argument);
         return true;
     }
+    if (verb == "/run-loot") {
+        if (!session.playing() || !isStanding(world_, session.entity)) {
+            out("请在存活时查看本局收集。");
+            return true;
+        }
+        ByteWriter reply;
+        reply.u8(static_cast<std::uint8_t>(net::ServerMessage::RunLoot));
+        reply.u32(static_cast<std::uint32_t>(session.runLoot.size()));
+        for (const auto& [item, count] : session.runLoot) {
+            reply.u16(item.first);
+            reply.u8(static_cast<std::uint8_t>(item.second));
+            reply.u32(count);
+        }
+        connection.send(reply);
+        return true;
+    }
     if (session.inRift && !effectiveAdmin(session)) return true;
 
     if (verb == "/server-status") {
@@ -563,6 +580,29 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
         } else {
             out(dungeons_->waveCommand(world_, *terrain_, session.entity, argument, rng_, clockMillis_));
         }
+        return true;
+    }
+
+    if (verb == "/dungeon-leave") {
+        if (!session.playing() || !isStanding(world_, session.entity) ||
+            session.controlling != 0 || session.controlledBy != 0 || !dungeons_) {
+            out("You cannot leave a dungeon in your current state.");
+            return true;
+        }
+        const Entity player = session.entity;
+        const auto origin = world_.get<Transform>(player).realm;
+        const Body& body = world_.get<Body>(player);
+        Realm destination;
+        Vec2 landing;
+        if (!dungeons_->exitFor(origin, rng_, body.radius, destination, landing)) {
+            out("You are not inside an active termite mound.");
+            return true;
+        }
+        moveEntityToRealm(player, destination, landing);
+        if (world_.get<Transform>(player).realm == origin)
+            out("You cannot leave a dungeon in your current state.");
+        else
+            out("You left the termite mound.");
         return true;
     }
 
@@ -930,6 +970,82 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
         return true;
     }
 
+    if (verb == "/mob-damage") {
+        if (!session.playing() || !isStanding(world_, session.entity)) {
+            out("请进入地图后再查询怪物伤害排行。");
+            return true;
+        }
+        const auto& self = world_.get<Transform>(session.entity);
+        const auto mine = [&](const Bounty::Share& share) {
+            return share.owner != 0 ? share.owner == session.connection
+                                    : share.player == session.entity;
+        };
+        Entity target = NULL_ENTITY;
+        double nearest = 1200.0 * 1200.0;
+        bool hasMyDamage = false;
+        Query<MobTag, Transform, MobType, Health, Bounty> mobs(world_);
+        mobs.without<Dead, Pet, WaveEnemy>();
+        mobs.each([&](Entity e, MobTag&, Transform& at, MobType&, Health& hp, Bounty& bounty) {
+            if (at.realm != self.realm || !hp.alive() || bounty.contributors.empty()) return;
+            const auto* subdivision = world_.tryGet<CancerSubdivision>(e);
+            if (subdivision && subdivision->spawnedCopy) return;
+            const double gap = distanceSq(at.position, self.position);
+            if (gap > 1200.0 * 1200.0) return;
+            const bool ownsShare = std::any_of(bounty.contributors.begin(), bounty.contributors.end(), mine);
+            if ((hasMyDamage && !ownsShare) || (ownsShare == hasMyDamage && gap >= nearest)) return;
+            target = e;
+            nearest = gap;
+            hasMyDamage = ownsShare;
+        });
+        if (target == NULL_ENTITY) {
+            out("附近没有已受伤害的常规怪物。");
+            return true;
+        }
+        std::vector<Bounty::Share> ranked;
+        for (const auto& share : world_.get<Bounty>(target).contributors) {
+            if (share.damage <= 0.0) continue;
+            const auto live = refreshedShare(world_, share);
+            if (world_.isAlive(live.player) && !world_.has<PlayerTag>(live.player)) continue;
+            ranked.push_back(live);
+        }
+        std::stable_sort(ranked.begin(), ranked.end(),
+                         [](const auto& a, const auto& b) { return a.damage > b.damage; });
+        const auto& type = world_.get<MobType>(target);
+        const double maximum = world_.get<Health>(target).max;
+        std::vector<Entity> eligible;
+        selectLootRecipients(ranked, lootSlotsForRarity(type.rarity), &squadIndex_, eligible,
+                             lootDamageFloor(type.rarity, maximum));
+        const bool selected = std::any_of(eligible.begin(), eligible.end(), [&](Entity body) {
+            const auto* owner = sessionForEntity(body);
+            return body == session.entity || (owner && owner->connection == session.connection);
+        });
+        const auto personal = std::find_if(ranked.begin(), ranked.end(), mine);
+
+        std::ostringstream report;
+        report << escapedMarkup(content().mob(type.configIndex).name) << " · 个人伤害排行";
+        constexpr std::size_t displayed = 5;
+        for (std::size_t i = 0; i < ranked.size() && i < displayed; ++i) {
+            const auto& share = ranked[i];
+            const auto* owner = sessionForEntity(share.player);
+            std::string name = "已离场";
+            if (owner && (share.owner == 0 || owner->connection == share.owner)) {
+                name = owner->displayName.empty() ? owner->username : owner->displayName;
+            } else if (botForEntity(share.player)) {
+                name = squadDisplayName(SquadMemberId::ofBot(share.player));
+            }
+            report << "<br/>" << i + 1 << ". " << escapedMarkup(name) << " · "
+                   << std::fixed << std::setprecision(1) << share.damage;
+        }
+        report << "<br/>你的排名 ";
+        if (personal == ranked.end()) report << "暂无个人伤害";
+        else report << (personal - ranked.begin() + 1) << " / " << ranked.size();
+        report << " · 常规掉落资格预计" << (selected ? "有" : "无")
+               << " · 图鉴击杀预计" << (selected && personal != ranked.end() ? "有" : "无")
+               << "<br/>当前伤害快照，最终以击杀时结算为准。";
+        out(report.str());
+        return true;
+    }
+
     if (verb == "/boss-timers") {
         // A wild unique or apex is a super its biome's clock upgraded, so
         // "when is the next unique" is a question about these clocks.
@@ -980,11 +1096,6 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
         if (!session.playing() || !isStanding(world_, session.entity) ||
             !pads || !pads->markReturnAvailable) {
             out("当前没有可用的Mark返程；死亡后可正常复活或返回菜单。");
-            return true;
-        }
-        if (clockMillis_ < pads->markHoldUntilMillis) {
-            out("H Mark滞留还剩 " + std::to_string(static_cast<int>(std::ceil(
-                (pads->markHoldUntilMillis - clockMillis_) / 1000.0))) + " 秒。");
             return true;
         }
         const RealmPoint origin = pads->markOrigin;
@@ -1044,12 +1155,13 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
         // parses this subset, so the listing arrives looking the way it looks
         // in the browser rather than as a wall of tags.
         std::string help = "Available commands:\n";
-        help += "/mark-return - Mark传送后返回原处；H需等待30秒（死亡或返回菜单解除）<br/>";
+        help += "/mark-return - 印记传送后立即返回原处<br/>";
         help += "/hyper-abandon [编号] - 主动放弃1份超凡，不返还材料（需要确认）<br/>";
         help += "/wave start / join 房号 / leave - 四人无限波次挑战，参与并通关每波可获星星<br/>";
         help += "/dps / /dps reset - \u67e5\u770b\u6216\u6e05\u7a7a\u4e2a\u4eba\u6728\u6869\u4f24\u5bb3\u7edf\u8ba1<br/>";
         help += "/biome - Show the most populated biome <br/>";
         help += "/boss-timers - Show each biome's unique/apex cooldown <br/>";
+        help += "/mob-damage - 查看附近已受伤害怪物的排行和当前常规奖励资格<br/>";
         help += "/level-from-string &lt;name&gt; - Show what level a bot named &lt;name&gt; would "
                 "roll <br/>";
         help += "/loadout-from-string &lt;name&gt; - Show the loadout a bot named &lt;name&gt; "
@@ -1201,14 +1313,6 @@ void GameServer::runSquadCommand(Session& session, net::Connection& connection,
     };
 
     if (sub == "create") {
-        // A split flower already has a squad -- itself -- and may not open one
-        // for anybody else. Refused here as well as at every door in, because
-        // a public squad nobody can join is only a puzzle.
-        const std::string whileSplit = splitSquadRefusal(me, "You are");
-        if (!whileSplit.empty()) {
-            out(whileSplit);
-            return;
-        }
         const bool isPublic = lowerCase(argument) == "public";
         Squad* squad = squads_.create(me, isPublic, rng_);
         if (squad == nullptr) {
@@ -1230,13 +1334,6 @@ void GameServer::runSquadCommand(Session& session, net::Connection& connection,
         }
         if (target == me) {
             out("You cannot invite yourself.");
-            return;
-        }
-        const std::string splitRefusal =
-            splitSquadRefusal(me, "You are") +
-            splitSquadRefusal(target, squadDisplayName(target) + " is");
-        if (!splitRefusal.empty()) {
-            out(splitRefusal);
             return;
         }
         // An invitation is the entry point; no separate create step is needed.
@@ -1270,7 +1367,7 @@ void GameServer::runSquadCommand(Session& session, net::Connection& connection,
         // of them to have respawned into another biome.
         if (const Squad* mine = squads_.forMember(me)) {
             const std::string wrongBiome =
-                squadBiomeRefusal(*mine, target, squadAccountName(target) + " is");
+                squadInviteeRefusal(*mine, target, squadAccountName(target) + " is");
             if (!wrongBiome.empty()) {
                 out(wrongBiome);
                 return;
@@ -1296,10 +1393,6 @@ void GameServer::runSquadCommand(Session& session, net::Connection& connection,
         open.erase(std::remove_if(open.begin(), open.end(),
                                   [&](const Squad* squad) { return !squadAcceptsBiome(*squad, me); }),
                    open.end());
-        // Same rule as the biome filter beside it: a listing is a list of
-        // things to type `/squad-join` at, and every one of them is refused
-        // while this flower is two flowers.
-        if (!splitSquadRefusal(me, "You are").empty()) open.clear();
         if (open.empty()) {
             out("No public squads available in your biome. Create one with /squad create "
                 "public.");
@@ -1321,8 +1414,6 @@ void GameServer::runSquadCommand(Session& session, net::Connection& connection,
     }
 
     if (sub == "code" && argument.empty()) {
-        const auto refusal=splitSquadRefusal(me,"You are");
-        if(!refusal.empty()){out(refusal);return;}
         auto* squad = squadOrCreate(session, connection);
         if (!squad) return;
         const std::string& code = squads_.issueCode(*squad, rng_);
@@ -1338,16 +1429,9 @@ void GameServer::runSquadCommand(Session& session, net::Connection& connection,
             out("请输入三位数字组队码，例如 /squad-code 007。");
             return;
         }
-        const std::string whileSplit = splitSquadRefusal(me, "You are");
-        if (!whileSplit.empty()) {
-            out(whileSplit);
-            return;
-        }
         const Squad* wanted = byCode ? squads_.findByCode(code) : squads_.find(argument);
         const std::string squadId = wanted ? wanted->id : argument;
         if (wanted) {
-            const auto targetSplit=splitSquadRefusal(wanted->leader,"The squad leader is");
-            if(!targetSplit.empty()){out(targetSplit);return;}
             const std::string wrongBiome = squadBiomeRefusal(*wanted, me, "You are");
             if (!wrongBiome.empty()) {
                 out(wrongBiome);
@@ -1370,14 +1454,6 @@ void GameServer::runSquadCommand(Session& session, net::Connection& connection,
     }
 
     if (sub == "public" || sub == "private") {
-        // The squad a split flower is in is the one the split made for it.
-        // Opening it would put the one door bots walk through back in the
-        // wall the other refusals just built.
-        const std::string whileSplit = splitSquadRefusal(me, "You are");
-        if (!whileSplit.empty()) {
-            out(whileSplit);
-            return;
-        }
         Squad* squad = nullptr;
         const std::string error = squads_.setVisibility(me, sub == "public", &squad);
         if (!error.empty()) {
@@ -1390,26 +1466,18 @@ void GameServer::runSquadCommand(Session& session, net::Connection& connection,
     }
 
     if (sub == "accept") {
-        // Checked before the biome is, and for the same reason it is checked
-        // again at all: an invitation lives thirty seconds, and a flower can
-        // have equipped a splitter in that time.
-        const std::string whileSplit = splitSquadRefusal(me, "You are");
-        if (!whileSplit.empty()) {
-            squads_.decline(me);
-            out(whileSplit);
-            return;
-        }
         // Re-checked here, not only at the invitation: an invite lives for
         // thirty seconds, and either end of it can have respawned into
         // another biome in that time.
         if (const Squad* pending = squads_.pendingInviteSquad(me, now)) {
-            const std::string wrongBiome = squadBiomeRefusal(*pending, me, "You are");
+            const std::string wrongBiome = squadInviteeRefusal(*pending, me, "You are");
             if (!wrongBiome.empty()) {
                 squads_.decline(me);
                 out(wrongBiome);
                 return;
             }
         }
+        const bool merging = squads_.forMember(me) != nullptr;
         std::string squadId;
         const std::string error = squads_.accept(me, now, squadId);
         if (!error.empty()) {
@@ -1418,7 +1486,8 @@ void GameServer::runSquadCommand(Session& session, net::Connection& connection,
         }
         Squad* squad = squads_.find(squadId);
         if (squad == nullptr) return;
-        sendSquadSystem(*squad, squadDisplayName(me) + " has joined the squad.");
+        sendSquadSystem(*squad, merging ? "The two squads have merged."
+                                       : squadDisplayName(me) + " has joined the squad.");
         broadcastSquadUpdate(*squad);
         return;
     }

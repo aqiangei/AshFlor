@@ -242,7 +242,7 @@ struct ClientSettings {
     /// Player-chosen camera zoom, multiplied into whatever the loadout asks
     /// for. Persisted, because it is a comfort setting, not a game state.
     double zoom = 1.0;
-    bool zoomDirty = false;
+    bool settingsDirty = false;
     /// How much of the gap between a drawn position and the authoritative one
     /// is closed per frame at 60 fps -- the smoothness/latency trade for every
     /// flower, petal, drop and mob facing. The TypeScript client kept the same
@@ -275,6 +275,8 @@ struct ClientSettings {
     /// `localStorage.showStats`.
     bool showStats = false;
     bool showExactValues = false;
+    bool hideMobAnnouncements = false;
+    bool hideCraftAnnouncements = false;
     /// Shows the grey bug button in the top strip, which is the only way into
     /// the debug panel. Off by default, exactly as `debugMenuEnabled` was.
     bool showDebugButton = false;
@@ -513,6 +515,9 @@ private:
     std::string search_;
     ui::TextFieldState searchField_;
     std::size_t dropMap_ = 0;
+    bool showRunLoot_ = false;
+    ui::Scroller runLootScroll_;
+    bool renderRunLoot(MenuContext&);
     std::unordered_map<std::string, std::vector<bool>> mapDrops_;
 };
 
@@ -657,6 +662,8 @@ void drawSlotLine(Canvas&, const SlotCardLayout&, const std::string& text,
 void drawSlotRefusal(Canvas&, const SlotCardLayout&, const std::string& text);
 
 /// What one cell of the grid says, as its panel decides it.
+bool editSlotSearch(MenuContext&, Rect, std::string&, ui::TextFieldState&);
+
 struct SlotCell {
     /// How many the cell shows as held: the account's stack, less whatever the
     /// panel has staged out of it. Zero draws the flat empty square.
@@ -691,7 +698,7 @@ public:
     std::optional<Pick> render(
         MenuContext&, const SlotCardLayout&, const ui::PanelSkin&, SlotGridTiers tiers,
         const std::function<SlotCell(std::uint16_t petalIndex, Rarity, std::uint32_t owned)>& look,
-        bool showScrollbar = false, Pick* inspected = nullptr);
+        bool showScrollbar = false, Pick* inspected = nullptr, const std::string& search = {});
 
 private:
     ui::Scroller scroll_;
@@ -719,7 +726,8 @@ public:
     std::optional<Pick> render(
         MenuContext&, const SlotCardLayout&, const ui::PanelSkin&, Rarity tier,
         std::size_t columns, double top,
-        const std::function<SlotCell(std::uint16_t petalIndex, std::uint32_t owned)>& look);
+        const std::function<SlotCell(std::uint16_t petalIndex, std::uint32_t owned)>& look,
+        const std::string& search = {});
 
 private:
     ui::Scroller scroll_;
@@ -861,6 +869,8 @@ private:
     void animate(double dtMs);
 
     SlotGrid grid_;
+    std::string search_;
+    ui::TextFieldState searchField_;
     ui::TooltipDelay tooltip_;
     ui::TouchInspectDelay touchInspect_;
     std::string account_;
@@ -868,7 +878,7 @@ private:
     /// fives are queued, which is what the slot badge counts.
     std::uint16_t stagedPetal_ = kNoPetal;
     Rarity stagedRarity_ = Rarity::Common;
-    int batches_ = 0;
+    int stagedCount_ = 0;
 
     /// Grid cell held down: same cadence as Absorb (1 s delay, then 300 ms
     /// steps that grow by a third + 1 each time), counting in batches.
@@ -877,8 +887,8 @@ private:
     double heldNextMs_ = 0;
     std::uint32_t heldStep_ = 1;
 
-    /// "Craft All" toggle: when on, a click on a craftable petal stages every
-    /// available batch (Shift-click's behaviour). Survives close/reopen.
+    /// "Craft All" toggle: when on, a click on a craftable petal stages the
+    /// entire stack (Shift-click's behaviour). Survives close/reopen.
     bool fillAllMode_ = false;
     int bulkTarget_ = 2;
     bool bulkArmed_ = false;
@@ -1165,6 +1175,8 @@ private:
     std::string allForgeSummary_;
     std::uint32_t resultQuantity_ = 0;
     SlotTierGrid grid_;
+    std::string search_;
+    ui::TextFieldState searchField_;
     SlotMotion motion_;
     /// The petal in the slot: five of it at apex, which is what one forge
     /// takes, or kNoPetal for an empty slot.
@@ -1270,7 +1282,18 @@ public:
     static Rect bounds(int viewWidth, int viewHeight);
 
 private:
+    struct BiomeRows {
+        std::string id;
+        std::string name;
+        std::vector<std::uint16_t> mobs;
+    };
+
+    void buildBiomeRows(const WorldMaps& maps);
+
     ui::Scroller scroll_;
+    bool groupByBiome_ = false;
+    bool hideNpcs_ = false;
+    std::vector<BiomeRows> biomeRows_;
 };
 
 /// The talent tree.
@@ -1640,7 +1663,7 @@ public:
     /// row (ashflor / florr hold-X). The bank stays after release so one finger
     /// can tap a tile to load or hold a tile to save; a later short tap on R
     /// cancels. Call each playing frame while touch controls are up.
-    void noteMobileLoadoutGestures(bool swapRowsTap, bool presetsHeld);
+    void noteMobileLoadoutGestures(bool swapRowsTap, bool presetsHeld, bool presetTap);
 
     /// True while the client is in a game, which is the only time the exit
     /// button is offered -- and the only time the changelog, Discord, and QQ
@@ -1649,7 +1672,7 @@ public:
     /// The screen owns the loadout bar's slide: the browser builds a fresh
     /// `CanvasLoadoutBar` per screen, so crossing between them replays the
     /// rise rather than leaving the bar already seated from last time.
-    void setTouchLayout(bool touch, const std::array<Rect, 4>& hitBounds) {
+    void setTouchLayout(bool touch, const std::array<Rect, 5>& hitBounds) {
         touchLayout_ = touch;
         touchHitBounds_ = hitBounds;
     }
@@ -1658,6 +1681,7 @@ public:
         inGame_ = inGame;
         loadoutSlide_ = 0.0;
         mobilePresetSticky_ = false;
+        mobilePresetConfirm_ = -1;
         // Its button is gone in game, so a changelog still open from the title
         // screen would be a card with nothing on screen that opened it.
         if (inGame_ && open_ == MenuId::Changelog) close();
@@ -1902,7 +1926,7 @@ private:
 
     bool inGame_ = false;
     bool touchLayout_ = false;
-    std::array<Rect, 4> touchHitBounds_{};
+    std::array<Rect, 5> touchHitBounds_{};
     bool exitRequested_ = false;
     bool logoutRequested_ = false;
     bool adminGrantOffered_ = false;
@@ -2000,6 +2024,7 @@ private:
     int pendingPreset_ = -1;
     Rect rotationDial_{};
     bool pendingPresetSave_ = false;
+    bool pendingPresetConfirm_ = false;
     /// In game, K and L are held down to name a preset, so whatever ELSE they
     /// are bound to -- mouse controls, the leaderboard -- cannot fire on the
     /// press: it would go off on every K+1 on the way to the number. Armed on
@@ -2016,6 +2041,9 @@ private:
     /// single thumb can tap/hold a preset tile. Cleared by a short R tap, a
     /// completed load/save, or leaving the game bar.
     bool mobilePresetSticky_ = false;
+    int mobilePresetConfirm_ = -1;
+    bool mobilePresetConfirmSave_ = false;
+    Rect mobilePresetConfirmRect_{};
     /// Bank shown on the bar this frame (copy of presetBank before clear).
     /// updateLoadoutInput reads it so a tap on a secondary preset tile can
     /// load that saved loadout -- the hover pass alone cannot, because the

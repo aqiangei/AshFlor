@@ -229,7 +229,9 @@ struct ChatCommand {
 
 constexpr ChatCommand kChatCommands[] = {
     {"/help", "Show available commands", false},
+    {"/mob-damage", "Nearby mob damage ranking and reward eligibility", false},
     {"/dps", "Personal target dummy damage by source", false},
+    {"/dungeon-leave", "Leave the termite mound", false},
     {"/wave", "Wave challenge: start / join code / leave", false},
     {"/biome", "Show the most populated biome", false},
     {"/boss-timers", "Show each biome's unique/apex cooldown", false},
@@ -1283,10 +1285,20 @@ void App::drawChat(Canvas& canvas, double time) {
         const double newestBaseline = panel.bottom() - kChatLastBaselineUp;
         const double oldestBaseline = panel.y + kChatFirstBaselineDown;
 
-        // Only the channels whose boxes are ticked. The server's own lines are
-        // on no tab and always pass.
-        const std::uint8_t shown = menus_.settings().chatChannels;
-        const auto passes = [shown](const ChatLine& line) {
+        const auto& settings = menus_.settings();
+        const std::uint8_t shown = settings.chatChannels;
+        // The two unused bits also key the transcript's cached height.
+        static_assert(kChatChannelsAll == 0x3f);
+        const std::uint8_t filters = shown | (settings.hideMobAnnouncements ? 0x40 : 0) |
+                                     (settings.hideCraftAnnouncements ? 0x80 : 0);
+        const auto passes = [&](const ChatLine& line) {
+            if (line.channel == net::ChatChannel::System && line.author.empty()) {
+                // These prefixes are attached by the server and survive localization.
+                if (settings.hideMobAnnouncements && line.text.rfind("<b data-mob='", 0) == 0)
+                    return false;
+                if (settings.hideCraftAnnouncements && line.text.rfind("<b data-petal='", 0) == 0)
+                    return false;
+            }
             const int tab = chatTabOf(line.channel);
             return tab < 0 || ((shown >> tab) & 1u) != 0;
         };
@@ -1305,11 +1317,11 @@ void App::drawChat(Canvas& canvas, double time) {
                 return height;
             };
             if (chatHeightSequence_ != net_.chatSequence() || chatMeasuredCount_ != net_.chat().size() ||
-                chatMeasuredWidth_ != column.w || chatMeasuredChannels_ != shown) {
+                chatMeasuredWidth_ != column.w || chatMeasuredFilters_ != filters) {
                 chatHeightSequence_ = net_.chatSequence();
                 chatMeasuredCount_ = net_.chat().size();
                 chatMeasuredWidth_ = column.w;
-                chatMeasuredChannels_ = shown;
+                chatMeasuredFilters_ = filters;
                 chatMeasuredHeight_ = measure(column.w);
                 chatMeasuredNarrowHeight_.reset();
             }

@@ -1139,6 +1139,8 @@ public:
     bool dead() const { return dead_; }
     const std::string& killerName() const { return killerName_; }
     const std::vector<Profile::Stack>& runLoot() const { return runLoot_; }
+    const auto& runLootOverview() const { return runLootOverview_; }
+    void requestRunLoot() { runLootOverview_.reset(); sendChat("/run-loot"); }
 
     /// Set once each time a yggdrasil raised this body. Cleared by whoever
     /// reads it, like `reconnected`: the socket knows the player is alive
@@ -1353,7 +1355,9 @@ private:
 
     bool dead_ = false;
     std::string killerName_;
+    static std::optional<std::vector<Profile::Stack>> readRunLoot(ByteReader&);
     std::vector<Profile::Stack> runLoot_;
+    std::optional<std::vector<Profile::Stack>> runLootOverview_;
     /// See joinPending().
     bool joinPending_ = false;
 

@@ -89,7 +89,8 @@ public:
     /// land on the closed chat slot.
     double stickHitRadius() const;
     double stickApproachBottom() const;
-    std::array<Rect, 4> hitBounds() const;
+    std::array<Rect, 5> hitBounds() const;
+    Vec2 presetCentre() const { return presetCentre_; }
 
     bool attackPressed() const { return attack_.held; }
     bool retractPressed() const { return retract_.held; }
@@ -97,6 +98,7 @@ public:
     /// True after a short tap on R (released before the long-press threshold).
     /// Consumed: one call clears it so a held frame does not re-fire the swap.
     bool consumeSwapRowsTap();
+    bool consumePresetTap();
 
     /// True once R has been held past the long-press threshold and is still
     /// down -- MenuSystem arms a sticky L bank from this edge (the bank stays
@@ -131,6 +133,7 @@ private:
     Vec2 attackCentre_{0, 0};
     Vec2 retractCentre_{0, 0};
     Vec2 swapCentre_{0, 0};
+    Vec2 presetCentre_{0, 0};
 
     // Fingers can be down at once, and only their ids tell the streams
     // apart -- a position cannot, once two of them are moving.
@@ -138,10 +141,12 @@ private:
     Contact attack_;
     Contact retract_;
     Contact swap_;
+    Contact preset_;
 
     double swapDownAt_ = -1.0;
     bool swapLong_ = false;
     bool swapTapPending_ = false;
+    bool presetTapPending_ = false;
 
     void moveKnob(double x, double y);
 };

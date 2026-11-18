@@ -2070,8 +2070,7 @@ TEST(a_squad_invite_is_refused_when_it_should_be) {
     CHECK(say(h, one, "/squad-invite one"));
     CHECK(sawText(one, "You cannot invite yourself."));
 
-    // Same-squad invite still refused; a player in another party can be
-    // invited and will switch on accept (covered in squad_tests).
+    // Players already in the same squad cannot invite each other.
     CHECK(say(h, one, "/squad-invite two"));
     CHECK(say(h, two, "/squad-accept"));
     h.step(3, {&one, &two});
@@ -3904,6 +3903,56 @@ TEST(inviting_auto_creates_and_members_can_invite_players_from_other_squads) {
     CHECK(say(h,mate,"/squad-invite visitor"));
     CHECK(h.stepUntil({&mate,&visitor},[&]{return visitor.squadInvite().waiting;}));
     CHECK(say(h,visitor,"/squad-accept"));h.step(3,{&lead,&mate,&other,&visitor});
-    CHECK_EQ(visitor.squad().id,lead.squad().id);CHECK_EQ(lead.squad().members.size(),std::size_t(3));
-    CHECK_EQ(other.squad().members.size(),std::size_t(1));CHECK(!visitor.squadInvite().waiting);
+    for (auto* member : {&mate, &other, &visitor}) {
+        CHECK_EQ(member->squad().id, lead.squad().id);
+        CHECK(!member->squadInvite().waiting);
+    }
+    CHECK_EQ(lead.squad().members.size(), std::size_t(4));
+}
+
+TEST(nearby_mob_damage_command_reports_private_rank_and_current_rewards) {
+    Harness h("mob-damage-command", [](const std::string& path) {
+        seedUser(path, "zrankone", "password7");
+        seedUser(path, "zranktwo", "password7");
+    }, dataDir(), 0);
+    if (!h.ready) { CHECK(false); return; }
+    NetClient first, second;
+    CHECK(loginAs(h, first, "zrankone", "password7"));
+    CHECK(loginAs(h, second, "zranktwo", "password7"));
+    first.joinGame(1280, 720, "garden:spawn", "ZRANKONE");
+    second.joinGame(1280, 720, "garden:spawn", "ZRANKTWO");
+    CHECK(h.stepUntil({&first, &second}, [&] {
+        return first.status() == NetClient::Status::Playing &&
+               second.status() == NetClient::Status::Playing;
+    }));
+    auto& world = h.server.world();
+    const auto one = bodyNamed(world, "ZRANKONE");
+    const auto two = bodyNamed(world, "ZRANKTWO");
+    if (one == NULL_ENTITY || two == NULL_ENTITY) { CHECK(false); return; }
+    const auto where = world.get<Transform>(one);
+    const auto mob = world.create();
+    world.add<MobTag>(mob);
+    world.add<Transform>(mob, Transform{where.position + Vec2{400, 0}, 0, where.realm});
+    world.add<Health>(mob, Health{799, 1000});
+    world.add<MobType>(mob, MobType{content().mobIndex("bee"), Rarity::Common});
+    auto& tally = world.add<Bounty>(mob);
+    tally.credit(one, 1.0, world.get<PlayerAccount>(one).connection);
+    tally.credit(two, 200.0, world.get<PlayerAccount>(two).connection);
+    CHECK(say(h, first, "/mob-damage"));
+    h.step(2, {&first, &second});
+    CHECK(sawText(first, "1. ZRANKTWO"));
+    CHECK(sawText(first, "2. ZRANKONE"));
+    CHECK(sawText(first, "你的排名 2 / 2"));
+    CHECK(sawText(first, "常规掉落资格预计无"));
+    CHECK(sawText(first, "图鉴击杀预计无"));
+    CHECK(!sawText(second, "个人伤害排行"));
+
+    CHECK(say(h, first, "/squad-invite zranktwo"));
+    CHECK(say(h, second, "/squad-accept"));
+    h.step(2, {&first, &second});
+    const auto before = first.chatSequence();
+    CHECK(say(h, first, "/mob-damage"));
+    CHECK(sawTextSince(first, before, "常规掉落资格预计有"));
+    CHECK(sawTextSince(first, before, "图鉴击杀预计有"));
+    CHECK_EQ(world.get<Bounty>(mob).contributors[0].damage, 1.0);
 }

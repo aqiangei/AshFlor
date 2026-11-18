@@ -5,6 +5,7 @@
 #include "server/squads.h"
 #include "server/systems/combat.h"
 #include "server/systems/movement.h"
+#include "server/systems/petals.h"
 #include "server/systems/spawning.h"
 #include "server/workers.h"
 #include "shared/core/world.h"
@@ -548,6 +549,26 @@ TEST(a_leech_spends_one_health_pool_however_many_bodies_are_hit) {
     }
 }
 
+TEST(a_flower_body_hits_every_overlapping_mob_once_per_independent_health_pool) {
+    Arena arena;
+    const Entity player = arena.player({1000, 1000});
+    arena.world.add<ContactDamage>(player, ContactDamage{20.0, 0.0});
+    std::vector<Entity> overlapping;
+    for (const Vec2 offset : {Vec2{10, 0}, Vec2{-10, 0}, Vec2{0, 12}, Vec2{0, -14}}) {
+        overlapping.push_back(arena.mob(Vec2{1000, 1000} + offset, 100));
+    }
+    const Entity outside = arena.mob({1045, 1000}, 100);
+    const auto chain = sharedChain(arena, 2, 100);
+    arena.world.get<Transform>(chain[1]).position = {1000, 10 + 1000};
+    arena.world.get<Transform>(chain[2]).position = {1000, 1000 - 10};
+
+    arena.step(1000);
+
+    for (const Entity mob : overlapping) CHECK_NEAR(arena.health(mob), 80, 1e-9);
+    CHECK_NEAR(arena.health(outside), 100, 1e-9);
+    for (const Entity segment : chain) CHECK_NEAR(arena.health(segment), 80, 1e-9);
+}
+
 TEST(emptying_a_leechs_pool_kills_every_body_at_once) {
     Arena a;
     const std::vector<Entity> chain = sharedChain(a, 9, 100.0);
@@ -809,16 +830,50 @@ TEST(corruption_disables_bandage_and_ends_existing_undead) {
     CHECK(b.world.has<Undead>(recovered));
 }
 
-TEST(hyper_corruption_and_its_aura_preserve_bandage_undead) {
-    for (const bool wearer : {false,true}) {
+TEST(corruption_loadout_only_allows_apex_wearers_to_use_bandage) {
+    const auto& content = testsupport::shippedContent();
+    for (const auto rarity : {Rarity::Apex, Rarity::PermanentHyper, Rarity::Ascendant}) {
         Arena a;const auto player=a.player({1000,1000});const auto mob=a.mob({5000,5000},100);
-        a.world.add<PlayerModifiers>(player).undeadMillis=2000;
-        auto& v=a.world.add<PlayerVisuals>(player);
-        v.equippedCorruption=wearer;v.hyperCorruption=wearer;v.nearbyCorruption=true;
-        CHECK(!a.combat.applyDamage(a.world,player,mob,500,1000).killed);
-        a.step(1001);CHECK(!a.world.has<Dead>(player));CHECK(a.world.has<Undead>(player));
-        a.step(3001);CHECK(a.world.has<Dead>(player));
+        a.world.get<PlayerProgress>(player).level = 20;
+        a.world.add<PlayerVisuals>(player);
+        a.world.add<PlayerModifiers>(player);
+        a.world.add<PetalRing>(player);
+        a.world.add<PlayerInput>(player);
+        auto& loadout = a.world.add<Loadout>(player);
+        loadout.slots[0].configIndex = content.petalIndex("corruption");
+        loadout.slots[0].rarity = rarity;
+        loadout.slots[1].configIndex = content.petalIndex("bandage");
+        PetalSystem petals;
+        petals.run(a.world, content, 990, net::kTickSeconds, a.commands);
+        a.commands.flush();
+        CHECK(a.world.get<PlayerVisuals>(player).hyperCorruption);
+        CHECK(a.world.get<PlayerModifiers>(player).undeadMillis > 0);
+        const bool apex = rarity == Rarity::Ascendant;
+        const double lethalDamage = a.health(player) * 100.0;
+        CHECK_EQ(a.combat.applyDamage(a.world, player, mob, lethalDamage, 1000).killed, !apex);
+        CHECK_EQ(a.world.has<Undead>(player), apex);
+        if (apex) {
+            a.step(1001);
+            CHECK(a.world.has<Undead>(player));
+            a.world.get<Loadout>(player).slots[0].rarity = Rarity::PermanentHyper;
+            petals.run(a.world, content, 1002, net::kTickSeconds, a.commands);
+            a.commands.flush();
+            a.step(1003);
+            CHECK(a.world.has<Dead>(player));
+            CHECK(!a.world.has<Undead>(player));
+        }
     }
+}
+
+TEST(corruption_aura_alone_allows_bandage_undead) {
+    Arena a;const auto player=a.player({1000,1000});const auto mob=a.mob({5000,5000},100);
+    a.world.add<PlayerModifiers>(player).undeadMillis = 2000;
+    a.world.add<PlayerVisuals>(player).nearbyCorruption = true;
+    CHECK(!a.combat.applyDamage(a.world, player, mob, 500, 1000).killed);
+    a.step(1001);
+    CHECK(a.world.has<Undead>(player));
+    a.step(3001);
+    CHECK(a.world.has<Dead>(player));
 }
 
 TEST(without_a_bandage_a_killing_blow_kills) {

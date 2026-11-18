@@ -1,5 +1,6 @@
 #include <map>
 #include "client/ui/gallery_drop_preview.h"
+#include "client/ui/gallery_map_mobs.h"
 // The bestiary.
 //
 // A row per mob, a column per tier, and a cell filled in only once the account
@@ -29,6 +30,7 @@
 #include "shared/core/json.h"
 #include "shared/game/config.h"
 #include "shared/game/drop_rates.h"
+#include "shared/game/map_elements.h"
 
 namespace flix {
 
@@ -42,7 +44,10 @@ namespace {
 
 constexpr double kPad = kMenuPadding;
 constexpr double kTitleHeight = 30.0;
-constexpr double kTitleGap = 26.0;
+constexpr double kControlsGap = 6.0;
+constexpr double kControlsHeight = 32.0;
+constexpr double kRowLabelHeight = 23.0;
+constexpr double kGroupLabelHeight = 34.0;
 /// The cell the shared item chrome is written in, and the gap the reference
 /// leaves between two of them. The bestiary is a grid of SEPARATE plates, not
 /// the edge-to-edge sheet the panel used to draw: neighbours never share a
@@ -57,7 +62,8 @@ constexpr double kScrollbarWidth = 12.0;
 constexpr double kThumbWidth = 8.0;
 
 /// Where the scrollable content starts, measured down from the card's top.
-constexpr double kContentTop = kPad + kTitleHeight + kTitleGap;
+constexpr double kControlsTop = kPad + kTitleHeight + kControlsGap;
+constexpr double kContentTop = kControlsTop + kControlsHeight + kControlsGap;
 
 /// The card is a fixed size however big the window is. It is a corner overlay
 /// now -- pinned under the top icon row rather than standing beside the icon
@@ -647,6 +653,83 @@ ScrollDrag& scrollDrag() {
 
 } // namespace
 
+std::vector<std::uint16_t> mapMobIndices(const MapData& map) {
+    std::vector<bool> seen(content().mobCount(), false);
+    std::vector<std::uint16_t> mobs;
+    const auto addMob = [&](std::uint16_t mob) {
+        if (mob >= seen.size() || seen[mob]) return;
+        seen[mob] = true;
+        mobs.push_back(mob);
+    };
+    const auto addGroup = [&](std::uint16_t group) {
+        if (group == kInvalidIndex) return;
+        for (const auto& member : content().mobGroup(group).members)
+            if (member.weight > 0.0) addMob(member.mob);
+    };
+    bool useDefault = false;
+    for (const auto& element : map.elements()) {
+        if (!element.isSpawnBand() && !element.isMobRegion()) continue;
+        if (element.isSpawnBand() && element.mobDistribution.empty()) useDefault = true;
+        for (const auto& row : element.mobDistribution) {
+            if (!(row.weight > 0.0)) continue;
+            const auto group = content().mobGroupIndex(row.name);
+            if (group != kInvalidIndex) addGroup(group);
+            else addMob(content().mobIndex(row.name));
+        }
+    }
+    if (useDefault) addGroup(content().mobGroupIndex(map.defaultMobGroup()));
+
+    for (std::size_t i = 0; i < mobs.size(); ++i) {
+        const auto& config = content().mob(mobs[i]);
+        for (const auto child : config.initialSpawns) addMob(child);
+        for (const auto& wave : config.spawnWaves)
+            for (const auto child : wave) addMob(child);
+        for (const auto& rung : config.hurtSpawn)
+            if (rung.count > 0) addMob(rung.mobIndex);
+        if (config.periodicSpawn.present) addMob(config.periodicSpawn.mobIndex);
+        const auto& brood = config.deathSpawn;
+        if (brood.present && brood.chance > 0.0 && brood.count > 0) addMob(brood.mobIndex);
+        for (const auto& rung : brood.byRarity)
+            if (rung.count > 0) addMob(rung.mobIndex);
+    }
+    return mobs;
+}
+
+void GalleryPanel::buildBiomeRows(const WorldMaps& maps) {
+    std::vector<bool> assigned(content().mobCount(), false);
+    for (const auto& map : maps.maps()) {
+        // Runtime copies and prestige variants share the same authored map.
+        if (map.id() != map.templateId()) continue;
+        auto group = std::find_if(biomeRows_.begin(), biomeRows_.end(),
+            [&](const BiomeRows& row) { return row.id == map.biome(); });
+        if (group == biomeRows_.end()) {
+            biomeRows_.push_back({map.biome(), map.displayName(), {}});
+            group = std::prev(biomeRows_.end());
+        }
+        const auto add = [&](std::uint16_t mob) {
+            if (mob >= assigned.size()) return;
+            assigned[mob] = true;
+            if (std::find(group->mobs.begin(), group->mobs.end(), mob) == group->mobs.end())
+                group->mobs.push_back(mob);
+        };
+        for (const auto mob : mapMobIndices(map)) add(mob);
+        for (const auto& element : map.elements())
+            if (element.kind == MapElementKind::Npc) add(content().mobIndex(element.npcId));
+    }
+
+    std::vector<std::size_t> rank(content().mobCount());
+    const auto& order = mobRows().order;
+    for (std::size_t i = 0; i < order.size(); ++i) rank[order[i]] = i;
+    for (auto& group : biomeRows_)
+        std::sort(group.mobs.begin(), group.mobs.end(), [&](auto a, auto b) { return rank[a] < rank[b]; });
+
+    // Event and instance-only mobs may have no authored spawn band.
+    BiomeRows other;
+    for (const auto mob : order)
+        if (!assigned[mob]) other.mobs.push_back(mob);
+    if (!other.mobs.empty()) biomeRows_.push_back(std::move(other));
+}
+
 int galleryOrbTier(const Profile& profile) {
     const auto legacy=content().petalIndex("magic_orb");
     const auto orb=legacy!=kInvalidIndex?legacy:content().petalIndex("mana_orb");
@@ -699,28 +782,77 @@ bool GalleryPanel::render(MenuContext& ctx) {
     const Rect closeRect = closeButtonRect(panel);
     panelClose(canvas, closeRect, closeRect.contains(mouse));
 
+    const WorldMaps* maps = ctx.renderer.worldMaps();
+    const double controlWidth = std::min(184.0, std::max(0.0, (panel.w - 2.0 * kPad - kControlsGap) * 0.5));
+    const Rect orderButton{panel.x + kPad, panel.y + kControlsTop, controlWidth, kControlsHeight};
+    const Rect npcButton{orderButton.right() + kControlsGap, orderButton.y, controlWidth, kControlsHeight};
+    if (maps && ctx.pressed() && orderButton.contains(mouse)) {
+        groupByBiome_ = !groupByBiome_;
+        if (groupByBiome_ && biomeRows_.empty()) buildBiomeRows(*maps);
+        scroll_.offset = 0.0;
+    }
+    if (ctx.pressed() && npcButton.contains(mouse)) {
+        hideNpcs_ = !hideNpcs_;
+        scroll_.offset = 0.0;
+    }
+    drawSlotButton(canvas, orderButton, groupByBiome_ ? trEnZh("Default order", "恢复原顺序")
+                                                      : trEnZh("Group by biome", "按群系排列"),
+                   maps ? (groupByBiome_ ? kGallerySkin.accent : kGallerySkin.fill)
+                        : std::optional<std::uint32_t>{},
+                   maps && orderButton.contains(mouse));
+    drawSlotButton(canvas, npcButton, hideNpcs_ ? trEnZh("Show NPCs", "显示 NPC")
+                                                : trEnZh("Hide NPCs", "隐藏 NPC"),
+                   hideNpcs_ ? kGallerySkin.accent : kGallerySkin.fill, npcButton.contains(mouse));
+
     // --- layout ------------------------------------------------------------
     const double contentTop = panel.y + kContentTop;
-    const Rect view{panel.x + kPad, contentTop, panel.w - kPad * 2 - kScrollbarWidth - 4.0,
+    const Rect view{panel.x + kPad, contentTop, std::max(0.0, panel.w - kPad * 2 - kScrollbarWidth - 4.0),
                     std::max(0.0, panel.h - kContentTop - kPad)};
 
-    const double startX = view.x + std::max(0.0, (view.w - kGridWidth) * 0.5);
+    const double scale = clamp(view.w / kGridWidth, 0.0, 1.0);
+    const double cellSize = kCell * scale;
+    const double cellStep = (kCell + kGridGap) * scale;
+    const double startX = view.x + std::max(0.0, (view.w - kGridWidth * scale) * 0.5);
 
+    struct Label {
+        double y;
+        const char* text;
+        bool heading;
+    };
+    std::vector<Label> labels;
     std::vector<Cell> cells;
     cells.reserve(content().mobCount() * kTierColumns);
     double y = kContentTop;
-    // Declaration order, not index order: the registry's indices are sorted.
-    for (const std::uint16_t mobIndex : mobRows().order) {
+    const auto showMob = [&](std::uint16_t mobIndex) {
+        return !hideNpcs_ || !content().mob(mobIndex).npc.present;
+    };
+    const auto addRow = [&](std::uint16_t mobIndex) {
+        if (!showMob(mobIndex)) return;
+        const auto& mob = content().mob(mobIndex);
+        labels.push_back({y + kRowLabelHeight * 0.5, mobNameTr(mob.id, mob.name.c_str()), false});
+        y += kRowLabelHeight;
         for (int tier = 0; tier < kTierColumns; ++tier) {
             const Rarity rarity = tier == kLadderRarityCount ? Rarity::Ascendant : clampRarity(tier);
             Cell cell;
-            cell.rect = {startX + tier * (kCell + kGridGap), y, kCell, kCell};
+            cell.rect = {startX + tier * cellStep, y, cellSize, cellSize};
             cell.mobIndex = mobIndex;
             cell.rarity = rarity;
             cell.kills = profile.killCount(mobIndex, rarity);
             cells.push_back(cell);
         }
-        y += kCell + kGridGap;
+        y += cellStep;
+    };
+    if (groupByBiome_) {
+        for (const auto& group : biomeRows_) {
+            if (std::none_of(group.mobs.begin(), group.mobs.end(), showMob)) continue;
+            const char* name = group.id.empty() ? trEnZh("Other creatures", "其他生物")
+                                                : biomeTr(group.id, group.name.c_str());
+            labels.push_back({y + kGroupLabelHeight * 0.5, name, true});
+            y += kGroupLabelHeight;
+            for (const auto mob : group.mobs) addRow(mob);
+        }
+    } else {
+        for (const auto mob : mobRows().order) addRow(mob);
     }
     // The trailing row gap counts: the reference measures from the first row's
     // top to the cursor AFTER the last row's gap, which is one gap of slack at
@@ -785,6 +917,16 @@ bool GalleryPanel::render(MenuContext& ctx) {
                 static_cast<float>(view.h));
     canvas.clip();
 
+    const double bandTop = scroll_.offset + kContentTop;
+    for (const auto& label : labels) {
+        if (label.y + kRowLabelHeight < bandTop || label.y - kRowLabelHeight > bandTop + view.h)
+            continue;
+        TextStyle style = galleryStyle(label.heading ? 19.0 : 14.0,
+                                       label.heading ? 0xFFD700u : kPaper);
+        style.baseline = Baseline::Middle;
+        text(canvas, label.text, startX + 3.0, panel.y + label.y - scroll_.offset, style);
+    }
+
     for (std::size_t i = 0; i < cells.size(); ++i) {
         const Cell& cell = cells[i];
         // Culled in the CARD's space, which is the space cell.rect.y is
@@ -794,7 +936,6 @@ bool GalleryPanel::render(MenuContext& ctx) {
         // which threw away the bottom row of every card it drew -- visible as
         // a strip of bare panel under the grid, and hoverable, since the hit
         // test never had the bug.
-        const double bandTop = scroll_.offset + kContentTop;
         if (cell.rect.bottom() <= bandTop || cell.rect.y >= bandTop + view.h) continue;
         const Rect rect{cell.rect.x, panel.y + cell.rect.y - scroll_.offset, cell.rect.w,
                         cell.rect.h};
@@ -821,24 +962,24 @@ bool GalleryPanel::render(MenuContext& ctx) {
         if (known) {
             // Common's radius, whatever tier this cell is -- see kIconZoom.
             const double radius = content().mobStats(cell.mobIndex, Rarity::Common).radius;
-            const double diameter = std::min(kIconCap, radius * 2.0 * kIconZoom);
+            const double diameter = std::min(kIconCap, radius * 2.0 * kIconZoom) * scale;
             // Cut its detail from the mob's OWN common-tier radius, not from
             // the tile: a rock in the bestiary is the rock the garden has, at
             // picture size, rather than a boulder squeezed into 60 units.
             ctx.sprites.drawMobPicture(canvas, cell.mobIndex, cell.rarity, rect.x + rect.w * 0.5,
-                                       rect.y + rect.h * 0.5, rect.w - kIconInset * 2.0, diameter,
+                                       rect.y + rect.h * 0.5, rect.w - kIconInset * scale * 2.0, diameter,
                                        ctx.timeSeconds, radius);
 
             // Abbreviated, unlike the drop table's own counts: five figures of
             // ant kills laid across a 60-unit plate is a smear, and a bestiary
             // tally is read for its order of magnitude.
             const std::string tally = "x" + abbreviateNumber(cell.kills);
-            TextStyle count = galleryStyle(kTallySize, kPaper);
+            TextStyle count = galleryStyle(kTallySize * scale, kPaper);
             count.align = Align::Centre;
             count.baseline = Baseline::Middle;
             canvas.save();
-            canvas.translate(static_cast<float>(rect.right() - kTallyInset),
-                             static_cast<float>(rect.y + kTallyInset));
+            canvas.translate(static_cast<float>(rect.right() - kTallyInset * scale),
+                             static_cast<float>(rect.y + kTallyInset * scale));
             canvas.rotate(static_cast<float>(kTallyTilt));
             text(canvas, tally, 0.0, 0.0, count);
             canvas.restore();
@@ -906,7 +1047,9 @@ bool GalleryPanel::render(MenuContext& ctx) {
         // on, and the AUTHORED sign with it: the tooltip reads straight off
         // mobs.json, where the moth's -0.48 is what a player sees. The unit is
         // a flower's top speed, so two places: a bee is 0.1, a fly 0.48.
-        stat("Speed: " + fixedDecimals(mobRows().speed[cell.mobIndex], 2), 0.0);
+        stat(std::string(trEnZh("Speed: ", "移速：")) +
+                 fixedDecimals(mobRows().speed[cell.mobIndex], 2), 0.0);
+        stat(std::string(trEnZh("Mass: ", "质量：")) + fixedDecimals(stats.mass, 2), 0.0);
         stat("XP: " + abbreviateNumber(stats.xp), 0.0);
 
         std::array<bool, kDropColumns> usedTiers{};
@@ -925,6 +1068,9 @@ bool GalleryPanel::render(MenuContext& ctx) {
         if (hasDrops && rewardRarity != Rarity::Common) {
             stat(std::string(rarityTr(rewardRarity)) +
                      trEnZh(" column: chance per eligible kill", "列为每次达标击杀的概率"), 0.0);
+            if (cell.rarity == Rarity::Ascendant)
+                stat(trEnZh("Eligible finishing blow: 1.5× the shown Apex odds.",
+                            "贡献达标且补刀时，Apex 掉率为表中数值的 1.5 倍。"), 0.0);
         }
 
         const double tableWidth = static_cast<double>(columns.size()) * kDropCellW;

@@ -18,6 +18,9 @@
 #include "client/ui/menu_style.h"
 #include "client/ui/menu_theme.h"
 #include "client/ui/menus.h"
+#include "client/ui/content_i18n.h"
+#include "client/ui/menu_widgets.h"
+#include "shared/core/text.h"
 #include "client/ui/text.h"
 #include "shared/game/config.h"
 
@@ -442,15 +445,43 @@ std::size_t SlotGrid::rows(const Profile& profile, SlotGridTiers tiers) {
     return heldTypes(profile, [&](Rarity rarity) { return slotGridShows(tiers, rarity); }).size();
 }
 
+bool editSlotSearch(MenuContext& ctx, Rect rect, std::string& query, ui::TextFieldState& field) {
+    trackTextMouse(ctx.window, field, rect, inputFieldRun(rect, query, field), query, ctx.timeSeconds);
+    const auto before = query;
+    if (field.focused) {
+        ctx.wantsText = true;
+        TextEditOptions typing;
+        typing.maxBytes = 128;
+        editText(ctx.window, query, field, ctx.timeSeconds, typing);
+        if (ctx.window.keyPressed(Key::Enter) || ctx.window.keyPressed(Key::Escape)) field.blur();
+    }
+    if (rect.contains(ctx.mouse())) ctx.window.setCursorShape(CursorShape::Text);
+    inputField(ctx.canvas, rect, query, trEnZh("Search petals", "查找花瓣"),
+               field.focused, ctx.timeSeconds, &field);
+    return query != before;
+}
+
+static void filterSlotTypes(std::vector<std::uint16_t>& types, const std::string& search) {
+    const auto needle = trimmed(lowerCase(search));
+    if (needle.empty()) return;
+    types.erase(std::remove_if(types.begin(), types.end(), [&](std::uint16_t i) {
+        const auto& petal = content().petal(i);
+        return lowerCase(petal.id).find(needle) == std::string::npos &&
+               lowerCase(petal.name).find(needle) == std::string::npos &&
+               lowerCase(petalNameTr(petal.id, petal.name.c_str())).find(needle) == std::string::npos;
+    }), types.end());
+}
+
 std::optional<SlotGrid::Pick> SlotGrid::render(
     MenuContext& ctx, const SlotCardLayout& layout, const PanelSkin& skin, SlotGridTiers tiers,
     const std::function<SlotCell(std::uint16_t petalIndex, Rarity, std::uint32_t owned)>& look,
-    bool showScrollbar, Pick* inspected) {
+    bool showScrollbar, Pick* inspected, const std::string& search) {
     Canvas& canvas = ctx.canvas;
     const Profile& profile = ctx.craftInventory ? *ctx.craftInventory : ctx.net.profile();
     const Vec2 mouse = ctx.mouse();
     const std::size_t columns = tierColumns(tiers);
-    const auto types = heldTypes(profile, [&](Rarity rarity) { return slotGridShows(tiers, rarity); });
+    auto types = heldTypes(profile, [&](Rarity rarity) { return slotGridShows(tiers, rarity); });
+    filterSlotTypes(types, search);
     // Index the bag once. Each visible row previously scanned the entire
     // inventory again for every tier it displayed.
     std::vector<std::array<std::uint32_t, kRarityCount>> counts(content().petalCount());
@@ -557,14 +588,15 @@ std::size_t SlotTierGrid::rows(const Profile& profile, Rarity tier, std::size_t 
 std::optional<SlotTierGrid::Pick> SlotTierGrid::render(
     MenuContext& ctx, const SlotCardLayout& layout, const PanelSkin& skin, Rarity tier,
     std::size_t columns, double top,
-    const std::function<SlotCell(std::uint16_t petalIndex, std::uint32_t owned)>& look) {
+    const std::function<SlotCell(std::uint16_t petalIndex, std::uint32_t owned)>& look,
+    const std::string& search) {
     Canvas& canvas = ctx.canvas;
     const Profile& profile = ctx.net.profile();
     const Vec2 mouse = ctx.mouse();
     columns = std::max<std::size_t>(1, columns);
 
-    const std::vector<std::uint16_t> types =
-        heldTypes(profile, [&](Rarity r) { return r == tier; });
+    auto types = heldTypes(profile, [&](Rarity r) { return r == tier; });
+    filterSlotTypes(types, search);
     const std::size_t rows = (types.size() + columns - 1) / columns;
 
     SlotCardLayout from = layout;

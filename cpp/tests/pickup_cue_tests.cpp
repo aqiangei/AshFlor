@@ -226,3 +226,30 @@ TEST(a_drop_that_simply_times_out_still_spins_out_where_it_lay) {
     renderer.update(kPastTheFlight);
     CHECK_EQ(itemsDrawn(renderer, view), 1);
 }
+
+#if !defined(__EMSCRIPTEN__)
+TEST(feedback_3684_instant_pickup_glitters_only_at_ultra_or_above) {
+    const auto frame = [](bool cue, Rarity rarity) {
+        WorldView view;
+        seedFlowers(view);
+        WorldRenderer renderer;
+        if (cue) view.events().push_back(pickupCue(3, rarity));
+        renderer.ingestEvents(view);
+        // The item's flight is over, but landing grains are still alive.
+        renderer.update(kPastTheFlight);
+        Canvas canvas = Canvas::createVirtual(kFrameSize, kFrameSize);
+        renderer.draw(canvas, view, testsupport::frameCamera(kFrameSize, kDropAt), kDropAt, 0.0);
+        CHECK_EQ(renderer.sectionTiming().itemCount, 0);
+        return canvas.getImageData(0, 0, kFrameSize, kFrameSize);
+    };
+
+    const auto background = frame(false, Rarity::Common);
+    const int common = testsupport::differingPixels(background, frame(true, Rarity::Common));
+    const int mythic = testsupport::differingPixels(background, frame(true, Rarity::Mythic));
+    const int ultra = testsupport::differingPixels(background, frame(true, Rarity::Ultra));
+    std::printf("Pickup-only pixels after flight: Common=%d Mythic=%d Ultra=%d\n", common, mythic, ultra);
+    CHECK_EQ(common, 0);
+    CHECK_EQ(mythic, 0);
+    CHECK(ultra > 0);
+}
+#endif

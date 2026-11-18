@@ -1812,18 +1812,19 @@ void PetalSystem::removePetal(World& world, Entity petal) {
 }
 
 bool PetalSystem::spendSlot(World& world, const ContentRegistry& registry, Entity player,
-                            std::uint8_t slot, double nowMillis, bool recallSummons) {
+                            std::uint8_t slot, double nowMillis, bool recallSummons,
+                            bool restartReload) {
     if (slot >= kLoadoutActiveSlots) return false;
     Loadout* loadout = world.tryGet<Loadout>(player);
     PetalSlotState* state = world.tryGet<PetalSlotState>(player);
     if (loadout == nullptr || state == nullptr) return false;
     LoadoutSlot& entry = loadout->slots[slot];
-    if (entry.empty() || entry.broken) return false;
+    if (entry.empty() || (entry.broken && !restartReload)) return false;
 
     PetalSlotState::Slot& slotState = state->slots[slot];
     // An independent slot has no single `broken` flag to read, so "already
     // spent" is asked of its grains: one still out means the slot can act.
-    if (slotState.independent) {
+    if (slotState.independent && !restartReload) {
         const bool anyOut = std::any_of(slotState.instanceReadyAtMillis.begin(),
                                         slotState.instanceReadyAtMillis.end(),
                                         [](double ready) { return ready <= 0.0; });
@@ -1874,6 +1875,7 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
     std::uint16_t equipFlags = EquipNone;
     bool equippedCorruption = false;
     bool hyperCorruption = false;
+    bool apexCorruption = false;
     int ghostSightTier = -1;
     // Whether the ring is physically pulled in, by updateRing's rule rather
     // than runActions': with both keys held the ring LUNGES, so a flower doing
@@ -2026,6 +2028,7 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
                 if (worn.id == "corruption") {
                     equippedCorruption = true;
                     hyperCorruption |= ladderRarity(equipped.rarity) == Rarity::Apex;
+                    apexCorruption |= equipped.rarity == Rarity::Ascendant;
                 }
                 if (worn.id == "paranormal_goggles")
                     ghostSightTier = std::max(ghostSightTier, petalTier(equipped.rarity));
@@ -2137,9 +2140,9 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
             const int manaCopies = petalCopies(1, activeTree ? &activeTree->skills : nullptr,
                 i, petalTier(equipped.rarity), manaConfig.stackable);
             aggregate.modifiers.maxMana += stats.maxMana * manaCopies;
-            const double leafRecovery = wearerMana && wearerMana->current < wearerMana->max * 0.5
+            const double lowManaRecovery = wearerMana && wearerMana->current < wearerMana->max * 0.5
                 ? hyperAmount(technique, HyperTechnique::ManaLeafRecovery) : 1.0;
-            aggregate.modifiers.passiveManaPerSecond += stats.passiveManaPerSecond * leafRecovery;
+            aggregate.modifiers.passiveManaPerSecond += stats.passiveManaPerSecond * lowManaRecovery;
             if (blocking && wearerMana && wearerMana->current < wearerMana->max * 0.25) {
                 aggregate.modifiers.passiveManaPerSecond += stats.maxMana *
                     hyperAmount(technique, HyperTechnique::MagicCactusReserve, 0.0);
@@ -2377,6 +2380,7 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
                 nowMillis < visuals->hyperCorruptionExposureUntilMillis;
         }
         visuals->hyperCorruption = hyperCorruption;
+        visuals->apexCorruption = apexCorruption;
         visuals->ghostSightTier = ghostSightTier;
     }
     aggregate.modifiers.luck += cloverLuck;
@@ -2822,7 +2826,7 @@ void PetalSystem::placePetals(World& world, const ContentRegistry& registry, Ent
         // though its attack orbit also uses defendOnly. Mimics inherit the
         // effective copied config, so a copied Sawblade follows the same rule.
         const double petalAttraction =
-            !manaOrb && petalCanBeAttracted(config) ? attractionRadius : 0.0;
+            !manaOrb && !petalIsEgg(config) && petalCanBeAttracted(config) ? attractionRadius : 0.0;
         if (instance->ricochet.active &&
             flyRicochetPetal(world, petal, *instance, *transform, orbit, committedFlower,
                              instanceStats(world, registry, *instance).reloadMillis, nowMillis, dt)) {
@@ -3154,12 +3158,16 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
                     world.get<Health>(petal).current = 0;
                     if (valid) onPlayerMarked(target, player, rarity, config.id == "void_void_mark", frozenMark);
                 }
-            } else if (attacking) {
+            } else if (attackHeld) {
+                const auto* owner = world.tryGet<Transform>(player);
+                const double rangeSquared = kDarkMarkRange * kDarkMarkRange;
                 for (const Entity target : playerList_) {
                     const auto* corpse = world.tryGet<Transform>(target);
-                    if (!corpse || corpse->realm != transform->realm ||
-                        distanceSq(corpse->position, transform->position) > kDarkMarkRange * kDarkMarkRange ||
-                        !canMarkPlayer(target, player, instance->rarity)) continue;
+                    if (!corpse || corpse->realm != transform->realm) continue;
+                    const bool nearPetal = distanceSq(corpse->position, transform->position) <= rangeSquared;
+                    const bool nearOwner = owner && corpse->realm == owner->realm &&
+                        distanceSq(corpse->position, owner->position) <= rangeSquared;
+                    if ((!nearPetal && !nearOwner) || !canMarkPlayer(target, player, instance->rarity)) continue;
                     instance->markTarget = target;
                     constexpr std::array<double, kLadderRarityCount> frozenDelayMillis = {
                         120000, 80000, 54000, 36000, 24000, 16000, 10000, 6000, 3000, 500
@@ -3540,11 +3548,10 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
             }
         }
 
-        // Bubble pops as soon as the ring is pulled in and propels the flower,
-        // then pays its rarity-scaled reload.
+        // The defend input pops bubbles even while attack holds the ring out.
+        // The pop still pays the petal's rarity-scaled reload.
         const bool magicBubble = config.id == "magic_bubble";
-        // Match the ring stance: attack takes priority when both are held.
-        if ((config.id == "bubble" || magicBubble) && defending && !attackHeld) {
+        if ((config.id == "bubble" || magicBubble) && defending) {
             // The body the burst throws: the flower, or the moon its ring is
             // laid out around -- the user's rule: a moon is boosted in the
             // flower's place.
@@ -3645,8 +3652,7 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
             continue;
         }
 
-        const bool shooting = attacking || (config.defendOnly && defending) ||
-                              (attackHeld && (config.id == "spaceship" || hyperShot));
+        const bool shooting = attackHeld || (config.defendOnly && defending);
         if ((config.projectile.present || hyperShot) && config.id != "diamond" && shooting &&
             nowMillis >= instance->nextProjectileMillis) {
             // No mana is asked here: a magic missile paid for itself when it
@@ -4338,6 +4344,9 @@ void PetalSystem::runBehaviour(World& world, Entity player, Entity petal,
             const auto* owner = world.tryGet<Transform>(player);
             if (!owner) return;
             const Realm realm = owner->realm;
+            Vec2 outward = at - owner->position;
+            if (outward.lengthSq() < 1e-12) outward = Vec2::fromAngle(owner->angle, 1.0);
+            outward = outward.normalized();
             const double radius = 64.0 + 8.0 * ladderIndex(rarity);
             emitDamageBurst(world, player, at, radius, 0.35 * petalStrengthScale(rarity),
                             false, nowMillis, true);
@@ -4349,7 +4358,9 @@ void PetalSystem::runBehaviour(World& world, Entity player, Entity petal,
                 const Vec2 away = world.get<Transform>(mob).position - at;
                 if (away.lengthSq() > radius * radius) continue;
                 const double mass = bodyMass(world.tryGet<Body>(mob));
-                const Vec2 impulse = away.normalized() * std::min(75.0, 100.0 / mass);
+                // A direct centre hit still shoves the mob away from the flower.
+                const Vec2 bearing = away.lengthSq() >= 1e-12 ? away.normalized() : outward;
+                const Vec2 impulse = bearing * std::min(75.0, 100.0 / mass);
                 auto& pending = world.ensure<Knockback>(mob).impulse;
                 if (impulse.lengthSq() > pending.lengthSq()) pending = impulse;
             }
@@ -4875,21 +4886,21 @@ void PetalSystem::dischargeCapacitors(World& world, const ContentRegistry& regis
 }
 
 bool PetalSystem::touchesGridMob(World& world, Realm realm, Vec2 at, double radius,
-                               bool includeDeadNpcs, bool wildOnly) {
+                               bool includeDeadNpcs, bool bubbleBomb) {
     // Wild mobs stay in place during this phase. An earlier petal can kill
     // one, so validate live eligibility after querying the frozen grid.
     attractionGrid_.query(realm, at, radius, attractionCandidates_);
     for (const Entity mob : attractionCandidates_) {
         if (!world.isAlive(mob)) continue;
-        if (wildOnly && (world.has<Pet>(mob) || world.has<NpcTag>(mob))) continue;
+        if (bubbleBomb && (world.has<Pet>(mob) || world.has<NpcTag>(mob))) continue;
         if (world.has<Dead>(mob) && !(includeDeadNpcs && world.has<NpcTag>(mob))) continue;
         const Transform* transform = world.tryGet<Transform>(mob);
         const Body* body = world.tryGet<Body>(mob);
         if (transform == nullptr || body == nullptr) continue;
         const double reach = radius + body->radius;
         const double gap = distanceSq(transform->position, at);
-        // A centre-on-centre overlap has no direction and does not count.
-        if (gap < reach * reach && gap > 0.0) return true;
+        // A bubble bomb handles coincident centres with its outward fallback.
+        if (gap < reach * reach && (gap > 0.0 || bubbleBomb)) return true;
     }
     return false;
 }
@@ -5447,6 +5458,10 @@ int PetalSystem::summonPets(World& world, const ContentRegistry& registry, Entit
     // A centipede or a leech arrives whole, as a wild one does: the head and
     // its body, every segment one more of the owner's pets.
     const bool closeHatch = config.ai == AiKind::Sandstorm;
+    const PetalConfig* source = slotState.configIndex < registry.petalCount()
+        ? &registry.petal(slotState.configIndex) : nullptr;
+    const bool checkNearbyEggSpace = !closeHatch && expiresAtMillis == 0.0 && ownerAt &&
+        at == ownerAt->position && source && source->petMobIndex == mobIndex && petalIsEgg(*source);
     const bool chain = config.segmentCount > 0 && config.segmentBodyIndex != kInvalidIndex;
 
     // Snapshot the relevant circles once per brood, not once per candidate.
@@ -5499,22 +5514,48 @@ int PetalSystem::summonPets(World& world, const ContentRegistry& registry, Entit
         // across a one-tile wall or directly inside the incubating egg.
         Vec2 spawnAt;
         bool placed = false;
+        std::optional<Vec2> crowdedLanding;
         constexpr int kRingSeats = 16;
+        const auto tryLanding = [&](Vec2 candidate) {
+            if (terrain_ && (terrain_->blocked(candidate, realm) ||
+                terrain_->segmentBlocked(at, candidate, realm) ||
+                terrain_->resolveWall(candidate, radius, realm).collided)) return false;
+            bool overlapsMobile = false;
+            for (const auto& circle : occupied) {
+                const double clearance = radius + circle.radius + 2.0;
+                if ((circle.at - candidate).lengthSq() >= clearance * clearance) continue;
+                if (crowdedLanding || !checkNearbyEggSpace || chain || circle.kind != HatchOccupant::Mobile)
+                    return false;
+                overlapsMobile = true;
+            }
+            if (overlapsMobile) {
+                if (!crowdedLanding) crowdedLanding = candidate;
+                return false;
+            }
+            spawnAt = candidate;
+            return true;
+        };
+        const double nearest = ownerRadius + radius + 8.0;
+        if (checkNearbyEggSpace) {
+            // The expanding random search can miss a narrow open direction
+            // next to the owner. Check the closest rings before expanding.
+            constexpr int kNearSeats = 2 * kRingSeats;
+            const double start = rng_.angle();
+            for (int ring = 0; ring < 3 && !placed; ++ring) {
+                const double distance = nearest + radius * 0.10 * ring;
+                for (int seat = 0; seat < kNearSeats && !placed; ++seat) {
+                    const double angle = start + kTau * seat / kNearSeats;
+                    placed = tryLanding(at + Vec2::fromAngle(angle, distance));
+                }
+            }
+        }
         const int attempts = closeHatch ? 4 * kRingSeats : 240;
         const double bearing = closeHatch ? rng_.angle() : 0.0;
         for (int attempt = 0; attempt < attempts && !placed; ++attempt) {
             const double extra = closeHatch ? attempt / kRingSeats : attempt / 20.0;
             const double angle = closeHatch ? bearing + kTau * (attempt % kRingSeats) / kRingSeats
                                             : rng_.angle();
-            const Vec2 candidate = at + Vec2::fromAngle(angle, ownerRadius + radius * (1 + extra) + 8);
-
-            if(terrain_ && (terrain_->blocked(candidate,realm) ||
-                terrain_->segmentBlocked(at,candidate,realm) ||
-                terrain_->resolveWall(candidate,radius,realm).collided)) continue;
-            bool overlaps=false;
-            for(const auto& circle:occupied){const double clearance=radius+circle.radius+2;
-                if((circle.at-candidate).lengthSq()<clearance*clearance){overlaps=true;break;}}
-            if(!overlaps){spawnAt=candidate;placed=true;}
+            placed = tryLanding(at + Vec2::fromAngle(angle, nearest + radius * extra));
         }
         if (!placed && terrain_ && radius > ownerRadius) {
             // A large summon can walk a corridor its full combat radius
@@ -5581,6 +5622,12 @@ int PetalSystem::summonPets(World& world, const ContentRegistry& registry, Entit
                     placed = true;
                 }
             }
+        }
+        if (!placed && crowdedLanding) {
+            // A crowded field can have no empty ring position. Mobile mobs
+            // move apart in the normal collision pass after the hatch.
+            spawnAt = *crowdedLanding;
+            placed = true;
         }
         if (!placed) {
             if (slotState.configIndex >= registry.petalCount() ||

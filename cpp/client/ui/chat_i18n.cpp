@@ -434,8 +434,14 @@ std::string localizePlain(std::string text) {
         const char* zh;
     };
     static constexpr Exact kExact[] = {
+        {"You cannot leave a dungeon in your current state.", "当前状态无法退出白蚁穴。"},
+        {"You are not inside an active termite mound.", "你当前不在白蚁穴内。"},
+        {"You left the termite mound.", "已退出白蚁穴。"},
+        {"Type /dungeon-leave to leave the termite mound early.", "输入 /dungeon-leave 可提前退出白蚁穴。"},
         {"Not enough mana to summon.", "法力不足，无法召唤。"},
         {"That player is already in a squad.", "该玩家已在小队中。"},
+        {"The two squads would exceed 4 players.", "两队合计超过 4 人，无法合并。"},
+        {"The two squads have merged.", "两个小队已合并。"},
         {"That player already has a pending invite.", "该玩家已有待处理邀请。"},
         {"You are already in a squad.", "你已在小队中。"},
         {"No pending invite.", "没有待处理的邀请。"},
@@ -448,12 +454,8 @@ std::string localizePlain(std::string text) {
         {"You were revived.", "你已复活。"},
         {"Rift is entered through the portals in Garden, Desert or Jungle. /rift shows the schedule.",
          "请从花园、沙漠或丛林的裂隙传送门进入。输入 /rift 查看开放时间。"},
-        {"Void Mark: sent to Void. /mark-return is available in 30 seconds.",
-         "虚空印记已将你送到虚空。30 秒后可用 /mark-return 返回原处。"},
         {"Void Mark: sent to Void. Use /mark-return to go back.",
          "虚空印记已将你送到虚空。输入 /mark-return 返回原处。"},
-        {"Frozen Mark: sent to Arctic. /mark-return is available in 30 seconds.",
-         "冰封印记已将你送到极地。30 秒后可用 /mark-return 返回原处。"},
         {"Frozen Mark: sent to Arctic. Use /mark-return to go back.",
          "冰封印记已将你送到极地。输入 /mark-return 返回原处。"},
         {"Blood Sacrifice kept. The monsters in this area are too low in rarity.",
@@ -470,6 +472,21 @@ std::string localizePlain(std::string text) {
     };
     for (const Exact& e : kExact) {
         if (text == e.en) return e.zh;
+    }
+
+    const std::string_view loaded = "Loaded loadout ";
+    const std::string_view kept = ". Current talents kept: the saved talents cost too many points.";
+    if (text.rfind(loaded, 0) == 0 && endsWith(text, kept.data())) {
+        std::string detail = text.substr(loaded.size(), text.size() - loaded.size() - kept.size());
+        const auto swap = [&](std::string_view en, std::string_view zh) {
+            const auto at = detail.find(en);
+            if (at != std::string::npos) detail.replace(at, en.size(), zh);
+        };
+        swap(" petals at a lower rarity", " 枚花瓣使用较低品质");
+        swap(" petal at a lower rarity", " 枚花瓣使用较低品质");
+        swap(" petals not found", " 枚花瓣缺失");
+        swap(" petal not found", " 枚花瓣缺失");
+        return "已切换配装 " + detail + "。保存的天赋点数超出当前预算，已保留当前天赋。";
     }
 
     // "{name} has joined the squad."
@@ -516,6 +533,13 @@ std::string localizePlain(std::string text) {
 /// id begins with (termite_mound_t3 is a termite mound); the English name the
 /// server sent when the table has neither.
 std::string mapNameTr(std::string id, const std::string& english) {
+    const bool prestigeTwo = startsWith(id, "prestige_2_");
+    const bool prestigeOne = !prestigeTwo && startsWith(id, "prestige_");
+    const auto base = std::string_view(id).substr(prestigeTwo ? sizeof("prestige_2_") - 1 : prestigeOne ? sizeof("prestige_") - 1 : 0);
+    if (base == "jurassic" || base == "jurassic_pangea" || base == "jurassic_tectonics")
+        return prestigeTwo ? "声望 II 侏罗纪" : prestigeOne ? "声望 I 侏罗纪" : "侏罗纪";
+    if (id.empty() && (english == "Jurassic" || english == "Pangea" || english == "Tectonics"))
+        return "侏罗纪";
     while (!id.empty()) {
         if (const char* name = biomeTr(id, nullptr)) return name;
         const std::size_t cut = id.rfind('_');
@@ -654,9 +678,17 @@ std::string localizeMarkupAware(std::string text) {
                 // rest may be "!", " somewhere!", " in MAP!", " by MARKUP", " by MARKUP!</b>" already cut
                 std::string zhBody;
                 if (std::string(enVerb) == " has spawned") {
-                    if (startsWith(rest, " somewhere")) {
+                    if (startsWith(rest, " somewhere in Prestige II!")) {
+                        zhBody = entity + " 已在声望 II 的某处生成！";
+                    } else if (startsWith(rest, " somewhere in Prestige I!")) {
+                        zhBody = entity + " 已在声望 I 的某处生成！";
+                    } else if (startsWith(rest, " somewhere")) {
                         zhBody = entity + (startsWith(rest, " somewhere in Prestige")
                             ? " 已在声望层的某处生成！" : " 已在某处生成！");
+                    } else if (startsWith(rest, " in Prestige II!")) {
+                        zhBody = entity + " 已在声望 II 生成！";
+                    } else if (startsWith(rest, " in Prestige I!")) {
+                        zhBody = entity + " 已在声望 I 生成！";
                     } else if (startsWith(rest, " in Prestige!")) {
                         zhBody = entity + " 已在声望层生成！";
                     } else if (startsWith(rest, " in ")) {

@@ -27,7 +27,7 @@ using ConnectionId = std::uint32_t;
 // Version 128: snapshot update records are smaller. The mask is a varint with
 // the common fields in its low seven bits, a short move is two bytes, and the
 // state byte carries only the bits a client draws from.
-inline constexpr std::uint16_t kProtocolVersion = 133; // Notifications carry an optional petal id.
+inline constexpr std::uint16_t kProtocolVersion = 135; // Adds the living player's run loot query reply.
 
 /// "Not one of the rotating store's cards": a purchase at the full ladder
 /// price. Any other value is a slot index the server checks against the offers
@@ -484,6 +484,7 @@ enum class ServerMessage : std::uint8_t {
     WaveRoomStatus,     ///< u8 occupied rooms, bool personal daily star cap reached.
     SkinReviewQueue,    ///< u8 count, followed by CustomSkin rows awaiting review.
     RiftStatus,         ///< bool admissionOpen.
+    RunLoot,            ///< u32 count, {u16 petal, u8 rarity, u32 count}* (own run).
 };
 
 // ---------------------------------------------------------------------------

@@ -3,6 +3,7 @@
 #include "shared/game/skills.h"
 #include <cstddef>
 #include <string>
+#include <string_view>
 namespace flix {
 namespace ui {
 namespace {
@@ -63,7 +64,7 @@ constexpr Pair kPetals[] = {
     {"arctic_plutonium", "钚"},
     {"arctic_fission", "北极裂变"},
     {"arctic_fusion", "融合"},
-    {"arctic_corium", "堆芯熔融物"},
+    {"arctic_corium", "极地堆芯熔融物"},
     {"arctic_nuke", "核弹"},
     {"arctic_banana", "香蕉"},
     {"arctic_pinecone", "松果"},
@@ -373,7 +374,7 @@ constexpr Pair kPetals[] = {
     {"void_blood_scythe", "虚空血镰"},
     {"void_comb", "虚空梳子"},
     {"void_copper_rod", "虚空铜棒"},
-    {"void_corium", "虚空堆芯熔岩"},
+    {"void_corium", "虚空堆芯熔融物"},
     {"void_cross", "虚空十字架"},
     {"void_cryo_bomb", "虚空冷冻炸弹"},
     {"void_cyanide", "虚空氰化物"},
@@ -942,7 +943,6 @@ constexpr Pair kPetalDescs[] = {
     {"void_dizzy", "提高其他花瓣的直接接触伤害。与伤口同时装备时取较高增益。"},
     {"void_dvd", "带护甲的花瓣，接触野怪时使其燃烧 3 秒：普通品质每秒 3 点燃烧伤害，品质每高一档乘 3，超凡为永恒的 1.5 倍。"},
     {"void_elemental", "产自虚空的花瓣。"},
-    {"void_eyeball", "装备时，同稀有度或更低的导弹会追踪敌人；装填期间仍有效。"},
     {"void_fan", "降低受到的持续燃烧伤害，多件风扇只取最高减伤。"},
     {"void_fire", "接触野怪时使其燃烧 3 秒：普通品质每秒 10 点燃烧伤害，品质每高一档乘 3，超凡为永恒的 1.5 倍。本身没有接触伤害，伤害全部来自燃烧。"},
     {"void_gunpowder", "装备时提高导弹飞行速度，取最高加成。火药命中燃烧的野怪时造成五倍接触伤害。"},
@@ -1034,8 +1034,12 @@ const char* petalNameZh(const std::string& id) {
     return "";
 }
 const char* petalNameTr(const std::string& id, const char* fallback) {
+    if (!zh() && id == "arctic_corium") return "Arctic Corium";
+    if (!zh() && id == "void_corium") return "Void Corium";
     if (!zh() && id == "arctic_stick") return "Arctic Branch";
     if (!zh() && id == "mysterious_stick") return "Mysterious Stick";
+    if (!zh() && id == "opal") return "Bio Opal";
+    if (!zh() && id == "void_opal") return "Void Opal";
     return lookup(kPetals, sizeof(kPetals) / sizeof(kPetals[0]), id, fallback);
 }
 const char* mobNameTr(const std::string& id, const char* fallback) {
@@ -1045,7 +1049,7 @@ const char* mobNameTr(const std::string& id, const char* fallback) {
 constexpr Pair kMobDescs[] = {
     {"jurassic_dodo", "威胁靠得太近时会追上去。"},
     {"jurassic_stegosaurus", "背上长有骨板的植食恐龙，尾击伤害较低。"},
-    {"jurassic_raptor", "会绕着目标移动。"},
+    {"jurassic_raptor", "先绕着目标移动，再冲上去造成接触伤害。"},
     {"jurassic_pteranodon", "行动迅捷的飞行猎手。"},
     {"jurassic_tyrannosaurus", "会追击目标的强力猎手。"},
     {"jurassic_fossil", "旋转的骨头保护着这块化石。"},
@@ -1177,14 +1181,14 @@ const char* petalDescTr(const std::string& id, const char* fallback) {
          "Software component that deals contact damage. Counts as the same part type as C++."},
         {"c++", "程序组件，靠碰撞造成伤害。与 JavaScript 同属程序类，搭配时只计一类。",
          "Software component that deals contact damage. Counts as the same part type as JavaScript."},
-        {"ram", "内存组件，可参与电脑转换机配方，例如与拟态一起合成永恒锯片。",
-         "Memory component. Used in computer assembler recipes, including Eternal Sawblade with Mimic."},
+        {"ram", "拟态在装备栏复制内存时会生成锯片。也可在电脑转换机用内存和拟态合成永恒锯片。",
+         "A Mimic that copies RAM equips a Sawblade. RAM and Mimic can also craft an Eternal Sawblade at a Computer Assembler."},
         {"computer_chip", "芯片组件，基础碰撞伤害较低，可用于凑电脑套装。",
          "Chip component with low contact damage. Counts toward the computer set."},
         {"capacitor", "电源组件。接触野怪时蓄电，离开目标或接触满 1 秒时释放闪电。",
          "Power component. Charges on contact with wild mobs and releases lightning on separation or after one second."},
-        {"cursor", "控制组件。召唤物可跟随指针移动，要求召唤物稀有度低于光标。",
-         "Control component. Directs summoned pets below its rarity toward your pointer."},
+        {"cursor", "控制组件。较低稀有度的己方召唤物会跟随鼠标指针。触屏可用移动摇杆指挥，松开摇杆后恢复自动行动。",
+         "Control component. Your lower-rarity summons follow the mouse pointer. On touch screens, push the movement stick to direct them and release it to return to automatic behavior."},
         {"cube", "几何组件，靠碰撞造成伤害。与二十面体、五边形同属一类。",
          "Geometry component that deals contact damage. Shares its part type with Icosahedron and Pentagon."},
         {"icosahedron", "几何组件，带护甲。撞击后弹向其他目标，随后返回。",
@@ -1199,10 +1203,16 @@ const char* petalDescTr(const std::string& id, const char* fallback) {
          "Costs mana to form and deals contact damage."},
         {"bomb", "碰撞或破碎时爆炸，造成范围伤害，随后进入重装。",
          "Explodes on collision or break, dealing area damage before reloading."},
+        {"magic_bubble_bomb", "碰到野怪时爆炸，对附近野怪造成少量伤害和击退。分裂天赋不会增加这个单瓣花瓣的数量。",
+         "Explodes on contact with wild mobs, damaging and knocking back nearby wild mobs. Duplicator does not add copies of this single-particle petal."},
+        {"void_cross", "可在花瓣环中承受伤害，本体不造成接触伤害。",
+         "Absorbs damage in your petal ring and deals no contact damage."},
         {"void_copper_rod", "攻击时发射直线投射物。",
          "Fires a straight projectile while attacking."},
         {"void_gamma_ray", "攻击时发射一道伽马射线。",
          "Fires a gamma ray while attacking."},
+        {"void_eyeball", "装备后，同阶或更低阶的导弹在发射时自动瞄准范围内的敌人，随后直线飞行。眼球装填期间仍有效。",
+         "While equipped, missiles of the same or lower rarity aim at an enemy in range at launch, then fly straight. This also works while Eyeball reloads."},
         {"void_halo", "装备时持续为自身回复生命。",
          "Continuously restores your health while equipped."},
         {"void_mark", "攻击时可给符合条件的倒地玩家放置印记。蓄力完成后，目标在地狱复活。",
@@ -1217,6 +1227,8 @@ const char* petalDescTr(const std::string& id, const char* fallback) {
          "Fires a trident projectile while attacking."},
         {"void_void_mark", "攻击时可给符合条件的倒地玩家放置印记。蓄力完成后，目标在虚空复活。",
          "Attack to mark an eligible fallen flower. When the mark finishes charging, the target revives in the Void."},
+        {"splitter", "装备后分成两个身体。点击装备槽切换控制，花瓣被击碎时仍可切换。切换有独立冷却。",
+         "Equip to split into two bodies. Click the equipped slot to switch, even when the petal breaks in combat. Switching has its own cooldown."},
         {"magic_stick", "耗魔召唤限时沙尘暴。召唤名额已满时会等有空位，即使魔力已满。",
          "Spends mana to summon temporary sandstorms. A full summon roster blocks new casts even at full mana."},
         {"mysterious_stick", "召唤沙尘暴。它们跟随你的移动，离你太远时会先折返。",
@@ -1224,6 +1236,17 @@ const char* petalDescTr(const std::string& id, const char* fallback) {
     };
     for (const auto& entry : bilingualDescs) {
         if (id == entry.id) return zh() ? entry.chinese : entry.english;
+    }
+    static constexpr std::string_view kVoidContactPetals[] = {
+        "void_antimatter", "void_balloon", "void_dark_matter", "void_elemental",
+        "void_kitty", "void_landmine", "void_nut", "void_orb", "void_quantum",
+        "void_relativity", "void_sad", "void_scythe", "void_zodiac",
+    };
+    for (const auto petal : kVoidContactPetals) {
+        if (id == petal) {
+            return zh() ? "花瓣碰到敌人时造成接触伤害。"
+                        : "Deals contact damage when the petal touches an enemy.";
+        }
     }
     static constexpr Pair kArcticEnglish[] = {
         {"arctic_stick", "An Arctic petal that does not summon. Snow Stick summons snowstorms and Mysterious Stick summons sandstorms."},
@@ -1261,6 +1284,12 @@ const char* petalDescTr(const std::string& id, const char* fallback) {
     return lookup(kPetalDescs, sizeof(kPetalDescs) / sizeof(kPetalDescs[0]), id, fallback);
 }
 const char* mobDescTr(const std::string& id, const char* fallback) {
+    if (id == "void_black_hole")
+        return zh() ? "虚空生物。吸引附近目标，并发射伽马射线。"
+                    : "A Void creature that pulls nearby targets in and fires gamma rays.";
+    if (id == "void_white_hole")
+        return zh() ? "虚空生物。推开附近目标，并发射伽马射线。"
+                    : "A Void creature that pushes nearby targets away and fires gamma rays.";
     return lookup(kMobDescs, sizeof(kMobDescs) / sizeof(kMobDescs[0]), id, fallback);
 }
 constexpr Pair kBiomes[] = {
@@ -1274,6 +1303,7 @@ constexpr Pair kBiomes[] = {
     {"polar-entry", "极圈"},
     {"bio", "生化"},
     {"bio_micro", "微观世界"},
+    {"zorr_null", "虚空深层（Null）"},
     {"bio_lab", "实验室"},
     {"default", "默认"},
     {"garden", "花园"},

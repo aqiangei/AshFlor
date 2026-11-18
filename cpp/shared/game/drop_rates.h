@@ -8,6 +8,7 @@
 namespace flix {
 
 inline constexpr double kApexPetalDropChance = 0.02;
+inline constexpr double kApexFinisherPetalDropChance = 0.03;
 
 inline constexpr Rarity personalBossRewardRarity(Rarity mobRarity) {
     if (mobRarity == Rarity::Ascendant) return Rarity::Ascendant;

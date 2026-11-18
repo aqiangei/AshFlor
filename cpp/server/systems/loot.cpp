@@ -818,6 +818,8 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
             continue;
         }
         const bool apexKill = type->rarity == Rarity::Ascendant;
+        const auto* finisher = apexKill ? world.tryGet<PlayerAccount>(world.get<Dead>(corpse).killer) : nullptr;
+        const std::string finisherAccount = finisher ? finisher->userId : std::string{};
         hyperKill = type->rarity == Rarity::Apex || apexKill;
         reducedClaimants.clear();
 
@@ -973,7 +975,9 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
                     std::find(paidAccounts.begin(), paidAccounts.end(), account->userId) != paidAccounts.end())
                     continue;
                 paidAccounts.push_back(account->userId);
-                if (!rng.chance(kApexPetalDropChance)) continue;
+                const double chance = apexKill && account->userId == finisherAccount
+                    ? kApexFinisherPetalDropChance : kApexPetalDropChance;
+                if (!rng.chance(chance)) continue;
                 // One personal roll per kill. Magic conversion only changes the
                 // selected type, so it cannot change the odds or rarity.
                 const auto* entry = rewardPool[rng.below(rewardPool.size())];

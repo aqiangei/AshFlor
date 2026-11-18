@@ -229,6 +229,16 @@ TEST(the_hide_other_petals_and_pets_switches_survive_the_settings_file) {
     CHECK(petsBack.load(path));
     CHECK(!petsBack.render.hideOtherPetals);
     CHECK(petsBack.render.hideOtherPets);
+    CHECK(!petsBack.render.hideOwnPets);
+
+    ClientSettings own;
+    own.render.hideOwnPets = true;
+    CHECK(own.save(path));
+    ClientSettings ownBack;
+    CHECK(ownBack.load(path));
+    CHECK(ownBack.render.hideOwnPets);
+    CHECK(!ownBack.render.hideOtherPets);
+    CHECK(!ownBack.render.hideOtherPetals);
 
     std::remove(path.c_str());
 }

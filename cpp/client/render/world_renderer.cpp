@@ -849,11 +849,11 @@ private:
 } // namespace
 
 bool WorldRenderer::hiddenByOptions(const RemoteEntity& entity) const {
-    if ((entity.spawnFlags & net::SpawnForeign) == 0) return false;
-    // A pet, or a shot one fired: the pet switch answers for both, so hiding
-    // the pets does not leave their volleys flying out of nothing.
-    if ((entity.spawnFlags & net::SpawnIsPet) != 0) return options.hideOtherPets;
-    return options.hideOtherPetals;
+    const bool foreign = (entity.spawnFlags & net::SpawnForeign) != 0;
+    // Pet and projectile visibility follows the projectile's owner.
+    if ((entity.spawnFlags & net::SpawnIsPet) != 0)
+        return foreign ? options.hideOtherPets : options.hideOwnPets;
+    return foreign && options.hideOtherPetals;
 }
 
 void WorldRenderer::ingestEvents(WorldView& view) {
@@ -1093,8 +1093,10 @@ void WorldRenderer::ingestEvents(WorldView& view) {
                 break;
             }
             case net::EventKind::Lightning: {
-                if ((event.flag & net::LightningForeign) &&
-                    ((event.flag & net::LightningFromPet) ? options.hideOtherPets : options.hideOtherPetals)) break;
+                const bool foreign = (event.flag & net::LightningForeign) != 0;
+                if ((event.flag & net::LightningFromPet)
+                      ? (foreign ? options.hideOtherPets : options.hideOwnPets)
+                      : (foreign && options.hideOtherPetals)) break;
                 // One arm per mob the strike hit. The endpoints are the
                 // server's, not the entity table's: the strike's damage lands a
                 // tick later, so some of these mobs are already dead and gone
@@ -1156,8 +1158,10 @@ void WorldRenderer::ingestEvents(WorldView& view) {
                     drop.position = event.position;
                     drop.typeIndex = static_cast<std::uint16_t>(event.amount);
                     drop.rarity = clampRarity(static_cast<int>(event.flag));
-                    for (int i = 0; i < kDropBurstCount; ++i) {
-                        pushDropGrain(drop.position, drop.rarity, kMaxDropSparkles);
+                    if (sparklingRarity(drop.rarity)) {
+                        for (int i = 0; i < kDropBurstCount; ++i) {
+                            pushDropGrain(drop.position, drop.rarity, kMaxDropSparkles);
+                        }
                     }
                 }
                 drop.takerNetId = event.otherNetId;
@@ -4056,8 +4060,8 @@ void drawPortalCracks(Canvas& canvas, double radius, std::uint32_t seed, double 
 }
 } // namespace
 
-void WorldRenderer::drawMapElements(Canvas& canvas, const Camera& camera, Realm realm,
-                                    double timeSeconds) const {
+void WorldRenderer::drawMapDecorations(Canvas& canvas, const Camera& camera, Realm realm,
+                                       double timeSeconds) const {
     const MapData* map = mapFor(realm);
     if (!map) return;
     const auto& art=artFor(*map);
@@ -4072,6 +4076,12 @@ void WorldRenderer::drawMapElements(Canvas& canvas, const Camera& camera, Realm 
         art[d.art]->renderFitted(canvas,-w*.5,-h*.5,w,h,static_cast<float>(timeSeconds));
         canvas.restore();
     }
+}
+
+void WorldRenderer::drawTeleporters(Canvas& canvas, const Camera& camera, Realm realm,
+                                    double timeSeconds) const {
+    const MapData* map = mapFor(realm);
+    if (!map) return;
     // florr runs the portal on a millisecond clock, and every rate below is
     // its own, per millisecond.
     const double ms = timeSeconds * 1000.0;
@@ -4514,6 +4524,22 @@ void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const
                     canvas.restore();
                     break;
                 }
+                case GroundEffectKind::BlinkLanding: {
+                    ui::disc(canvas, screen, radius, 0xC966E8u, 0x522A70u, 2.0 * zoom, 0.28);
+                    ui::setStroke(canvas, 0xEDD0FFu);
+                    canvas.setLineWidth(static_cast<float>(std::max(2.0, radius * .12)));
+                    canvas.beginPath();
+                    canvas.moveTo(static_cast<float>(screen.x - radius * .62),
+                                  static_cast<float>(screen.y + radius * .42));
+                    canvas.lineTo(static_cast<float>(screen.x + radius * .62),
+                                  static_cast<float>(screen.y - radius * .42));
+                    canvas.moveTo(static_cast<float>(screen.x - radius * .3),
+                                  static_cast<float>(screen.y - radius * .45));
+                    canvas.lineTo(static_cast<float>(screen.x + radius * .3),
+                                  static_cast<float>(screen.y + radius * .45));
+                    canvas.stroke();
+                    break;
+                }
                 case GroundEffectKind::Fire:
                     ui::disc(canvas, screen, radius, 0xFFB530u, 0xE6572Au, 3.0 * zoom);
                     ui::disc(canvas, screen, radius * .54, 0xFFE670u, 0xFFB530u, 2.0 * zoom);
@@ -4766,8 +4792,10 @@ void WorldRenderer::drawLightning(Canvas& canvas, const Camera& camera) const {
     canvas.setLineCap("round");
     canvas.setLineJoin("round");
     for (const LightningBolt& bolt : bolts_) {
-        if ((bolt.ownership & net::LightningForeign) &&
-            ((bolt.ownership & net::LightningFromPet) ? options.hideOtherPets : options.hideOtherPetals)) continue;
+        const bool foreign = (bolt.ownership & net::LightningForeign) != 0;
+        if ((bolt.ownership & net::LightningFromPet)
+              ? (foreign ? options.hideOtherPets : options.hideOwnPets)
+              : (foreign && options.hideOtherPetals)) continue;
         if (bolt.points.size() < 2) continue;
         const double t = clamp(bolt.ageSeconds / kLightningLifeSeconds, 0.0, 1.0);
         canvas.setGlobalAlpha(static_cast<float>(1.0 - t));
@@ -4885,7 +4913,7 @@ void WorldRenderer::draw(Canvas& canvas, const EntityMap& entities, const Camera
         drawArena(canvas, camera);
     } else {
         drawTerrain(canvas, camera, realm_);
-        drawMapElements(canvas, camera, realm_, timeSeconds);
+        drawMapDecorations(canvas, camera, realm_, timeSeconds);
     }
     chargeOps(ops_.terrain);
 
@@ -5239,6 +5267,9 @@ void WorldRenderer::draw(Canvas& canvas, const EntityMap& entities, const Camera
     }
     chargeOps(ops_.labels);
     if (lightClipped) canvas.restore();
+    // Keep entrances visible when mobs or their effects cross the pad.
+    drawTeleporters(canvas, camera, realm_, timeSeconds);
+    chargeOps(ops_.terrain);
     // Last of all, over every body and every effect: what somebody is saying
     // is the one thing on screen that must never be hidden behind the fight --
     // not by the dark either.

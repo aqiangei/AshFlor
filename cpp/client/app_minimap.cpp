@@ -75,6 +75,45 @@ constexpr std::array<std::uint32_t, kMazeZoneCount> kMazeZoneTints = {
 };
 constexpr double kMazeZoneTintAlpha = 0.30;
 
+enum class MapLabelPriority { Player, Guild, Self, Squad, Portal };
+
+struct MapLabel {
+    Vec2 baseline;
+    std::string name;
+    MapLabelPriority priority;
+};
+
+void paintMapLabels(Canvas& canvas, const Rect& map, std::vector<MapLabel>& labels) {
+    std::stable_sort(labels.begin(), labels.end(), [](const MapLabel& a, const MapLabel& b) {
+        return a.priority > b.priority;
+    });
+    TextStyle style;
+    style.size = 9.0;
+    style.fill = kPaper;
+    style.stroke = kInk;
+    style.align = Align::Centre;
+    style.baseline = Baseline::Bottom;
+    std::vector<Rect> occupied;
+    occupied.reserve(labels.size());
+    for (const auto& label : labels) {
+        const double width = textWidth(canvas, label.name, style.size) + 4.0;
+        const double half = std::min(width, map.w) * 0.5;
+        const double x = std::clamp(label.baseline.x, map.x + half, map.right() - half);
+        const double y = std::clamp(label.baseline.y, map.y + 11.0, map.bottom() - 1.0);
+        const Rect bounds{x - half, y - 11.0, half * 2.0, 12.0};
+        if (std::any_of(occupied.begin(), occupied.end(),
+                        [&](const Rect& previous) { return previous.intersects(bounds); })) continue;
+        text(canvas, label.name, x, y, style);
+        occupied.push_back(bounds);
+    }
+}
+
+MapLabelPriority playerLabelPriority(const GuildState& guild, std::string_view tag, bool squadmate) {
+    if (squadmate) return MapLabelPriority::Squad;
+    if (guild.joined && !tag.empty() && tag == guild.tag) return MapLabelPriority::Guild;
+    return MapLabelPriority::Player;
+}
+
 const char* mazeBiomeLabel(MazeBiome biome) {
     switch (biome) {
         case MazeBiome::Garden: return "Garden";
@@ -463,8 +502,9 @@ void App::drawMinimap(Canvas& canvas, bool expanded) {
     canvas.rect(static_cast<float>(x), static_cast<float>(y), static_cast<float>(side),
                 static_cast<float>(side));
     canvas.clip();
+    std::vector<MapLabel> labels;
     const auto dot = [&](Vec2 world, double radius, std::uint32_t fill, bool outlined,
-                         const std::string* label) {
+                         const std::string& label, MapLabelPriority priority) {
         const Vec2 box = fit.toBox(world);
         const double dx = x + box.x;
         const double dy = y + box.y;
@@ -481,25 +521,23 @@ void App::drawMinimap(Canvas& canvas, bool expanded) {
             canvas.strokeCircle(static_cast<float>(dx), static_cast<float>(dy),
                                 static_cast<float>(radius));
         }
-        if (label == nullptr || label->empty()) return;
-        TextStyle name;
-        name.size = 9.0;
-        name.fill = kPaper;
-        name.stroke = kInk;
-        name.align = Align::Centre;
-        name.baseline = Baseline::Bottom;
-        text(canvas, *label, dx, dy - radius - 2.0, name);
+        if (!label.empty()) labels.push_back({{dx, dy - radius - 2.0}, label, priority});
     };
-    const MapData* map = worldMaps_.forRealm(realm);
-    if (map) {
+    if (const MapData* map = worldMaps_.forRealm(realm)) {
         for (const auto& element : map->elements()) {
-            if (element.kind != MapElementKind::Teleporter ||
-                (element.targetMap != "zorr_void" && element.targetMap != "zorr_astral" &&
-                 element.targetMap != "zorr_null")) continue;
-            const std::string fallback = element.targetMap == "zorr_void" ? "Void" :
-                                         element.targetMap == "zorr_astral" ? "Astral" : "Null";
-            const std::string destination = ui::biomeTr(element.targetMap, fallback.c_str());
-            dot(element.centre(), 4.0, 0xBE9CEAu, true, &destination);
+            if (element.kind != MapElementKind::Teleporter || element.padId == "rift" ||
+                element.targetMap.empty()) continue;
+            bool found = false;
+            const Realm target = worldMaps_.realmOfId(element.targetMap, found);
+            const MapData* targetMap = found ? worldMaps_.forRealm(target) : nullptr;
+            if (targetMap == nullptr) continue;
+            const std::string& fallback = targetMap->displayName().empty()
+                ? targetMap->id() : targetMap->displayName();
+            const std::string destination = ui::biomeTr(targetMap->templateId(), fallback.c_str());
+            const bool arcane = element.targetMap == "zorr_void" || element.targetMap == "zorr_astral" ||
+                                element.targetMap == "zorr_null";
+            dot(element.centre(), arcane ? 4.0 : 3.0, arcane ? 0xBE9CEAu : 0x00FF00u,
+                true, destination, MapLabelPriority::Portal);
         }
     }
 
@@ -521,8 +559,8 @@ void App::drawMinimap(Canvas& canvas, bool expanded) {
         const bool squadmate = squad.contains(entry.first);
         const std::string label =
             entity.name.empty() ? std::string(tr(Msg::Flower)) : entity.name;
-        if (squadmate) dot(entity.position, 4.0, 0xFF69B4u, true, &label);
-        else dot(entity.position, 4.0, kInk, false, &label);
+        dot(entity.position, 4.0, squadmate ? 0xFF69B4u : kInk, squadmate, label,
+            playerLabelPriority(net_.guild(), entity.guildName, squadmate));
         painted.push_back(label);
     }
     const std::string selfName =
@@ -542,11 +580,12 @@ void App::drawMinimap(Canvas& canvas, bool expanded) {
         }
         if (already) continue;
         const std::string markerLabel=row.name+(projected?(ui::language()==ui::Language::Zh?"（白蚁丘内）":" (inside mound)"):"");
-        if (squadByName(row.name)) dot(at, 4.0, 0xFF69B4u, true, &markerLabel);
-        else dot(at, 4.0, kInk, false, &markerLabel);
+        const bool squadmate = squadByName(row.name);
+        dot(at, 4.0, squadmate ? 0xFF69B4u : kInk, squadmate, markerLabel,
+            playerLabelPriority(net_.guild(), row.guild, squadmate));
     }
     // Self last, so the blue dot is never hidden under someone standing on it.
-    dot(me, 3.0, 0x0000FFu, true, &selfName);
+    dot(me, 3.0, 0x0000FFu, true, selfName, MapLabelPriority::Self);
 
     // The camera's own rectangle, inside the clip, with hitboxes on. The
     // reference strokes it from cameraX/cameraY, which are the world-space TOP
@@ -564,6 +603,7 @@ void App::drawMinimap(Canvas& canvas, bool expanded) {
                     static_cast<float>(view.h * fit.scale));
         canvas.stroke();
     }
+    paintMapLabels(canvas, box, labels);
     canvas.restore();
 
     canvas.save();
@@ -820,8 +860,9 @@ void App::drawMazeMinimap(Canvas& canvas, const Rect& box) {
                 static_cast<float>(side));
     canvas.clip();
     // AOI + OnlineRoster (same realm), labeled — roster covers far humans.
+    std::vector<MapLabel> labels;
     const auto dot = [&](Vec2 world, double radius, std::uint32_t fill, bool outlined,
-                         const std::string* label) {
+                         const std::string& label, MapLabelPriority priority) {
         const double dx = x + (world.x - kMazeOriginX) * scale;
         const double dy = y + (world.y - kMazeOriginY) * scale;
         setFill(canvas, fill);
@@ -833,14 +874,7 @@ void App::drawMazeMinimap(Canvas& canvas, const Rect& box) {
             canvas.strokeCircle(static_cast<float>(dx), static_cast<float>(dy),
                                 static_cast<float>(radius));
         }
-        if (label == nullptr || label->empty()) return;
-        TextStyle name;
-        name.size = 9.0;
-        name.fill = kPaper;
-        name.stroke = kInk;
-        name.align = Align::Centre;
-        name.baseline = Baseline::Bottom;
-        text(canvas, *label, dx, dy - radius - 2.0, name);
+        if (!label.empty()) labels.push_back({{dx, dy - radius - 2.0}, label, priority});
     };
     const SquadState& squad = net_.squad();
     const auto squadByName = [&](const std::string& name) {
@@ -857,8 +891,8 @@ void App::drawMazeMinimap(Canvas& canvas, const Rect& box) {
         const bool squadmate = squad.contains(entry.first);
         const std::string label =
             entity.name.empty() ? std::string(tr(Msg::Flower)) : entity.name;
-        if (squadmate) dot(entity.position, 4.0, 0xFF69B4u, true, &label);
-        else dot(entity.position, 4.0, kInk, false, &label);
+        dot(entity.position, 4.0, squadmate ? 0xFF69B4u : kInk, squadmate, label,
+            playerLabelPriority(net_.guild(), entity.guildName, squadmate));
         painted.push_back(label);
     }
     const std::string selfName =
@@ -877,10 +911,12 @@ void App::drawMazeMinimap(Canvas& canvas, const Rect& box) {
         }
         if (already) continue;
         const Vec2 at{row.x, row.y};
-        if (squadByName(row.name)) dot(at, 4.0, 0xFF69B4u, true, &row.name);
-        else dot(at, 4.0, kInk, false, &row.name);
+        const bool squadmate = squadByName(row.name);
+        dot(at, 4.0, squadmate ? 0xFF69B4u : kInk, squadmate, row.name,
+            playerLabelPriority(net_.guild(), row.guild, squadmate));
     }
-    dot(net_.view().selfDrawnPosition(), 3.0, 0x0000FFu, true, &selfName);
+    dot(net_.view().selfDrawnPosition(), 3.0, 0x0000FFu, true, selfName, MapLabelPriority::Self);
+    paintMapLabels(canvas, box, labels);
     canvas.restore();
 
     canvas.save();

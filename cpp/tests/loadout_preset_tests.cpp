@@ -268,3 +268,86 @@ TEST(loading_a_preset_that_was_never_saved_empties_the_loadout) {
     CHECK_EQ(client.profile().stackCount(content().petalIndex("basic"), Rarity::Common), 1u);
     CHECK(h.stepUntil({&client}, [&] { return sawText(client, "Loaded loadout L0."); }));
 }
+
+TEST(loadout_preserves_current_prestige_and_restores_saved_talents_when_affordable) {
+    const double cell = kTileSize;
+    const auto map = fixtureMap(24, 24,
+        fixtureDoor("meadow", "Meadow", cell * 2, cell * 2, cell * 4, cell * 4, true, 0.0), "");
+    const std::string dir = stageDataDir("preset-prestige-budget", {{"meadow", map}});
+    if (dir.empty()) { CHECK(false); return; }
+    struct Cleanup {
+        const std::string& dir;
+        ~Cleanup() { removeDataDir(dir); }
+    } cleanup{dir};
+    if (!writeText(dir + "/maps.json", R"({"maps":[{"file":"meadow.tmj","prestige":true}]})")) {
+        CHECK(false);
+        return;
+    }
+    Harness h("preset-prestige-budget", [](const std::string& path) {
+        seedKeeper(path, [](PlayerRecord& record) {
+            record.talentPointBonus = 375;
+            record.setItemCount(Rarity::Common, bagKey("rose"), 1);
+            record.setItemCount(Rarity::Common, bagKey("basic"), 1);
+        });
+    }, dir, 0);
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient client;
+    CHECK(login(h, client));
+    const auto level = [&](SkillId skill) { return client.profile().skills.florrLevel(skill); };
+    const auto equip = [&](const char* petalId) {
+        client.setLoadoutSlot(0, content().petalIndex(petalId), Rarity::Common);
+        return h.stepUntil({&client}, [&] { return slotIs(client, 0, petalId, Rarity::Common); });
+    };
+    constexpr int l1 = kLoadoutPresetsPerBank;
+    constexpr int l2 = l1 + 1;
+
+    // Save L2 with Prestige I and seven points spent on Health.
+    client.requestUpgradeSkill(SkillId::Prestige, 0);
+    CHECK(h.stepUntil({&client}, [&] { return level(SkillId::Prestige) == 1; }));
+    for (int tier = 0; tier < 2; ++tier) {
+        client.requestUpgradeSkill(SkillId::Health, tier);
+        CHECK(h.stepUntil({&client}, [&] { return level(SkillId::Health) == tier + 1; }));
+    }
+    CHECK(equip("rose"));
+    client.saveLoadoutPreset(l2);
+    CHECK(h.stepUntil({&client}, [&] { return !client.profile().presets[l2].empty(); }));
+
+    // Prestige II leaves only two ordinary points. Save L1 and enter its map.
+    client.requestDowngradeSkill(SkillId::Health, 0);
+    CHECK(h.stepUntil({&client}, [&] { return level(SkillId::Health) == 0; }));
+    client.requestUpgradeSkill(SkillId::Prestige, 1);
+    CHECK(h.stepUntil({&client}, [&] { return level(SkillId::Prestige) == 2; }));
+    client.requestUpgradeSkill(SkillId::Damage, 0);
+    CHECK(h.stepUntil({&client}, [&] { return level(SkillId::Damage) == 1; }));
+    CHECK(equip("basic"));
+    client.saveLoadoutPreset(l1);
+    CHECK(h.stepUntil({&client}, [&] { return !client.profile().presets[l1].empty(); }));
+    client.loadLoadoutPreset(l1);
+    client.joinGame(1280, 720, "meadow", kName, true);
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; }));
+    const Realm prestigeRealm = client.view().realm();
+    const auto* mapData = h.server.worldMaps().forRealm(prestigeRealm);
+    CHECK(mapData && mapData->prestigeLevel() == 2);
+
+    client.loadLoadoutPreset(l2);
+    CHECK(h.stepUntil({&client}, [&] { return slotIs(client, 0, "rose", Rarity::Common); }));
+    CHECK(h.stepUntil({&client}, [&] {
+        return sawText(client, "已保留当前天赋") ||
+               sawText(client, "Current talents kept: the saved talents cost too many points.");
+    }));
+    CHECK(client.status() == NetClient::Status::Playing);
+    CHECK(client.view().realm() == prestigeRealm);
+    CHECK_EQ(level(SkillId::Prestige), 2);
+    CHECK_EQ(level(SkillId::Damage), 1);
+    CHECK_EQ(level(SkillId::Health), 0);
+
+    client.leaveGame();
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::LoggedIn; }));
+    client.requestDowngradeSkill(SkillId::Prestige, 1);
+    CHECK(h.stepUntil({&client}, [&] { return level(SkillId::Prestige) == 1; }));
+    client.loadLoadoutPreset(l2);
+    CHECK(h.stepUntil({&client}, [&] { return level(SkillId::Health) == 2; }));
+    CHECK_EQ(level(SkillId::Damage), 0);
+    CHECK_EQ(level(SkillId::Prestige), 1);
+}

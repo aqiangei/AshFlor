@@ -546,9 +546,7 @@ TEST(an_npc_that_stands_turns_to_look_at_the_flower_beside_it) {
     removeDataDir(dir);
 }
 
-TEST(the_oracle_looks_where_it_is_flying_even_with_a_flower_beside_it) {
-    // The oracle cruises, and its eye is on where it is going: a flower
-    // standing right next to it does not turn its head.
+TEST(the_oracle_holds_position_while_a_flower_can_craft_and_resumes_afterward) {
     const std::string dir = oracleWorld("npc-look-fly");
     Harness h("npc-look-fly", [](const std::string& path) { seedAccount(path, "seer"); }, dir, 0);
     if (!h.ready) { CHECK(false); removeDataDir(dir); return; }
@@ -561,23 +559,16 @@ TEST(the_oracle_looks_where_it_is_flying_even_with_a_flower_beside_it) {
     const Entity player = onlyPlayer(world);
     if (oracle == NULL_ENTITY || player == NULL_ENTITY) { CHECK(false); removeDataDir(dir); return; }
 
-    int checked = 0;
-    for (int i = 0; i < 120; ++i) {
-        // Kept right beside it, on the side it is NOT flying toward, so a head
-        // that turned to the flower would be pointing the wrong way.
-        const Transform& at = world.get<Transform>(oracle);
-        const double side = at.angle + kPi * 0.5;
-        world.get<Transform>(player).position =
-            at.position + Vec2::fromAngle(side, world.get<Body>(oracle).radius + 60.0);
-        const Vec2 before = at.position;
+    const Vec2 at = world.get<Transform>(oracle).position;
+    world.get<Transform>(player).position = at + Vec2{100.0, 0.0};
+    h.step(120, {&client});
+    CHECK_NEAR(distance(world.get<Transform>(oracle).position, at), 0.0, 1e-6);
+
+    for (int tick = 0; tick < 30; ++tick) {
+        world.get<Transform>(player).position = {kTileSize * 20.0, kTileSize * 20.0};
         h.step(1, {&client});
-        const Transform& after = world.get<Transform>(oracle);
-        const Vec2 step = after.position - before;
-        if (step.lengthSq() < 1e-6) continue;
-        CHECK_NEAR(angleDelta(after.angle, step.angle()), 0.0, 1e-9);
-        ++checked;
     }
-    CHECK(checked > 60);
+    CHECK(distance(world.get<Transform>(oracle).position, at) > 5.0);
     removeDataDir(dir);
 }
 

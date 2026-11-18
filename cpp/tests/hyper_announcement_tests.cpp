@@ -85,3 +85,20 @@ TEST(notification_language_uses_petal_id_and_preserves_player_text) {
     CHECK_EQ(ui::localizeNotificationText(stars, {}), stars);
     ui::setLanguage(before);
 }
+
+TEST(announced_jurassic_layouts_preserve_prestige_tier) {
+    const auto previous = ui::language();
+    ui::setLanguage(ui::Language::Zh);
+    const auto translate = [](const std::string& mapId,const std::string& suffix) {
+        const std::string tag=mapId.empty() ? "" : " data-map='" + mapId + "'";
+        return ui::localizeChatText("<b data-mob='bee'" + tag +
+            " style=\"color: #ff0000;\">A Hyper Bee has spawned" + suffix + "!</b>");
+    };
+    CHECK(translate("jurassic_pangea"," in Pangea").find("已在侏罗纪生成！")!=std::string::npos);
+    CHECK(translate("prestige_jurassic_pangea"," in Prestige Pangea").find("已在声望 I 侏罗纪生成！")!=std::string::npos);
+    CHECK(translate("prestige_2_jurassic_tectonics"," in Prestige II Tectonics").find("已在声望 II 侏罗纪生成！")!=std::string::npos);
+    CHECK(translate("prestige_2_jurassic"," in Prestige II Jurassic").find("已在声望 II 侏罗纪生成！")!=std::string::npos);
+    CHECK(translate(""," in Prestige II").find("已在声望 II 生成！")!=std::string::npos);
+    CHECK(translate(""," somewhere in Prestige I").find("已在声望 I 的某处生成！")!=std::string::npos);
+    ui::setLanguage(previous);
+}

@@ -446,7 +446,7 @@ void App::drawHudFlower(Canvas& canvas, std::uint32_t netId, double centreX, dou
 
 void App::drawSquadHud(Canvas& canvas, double time, double hudBottom) {
     const SquadState& squad = net_.squad();
-    if (!squad.inSquad) return;
+    if (squad.members.empty()) return;
 
     // Uniformly 80% of the main HUD and laid out the same way, which is what
     // the reference scales its own squad block to.
@@ -634,7 +634,12 @@ double App::drawBossBars(Canvas& canvas, bool altHeld) {
     // fixture, so neither earns the screen-top bar whatever tier it wears.
     // A centipede or a leech is one boss however many bodies it drags: the
     // head wears the bar and the segments behind it none.
-    std::vector<const RemoteEntity*> bosses;
+    struct BossBarTarget {
+        const RemoteEntity* entity;
+        double distanceSquared;
+    };
+    std::vector<BossBarTarget> bosses;
+    const Vec2 playerPosition = net_.view().selfDrawnPosition();
     const Rect view = camera_.visibleWorld();
     for (const auto& entry : net_.view().entities()) {
         const RemoteEntity& entity = entry.second;
@@ -654,13 +659,19 @@ double App::drawBossBars(Canvas& canvas, bool altHeld) {
             entity.position.y + margin < view.top() || entity.position.y - margin > view.bottom()) {
             continue;
         }
-        bosses.push_back(&entity);
+        const double distanceSquared = distanceSq(playerPosition, entity.position);
+        if (std::isfinite(distanceSquared)) bosses.push_back({&entity, distanceSquared});
     }
     if (bosses.empty()) return 0.0;
-    // The entity table is unordered, so two bosses on screen at once would
-    // otherwise trade rows from frame to frame.
-    std::sort(bosses.begin(), bosses.end(),
-              [](const RemoteEntity* a, const RemoteEntity* b) { return a->netId < b->netId; });
+    constexpr std::size_t kMaxBossBars = 3;
+    const std::size_t shown = std::min(bosses.size(), kMaxBossBars);
+    // Distance is from the flower, since the camera may be pinned to a map
+    // edge. The stable tie-break keeps the unordered entity table out of it.
+    std::partial_sort(bosses.begin(), bosses.begin() + shown, bosses.end(),
+        [](const BossBarTarget& a, const BossBarTarget& b) {
+            if (a.distanceSquared != b.distanceSquared) return a.distanceSquared < b.distanceSquared;
+            return a.entity->netId < b.entity->netId;
+        });
 
     constexpr double kBarWidth = 400.0;
     constexpr double kBarHeight = 34.0;
@@ -686,8 +697,8 @@ double App::drawBossBars(Canvas& canvas, bool altHeld) {
     canvas.save();
     canvas.setGlobalAlpha(static_cast<float>(kHudLayerAlpha));
 
-    for (std::size_t i = 0; i < bosses.size(); ++i) {
-        const RemoteEntity& boss = *bosses[i];
+    for (std::size_t i = 0; i < shown; ++i) {
+        const RemoteEntity& boss = *bosses[i].entity;
         const double barY = kTopMargin + static_cast<double>(i) * kRowSpacing;
 
         // Max health is not on the wire -- only the fraction is -- so it is
@@ -736,7 +747,7 @@ double App::drawBossBars(Canvas& canvas, bool altHeld) {
 
     canvas.restore();
     // The last row's tier line, which is the lowest thing in the block.
-    const double lastBarY = kTopMargin + static_cast<double>(bosses.size() - 1) * kRowSpacing;
+    const double lastBarY = kTopMargin + static_cast<double>(shown - 1) * kRowSpacing;
     return lastBarY + kBarHeight + kTierDrop - descent(kTierSize);
 }
 

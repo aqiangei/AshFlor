@@ -840,7 +840,8 @@ private:
     };
     void prepareTargets(const World& world, const Terrain& terrain, const SpatialGrid& grid,
                         double nowMillis);
-    void preparePetTargets(World& world, const Terrain& terrain, const SpatialGrid& grid);
+    void preparePetTargets(World& world, const Terrain& terrain, const SpatialGrid& grid,
+                           double nowMillis);
     static PetPreyTarget readPetPrey(const World& world, Entity candidate);
 
     Drive driveFor(std::uint16_t configIndex, Rarity rarity);
@@ -1056,7 +1057,8 @@ private:
     /// kPetRetargetMargin kept by its current target.
     PetPrey acquirePetPrey(const World& world, const Terrain& terrain, const SpatialGrid& grid,
                            Entity self, Vec2 from, Realm realm, Entity previous, bool hasOwner,
-                           double range, TargetScratch& scratch, bool frozenTargets = false) const;
+                           double range, double nowMillis, TargetScratch& scratch,
+                           bool frozenTargets = false) const;
     /// Pops a sandstorm pet onto a clear, visible ring position around its
     /// owner. False when nothing was clear and the pet stayed where it was.
     bool teleportPetToOwner(const Terrain& terrain, Transform& transform, Vec2 ownerPosition);

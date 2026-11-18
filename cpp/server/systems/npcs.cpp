@@ -326,6 +326,18 @@ void NpcSystem::run(World& world, const Terrain& terrain, const ContentRegistry&
         // Neither moves nor turns: it stands where it was put down, facing
         // where it was put down facing.
         if (npc.still) return;
+        if (npc.cruises && npc.service == NpcService::Oracle) {
+            const auto* faction = world.tryGet<Faction>(e);
+            if (faction && faction->team == Team::Players) {
+                const double reach = kNpcServiceReach + npc.serviceRadius;
+                const bool serving = std::any_of(players.begin(), players.end(),
+                    [&](const RealmPoint& player) {
+                        return player.realm == transform.realm &&
+                               distanceSq(player.position, transform.position) <= reach * reach;
+                    });
+                if (serving) return;
+            }
+        }
         if (npc.cruises) {
             // The leash: out past it, the heading swings back toward home a
             // little each tick, and the weave the cruise lays over it goes on.

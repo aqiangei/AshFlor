@@ -275,6 +275,46 @@ TEST(an_invitation_reaches_the_invitee_and_joins_them_on_accept) {
     CHECK(!recruit.guildInvite().waiting);
 }
 
+TEST(guild_panel_can_invite_a_squad_and_fill_the_last_seat) {
+    Harness h("guild-squad-merge", [](const std::string& path) {
+        for (const char* name : {"leader", "member", "wing", "last"})
+            seedUser(path, name, "password7");
+    });
+    if (!h.ready) { CHECK(false); return; }
+    NetClient leader, member, wing, last;
+    CHECK(loginAs(h, leader, "leader", "password7"));
+    CHECK(loginAs(h, member, "member", "password7"));
+    CHECK(loginAs(h, wing, "wing", "password7"));
+    CHECK(loginAs(h, last, "last", "password7"));
+    const std::vector<NetClient*> clients = {&leader, &member, &wing, &last};
+
+    leader.requestGuildCreate("party", "Party");
+    CHECK(h.stepUntil(clients, [&] { return leader.guild().joined; }));
+    for (const auto& invitee : {std::pair{"member", &member}, std::pair{"last", &last}}) {
+        leader.requestGuildInvite(invitee.first);
+        CHECK(h.stepUntil(clients, [&] { return invitee.second->guildInvite().waiting; }));
+        invitee.second->requestGuildAccept();
+        CHECK(h.stepUntil(clients, [&] { return invitee.second->guild().joined; }));
+    }
+
+    CHECK(say(h, member, "/squad-invite wing"));
+    CHECK(h.stepUntil(clients, [&] { return wing.squadInvite().waiting; }));
+    CHECK(say(h, wing, "/squad-accept"));
+    CHECK(h.stepUntil(clients, [&] { return member.squad().members.size() == 2; }));
+    leader.requestGuildInviteToSquad("member");
+    CHECK(h.stepUntil(clients, [&] { return member.squadInvite().waiting; }));
+    CHECK(say(h, member, "/squad-accept"));
+    CHECK(h.stepUntil(clients, [&] {
+        return leader.squad().members.size() == 3 && wing.squad().id == leader.squad().id;
+    }));
+    leader.requestGuildSquadAll();
+    CHECK(h.stepUntil(clients, [&] { return last.squadInvite().waiting; }));
+    CHECK(say(h, last, "/squad-accept"));
+    CHECK(h.stepUntil(clients, [&] {
+        return leader.squad().members.size() == 4 && last.squad().id == leader.squad().id;
+    }));
+}
+
 TEST(a_kick_empties_the_kicked_players_guild_and_shortens_everyone_elses) {
     Harness h("guild-kick", [](const std::string& path) {
         seedUser(path, "leader", "password7");
