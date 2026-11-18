@@ -1978,6 +1978,10 @@ void SpawnSystem::rebuildZones(const ContentRegistry& content) {
             zone.bounds = element.bounds;
             zone.polygon = element.polygon;
             zone.difficulty = element.difficulty;
+            if (map.prestigeLevel() == 1 && map.biome() == "pyramid" &&
+                element.isSpawnBand() && !element.singular && element.forceRarity < 0) {
+                zone.difficulty += 15.0;
+            }
             if (prestigeHel && element.forceRarity < 0) {
                 // Raise the approach to the Ultra curve and keep the deepest
                 // band on the curve that Prestige can promote to Super.
@@ -2532,8 +2536,29 @@ void SpawnSystem::stockSuperFarms(World& world, const Terrain& terrain,
         const int deepest=static_cast<int>(std::count_if(candidates.begin(),candidates.end(),
             [&](auto i){return zones_[i].difficulty==highest;}));
         const double deepTarget=static_cast<double>(farmPopulation)/3/std::max(1,deepest);
-        const double otherTarget=(farmPopulation-deepTarget*deepest)/
-            std::max(1,static_cast<int>(candidates.size())-deepest);
+        // The dedicated map is large enough that filling distant bands first
+        // can make its entrance look empty. Give its entrance habitats a
+        // share of the existing quota and retain the usual spawn clearance.
+        std::vector<bool> entryBand(zones_.size(), false);
+        int entryBands = 0;
+        if (dedicatedFarm && !map.playerSpawns().empty()) {
+            const auto& entry = map.playerSpawns().front()->bounds;
+            const Vec2 centre{entry.x + entry.w * 0.5, entry.y + entry.h * 0.5};
+            constexpr double entryReach = 1800.0;
+            for (const auto index : candidates) {
+                const auto& zone = zones_[index];
+                const Vec2 midpoint{zone.bounds.x + zone.bounds.w * 0.5,
+                                    zone.bounds.y + zone.bounds.h * 0.5};
+                if (zone.difficulty < highest && distanceSq(centre, midpoint) <= entryReach * entryReach) {
+                    entryBand[index] = true;
+                    ++entryBands;
+                }
+            }
+        }
+        const double entryStock = entryBands > 0 ? 6.0 : 0.0;
+        const double entryTarget = entryStock / std::max(1, entryBands);
+        const double otherTarget = (farmPopulation - deepTarget * deepest - entryStock) /
+            std::max(1, static_cast<int>(candidates.size()) - deepest - entryBands);
         std::vector<unsigned> attemptsByZone(zones_.size(), 0);
         for (int attempt=0;attempt<160 && state->population.ready(nowMillis);++attempt) {
             auto index=candidates[rng.below(static_cast<std::uint32_t>(candidates.size()))];
@@ -2541,7 +2566,8 @@ void SpawnSystem::stockSuperFarms(World& world, const Terrain& terrain,
             for(const auto candidate:candidates){
                 const double wanted=deepest==static_cast<int>(candidates.size())?
                     static_cast<double>(farmPopulation)/deepest:
-                    zones_[candidate].difficulty==highest?deepTarget:otherTarget;
+                    zones_[candidate].difficulty==highest?deepTarget:
+                    entryBand[candidate]?entryTarget:otherTarget;
                 // A blocked/visible room must not consume every retry and
                 // prevent safe rooms from receiving their replacements.
                 const double deficit=wanted-zoneLiving[candidate]-attemptsByZone[candidate]+rng.unit()*.01;

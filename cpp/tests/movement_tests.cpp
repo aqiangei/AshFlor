@@ -1,6 +1,7 @@
 #include "test.h"
 
 #include "server/systems/movement.h"
+#include "server/systems/npcs.h"
 #include "server/systems/spawning.h"
 #include "server/workers.h"
 #include "server_harness.h"
@@ -1067,6 +1068,29 @@ TEST(a_guided_shot_re_aims_once_at_launch_and_then_flies_straight) {
     CHECK(fx.positionOf(homing).y > 5100.0);
     CHECK_NEAR(fx.velocityOf(homing).length(), 500.0, 1e-9);
     CHECK_NEAR(fx.velocityOf(dumb).y, 0.0, 1e-12);
+}
+
+TEST(guided_shots_use_an_eternal_training_dummys_edge_at_launch) {
+    std::string error;
+    if (!loadContent(testsupport::dataDir(), error)) { CHECK(false); return; }
+    const auto missile = content().petalIndex("missile");
+    const double range = content().petal(missile).projectile.distance;
+    const Vec2 launch{5000, 5000};
+    for (const double edgeGap : {range - 20.0, range + 20.0}) {
+        Fixture fx;
+        NpcSystem npcs;
+        const Entity dummy = npcs.spawnNpc(fx.world, fx.terrain, content(),
+            content().mobIndex("target_dummy"), Rarity::Unique, {6000, 6000},
+            Realm::Overworld, 0.0);
+        CHECK(dummy != NULL_ENTITY);
+        if (dummy == NULL_ENTITY) continue;
+        const double radius = fx.world.get<Body>(dummy).radius;
+        CHECK(radius > 20.0);
+        fx.world.get<Transform>(dummy).position = launch + Vec2{0, radius + edgeGap};
+        const Entity shot = fx.spawnProjectile(launch, {300, 0}, range, range, kPi);
+        fx.step();
+        CHECK_NEAR(fx.velocityOf(shot).angle(), edgeGap < range ? kPi * 0.5 : 0.0, 1e-9);
+    }
 }
 
 TEST(homing_ignores_targets_outside_the_cone_and_on_its_own_team) {

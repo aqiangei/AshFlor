@@ -299,6 +299,7 @@ public:
         /// view of the world, not a change to it.
         bool hideOtherPetals = false;
         bool hideOtherPets = false;
+        bool hideOwnPets = false;
         bool disableUltraPetalParticles = false;
         bool simplifyCombatEffects = false;
         /// Shakes the world when the viewer's own flower is hit (florr's
@@ -410,7 +411,8 @@ private:
     /// outside it, and the red boundary the server clamps bodies to.
     void drawArena(Canvas&, const Camera&) const;
     /// Teleporters, off the realm's own map.
-    void drawMapElements(Canvas&, const Camera&, Realm realm, double timeSeconds) const;
+    void drawMapDecorations(Canvas&, const Camera&, Realm realm, double timeSeconds) const;
+    void drawTeleporters(Canvas&, const Camera&, Realm realm, double timeSeconds) const;
     bool riftOpen_ = false;
     void drawEntity(Canvas&, const RemoteEntity&, const Camera&, Vec2 at, double timeSeconds) const;
     void drawFlower(Canvas&, const RemoteEntity&, const Camera&, Vec2 at, double timeSeconds) const;

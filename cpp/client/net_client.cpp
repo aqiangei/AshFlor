@@ -97,6 +97,7 @@ const char* serverMessageName(std::uint8_t id) {
         case net::ServerMessage::Chat:                return "chat";
         case net::ServerMessage::Notice:              return "notice";
         case net::ServerMessage::Died:                return "died";
+        case net::ServerMessage::RunLoot:             return "runLoot";
         case net::ServerMessage::Revived:             return "revived";
         case net::ServerMessage::CraftResult:         return "craftResult";
         case net::ServerMessage::PracticeBoard:       return "practiceBoard";
@@ -1341,6 +1342,7 @@ void NetClient::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ServerMessage::Chat:         handleChat(reader); break;
         case net::ServerMessage::Notice:       handleNotice(reader); break;
         case net::ServerMessage::Died:         handleDied(reader); break;
+        case net::ServerMessage::RunLoot:      runLootOverview_ = readRunLoot(reader); break;
         case net::ServerMessage::Revived:      handleRevived(reader); break;
         case net::ServerMessage::CraftResult:  handleCraftResult(reader); break;
         case net::ServerMessage::PracticeBoard: handlePracticeBoard(reader); break;
@@ -2000,9 +2002,9 @@ void NetClient::handleOnlineRoster(ByteReader& reader) {
 
 void NetClient::handleSquadUpdate(ByteReader& reader) {
     SquadState next;
-    next.inSquad = reader.boolean();
-    if (next.inSquad) {
+    if (reader.boolean()) {
         next.id = reader.str();
+        next.inSquad = !next.id.empty();
         next.joinCode = reader.str();
         next.isPublic = reader.boolean();
         const std::uint8_t count = reader.u8();
@@ -2147,6 +2149,7 @@ void NetClient::handleJoinAccepted(ByteReader& reader) {
     status_ = Status::Playing;
     dead_ = false;
     runLoot_.clear();
+    runLootOverview_.reset();
     revived = false;
     clearViewOnSnapshot_ = false;
     view_.clear();
@@ -2380,14 +2383,11 @@ void NetClient::handleNotice(ByteReader& reader) {
     addSystemMessage(text);
 }
 
-void NetClient::handleDied(ByteReader& reader) {
-    auto killer = reader.str();
-    reader.u32();   // xp lost
-    reader.u32();   // ticks survived
+std::optional<std::vector<Profile::Stack>> NetClient::readRunLoot(ByteReader& reader) {
     const auto count = reader.u32();
     constexpr std::size_t stackBytes = 7;
     if (!reader.ok() || reader.remaining() % stackBytes != 0 ||
-        count != reader.remaining() / stackBytes) return;
+        count != reader.remaining() / stackBytes) return std::nullopt;
     std::vector<Profile::Stack> collected;
     collected.reserve(count);
     for (std::uint32_t i = 0; i < count; ++i) {
@@ -2397,8 +2397,18 @@ void NetClient::handleDied(ByteReader& reader) {
         if (petal < content().petalCount() && tier < kRarityCount && quantity > 0)
             collected.push_back({petal, static_cast<Rarity>(tier), quantity});
     }
+    return collected;
+}
+
+void NetClient::handleDied(ByteReader& reader) {
+    auto killer = reader.str();
+    reader.u32();   // xp lost
+    reader.u32();   // ticks survived
+    auto loot = readRunLoot(reader);
+    if (!loot) return;
     killerName_ = std::move(killer);
-    runLoot_ = std::move(collected);
+    runLoot_ = std::move(*loot);
+    runLootOverview_.reset();
     dead_ = true;
 }
 

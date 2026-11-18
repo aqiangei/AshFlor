@@ -22,7 +22,7 @@ struct BossFloorAudit {
     std::vector<int> floorCopiesByKill;
 };
 Counts kills(const char* id,Rarity rarity,int count,bool orb=false,int bonus=1,int* maxEternal=nullptr,bool splitAccount=false,double damage=100.0,
-             BossFloorAudit* audit=nullptr){
+             BossFloorAudit* audit=nullptr, bool finisher=false){
     const auto& c=registry();World w;CommandBuffer commands{w};EventQueue events;SpatialGrid grid;Rng rng{81927};LootSystem loot;loot.bonusMultiplier=[bonus](Entity){return bonus;};
     if (audit) loot.allowsBossParticipationFloor = [audit](Realm) { return audit->enabled; };
     int priorMeaningful = 0;
@@ -34,7 +34,7 @@ Counts kills(const char* id,Rarity rarity,int count,bool orb=false,int bonus=1,i
     if(splitAccount){sibling=w.create();w.add<PlayerTag>(sibling);w.add<PlayerAccount>(sibling,PlayerAccount{"audit-user","audit",77,false});w.add<Transform>(sibling,Transform{{10000,10000},0});w.add<Health>(sibling,Health{100,100,0,0});}
     int previousEternal=0;
     if(orb){w.add<Loadout>(p);auto& s=w.get<Loadout>(p).slots[0];s.configIndex=c.petalIndex("mana_orb");s.rarity=Rarity::Mythic;}
-    for(int i=0;i<count;++i){const Entity corpse=w.create();w.add<MobTag>(corpse);w.add<MobType>(corpse,MobType{c.mobIndex(id),rarity,1});w.add<Transform>(corpse,Transform{{1000,1000},0});w.add<Health>(corpse,Health{0,100,0,0});Bounty b;b.credit(p,damage,77);if(splitAccount)b.credit(sibling,damage,77);w.add<Bounty>(corpse,b);w.add<Dead>(corpse,Dead{p});loot.run(w,grid,c,rng,i,0,commands,events);commands.flush();w.destroy(corpse);
+    for(int i=0;i<count;++i){const Entity corpse=w.create();w.add<MobTag>(corpse);w.add<MobType>(corpse,MobType{c.mobIndex(id),rarity,1});w.add<Transform>(corpse,Transform{{1000,1000},0});w.add<Health>(corpse,Health{0,100,0,0});Bounty b;b.credit(p,damage,77);if(splitAccount)b.credit(sibling,damage,77);w.add<Bounty>(corpse,b);w.add<Dead>(corpse,Dead{finisher ? (splitAccount ? sibling : p) : NULL_ENTITY});loot.run(w,grid,c,rng,i,0,commands,events);commands.flush();w.destroy(corpse);
         if (audit) {
             int meaningful = 0, privateFloor = 0;
             Query<DropTag,DropItem>{w}.each([&](Entity, DropTag&, DropItem& d) {
@@ -67,6 +67,24 @@ TEST(apex_reward_roll_is_personal_and_independent_of_drop_bonus) {
         }
         CHECK_NEAR(static_cast<double>(apex) / trials, 0.02, 0.012);
     }
+}
+
+TEST(apex_reward_roll_increases_for_a_qualified_finisher) {
+    constexpr int trials = 3200;
+    const auto countApex = [](const Counts& drops) {
+        int count = 0;
+        for (const auto& [key, quantity] : drops) {
+            if (key.second == rarityIndex(Rarity::Ascendant)) count += quantity;
+        }
+        return count;
+    };
+    const int normal = countApex(kills("crab", Rarity::Ascendant, trials, false, 1, nullptr, true));
+    const int finisher = countApex(kills("crab", Rarity::Ascendant, trials, false, 1,
+                                        nullptr, true, 100, nullptr, true));
+    CHECK(finisher > normal);
+    CHECK_NEAR(static_cast<double>(finisher) / trials, kApexFinisherPetalDropChance, 0.009);
+    CHECK_EQ(countApex(kills("crab", Rarity::Ascendant, 240, false, 1, nullptr,
+                             false, 0.9, nullptr, true)), 0);
 }
 
 TEST(hyper_personal_permanent_drop_matches_the_apex_rate_and_damage_floor) {

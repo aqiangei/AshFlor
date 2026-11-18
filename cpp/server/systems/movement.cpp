@@ -782,9 +782,6 @@ void MovementSystem::stepTeleporters(World& world, double nowMillis, double dt) 
         // pulled by one: the suction is the pad's first act, and a bot half
         // dragged onto a pad it can never take would stand there forever.
         if (takesTeleporters && !takesTeleporters(e)) continue;
-        if (const auto* pads = world.tryGet<TeleporterState>(e)) {
-            if (nowMillis < pads->markHoldUntilMillis && isStanding(world, e)) continue;
-        }
         Transform* transform = world.tryGet<Transform>(e);
         if (!transform) continue;
         // Every world map has its own pads. The arena and the maze have none:
@@ -1159,10 +1156,8 @@ void MovementSystem::collectSeekTargets(const World& world) {
     seekTargets_.clear();
     seekTargetsReady_ = true;
 
-    // Mobs only. The reference's seek walks the shared enemy broadphase, which
-    // deliberately holds no players and no pets, so a guided shot locks onto
-    // wild mobs and nothing else; the team test below is what keeps a pet off
-    // the list here, since a pet is a mob on the players' team.
+    // The reference seeks enemies rather than players or allied pets. Pets
+    // share this query with wild mobs; the team check filters them below.
     queries_->mobTargets.each([&](Entity e, MobTag&, Transform& t, Faction& f, Health& h) {
         if (!h.alive()) return;
         seekTargets_.push_back({e, t.position, f.team, t.realm, world.has<GhostTag>(e) ? petalTier(world.tryGet<MobType>(e)->rarity) : -1});
@@ -1172,7 +1167,15 @@ void MovementSystem::collectSeekTargets(const World& world) {
     // the oracle would be wasted on something that takes no hits.
     queries_->npcTargets.each([&](Entity e, NpcTag&, Transform& t, Faction& f) {
         if (f.team == Team::Players) return;
-        seekTargets_.push_back({e, t.position, f.team, t.realm});
+        double practiceRadius = 0.0;
+        if (const auto* npc = world.tryGet<Npc>(e)) {
+            const auto& id = content().mob(npc->configIndex).id;
+            const auto* body = world.tryGet<Body>(e);
+            if (body && (id == "target_dummy" || id == "test_dummy")) {
+                practiceRadius = std::max(0.0, body->radius);
+            }
+        }
+        seekTargets_.push_back({e, t.position, f.team, t.realm, -1, practiceRadius});
     });
 }
 
@@ -1182,7 +1185,6 @@ Entity MovementSystem::findSeekTarget(Entity self, const Projectile& projectile,
     // firing bearing -- the reference's default. A full circle would let a
     // shot leave along a bearing nothing was ever fired on.
     const double cone = projectile.seekCone > 0.0 ? projectile.seekCone : kPi * 0.25;
-    const double rangeSq = projectile.seekRange * projectile.seekRange;
     double bestDistanceSq = 0.0;
     Entity best = NULL_ENTITY;
 
@@ -1194,8 +1196,11 @@ Entity MovementSystem::findSeekTarget(Entity self, const Projectile& projectile,
 
         const Vec2 toTarget = candidate.position - position;
         const double distanceSquared = toTarget.lengthSq();
+        // A large practice target can be within the shot's reach even while
+        // its centre is farther away. Keep the bearing and target ordering.
+        const double range = projectile.seekRange + candidate.practiceRadius;
         // A target sitting exactly on the shot has no bearing to aim at.
-        if (distanceSquared > rangeSq || distanceSquared < 1e-12) continue;
+        if (distanceSquared > range * range || distanceSquared < 1e-12) continue;
         // Strictly nearer, so an exact tie keeps the one found first.
         if (best != NULL_ENTITY && distanceSquared >= bestDistanceSq) continue;
         if (std::fabs(angleDelta(heading, toTarget.angle())) > cone) continue;

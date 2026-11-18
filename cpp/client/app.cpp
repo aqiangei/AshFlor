@@ -821,7 +821,7 @@ void App::frame(double dt) {
     }
 
     if (screen_ != Screen::Playing) {
-        if (pinchDistance_ > 0.0) menus_.settings().zoomDirty = true;
+        if (pinchDistance_ > 0.0) menus_.settings().settingsDirty = true;
         zoomTouches_.clear();
         pinchDistance_ = 0.0;
     }
@@ -1151,11 +1151,11 @@ void App::frame(double dt) {
 #endif
     auto& settingsForSave = menus_.settings();
     if (settingsForSave.craftBlacklistDirty || settingsForSave.notificationReadsDirty ||
-        settingsForSave.zoomDirty) {
+        settingsForSave.settingsDirty) {
         if (settingsForSave.save(settingsPath())) {
             settingsForSave.craftBlacklistDirty = false;
             settingsForSave.notificationReadsDirty = false;
-            settingsForSave.zoomDirty = false;
+            settingsForSave.settingsDirty = false;
         }
     }
     window_.present();

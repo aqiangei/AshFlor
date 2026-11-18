@@ -304,3 +304,43 @@ TEST(magic_stick_reports_when_an_eligible_summon_lacks_mana) {
     Query<Pet>{world}.each([&](Entity, Pet&) { ++storms; });
     CHECK_EQ(storms, 0);
 }
+
+TEST(hyper_magic_basil_recovers_more_mana_below_half) {
+    World world;
+    PetalSystem petals;
+    CommandBuffer commands{world};
+    const auto& registry = shippedContent();
+    const auto basil = registry.petalIndex("magic_basil");
+    const auto soil = registry.petalIndex("magic_soil");
+    if (basil == kInvalidIndex || soil == kInvalidIndex) { CHECK(false); return; }
+    const auto player = world.create();
+    world.add<PlayerTag>(player);
+    world.add<Transform>(player, Transform{{900,900},0});
+    world.add<Motion>(player);
+    world.add<Body>(player, Body{kPlayerBaseRadius,1});
+    world.add<Health>(player, Health{100,100});
+    world.add<Faction>(player, Faction{Team::Players,true});
+    world.add<PlayerInput>(player);
+    world.add<PlayerModifiers>(player);
+    world.add<PetalRing>(player);
+    world.add<Loadout>(player).slots[0] = {soil, Rarity::Apex};
+    int tick = 0;
+    const auto step = [&] { petals.run(world,registry,1000 + 50 * tick++,net::kTickSeconds,commands); commands.flush(); };
+    step();
+    for (const auto tier : {Rarity::Unique,Rarity::Apex,Rarity::PermanentHyper,Rarity::Ascendant}) {
+        world.get<Loadout>(player).slots[1] = {basil,tier};
+        step();
+        const auto base = registry.petalStats(basil,tier).passiveManaPerSecond;
+        const auto baseSoil = registry.petalStats(soil,Rarity::Apex).passiveManaPerSecond;
+        for (const double fill : {0.25,0.5,0.75}) {
+            auto& mana=world.get<ManaPool>(player);
+            const double before = mana.current = mana.max * fill;
+            step();
+            const auto bonus = isHyperPetal(tier) && fill<0.5 ? 1.10 : 1.0;
+            const auto rate = world.get<PlayerModifiers>(player).passiveManaPerSecond;
+            CHECK_NEAR(rate - baseSoil,base*bonus,1e-6);
+            CHECK_NEAR(world.get<ManaPool>(player).current - before, rate*net::kTickSeconds,1e-6);
+            std::printf("tier %d fill %.2f base %.2f observed %.2f\n", rarityIndex(tier),fill,base,rate-baseSoil);
+        }
+    }
+}

@@ -278,7 +278,8 @@ public:
     /// sacrifice's star reloads an egg it touches without reaching for pets
     /// standing outside it.
     bool spendSlot(World& world, const ContentRegistry& registry, Entity player,
-                   std::uint8_t slot, double nowMillis, bool recallSummons = true);
+                   std::uint8_t slot, double nowMillis, bool recallSummons = true,
+                   bool restartReload = false);
 
     /// Put the petal that hatched `pet` back on its reload, as a summon
     /// retired for getting lost does. For whoever ends a pet from outside
@@ -524,7 +525,7 @@ private:
     /// Checks overlap against wild mobs and hostile NPCs in the attraction grid.
     /// Parked contact petals also trigger on a hostile NPC's remaining body.
     bool touchesGridMob(World& world, Realm realm, Vec2 at, double radius,
-                        bool includeDeadNpcs = false, bool wildOnly = false);
+                        bool includeDeadNpcs = false, bool bubbleBomb = false);
     /// Where a compass at `at` points: the nearest magnet its flower wears,
     /// or else the highest-tier wild mob in its realm (the nearest of those),
     /// with florr's needle wobble on top. `fallback`, its place on the ring,

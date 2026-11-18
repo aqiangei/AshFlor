@@ -755,6 +755,23 @@ TEST(magic_bubble_bomb_contact_pushes_nearby_wild_mobs_once) {
     rig.combatTick(4100);
     CHECK_NEAR(rig.world.get<Health>(near).current, 999.65, 1e-6);
 }
+TEST(magic_bubble_bomb_pushes_a_mob_that_covers_its_centre) {
+    ArcticBlast collision("magic_bubble_bomb", Rarity::Common, "mana_orb");
+    const auto live = collision.liveIn(0);
+    CHECK(!live.empty());
+    if (live.empty()) return;
+    const Vec2 centre = collision.world.get<Transform>(live.front()).position;
+    const Vec2 flower = collision.world.get<Transform>(collision.player).position;
+    const Entity overlap = collision.mob(centre);
+    collision.world.add<Motion>(overlap);
+    // Keep the ring still while the contact pass runs at exact overlap.
+    collision.petals.run(collision.world, collision.registry, 4050, 0.0, collision.commands);
+    collision.commands.flush();
+    const auto* knockback = collision.world.tryGet<Knockback>(overlap);
+    CHECK(knockback && knockback->impulse.length() > 1.0);
+    if (knockback) CHECK_NEAR(knockback->impulse.angle(), (centre - flower).angle(), 1e-9);
+}
+
 TEST(magic_bubble_bomb_high_blueberries_keep_volley_rate) {
     const auto& c=testsupport::shippedContent();
     const auto berry=c.petalIndex("magic_peas");
@@ -922,4 +939,41 @@ TEST(feedback_wild_stingers_push_flowers_without_changing_hit_damage) {
             CHECK_NEAR(push, wild && std::string_view(ammo) != "stinger" ? 48.0 : 5.0, 1e-6);
         }
     }
+}
+
+TEST(fluid_spills_reach_buffed_range_and_record_training_damage) {
+    std::string error;
+    if (!loadContent(testsupport::dataDir(), error)) { CHECK(false); return; }
+    ArcticBlast rig("acid");
+    rig.equip(1, "void_soap", Rarity::Super);
+    rig.world.add<PlayerSkillTree>(rig.player).skills.set(SkillId::FluidReach, 2);
+    rig.world.get<PlayerInput>(rig.player).current.flags = net::InputAttack;
+    for (int now = 4050; now <= 6100; now += 50) rig.tickPetals(now);
+    Entity field = NULL_ENTITY;
+    Query<GroundEffect>{rig.world}.each([&](Entity e, GroundEffect& spill) {
+        if (spill.kind == GroundEffectKind::AcidSpill && field == NULL_ENTITY) field = e;
+    });
+    CHECK(field != NULL_ENTITY);
+    if (field == NULL_ENTITY) return;
+    const auto radius = rig.world.get<GroundEffect>(field).radius;
+    CHECK_NEAR(radius, 57.5 * 1.62 * 1.30, 1e-6);
+    const auto centre = rig.world.get<Transform>(field).position;
+    const auto wild = rig.mob(centre + Vec2{100, 0});
+    const auto outside = rig.mob(centre + Vec2{0, 500});
+    auto dummy = rig.mob(centre + Vec2{0, 100});
+    rig.world.remove<MobTag>(dummy);
+    rig.world.add<NpcTag>(dummy);
+    const auto dummyIndex = content().mobIndex("target_dummy");
+    CHECK(dummyIndex != kInvalidIndex);
+    rig.world.add<Npc>(dummy).configIndex = dummyIndex;
+    rig.combatTick(6150);
+    CHECK(rig.world.get<Health>(wild).current < 1000.0);
+    CHECK_EQ(rig.world.get<Health>(outside).current, 1000.0);
+    CHECK_EQ(rig.world.get<Health>(dummy).current, 1000.0);
+    const auto damage = rig.combat.practiceDamage(rig.player, 6150, dummy);
+    CHECK(!damage.empty());
+    if (!damage.empty()) CHECK(damage.front().amount > 0.0);
+    std::printf("Acid radius %.3f, wild damage %.3f, training damage %.3f\n", radius,
+                1000.0 - rig.world.get<Health>(wild).current,
+                damage.empty() ? 0.0 : damage.front().amount);
 }

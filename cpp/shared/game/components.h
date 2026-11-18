@@ -559,6 +559,8 @@ struct PetalRing {
 struct PlayerInput {
     net::InputFrame current;
     Vec2 previousWalkIntent; ///< Unit direction scaled by the last applied walk strength.
+    Entity summonFocus = NULL_ENTITY; ///< Wild mob most recently hit by the flower itself.
+    double summonFocusUntilMillis = 0.0;
 };
 
 /// Account-scoped identity. Cold: read on join, on save, and when someone
@@ -633,6 +635,10 @@ struct PlayerVisuals {
     bool hyperCorruptionExposed = false;
     double hyperCorruptionExposureUntilMillis = 0.0;
     int ghostSightTier = -1;
+    bool apexCorruption = false;
+    bool corruptionBlocksBandage() const {
+        return corrupted || (equippedCorruption && !apexCorruption);
+    }
     bool canSeeGhost(Rarity rarity) const { return ghostSightTier >= petalTier(rarity); }
 };
 
@@ -775,7 +781,6 @@ struct PlayerLocation {
 /// back through the one it arrived on.
 struct TeleporterState {
     // Server-only; never persisted or renewed by another mark. Death clears it.
-    double markHoldUntilMillis = 0;
     bool markReturnAvailable = false;
     RealmPoint markOrigin;
     /// Index into MapData's element list, or -1 when standing on no pad.
@@ -838,6 +843,9 @@ struct MobAi {
     /// (kDiggerRoamMillis).
     double nextHeadingMillis = 0;
     double nextBlinkMillis = 0;
+    double blinkLandingMillis = 0;
+    Vec2 blinkLanding;
+    Realm blinkRealm = Realm::Overworld;
     double aggroSuppressedUntilMillis = 0.0;
     /// Which way a crawling centipede head is bending: +1, -1, or 0 for one
     /// that has not crawled yet and picks a side on its first step. See
@@ -1546,6 +1554,7 @@ enum class GroundEffectKind : std::uint8_t {
     Corium = 15,
     Blood = 16,
     Fire = 17,
+    BlinkLanding = 18,
 };
 
 /// What is left lying where a mob with `remains_ms` died -- florr's opened

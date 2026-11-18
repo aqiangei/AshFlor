@@ -253,8 +253,9 @@ TEST(a_split_flowers_two_halves_are_one_persons) {
 
     // One squad, holding both bodies: the party HUD carries a bar for the half
     // the player is not looking through.
-    CHECK(h.stepUntil({&alice}, [&] { return alice.squad().inSquad; }));
-    CHECK_EQ(alice.squad().members.size(), std::size_t{2});
+    CHECK(h.stepUntil({&alice}, [&] { return alice.squad().members.size() == 2; }));
+    CHECK(!alice.squad().inSquad);
+    CHECK(alice.squad().joinCode.empty());
     CHECK(alice.squad().members[0].netId != 0);
     CHECK(alice.squad().members[1].netId != 0);
     CHECK(alice.squad().members[0].netId != alice.squad().members[1].netId);
@@ -344,6 +345,20 @@ TEST(clicking_the_loaded_splitter_swaps_halves_and_pays_a_reload) {
         if(world.get<NetId>(half).value==steered)activeBeforeClick=half;
     CHECK(activeBeforeClick!=NULL_ENTITY);
     if(activeBeforeClick==NULL_ENTITY)return;
+    Entity combatPetal = NULL_ENTITY;
+    Query<PetalInstance>{world}.without<Dead>().each([&](Entity petal, PetalInstance& state) {
+        if (state.owner == activeBeforeClick && state.slot == 0) combatPetal = petal;
+    });
+    CHECK(combatPetal != NULL_ENTITY);
+    if (combatPetal == NULL_ENTITY) return;
+    world.add<Dead>(combatPetal);
+    CHECK(h.stepUntil({&alice}, [&] {
+        const auto* loadout = world.tryGet<Loadout>(activeBeforeClick);
+        return loadout && loadout->slots[0].broken;
+    }));
+    const auto beforeSwitchDeadline = world.get<Loadout>(activeBeforeClick).slots[0].reloadReadyAtMillis;
+    h.step(5, {&alice});
+    CHECK(world.get<Loadout>(activeBeforeClick).slots[0].broken);
     auto& held=world.get<PlayerInput>(activeBeforeClick).current;
     held.moveStrength=1;held.moveAngle=.75;held.flags=net::InputDefend;
     alice.usePetal(0);
@@ -359,7 +374,9 @@ TEST(clicking_the_loaded_splitter_swaps_halves_and_pays_a_reload) {
     // And the slot is reloading, on BOTH halves, so the bar reads the same
     // whichever body is being steered.
     for (const Entity half : bodiesNamed(world, "alice")) {
-        CHECK(world.get<Loadout>(half).slots[0].broken);
+        const auto& wear = world.get<Loadout>(half).slots[0];
+        CHECK(wear.broken);
+        CHECK(wear.reloadReadyAtMillis > beforeSwitchDeadline);
     }
     CHECK(h.stepUntil({&alice}, [&] {
         return alice.view().self().slotReloadRemainingMillis[0] > 0.0;
@@ -405,7 +422,17 @@ TEST(taking_the_splitter_off_puts_the_flower_back_together) {
 }
 
 TEST(a_split_flower_can_join_switch_and_merge_without_losing_squad) {
-    Harness h("splitter-squad", {}, flix::testsupport::dataDir(), 0);
+    const double cell = kTileSize;
+    const auto map = flix::testsupport::fixtureMap(24, 24,
+        flix::testsupport::fixtureDoor("meadow", "Meadow", cell * 2, cell * 2,
+                                      cell * 4, cell * 4, true, 0.0), "");
+    const std::string dir = flix::testsupport::stageDataDir("splitter-squad", {{"meadow", map}});
+    struct Cleanup {
+        const std::string& dir;
+        ~Cleanup() { flix::testsupport::removeDataDir(dir); }
+    } cleanup{dir};
+    if (dir.empty()) { CHECK(false); return; }
+    Harness h("splitter-squad", {}, dir, 0);
     if (!h.ready) { CHECK(false); return; }
 
     NetClient alice;
@@ -428,16 +455,59 @@ TEST(a_split_flower_can_join_switch_and_merge_without_losing_squad) {
     CHECK(equipSplitter(h, alice, "alice", splitter));
     CHECK(h.stepUntil({&alice}, [&] { return bodiesNamed(world, "alice").size() == 2; }));
 
-    bob.sendChat("/squad create public");h.step(5,{&alice,&bob});
+    bob.sendChat("/squad create public");
+    CHECK(h.stepUntil({&alice, &bob}, [&] { return bob.squad().inSquad; }));
     bob.sendChat("/squad-invite alice");
-    CHECK(h.stepUntil({&alice,&bob},[&]{return alice.squadInvite().waiting;}));
+    CHECK(h.stepUntil({&alice, &bob}, [&] { return alice.squadInvite().waiting; }));
     alice.sendChat("/squad-accept");
-    CHECK(h.stepUntil({&alice,&bob},[&]{return alice.squad().inSquad && alice.squad().members.size()==3;}));
-    alice.usePetal(0);h.step(10,{&alice,&bob});
-    CHECK(alice.squad().inSquad);CHECK_EQ(alice.squad().members.size(),3u);
-    alice.setLoadoutSlot(0,kNoPetal,Rarity::Common);
-    CHECK(h.stepUntil({&alice,&bob},[&]{return bodiesNamed(world,"alice").size()==1;}));
-    CHECK(alice.squad().inSquad);CHECK(bob.squad().inSquad);
+    CHECK(h.stepUntil({&alice, &bob}, [&] {
+        return alice.squad().inSquad && alice.squad().id == bob.squad().id &&
+               alice.squad().members.size() == 3 && bob.squad().members.size() == 3;
+    }));
+
+    alice.sendChat("/squad-leave");
+    CHECK(h.stepUntil({&alice, &bob}, [&] {
+        return !alice.squad().inSquad && alice.squad().members.size() == 2;
+    }));
+    alice.sendChat("/squad-code " + bob.squad().joinCode);
+    CHECK(h.stepUntil({&alice, &bob}, [&] {
+        return alice.squad().inSquad && alice.squad().id == bob.squad().id;
+    }));
+
+    alice.sendChat("/squad-leave");
+    bob.sendChat("/squad-leave");
+    CHECK(h.stepUntil({&alice, &bob}, [&] {
+        return !alice.squad().inSquad && !bob.squad().inSquad;
+    }));
+    alice.sendChat("/squad-auto on");
+    bob.sendChat("/squad-auto on");
+    CHECK(h.stepUntil({&alice, &bob}, [&] {
+        return alice.squad().inSquad && alice.squad().id == bob.squad().id &&
+               bob.squad().members.size() == 3;
+    }, 240));
+
+    const auto oldBody = alice.view().self().netId;
+    // The splitter must finish its initial equip reload before it can switch.
+    CHECK(h.stepUntil({&alice, &bob}, [&] {
+        const auto halves = bodiesNamed(world, "alice");
+        if (halves.size() != 2) return false;
+        for (const Entity half : halves) {
+            const auto* loadout = world.tryGet<Loadout>(half);
+            if (!loadout || loadout->slots[0].broken) return false;
+        }
+        return true;
+    }, 650));
+    alice.usePetal(0);
+    CHECK(h.stepUntil({&alice, &bob}, [&] {
+        return alice.view().self().netId != 0 && alice.view().self().netId != oldBody;
+    }));
+    CHECK_EQ(alice.squad().id, bob.squad().id);
+    alice.setLoadoutSlot(0, kNoPetal, Rarity::Common);
+    CHECK(h.stepUntil({&alice, &bob}, [&] {
+        return bodiesNamed(world, "alice").size() == 1 && bob.squad().members.size() == 2;
+    }));
+    CHECK(alice.squad().inSquad);
+    CHECK_EQ(alice.squad().id, bob.squad().id);
 }
 
 TEST(losing_a_half_ends_the_split_and_the_splitter_reloads) {
@@ -839,6 +909,17 @@ TEST(death_summary_uses_credited_splitter_loot_and_ignores_visual_cues) {
     world.get<DropItem>(drop).quantity = 7;
     if (!h.stepUntil({&alice}, [&] { return !world.isAlive(drop); })) { CHECK(false); return; }
     CHECK_EQ(record.itemCount(Rarity::Rare, "petal_rock"), kMaxStackCount);
+
+    alice.requestRunLoot();
+    CHECK(h.stepUntil({&alice}, [&] { return alice.runLootOverview().has_value(); }));
+    CHECK(!alice.dead());
+    if (const auto& overview = alice.runLootOverview(); overview && overview->size() == 1) {
+        CHECK_EQ(overview->front().petalIndex, rock);
+        CHECK_EQ(overview->front().rarity, Rarity::Rare);
+        CHECK_EQ(overview->front().count, 1u);
+    } else {
+        CHECK(false);
+    }
 
     // The legacy event tally included the entire ground stack even though only
     // one fit. Two plausible-width visual cues can also fabricate a 4.1B row

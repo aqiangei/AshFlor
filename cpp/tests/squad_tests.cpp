@@ -70,28 +70,49 @@ TEST(any_member_invites_and_only_once_per_target) {
                                                          "invite.");
 }
 
-TEST(squad_invites_do_not_remove_players_from_their_current_squad) {
+TEST(squad_invites_merge_four_without_dropping_members) {
     Rng rng(21);
     SquadRoster roster;
-    auto* inviter = roster.create(human(1), false, rng);
-    CHECK(inviter != nullptr);
-    CHECK(roster.invite(human(1), human(2), 0).empty());
-
-    // The player can form a squad while an invitation is already pending.
-    auto* current = roster.create(human(2), false, rng);
-    CHECK(current != nullptr);
-    CHECK(roster.invite(human(1), human(2), 0) == "That player is already in a squad.");
+    auto* first = roster.create(human(1), false, rng);
+    auto* second = roster.create(human(2), true, rng);
+    CHECK(first != nullptr);
+    CHECK(second != nullptr);
+    const auto oldId = second->id;
     std::string joined;
-    CHECK(roster.accept(human(2), 0, joined) == "Leave your current squad before accepting an invite.");
-    CHECK(joined.empty());
-    CHECK(roster.forMember(human(2)) == current);
-    CHECK(current->leader == human(2));
-    CHECK(inviter->members.size() == 1);
+    CHECK(roster.invite(human(1), human(3), 0).empty());
+    CHECK(roster.accept(human(3), 0, joined).empty());
+    CHECK(roster.invite(human(2), human(4), 0).empty());
+    CHECK(roster.accept(human(4), 0, joined).empty());
+    CHECK(roster.invite(human(2), human(5), 0).empty());
+    CHECK(roster.invite(human(3), human(4), 0).empty());
+    CHECK(roster.accept(human(4), 0, joined).empty());
+    CHECK_EQ(joined, first->id);
+    CHECK(!first->isPublic);
+    CHECK(first->leader == human(1));
+    CHECK_EQ(first->members.size(), kMaxSquadSize);
+    for (net::ConnectionId id = 1; id <= 4; ++id) CHECK(roster.forMember(human(id)) == first);
+    CHECK(roster.find(oldId) == nullptr);
+    CHECK(roster.pendingInviteSquad(human(5), 0) == nullptr);
+}
 
-    CHECK(roster.leave(human(2)).wasMember);
+TEST(squad_invites_check_both_rosters_again_after_the_invitation) {
+    Rng rng(21);
+    SquadRoster roster;
+    auto* first = roster.create(human(1), false, rng);
+    auto* second = roster.create(human(2), false, rng);
+    std::string joined;
+    CHECK(roster.invite(human(1), human(3), 0).empty());
+    CHECK(roster.accept(human(3), 0, joined).empty());
+    CHECK(roster.invite(human(2), human(4), 0).empty());
+    CHECK(roster.accept(human(4), 0, joined).empty());
     CHECK(roster.invite(human(1), human(2), 0).empty());
-    CHECK(roster.accept(human(2), 0, joined).empty());
-    CHECK(joined == inviter->id);
+    CHECK(roster.invite(human(2), human(5), 0).empty());
+    CHECK(roster.accept(human(5), 0, joined).empty());
+    CHECK(roster.accept(human(2), 0, joined) == "The two squads would exceed 4 players.");
+    CHECK(roster.invite(human(1), human(2), 0) == "The two squads would exceed 4 players.");
+    CHECK_EQ(first->members.size(), 2u);
+    CHECK_EQ(second->members.size(), 3u);
+    CHECK(roster.forMember(human(2)) == second);
 }
 
 TEST(an_invitation_lapses_after_thirty_seconds) {

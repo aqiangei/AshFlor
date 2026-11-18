@@ -1359,6 +1359,16 @@ DamageResult CombatSystem::applyDamageOnce(World& world, Entity victim, Entity s
 
     creditSwing(world, victim, source, amount);
 
+    if (isDirectHit(kind) && isWildMob(world, victim) && !fatal) {
+        Entity flower = source;
+        if (const auto* shot = world.tryGet<Projectile>(source)) flower = shot->owner;
+        else if (const auto* petal = world.tryGet<PetalInstance>(source)) flower = petal->owner;
+        if (auto* input = world.tryGet<PlayerInput>(flower)) {
+            input->summonFocus = victim;
+            input->summonFocusUntilMillis = nowMillis + 2000.0;
+        }
+    }
+
     // Every kind narrates itself. A poison tick and a sponge repayment reach
     // the reference's client as ordinary damage on the same two channels a
     // petal hit does -- markPoisonDamaged() and emitPlayerDamaged() -- and the
@@ -1791,7 +1801,7 @@ bool CombatSystem::trySecondChance(World& world, Entity victim, double nowMillis
 bool CombatSystem::tryUndead(World& world, Entity victim, Entity source, double nowMillis) {
     if (world.has<PlayerTag>(victim)) {
         const auto* visuals = world.tryGet<PlayerVisuals>(victim);
-        if (visuals && (visuals->corrupted || (visuals->equippedCorruption && !visuals->hyperCorruption))) return false;
+        if (visuals && visuals->corruptionBlocksBandage()) return false;
     }
     // Already Undead: death is put off until the bandage's time runs out, and
     // no blow brings it nearer. The clock is the first blow's.
@@ -1825,9 +1835,8 @@ void CombatSystem::tickUndead(World& world, double nowMillis) {
     std::vector<Entity> expired;
     walking.each([&](Entity e, Undead& undead) {
         const auto* visuals = world.tryGet<PlayerVisuals>(e);
-        const bool corruptedPlayer = world.has<PlayerTag>(e) && visuals &&
-            (visuals->corrupted || (visuals->equippedCorruption && !visuals->hyperCorruption));
-        if (nowMillis >= undead.untilMillis || corruptedPlayer) expired.push_back(e);
+        const bool bandageBlocked = world.has<PlayerTag>(e) && visuals && visuals->corruptionBlocksBandage();
+        if (nowMillis >= undead.untilMillis || bandageBlocked) expired.push_back(e);
     });
     for (const Entity e : expired) {
         const Undead undead = world.get<Undead>(e);
@@ -2790,6 +2799,7 @@ void CombatSystem::tickGroundEffects(World& world, const SpatialGrid& grid,
                                      bool bodyGridOnly) {
     fields_.clear();
     queries_->fields.each([&](Entity e, GroundEffect& effect, Transform& transform) {
+        if (effect.kind == GroundEffectKind::BlinkLanding) return;
         // In-flight or disabled fields still age; zero radius must not make
         // their Lifetime immortal.
         // A strike's burst is a pollen puff in every respect the field pass
@@ -2892,7 +2902,9 @@ void CombatSystem::tickGroundEffects(World& world, const SpatialGrid& grid,
             }
             if (!canHit(world, victim, field.effect, nowMillis)) continue;
             if (field.kind >= GroundEffectKind::AcidSpill && field.kind <= GroundEffectKind::ElixirSpill) {
-                if (!isWildMob(world, victim)) continue;
+                const auto* npc = world.tryGet<Npc>(victim);
+                const bool practiceTarget = npc && content.mob(npc->configIndex).id == "target_dummy";
+                if (!isWildMob(world, victim) && !practiceTarget) continue;
                 if (field.kind == GroundEffectKind::BloodSpill) {
                     applyArmorShred(world, victim, field.damagePerSecond, nowMillis);
                 } else if (field.kind == GroundEffectKind::LavaSpill) {
@@ -3423,9 +3435,11 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
         for (int i = 0; i < reads; ++i) end = contactSampleMillis();
         timing->sampleClockNs = (end - start) * 1e6 / reads;
     }
+    std::vector<Entity> flowerSharedPoolsHit;
     for (std::size_t i = 0; i < melee_.size(); ++i) {
         const MeleeSource& source = melee_[i];
         if (!world.isAlive(source.attacker) || world.has<Dead>(source.attacker)) continue;
+        if (source.isPlayerBody) flowerSharedPoolsHit.clear();
 
         // The grid files each entity under every cell its own radius touches,
         // so a query at the attacker's radius already returns everything whose
@@ -3596,6 +3610,16 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
                 if (!petal->ricochet.allowsHit(victim, nowMillis)) continue;
             }
             if (!canHit(world, victim, source.attacker, nowMillis)) continue;
+            Entity sharedPool = NULL_ENTITY;
+            if (source.isPlayerBody) {
+                // Several overlapping segments may be parts of the same health pool.
+                const auto* link = world.tryGet<BodySegment>(victim);
+                if (link && link->sharedHealth) {
+                    sharedPool = poolOwner(world, victim);
+                    if (std::find(flowerSharedPoolsHit.begin(), flowerSharedPoolsHit.end(), sharedPool) !=
+                        flowerSharedPoolsHit.end()) continue;
+                }
+            }
 
             // Almost nothing is throttled in the reference, and the throttle
             // that survives is not keyed the way a hit ledger usually is.
@@ -3731,6 +3755,7 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
             // rolls intervene. A shared pool still checks its own recipient.
             DamageResult hit = applyDamageWithRuby(world, victim, source.attacker, swing,
                                                    nowMillis, source.hitKind, victim);
+            if (sharedPool != NULL_ENTITY && !hit.refused) flowerSharedPoolsHit.push_back(sharedPool);
             if (mobTouchesPlayer && source.swallows &&
                 !hit.refused && !hit.dodged && !hit.killed) {
                 const auto* prior = world.tryGet<WormSwallow>(victim);
@@ -4047,14 +4072,6 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
                 else cooldowns.arm(victim, nowMillis + interval);
             }
 
-            // The other half of the one-per-tick contact rule, for the
-            // direction the victim's contacted flag cannot see. resolvePlayerMobContact
-            // breaks out of its candidate loop on the first LIVE mob it
-            // collides with, so a flower's body lands one hit per tick however
-            // many mobs it is wedged between -- a corpse it is also touching
-            // costs it nothing, because that candidate is skipped rather than
-            // ending the loop, which is what canHit() refusing above does.
-            if (source.isPlayerBody && !hit.refused) break;
         }
         if (timing) {
             if (usePlan) ++timing->planned; else ++timing->fallback;

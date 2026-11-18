@@ -456,8 +456,8 @@ bool AbsorbPanel::render(MenuContext& ctx) {
     const double barY = panel.y + kBarY;
     // The maze keeps a level of its own: a different track, not a level-up.
     const bool mazeTrack = live && ctx.net.view().realm() == Realm::Maze;
-    stepBar(profile.username + (mazeTrack ? "#maze" : ""), live ? self.totalXp : profile.totalXp,
-            dtMs, {barLeft, barY});
+    const double currentXp = live ? self.totalXp : profile.totalXp;
+    stepBar(profile.username + (mazeTrack ? "#maze" : ""), currentXp, dtMs, {barLeft, barY});
     const double need = std::max(1.0, xpForNextLevel(barLevel_));
 
     // What the staged petals would grant, priced exactly as the server will
@@ -498,7 +498,12 @@ bool AbsorbPanel::render(MenuContext& ctx) {
 
     // Keep the level-up preview aligned with availableTalentPoints.
     const double labelsY = barY - kBarTrackWidth * 0.5 - 1.0 - kNextSize * kLineHeight * 0.5;
-    outlinedText(canvas, trEnZh("Next level: +2 TP", "下一级：+2 TP"), barRight, labelsY,
+    std::string levelPreview = trEnZh("Next level: +2 TP", "下一级：+2 TP");
+    if (plannedXp > 0.0) {
+        const int projected = levelFromTotalXp(currentXp + plannedXp).level;
+        levelPreview = std::string(trEnZh("After absorb Lv. ", "吸收后等级 ")) + std::to_string(projected);
+    }
+    outlinedText(canvas, levelPreview, barRight, labelsY,
                  panelLabel(kNextSize, Align::Right, Baseline::Middle), 1.0);
     if (plannedXp >= 0.5) {
         outlinedText(canvas, std::string(trEnZh("Preview +", "预计 +")) + florrShort(plannedXp) + " XP",

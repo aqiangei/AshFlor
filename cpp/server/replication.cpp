@@ -140,7 +140,8 @@ double replicatedRadius(World& world, Entity e) {
         const auto kind = effect->kind;
         const bool spill = kind == GroundEffectKind::Blood ||
             (kind >= GroundEffectKind::AcidSpill && kind <= GroundEffectKind::ElixirSpill);
-        if ((spill || kind == GroundEffectKind::Web || kind == GroundEffectKind::ElectricWeb) &&
+        if ((spill || kind == GroundEffectKind::Web || kind == GroundEffectKind::ElectricWeb ||
+             kind == GroundEffectKind::BlinkLanding) &&
             effect->radius > 0.0) return effect->radius;
     }
     return 10.0;

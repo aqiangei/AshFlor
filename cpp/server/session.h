@@ -96,7 +96,6 @@ struct Session {
     };
     std::unordered_map<Entity, DummyDamage> dummyDamage;
 
-    bool splitCreatedSoloSquad = false;
     bool pyramidMapRevealed = false;
     Realm pyramidMapRealm = static_cast<Realm>(255);
     std::string userId;
@@ -160,6 +159,8 @@ struct Session {
     /// splitter mean "split in ten seconds" -- which is the reload the petal is
     /// explicitly not supposed to charge for being worn.
     double splitReadyAtMillis = 0;
+    /// Manual switch cooldown on the session, independent of combat breakage.
+    double splitSwitchReadyAtMillis = 0;
 
     /// When this session's next TitanHolder query will be answered, on the
     /// server's tick clock. See kTitanHolderQueryMillis.

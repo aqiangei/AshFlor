@@ -146,8 +146,11 @@ std::string SquadRoster::invite(SquadMemberId from, SquadMemberId to, std::int64
     Squad* squad = forMember(from);
     if (squad == nullptr) return "You are not in a squad.";
     // Any member may invite — AshFlor: filling a party from every seat.
+    const Squad* previous = forMember(to);
+    if (previous == squad) return "That player is already in a squad.";
     if (squad->full()) return "Squad is full (max 4 players).";
-    if (forMember(to) != nullptr) return "That player is already in a squad.";
+    if (previous && squad->members.size() + previous->members.size() > kMaxSquadSize)
+        return "The two squads would exceed 4 players.";
 
     const auto pending = invites_.find(to.connection);
     if (pending != invites_.end() && pending->second.expiresAtMillis > nowMillis) {
@@ -180,10 +183,27 @@ std::string SquadRoster::accept(SquadMemberId target, std::int64_t nowMillis,
 
     Squad* squad = find(squadId);
     if (squad == nullptr) return "Squad no longer exists.";
+    Squad* previous = forMember(target);
+    if (previous == squad) return "That player is already in a squad.";
     if (squad->full()) return "Squad is full.";
-    if (forMember(target) != nullptr) return "Leave your current squad before accepting an invite.";
-
-    squad->members.push_back(target);
+    if (previous) {
+        if (squad->members.size() + previous->members.size() > kMaxSquadSize)
+            return "The two squads would exceed 4 players.";
+        const std::string previousId = previous->id;
+        squad->members.insert(squad->members.end(), previous->members.begin(), previous->members.end());
+        // Members switched squads, so their previous invitations no longer apply.
+        for (const SquadMemberId member : previous->members) {
+            if (!member.bot()) invites_.erase(member.connection);
+        }
+        // Outstanding invitations from the disbanded squad are invalid too.
+        for (auto invite = invites_.begin(); invite != invites_.end();) {
+            if (invite->second.squadId == previousId) invite = invites_.erase(invite);
+            else ++invite;
+        }
+        squads_.erase(previousId);
+    } else {
+        squad->members.push_back(target);
+    }
     squadIdOut = squadId;
     return {};
 }

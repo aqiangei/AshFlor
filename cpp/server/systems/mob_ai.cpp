@@ -1991,18 +1991,47 @@ void MobAiSystem::steerMob(World& world, const Terrain& terrain, const SpatialGr
     // A digger that loses its target picks a fresh heading to roam on, as
     // gardn's drops to kIdle, rather than finishing the old one.
     if (driven && drive.diggerAi) ai.nextHeadingMillis = 0.0;
-    if (driven && drive.blinkMillis > 0.0 && !world.has<Pet>(self)) {
+    if (ai.blinkLandingMillis > 0.0 && nowMillis >= ai.blinkLandingMillis) {
+        ai.blinkLandingMillis = 0.0;
+        if (transform.realm == ai.blinkRealm && !world.has<Pet>(self) &&
+            !terrain.resolveWall(ai.blinkLanding, body.radius, transform.realm).collided &&
+            !terrain.segmentBlocked(transform.position, ai.blinkLanding, transform.realm)) {
+            transform.position = ai.blinkLanding;
+        }
+    } else if (ai.blinkLandingMillis == 0.0 && driven &&
+               drive.blinkMillis > 0.0 && !world.has<Pet>(self)) {
         if (ai.nextBlinkMillis == 0.0) ai.nextBlinkMillis = nowMillis + drive.blinkMillis;
         if (nowMillis >= ai.nextBlinkMillis) {
+            constexpr double kBlinkWarningMillis = 600.0;
             ai.nextBlinkMillis = nowMillis + drive.blinkMillis;
             const auto* target = world.tryGet<Transform>(ai.target);
             const auto* targetBody = world.tryGet<Body>(ai.target);
             if (target && targetBody && target->realm == transform.realm) {
                 const Vec2 approach = (target->position - transform.position).normalized();
                 const Vec2 goal = target->position - approach * (body.radius + targetBody->radius + 18.0);
-                const auto landing = terrain.resolveWall(goal, body.radius, transform.realm);
-                if (!landing.collided && !terrain.segmentBlocked(transform.position, goal, transform.realm))
-                    transform.position = goal;
+                if (!terrain.resolveWall(goal, body.radius, transform.realm).collided &&
+                    !terrain.segmentBlocked(transform.position, goal, transform.realm)) {
+                    ai.blinkLanding = goal;
+                    ai.blinkRealm = transform.realm;
+                    ai.blinkLandingMillis = nowMillis + kBlinkWarningMillis;
+                    const Realm realm = transform.realm;
+                    const double radius = body.radius;
+                    const bool identified = static_cast<bool>(allocateNetId);
+                    const std::uint32_t netId = identified ? allocateNetId() : 0;
+                    commands.defer([goal, realm, radius, identified, netId](World& deferred) {
+                        const Entity warning = deferred.create();
+                        deferred.add<GroundEffectTag>(warning);
+                        deferred.add<Transform>(warning, Transform{goal, 0.0, realm});
+                        GroundEffect effect;
+                        effect.kind = GroundEffectKind::BlinkLanding;
+                        effect.radius = radius;
+                        deferred.add<GroundEffect>(warning, effect);
+                        deferred.add<Lifetime>(warning, Lifetime{kBlinkWarningMillis / 1000.0});
+                        deferred.add<Replicated>(warning, Replicated{net::EntityKind::Effect, 0,
+                            static_cast<std::uint16_t>(GroundEffectKind::BlinkLanding), Rarity::Common, 0});
+                        if (identified) deferred.add<NetId>(warning, NetId{netId});
+                    });
+                }
             }
         }
     }
@@ -2072,7 +2101,7 @@ static double summonRangeBonus(const World& world, const Pet* pet) {
 MobAiSystem::PetPrey MobAiSystem::acquirePetPrey(const World& world, const Terrain& terrain,
                                                 const SpatialGrid& grid, Entity self, Vec2 from,
                                                 Realm realm, Entity previous, bool hasOwner,
-                                                double range, TargetScratch& scratch,
+                                                double range, double nowMillis, TargetScratch& scratch,
                                                 bool frozenTargets) const {
     // Every direction around the PET. The owner's screen is a rectangle pinned
     // to the flower, and a summon running ahead of it sat outside the reach it
@@ -2094,6 +2123,16 @@ MobAiSystem::PetPrey MobAiSystem::acquirePetPrey(const World& world, const Terra
     const auto withinLeash = [&](Vec2 position) {
         return !ownerAt || distanceSq(position, ownerAt->position) <= ownerReachSq;
     };
+
+    if (const auto* input = ownerAt ? world.tryGet<PlayerInput>(pet->owner) : nullptr;
+        input && nowMillis < input->summonFocusUntilMillis) {
+        const auto target = readPetPrey(world, input->summonFocus);
+        if (target.entity != NULL_ENTITY && target.realm == realm &&
+            (!target.ghost || (ownerVisuals && ownerVisuals->ghostSightTier >= target.tier)) &&
+            withinLeash(target.position) && distanceSq(from, target.position) < reachSq &&
+            !terrain.segmentBlocked(from, target.position, realm))
+            return {target.entity, false};
+    }
 
     // Map training posts are NPCs, not MobTag entities. Keep an established
     // training target while it remains in reach and in the pet's sight.
@@ -2303,7 +2342,7 @@ void MobAiSystem::steerPet(World& world, const Terrain& terrain, const SpatialGr
             transform.position == plan->from && transform.realm == plan->realm;
         const PetPrey prey = planned ? plan->prey :
             acquirePetPrey(world, terrain, grid, self, transform.position, transform.realm,
-                           ai.target, hasOwner, range, targetScratch_);
+                           ai.target, hasOwner, range, nowMillis, targetScratch_);
         stats_.targetScans += prey.searched;
         return prey.target;
     };
@@ -2442,7 +2481,7 @@ void MobAiSystem::steerPet(World& world, const Terrain& terrain, const SpatialGr
 }
 
 void MobAiSystem::preparePetTargets(World& world, const Terrain& terrain,
-                                    const SpatialGrid& grid) {
+                                    const SpatialGrid& grid, double nowMillis) {
     petTargetPlans_.clear();
     const unsigned limit = workers ? std::min(workerLimit, workers->count()) : 0;
     if (!limit || stepList_.size() < 64) return;
@@ -2486,7 +2525,7 @@ void MobAiSystem::preparePetTargets(World& world, const Terrain& terrain,
             auto& plan = petTargetPlans_[index];
             plan = {ai.target, at.position, at.realm,
                 acquirePetPrey(world, terrain, grid, self, at.position, at.realm, ai.target, true,
-                               range, scratch, true), true};
+                               range, nowMillis, scratch, true), true};
         }
     });
 }
@@ -2496,7 +2535,7 @@ void MobAiSystem::steerPets(World& world, const Terrain& terrain, const SpatialG
     // Deliberately not LOD-gated: a pet belongs to a player, and a player is by
     // definition somewhere someone is looking.
     pets_.collect(stepList_);
-    preparePetTargets(world, terrain, grid);
+    preparePetTargets(world, terrain, grid, nowMillis);
     for (std::size_t index = 0; index < stepList_.size(); ++index) {
         const Entity self = stepList_[index];
         if (!world.isAlive(self) || world.tryGet<Dead>(self) != nullptr) continue;
@@ -2509,7 +2548,15 @@ void MobAiSystem::steerPets(World& world, const Terrain& terrain, const SpatialG
         const MobType* type = world.tryGet<MobType>(self);
         const Pet* pet = world.tryGet<Pet>(self);
         if (type == nullptr || pet == nullptr) continue;
-        const Drive drive = driveFor(type->configIndex, type->rarity);
+        Drive drive = driveFor(type->configIndex, type->rarity);
+        if (drive.shoots) {
+            const auto& config = content().mob(type->configIndex);
+            if (config.id == "void_black_hole" || config.id == "void_white_hole") {
+                // A stationary summon uses the authored ray distance, without
+                // the wild boss's rarity multiplier on the projectile budget.
+                drive.shotReach = std::min(drive.shotReach, config.projectile.distance);
+            }
+        }
         const Entity owner = pet->owner;
         const bool ownerAlive = isStanding(world, owner);
 

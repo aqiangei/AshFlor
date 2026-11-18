@@ -834,6 +834,12 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
         }
         moveEntityToRealm(entity, realm, position);
         const auto* after = world_.tryGet<Transform>(entity);
+        if (after && after->realm != from && dungeons_->isInstance(after->realm)) {
+            if (const auto* session = sessionForEntity(entity)) {
+                if (auto* peer = listener_.find(session->connection))
+                    sendSystem(*peer, "Type /dungeon-leave to leave the termite mound early.");
+            }
+        }
         if (movingWaveMember && after && after->realm != from) {
             if (auto* session = sessionForEntity(entity); session && session->entity == entity) {
                 syncSplitProgress(*session);
@@ -2320,21 +2326,32 @@ void GameServer::announceMob(std::uint16_t mobIndex, Rarity rarity,
     // A hyper or better that spawned names its map to the players on another
     // one -- which map, never where on it. A ritual's summon stays "somewhere":
     // its summoner paid for that fight.
-    const MapData* map = localRealm && !summoned && rarityIndex(rarity) >= rarityIndex(Rarity::Apex)
-        ? worldMaps_.forRealm(*localRealm) : nullptr;
-    if (map != nullptr && map->displayName().empty()) map = nullptr;
-    const auto opening = [&](const MapData* named) {
+    const MapData* origin = localRealm ? worldMaps_.forRealm(*localRealm) : nullptr;
+    const MapData* map = !summoned && rarityIndex(rarity) >= rarityIndex(Rarity::Apex) &&
+                         origin && !origin->displayName().empty() ? origin : nullptr;
+    const int prestigeLevel = origin ? origin->prestigeLevel() : 0;
+    const char* tier = prestigeLevel == 2 ? "Prestige II" :
+                       prestigeLevel == 1 ? "Prestige I" : "Prestige";
+    const bool jurassic = map && map->biome() == "jurassic";
+    std::string mapId = map ? map->id() : std::string();
+    std::string mapName = map ? map->displayName() : std::string();
+    if (jurassic) {
+        mapId = std::string(prestigeLevel == 2 ? kPrestigeTwoMapPrefix :
+                            prestigeLevel == 1 ? kPrestigeMapPrefix : "") + "jurassic";
+        mapName = prestigeLevel ? std::string(tier) + " Jurassic" : "Jurassic";
+    }
+    const auto opening = [&](bool showMap) {
         return "<b data-mob='" + escapedMarkup(mob.id) + "'" +
-            (named != nullptr ? " data-map='" + escapedMarkup(named->id()) + "'" : std::string()) +
+            (showMap ? " data-map='" + escapedMarkup(mapId) + "'" : std::string()) +
             " style=\"color: " + color + ";\">A " + rarityLabel(rarity) + " " + mob.name +
             (summoned ? " has been summoned" : " has spawned");
     };
     const bool prestigeSpawn = !summoned &&
         (localRealm ? worldMaps_.isPrestige(*localRealm) : remotePrestige);
-    const std::string prefix = opening(nullptr);
-    const std::string remoteText = map != nullptr
-        ? opening(map) + " in " + escapedMarkup(map->displayName()) + "!</b>"
-        : prefix + (prestigeSpawn ? " somewhere in Prestige!</b>" : " somewhere!</b>");
+    const std::string prefix = opening(false);
+    const std::string remoteText = map
+        ? opening(true) + " in " + escapedMarkup(mapName) + "!</b>"
+        : prefix + (prestigeSpawn ? std::string(" somewhere in ") + tier + "!</b>" : " somewhere!</b>");
     for (auto& entry : sessions_) {
         Session& session = entry.second;
         if (!session.authenticated()) continue;
@@ -2343,7 +2360,8 @@ void GameServer::announceMob(std::uint16_t mobIndex, Rarity rarity,
         const Transform* transform = world_.tryGet<Transform>(session.entity);
         const bool here = localRealm && transform && transform->realm == *localRealm;
         sendChatTo(*connection, net::ChatChannel::System, "",
-                   here ? prefix + (prestigeSpawn ? " in Prestige!</b>" : "!</b>") : remoteText);
+                   here ? prefix + (prestigeSpawn ? std::string(" in ") + tier + "!</b>" : "!</b>")
+                        : remoteText);
     }
     chatHistory_.push_back({net::ChatChannel::System, "", remoteText, database_.nowMillis()});
     while (chatHistory_.size() > kChatHistoryLines) chatHistory_.pop_front();
@@ -2416,7 +2434,6 @@ void GameServer::reapDead() {
         // over the body. That means this loop meets the same corpse on every
         // later tick, so everything below has to happen exactly once.
         if (isPlayer) {
-            if (auto* pads = world_.tryGet<TeleporterState>(e)) pads->markHoldUntilMillis = 0;
             if (session == nullptr && bot == nullptr) {
                 // Nobody is watching through this body and nothing owns it. It
                 // leaves no corpse and no death notice, and its ring goes with
@@ -4676,13 +4693,11 @@ void GameServer::handleLoadLoadoutPreset(Session& session, net::Connection& conn
     // An untouched preset has no saved talent allocation. Keep the current
     // tree when selecting it; an explicitly saved empty tree still loads.
     const Json& presetSkills = std::as_const(record.extra)["loadoutPresetSkills"][name];
-    if (presetSkills.isObject() && !loadPresetSkills(record, name)) {
-        sendNotice(connection, net::NoticeSeverity::Warning,
-                   "This loadout's saved talents cost more points than you have.");
-        return;
-    }
+    const bool keepCurrentSkills = presetSkills.isObject() && !loadPresetSkills(record, name);
     const PresetLoad result = equipPreset(record, slots, record.skills.loadoutSlots());
-    record.extra["activeLoadoutPreset"]=static_cast<int>(preset);
+    // Keep the saved preset intact when applying only its petals. The original
+    // tree may fit again once the player earns more points or refunds Prestige.
+    record.extra["activeLoadoutPreset"] = keepCurrentSkills ? -1 : static_cast<int>(preset);
     autoSaveActivePreset(record);
     database_.markDirty();
 
@@ -4699,8 +4714,10 @@ void GameServer::handleLoadLoadoutPreset(Session& session, net::Connection& conn
         text += ")";
     }
     text += ".";
+    if (keepCurrentSkills) text += " Current talents kept: the saved talents cost too many points.";
     sendNotice(connection,
-               result.missing > 0 ? net::NoticeSeverity::Warning : net::NoticeSeverity::Good, text);
+               result.missing > 0 || keepCurrentSkills ? net::NoticeSeverity::Warning
+                                                      : net::NoticeSeverity::Good, text);
 }
 
 namespace {
@@ -5951,8 +5968,9 @@ void GameServer::announceBossDefeat(Entity mob, const MobType& type,
     const std::string& name = config.name;
     char colorAttribute[32];
     std::snprintf(colorAttribute, sizeof colorAttribute, "#%06x", rarityColor(type.rarity));
-    const std::string opening = std::string("<b style=\"color: ") + colorAttribute + ";\">A " +
-                                rarityLabel(type.rarity) + " " + name + " has been defeated";
+    const std::string opening = "<b data-mob='" + escapedMarkup(config.id) +
+        "' style=\"color: " + colorAttribute + ";\">A " + rarityLabel(type.rarity) +
+        " " + name + " has been defeated";
 
     // Credited to the top damage dealer alone, whatever the kill was shared
     // with: `ranked` is already sorted by damage, so that is its first row.
@@ -8363,15 +8381,17 @@ net::Connection* GameServer::squadConnection(SquadMemberId member) {
 void GameServer::sendSquadUpdate(net::Connection& connection, Squad* squad) {
     ByteWriter w;
     w.u8(static_cast<std::uint8_t>(net::ServerMessage::SquadUpdate));
-    if (squad == nullptr) {
+    const Session* solo = squad == nullptr ? sessionFor(connection.id()) : nullptr;
+    if (squad == nullptr && !(solo && solo->split())) {
         w.boolean(false);
         connection.send(w);
         return;
     }
+    // An empty id carries only the solo player's body rows for the HUD.
     w.boolean(true);
-    w.str(squad->id);
-    w.str(squads_.issueCode(*squad, rng_));
-    w.boolean(squad->isPublic);
+    w.str(squad ? squad->id : "");
+    w.str(squad ? squads_.issueCode(*squad, rng_) : "");
+    w.boolean(squad && squad->isPublic);
 
     // A ROW PER BODY, not per member. A splitter's owner is one member with
     // two flowers, and the party HUD is a list of bars over bodies -- a member
@@ -8379,14 +8399,16 @@ void GameServer::sendSquadUpdate(net::Connection& connection, Squad* squad) {
     // one you cannot see because you are not looking through it, with no
     // health bar anywhere on the screen.
     std::vector<std::pair<SquadMemberId, Entity>> rows;
-    rows.reserve(squad->members.size() + 1);
-    for (const SquadMemberId& member : squad->members) {
-        rows.emplace_back(member, squadEntityOf(member));
-        if (member.bot()) continue;
-        const auto found = sessions_.find(member.connection);
-        if (found != sessions_.end() && found->second.split()) {
-            rows.emplace_back(member, found->second.splitOther);
+    if (squad) {
+        for (const SquadMemberId& member : squad->members) {
+            rows.emplace_back(member, squadEntityOf(member));
+            if (member.bot()) continue;
+            const Session* session = sessionFor(member.connection);
+            if (session && session->split()) rows.emplace_back(member, session->splitOther);
         }
+    } else {
+        rows.emplace_back(squadIdOf(*solo), solo->entity);
+        rows.emplace_back(squadIdOf(*solo), solo->splitOther);
     }
 
     w.u8(static_cast<std::uint8_t>(rows.size()));
@@ -8401,7 +8423,7 @@ void GameServer::sendSquadUpdate(net::Connection& connection, Squad* squad) {
         std::uint8_t flags = 0;
         // The leader mark rides the member's OWN row, which is the first one
         // it has: a flower does not lead a squad twice for being two flowers.
-        if (squad->leader == row.first && row.second == squadEntityOf(row.first)) flags |= 1u;
+        if (squad && squad->leader == row.first && row.second == squadEntityOf(row.first)) flags |= 1u;
         if (row.first.bot()) flags |= 2u;
         w.u8(flags);
     }
@@ -8424,7 +8446,7 @@ void GameServer::serviceAutoSquads(double wallMillis) {
             session.autoSquad = false;
             continue;
         }
-        if (!session.authenticated() || !session.playing() || session.split() || session.inRift ||
+        if (!session.authenticated() || !session.playing() || session.inRift ||
             session.arena || session.controlling != 0 || session.controlledBy != 0 ||
             !isStanding(world_, session.entity) ||
             squads_.pendingInviteSquad(member, static_cast<std::int64_t>(wallMillis))) continue;
@@ -8605,8 +8627,20 @@ std::string GameServer::squadBiomeRefusal(const Squad& squad, SquadMemberId who,
            biomeLabel(squadBiome(squad)) + ". A squad cannot span biomes.";
 }
 
+std::string GameServer::squadInviteeRefusal(const Squad& destination, SquadMemberId who,
+                                          const std::string& whoLabel) {
+    const Squad* previous = squads_.forMember(who);
+    if (previous == nullptr || previous == &destination)
+        return squadBiomeRefusal(destination, who, whoLabel);
+    for (const SquadMemberId member : previous->members) {
+        const std::string label = member == who ? whoLabel : squadDisplayName(member) + " is";
+        const auto error = squadBiomeRefusal(destination, member, label);
+        if (!error.empty()) return error;
+    }
+    return {};
+}
+
 void GameServer::enforceSquadBiome(SquadMemberId member) {
-    if(!member.bot())if(const auto* session=sessionFor(member.connection);session && session->split())return;
     Squad* squad = squads_.forMember(member);
     if (squad == nullptr) return;
     // Against the REST of the squad, not against squadBiome(): a leader who
@@ -8650,7 +8684,19 @@ void GameServer::enforceSquadBiome(SquadMemberId member) {
 
 void GameServer::rebuildSquadIndex() {
     squadIndex_.clear();
-    if (squads_.empty()) return;
+    const auto addGroup = [this](std::vector<SquadBody> bodies) {
+        if (bodies.size() < 2) return;
+        const std::size_t group = squadIndex_.groups.size();
+        for (const SquadBody& member : bodies) squadIndex_.group[member.body] = group;
+        squadIndex_.groups.push_back(std::move(bodies));
+    };
+    // A solo player's two bodies still share one loot contender.
+    for (const auto& entry : sessions_) {
+        const Session& session = entry.second;
+        if (session.playing() && session.split() && !squads_.forMember(squadIdOf(session))) {
+            addGroup({{session.entity, session.connection}, {session.splitOther, session.connection}});
+        }
+    }
     for (const auto& entry : squads_.all()) {
         std::vector<SquadBody> bodies;
         for (const SquadMemberId& member : entry.second.members) {
@@ -8685,10 +8731,7 @@ void GameServer::rebuildSquadIndex() {
         // One body in the world is not a pool: leaving it out keeps the
         // ordinary case -- a squad whose other members are on the title screen
         // -- ranking exactly as a solo player does.
-        if (bodies.size() < 2) continue;
-        const std::size_t group = squadIndex_.groups.size();
-        for (const SquadBody& member : bodies) squadIndex_.group[member.body] = group;
-        squadIndex_.groups.push_back(std::move(bodies));
+        addGroup(std::move(bodies));
     }
 }
 
@@ -8726,13 +8769,6 @@ void GameServer::handleGuildSquadAll(Session& session, net::Connection& connecti
         sendNotice(connection, net::NoticeSeverity::Warning, "You are not in a guild.");
         return;
     }
-    // Before squadOrCreate, which would otherwise mint a squad for a flower
-    // that is about to be told it may not have one.
-    const std::string whileSplit = splitSquadRefusal(squadIdOf(session), "You are");
-    if (!whileSplit.empty()) {
-        sendNotice(connection, net::NoticeSeverity::Warning, whileSplit);
-        return;
-    }
     Squad* squad = squadOrCreate(session, connection);
     if (squad == nullptr) {
         sendNotice(connection, net::NoticeSeverity::Warning, "Failed to create a squad.");
@@ -8745,15 +8781,10 @@ void GameServer::handleGuildSquadAll(Session& session, net::Connection& connecti
     for (std::size_t i = 0; i < members.size(); ++i) {
         const std::string member = members[i].asString();
         if (lowerCase(member) == lowerCase(session.username)) continue;
-        // +1 for the invitation already in flight this iteration: an invite is
-        // a claim on a seat, and the reference stops one short for it.
-        if (squad->members.size() + 1 >= kMaxSquadSize) break;
+        if (squad->full()) break;
         Session* target = sessionForUser(member);
         if (target == nullptr) continue;
-        // A guildmate farming another biome is not someone this squad can
-        // take, so they are passed over rather than sent an invitation they
-        // would be refused on.
-        if (!squadAcceptsBiome(*squad, squadIdOf(*target))) continue;
+        if (!squadInviteeRefusal(*squad, squadIdOf(*target), member + " is").empty()) continue;
         if (!squads_.invite(squadIdOf(session), squadIdOf(*target), now).empty()) {
             continue;
         }
@@ -8794,20 +8825,13 @@ void GameServer::guildInviteToSquad(Session& session, net::Connection& connectio
         sendNotice(connection, net::NoticeSeverity::Warning, target + " is offline.");
         return;
     }
-    const std::string whileSplit =
-        splitSquadRefusal(squadIdOf(session), "You are") +
-        splitSquadRefusal(squadIdOf(*peerSession), target + " is");
-    if (!whileSplit.empty()) {
-        sendNotice(connection, net::NoticeSeverity::Warning, whileSplit);
-        return;
-    }
     Squad* squad = squadOrCreate(session, connection);
     if (squad == nullptr) {
         sendNotice(connection, net::NoticeSeverity::Warning, "Failed to create a squad.");
         return;
     }
     const std::string wrongBiome =
-        squadBiomeRefusal(*squad, squadIdOf(*peerSession), target + " is");
+        squadInviteeRefusal(*squad, squadIdOf(*peerSession), target + " is");
     if (!wrongBiome.empty()) {
         sendNotice(connection, net::NoticeSeverity::Warning, wrongBiome);
         return;
@@ -8830,17 +8854,6 @@ void GameServer::serviceNearbyRevives(double nowMillis) {
     for (auto& entry : sessions_) {
         Session& corpse = entry.second;
         const Entity victim = corpse.entity;
-        if (auto* pads = world_.tryGet<TeleporterState>(victim)) {
-            if (pads->markHoldUntilMillis > 0 && nowMillis >= pads->markHoldUntilMillis) {
-                pads->markHoldUntilMillis = 0;
-                if (isStanding(world_, victim)) {
-                    if (auto* connection = listener_.find(corpse.connection)) {
-                        sendNotice(*connection, net::NoticeSeverity::Info,
-                            "H Mark滞留已解除，可用 /mark-return 返回原处或正常传送。");
-                    }
-                }
-            }
-        }
         const auto* at = world_.tryGet<Transform>(victim);
         const auto* hp = world_.tryGet<Health>(victim);
         if (!corpse.playing() || !world_.has<Dead>(victim) || !at || !hp) {
@@ -9050,23 +9063,19 @@ bool GameServer::transportMarkedPlayer(Entity target, Entity marker, Rarity rari
     onPlayerRevived(target, NULL_ENTITY);
     moveEntityToRealm(target, realm, spawn);
     auto& pads = world_.ensure<TeleporterState>(target);
-    const bool hyper = ladderRarity(rarity) == Rarity::Apex;
-    pads.markHoldUntilMillis = hyper ? clockMillis_ + kHyperMarkHoldMillis : 0;
     pads.markOrigin = {origin.position, origin.realm};
     pads.markReturnAvailable = true;
     victim->hasDeathSite = false;
     if (auto* connection = listener_.find(victim->connection)) {
-        if (toVoid) sendSystem(*connection, "Void Mark：已被传送到虚空。");
+        if (toVoid) sendSystem(*connection, "虚空印记：已传送至虚空，可立即用 /mark-return 返回原处。");
         else if (frozen) sendSystem(*connection, "冰封印记：已被传送到极地。可使用 /mark-return 返回。");
-        else sendNotice(*connection, net::NoticeSeverity::Info, hyper
-            ? "H Mark：已传送至地狱，30秒后可用 /mark-return 返回原处。死亡或返回菜单解除滞留；5分钟内免疫其他Mark。"
-            : "Mark：已传送至地狱，可立即用 /mark-return 返回原处；5分钟内免疫其他Mark。");
+        else sendNotice(*connection, net::NoticeSeverity::Info,
+            "Mark：已传送至地狱，可立即用 /mark-return 返回原处。5 分钟内免疫其他印记。");
     }
     return true;
 }
 
 void GameServer::onPlayerRevived(Entity revived, Entity reviver) {
-    if (auto* pads = world_.tryGet<TeleporterState>(revived)) pads->markHoldUntilMillis = 0;
     Session* session = sessionForEntity(revived);
     if (session == nullptr) return;
 
@@ -9480,10 +9489,6 @@ void GameServer::moveEntityToRealm(Entity entity, Realm realm, Vec2 position) {
             position = playerRespawnPosition(*terrain_, realm, position, body->radius);
         }
     }
-    if (transform->realm != realm && isStanding(world_, entity)) {
-        const auto* pads = world_.tryGet<TeleporterState>(entity);
-        if (pads && clockMillis_ < pads->markHoldUntilMillis) return;
-    }
     if (transform->realm == realm && distanceSq(transform->position, position) < 1.0) return;
 
     const Realm from = transform->realm;
@@ -9806,7 +9811,6 @@ void GameServer::serviceJurassicRotation(std::int64_t cycle) {
         routeJurassicEntrance(realm, position);
         if (const auto* body = world_.tryGet<Body>(player))
             position = playerRespawnPosition(*terrain_, realm, position, body->radius);
-        if (auto* pads = world_.tryGet<TeleporterState>(player)) pads->markHoldUntilMillis = 0.0;
         moveEntityToRealm(player, realm, position);
     }
     std::vector<Entity> retired;
@@ -9867,7 +9871,6 @@ void GameServer::servicePyramidRotation(std::int64_t cycle) {
         if (const auto* body = world_.tryGet<Body>(player)) {
             at = playerRespawnPosition(*terrain_, realm, at, body->radius);
         }
-        if (auto* pads = world_.tryGet<TeleporterState>(player)) pads->markHoldUntilMillis = 0.0;
         moveEntityToRealm(player, realm, at);
         if (const auto* session = sessionForEntity(player); session && session->entity == player) {
             if (auto* connection = listener_.find(session->connection)) {

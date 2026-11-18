@@ -66,7 +66,6 @@ TEST(dark_mark_normal_transports_revives_returns_and_preserves_progress) {
     CHECK(Peer::applyMark(f.server, f.target, f.owner, Rarity::Unique));
     CHECK(isStanding(w, f.target));
     CHECK(f.server.worldMaps().forRealm(w.get<Transform>(f.target).realm)->biome() == "hel");
-    CHECK_NEAR(w.get<TeleporterState>(f.target).markHoldUntilMillis, 0, 0);
     CHECK_EQ(w.get<PlayerProgress>(f.target).stars, stars);
     CHECK_NEAR(w.get<Health>(f.target).current, w.get<Health>(f.target).max, 0);
     f.returnCommand();
@@ -78,24 +77,50 @@ TEST(dark_mark_normal_transports_revives_returns_and_preserves_progress) {
     CHECK(Peer::canMark(f.server, f.target, f.owner, Rarity::Apex));
 }
 
-TEST(dark_mark_hyper_hold_is_bounded_and_death_clears_it) {
+TEST(dark_mark_hyper_portals_are_available_immediately) {
     MarkFixture f; if (!f.ready) return;
     auto& w = f.server.world(); const Transform before = w.get<Transform>(f.target);
     f.kill(); CHECK(Peer::applyMark(f.server, f.target, f.owner, Rarity::Apex));
     const Realm hel = w.get<Transform>(f.target).realm;
-    CHECK_NEAR(w.get<TeleporterState>(f.target).markHoldUntilMillis, 1030000, 0);
-    f.returnCommand(); CHECK(w.get<Transform>(f.target).realm == hel);
+    CHECK(hel != before.realm);
     Peer::markTeleport(f.server, f.target, before.realm, before.position);
-    CHECK(w.get<Transform>(f.target).realm == hel);
-    Peer::markClock(f.server, 1029999);
-    Peer::markTeleport(f.server, f.target, before.realm, before.position);
-    CHECK(w.get<Transform>(f.target).realm == hel);
-    Peer::markClock(f.server, 1030000); f.returnCommand();
     CHECK(w.get<Transform>(f.target).realm == before.realm);
-    // A second hold after protection expires still ends immediately on death.
-    Peer::markClock(f.server, 1300000); f.kill();
-    CHECK(Peer::applyMark(f.server, f.target, f.owner, Rarity::Apex));
-    f.kill(); CHECK_NEAR(w.get<TeleporterState>(f.target).markHoldUntilMillis, 0, 0);
+}
+
+TEST(void_mark_can_target_a_corpse_near_the_flower_and_return_immediately) {
+    MarkFixture f;
+    if (!f.ready) return;
+    auto& w = f.server.world();
+    auto& petals = Peer::markPetals(f.server);
+    CommandBuffer commands{w};
+    const auto index = content().petalIndex("void_mark");
+    auto& slot = w.get<Loadout>(f.owner).slots[0];
+    slot.configIndex = index;
+    slot.rarity = Rarity::Apex;
+    petals.run(w, content(), 1000000, 0, commands);
+    petals.run(w, content(), 1021000, 0, commands);
+    Entity mark = NULL_ENTITY;
+    for (Entity entity : w.get<Loadout>(f.owner).spawned) {
+        if (w.get<PetalInstance>(entity).configIndex == index) mark = entity;
+    }
+    CHECK(mark != NULL_ENTITY);
+    if (!mark) return;
+    f.kill();
+    const Transform before = w.get<Transform>(f.owner);
+    w.get<Transform>(f.target).position = before.position;
+    w.get<Transform>(mark).position = before.position + Vec2{100, 0};
+    w.get<PlayerInput>(f.owner).current.flags = net::InputAttack | net::InputDefend;
+    Peer::markClock(f.server, 1021000);
+    petals.run(w, content(), 1021000, 0, commands);
+    CHECK_EQ(w.get<PetalInstance>(mark).markTarget, f.target);
+    const double ready = 1021000 + darkMarkDelayMillis(Rarity::Apex);
+    Peer::markClock(f.server, ready);
+    petals.run(w, content(), ready, 0, commands);
+    CHECK(isStanding(w, f.target));
+    const auto* destination = f.server.worldMaps().forRealm(w.get<Transform>(f.target).realm);
+    CHECK(destination && destination->id() == "hel");
+    f.returnCommand();
+    CHECK_EQ(w.get<Transform>(f.target).realm, before.realm);
 }
 
 TEST(dark_mark_rejects_higher_tier_low_level_other_realms_and_dungeons) {

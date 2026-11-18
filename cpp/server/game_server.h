@@ -597,7 +597,7 @@ private:
     int splitterSlotOf(Entity body) const;
     /// Puts the splitter slot on its reload on BOTH halves, so the bar reads
     /// the same whichever body is being steered.
-    void armSplitterReload(const Session&, double nowMillis);
+    double armSplitterReload(const Session&, double nowMillis, bool restartReload = false);
     /// Copies the account-scoped progress the halves must agree about -- XP,
     /// level, stars -- from whichever body has the most onto the other.
     /// Whichever half a kill was credited to, the account keeps it.
@@ -605,10 +605,8 @@ private:
     /// Both bodies this session owns, active half first; the second is
     /// NULL_ENTITY unless it is split.
     std::array<Entity, 2> bodiesOf(const Session&) const;
-    /// The line refusing a squad door to a split flower, or empty. `whoLabel`
-    /// is how it names them ("You are", "bob is"), exactly as the biome
-    /// refusal beside it does.
-    std::string splitSquadRefusal(SquadMemberId, const std::string& whoLabel) const;
+    /// Refresh the two body rows after a split, switch, or merge.
+    void refreshSplitSquadRows(Session&);
 
     /// Appends one row to the global notification feed.
     ///
@@ -753,6 +751,8 @@ private:
     /// `whoLabel` is how it names them ("You are", "bob is").
     std::string squadBiomeRefusal(const Squad&, SquadMemberId who,
                                   const std::string& whoLabel) const;
+    std::string squadInviteeRefusal(const Squad&, SquadMemberId who,
+                                    const std::string& whoLabel);
     /// Takes a member out of their squad when they have just arrived in a
     /// biome the rest of it is not in. Called from the two places a flower
     /// changes realm: a fresh body, and a pad.

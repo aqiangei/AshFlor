@@ -185,3 +185,27 @@ TEST(chinese_inventory_names_are_available_in_both_ui_languages) {
  }
  ui::setLanguage(previous);
 }
+
+TEST(mimic_ram_shows_mimic_identity_and_effective_sawblade) {
+    std::string error;
+    if (!loadContent(testsupport::dataDir(), error)) { CHECK(false); return; }
+    const auto ram = content().petalIndex("ram");
+    const auto mimic = content().petalIndex("mimic");
+    Loadout loadout;
+    loadout.slots[0] = {ram, Rarity::Common};
+    loadout.slots[1] = {mimic, Rarity::Rare};
+    const auto copy = equippedPetal(content(), loadout, 1);
+    CHECK_EQ(copy.configIndex, content().petalIndex("sawblade"));
+    CHECK(copy.rarity == Rarity::Rare);
+    CHECK(copy.reloadRarity == Rarity::Common);
+    const auto oldLanguage = ui::language();
+    ui::setLanguage(ui::Language::En);
+    const auto en = ui::equippedPetalTooltipLines(mimic, copy, {}, 1.0);
+    CHECK_EQ(en.front().text, "Mimic");
+    CHECK_EQ(en.back().text, "Effective copy: Sawblade");
+    ui::setLanguage(ui::Language::Zh);
+    const auto zh = ui::equippedPetalTooltipLines(mimic, copy, {}, 1.0);
+    CHECK_EQ(zh.front().text, "拟态");
+    CHECK_EQ(zh.back().text, "实际复制效果：锯片");
+    ui::setLanguage(oldLanguage);
+}

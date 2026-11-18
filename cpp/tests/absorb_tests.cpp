@@ -295,7 +295,11 @@ TEST(absorbing_in_the_world_levels_the_flower_up_on_the_spot) {
     const int levelBefore = world.get<PlayerProgress>(body).level;
 
     // Two legendaries grant several levels to a fresh flower immediately.
+    const double plannedXp = absorbXpTotal(2.0 * absorbUnits(Rarity::Legendary), client.profile().skills);
+    const int projectedLevel = levelFromTotalXp(before + plannedXp).level;
     constexpr double earnedXp = 1000.0;
+    CHECK_EQ(plannedXp, earnedXp);
+    CHECK(projectedLevel > levelBefore + 1);
     AbsorbOutcome outcome;
     CHECK(absorb(h, client, {{rose, Rarity::Legendary, 2}}, outcome));
     CHECK(outcome.success);
@@ -303,7 +307,9 @@ TEST(absorbing_in_the_world_levels_the_flower_up_on_the_spot) {
     const PlayerProgress& progress = world.get<PlayerProgress>(body);
     CHECK_EQ(progress.totalXp, before + earnedXp);
     CHECK(progress.level > levelBefore);
-    CHECK_EQ(progress.level, levelFromTotalXp(before + earnedXp).level);
+    CHECK_EQ(progress.level, projectedLevel);
+    std::printf("Absorb experience %.0f, level %d -> %d, projected %d\n",
+                outcome.reward, levelBefore, progress.level, projectedLevel);
     // The level-up landed with the XP: the new level's health, full.
     const Health& health = world.get<Health>(body);
     CHECK(health.max > maxHealthForLevel(levelBefore));
@@ -311,7 +317,8 @@ TEST(absorbing_in_the_world_levels_the_flower_up_on_the_spot) {
     // And the record was brought level with the body straight away, so the
     // Profile that followed already counts it.
     CHECK(awaitProfile(h, client, [&](const Profile& p) {
-        return p.totalXp == before + earnedXp && p.stackCount(rose, Rarity::Legendary) == 0u;
+        return p.totalXp == before + earnedXp && p.level == projectedLevel &&
+               p.stackCount(rose, Rarity::Legendary) == 0u;
     }));
 }
 

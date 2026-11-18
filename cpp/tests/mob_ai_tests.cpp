@@ -274,6 +274,44 @@ struct Sim {
 /// Middle of the map, well away from the world edge that reads as wall.
 const Vec2 kOrigin{30000.0, 30000.0};
 
+TEST(blinking_void_mobs_mark_the_fixed_landing_before_moving) {
+    CHECK(contentReady());
+    for (const char* id : {"void_momy", "void_zatan"}) {
+        Sim sim;
+        std::uint32_t nextId = 0;
+        sim.ai.allocateNetId = [&] { return ++nextId; };
+        const Entity mob = sim.spawnMob(id, {1000.0, 1000.0});
+        const Entity flower = sim.spawnPlayer({1240.0, 1000.0});
+        sim.brainOf(mob).target = flower;
+        sim.brainOf(mob).nextBlinkMillis = sim.now;
+        const double start = sim.now;
+        sim.tickIntent();
+        CHECK(distance(sim.positionOf(mob), {1000.0, 1000.0}) < 12.0);
+        CHECK_NEAR(sim.brainOf(mob).blinkLandingMillis, start + 600.0, 0.001);
+        int markers = 0;
+        Vec2 mark;
+        Query<GroundEffect, Transform, Lifetime, Replicated, NetId>{sim.world}.each(
+            [&](Entity, GroundEffect& effect, Transform& at, Lifetime&, Replicated& rep, NetId&) {
+                if (effect.kind != GroundEffectKind::BlinkLanding) return;
+                ++markers;
+                mark = at.position;
+                CHECK_EQ(rep.kind, net::EntityKind::Effect);
+                CHECK_EQ(rep.typeIndex, static_cast<std::uint16_t>(GroundEffectKind::BlinkLanding));
+                CHECK_NEAR(effect.damagePerSecond, 0.0, 0.001);
+                CHECK_NEAR(effect.radius, sim.world.get<Body>(mob).radius, 0.001);
+            });
+        CHECK_EQ(markers, 1);
+        if (markers != 1) continue;
+        sim.world.get<Transform>(flower).position = {1240.0, 1160.0};
+        sim.now = start + 600.0 - net::kTickMillis;
+        sim.tickIntent();
+        CHECK(distance(sim.positionOf(mob), {1000.0, 1000.0}) < 12.0);
+        sim.tickIntent();
+        CHECK_NEAR(sim.positionOf(mob).x, mark.x, 0.001);
+        CHECK_NEAR(sim.positionOf(mob).y, mark.y, 0.001);
+    }
+}
+
 TEST(baby_ant_and_neutral_bee_switch_from_a_nearby_flower_to_visible_honey) {
     if (!contentReady()) return;
     Sim sim;
@@ -1815,6 +1853,44 @@ TEST(a_pet_prefers_the_highest_tier_mob_in_reach) {
     CHECK_EQ(sim.brainOf(pet).target, epic);
 }
 
+TEST(feedback_3697_pet_prioritizes_the_flowers_recent_hit) {
+    CHECK(contentReady());
+    for (const bool parallel : {false, true}) {
+        ServerWorkers workers(parallel ? 2 : 0);
+        Sim sim;
+        if (parallel) {
+            sim.ai.workers = &workers;
+            sim.ai.workerLimit = workers.count();
+        }
+        CombatSystem combat;
+        EventQueue events;
+        const Entity owner = sim.spawnPlayer(kOrigin);
+        sim.world.ensure<PlayerInput>(owner);
+        std::vector<Entity> pets;
+        const int petCount = parallel ? 64 : 1;
+        for (int i = 0; i < petCount; ++i) {
+            const Entity pet = sim.spawnMob("soldier_ant", kOrigin + Vec2{100, double(i)});
+            sim.world.add<Pet>(pet, Pet{owner, 0});
+            sim.world.get<Faction>(pet).team = Team::Players;
+            pets.push_back(pet);
+        }
+        const Entity common = sim.spawnMob("rock", kOrigin + Vec2{160, 0});
+        const Entity epic = sim.spawnMob("ladybug", kOrigin + Vec2{300, 0}, Rarity::Epic);
+        sim.tickIntent();
+        for (const Entity pet : pets) CHECK_EQ(sim.brainOf(pet).target, epic);
+
+        combat.beginTick(sim.world, content(), sim.now, sim.dt, events);
+        combat.applyDamage(sim.world, common, owner, 1.0, sim.now);
+        combat.applyDamage(sim.world, epic, pets.front(), 1.0, sim.now);
+        sim.tickIntent();
+        for (const Entity pet : pets) CHECK_EQ(sim.brainOf(pet).target, common);
+
+        sim.now += 2000.0;
+        sim.tickIntent();
+        for (const Entity pet : pets) CHECK_EQ(sim.brainOf(pet).target, epic);
+    }
+}
+
 TEST(egg_pet_attacks_same_tier_mob_at_its_edge) {
     CHECK(contentReady());
     for (Rarity tier : {Rarity::Super, Rarity::Unique, Rarity::Apex}) {
@@ -2736,6 +2812,30 @@ TEST(pet_damage_talent_scales_hornet_projectiles_without_changing_fire_rate) {
         if(shot == NULL_ENTITY) continue;
         if(scale == 1.0) damage = sim.world.get<Projectile>(shot).damage;
         else CHECK_NEAR(sim.world.get<Projectile>(shot).damage, damage*2, 1e-9);
+    }
+}
+
+TEST(summoned_black_and_white_hole_rays_use_the_authored_distance) {
+    CHECK(contentReady());
+    for (const char* id : {"void_black_hole", "void_white_hole"}) {
+        for (bool summoned : {false, true}) {
+            Sim sim;
+            const Entity hole = sim.spawnMob(id, kOrigin, Rarity::Super);
+            if (summoned) {
+                const Entity owner = sim.spawnPlayer(kOrigin - Vec2{100, 0});
+                sim.world.add<Pet>(hole, Pet{owner, 0});
+                sim.world.get<Faction>(hole) = Faction{Team::Players, false};
+                sim.spawnMob("soldier_ant", kOrigin + Vec2{400, 0});
+            } else {
+                sim.spawnPlayer(kOrigin + Vec2{400, 0});
+            }
+            const Entity shot = fireAndCatch(sim);
+            CHECK(shot != NULL_ENTITY);
+            if (shot == NULL_ENTITY) continue;
+            const double reach = sim.world.get<Projectile>(shot).remainingDistance;
+            if (summoned) CHECK_NEAR(reach, 690.0, 1e-9);
+            else CHECK(reach > 690.0);
+        }
     }
 }
 

@@ -25,7 +25,8 @@ namespace {
 /// 70 apart with 10 of padding top and bottom.
 constexpr std::size_t kColumns = 6;
 constexpr double kMaxHeight = 700.0;
-constexpr double kGridTop = 380.8;
+constexpr double kSearchTop = 380.8;
+constexpr double kGridTop = kSearchTop + 34.0;
 constexpr double kGridPitch = 70.0;
 constexpr double kGridPadding = 10.0;
 
@@ -82,6 +83,7 @@ Vec2 TitanPanel::size(const Profile& profile) {
 }
 
 void TitanPanel::reset() {
+    searchField_.blur();
     grid_.reset();
     motion_.clear();
     stagedPetal_ = kNoPetal;
@@ -204,6 +206,9 @@ bool TitanPanel::render(MenuContext& ctx) {
         }
     }
 
+    const Rect searchRect{panel.x + 16.0, panel.y + kSearchTop, panel.w - 32.0, 28.0};
+    if (editSlotSearch(ctx, searchRect, search_, searchField_)) grid_.reset();
+
     if (abandon_) {
         if (knownPetal(stagedPetal_) && profile.stackCount(stagedPetal_, Rarity::Apex) == 0) reset();
         if (knownPetal(stagedPetal_) && now - askedAt_ > 1) {
@@ -240,7 +245,7 @@ bool TitanPanel::render(MenuContext& ctx) {
                 SlotCell cell; cell.count = count;
                 if (count > 1) cell.badge = "x" + stackCountText(count);
                 return cell;
-            });
+            }, search_);
         if (!ctx.pressed()) return true;
         if (card.close.contains(mouse)) return false;
         if (hovered) {
@@ -444,7 +449,7 @@ bool TitanPanel::render(MenuContext& ctx) {
             // A lone petal carries no badge, as in the inventory.
             if (cell.count > 1) cell.badge = "x" + stackCountText(cell.count);
             return cell;
-        });
+        }, search_);
 
     // Tiles on their way out go over everything but the words.
     motion_.drawVanishing(canvas, ctx.sprites, dtMs);

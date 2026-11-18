@@ -851,6 +851,21 @@ TEST(a_mob_in_reach_draws_a_petal_onto_its_edge) {
 }
 
 /// A petal whose ring point is buried in a mob is put on its edge too.
+TEST(feedback_3266_eggs_stay_on_the_ring_when_a_mob_is_near) {
+    if (!contentLoaded()) return;
+    Rig rig;
+    rig.equip(0, "beetle_egg");
+    rig.freezeRing();
+    rig.settleRing();
+    const Entity egg = rig.petals(0).front();
+    const Vec2 orbit = rig.position(egg);
+    const Vec2 away = (orbit - rig.position(rig.player)).normalized();
+    addAttractor(rig, orbit + away * 30.0, 20.0);
+    rig.tick(240);
+    CHECK_EQ(rig.world.get<PetalInstance>(egg).attractedTo, NULL_ENTITY);
+    CHECK_NEAR(distance(rig.position(egg), orbit), 0.0, 1e-6);
+}
+
 TEST(a_petal_inside_a_mob_is_put_on_its_edge) {
     if (!contentLoaded()) return;
     // The ring point ten units inside a mob of radius 20.
@@ -3159,7 +3174,7 @@ TEST(a_berry_reloads_on_its_own_short_cooldown_when_the_pool_can_pay) {
     CHECK(rig.world.get<ManaPool>(rig.player).current <= 100.0 - 40.0 + 1e-9);
 }
 
-TEST(bubbles_only_pop_from_defend_when_attack_is_released) {
+TEST(bubbles_pop_while_the_attack_ring_and_projectiles_stay_active) {
     if (!contentLoaded()) return;
     for (const char* id : {"bubble", "magic_bubble"}) {
         Rig rig;
@@ -3173,13 +3188,21 @@ TEST(bubbles_only_pop_from_defend_when_attack_is_released) {
         rig.setFlags(net::InputAttack);
         rig.tick(3);
         CHECK_EQ(rig.petals(1).size(), std::size_t(1));
-        rig.setFlags(net::InputAttack | net::InputDefend);
-        rig.tick(3);
-        CHECK_EQ(rig.petals(1).size(), std::size_t(1));
         CHECK_NEAR(rig.velocity(rig.player).length(), 0.0, 1e-9);
-        rig.setFlags(net::InputDefend);
+
+        rig.setFlags(0);
+        rig.equip(2, "missile");
+        rig.settleEquips();
+        CHECK_EQ(rig.countOf(net::EntityKind::Projectile), std::size_t(0));
+
+        rig.setFlags(net::InputAttack | net::InputDefend);
         rig.tick();
         CHECK(rig.velocity(rig.player).length() > 1.0);
+        CHECK_NEAR(rig.ring().radius, kAttackOrbit, 1e-9);
+        CHECK_EQ(rig.countOf(net::EntityKind::Projectile), std::size_t(1));
+        rig.tick();
+        CHECK(rig.slot(1).broken);
+        CHECK(rig.petals(1).empty());
     }
 }
 
@@ -6844,6 +6867,28 @@ TEST(large_black_hole_egg_hatches_in_a_corridor_crowded_by_moving_crabs) {
     }
 }
 
+TEST(feedback_3697_egg_hatches_on_open_ground_crowded_by_moving_mobs) {
+    const auto& registry = testsupport::shippedContent();
+    for (const bool mobile : {true, false}) {
+        Rig rig(registry);
+        rig.useHatchTerrain = true;
+        const Vec2 owner{10.5 * kTileSize, 10.5 * kTileSize};
+        rig.world.get<Transform>(rig.player).position = owner;
+        const Entity blocker = addMob(rig, owner, "crab");
+        rig.world.get<Body>(blocker).radius = 1000.0;
+        if (mobile) rig.world.add<Motion>(blocker, Motion{Vec2{40, 0}});
+
+        rig.equip(0, "beetle_egg", Rarity::Common);
+        CHECK_EQ(rig.tickUntil([&] { return rig.petCount() > 0; }, 1500), mobile);
+        Query<Pet, Transform, Body>{rig.world}.each(
+            [&](Entity, Pet& pet, Transform& at, Body& body) {
+                CHECK_EQ(pet.owner, rig.player);
+                CHECK(distance(owner, at.position) > body.radius);
+                CHECK(!rig.terrain.resolveWall(at.position, body.radius, at.realm).collided);
+            });
+    }
+}
+
 TEST(large_black_hole_egg_still_needs_room_away_from_a_fixed_summon) {
     const auto& registry = testsupport::shippedContent();
     Rig rig(registry);
@@ -8505,4 +8550,33 @@ TEST(summon_bulb_bonus_uses_active_stack_and_ignores_poo) {
     rig.unequip(1);
     rig.tick();
     CHECK_NEAR(rig.modifiers().petTargetRangeScale, 1.0, 1e-9);
+}
+
+TEST(feedback_3442_ready_egg_checks_nearby_angles_before_hatching_farther_out) {
+    const auto& registry = fixture().registry;
+    CHECK(contentLoaded());
+    const double radius = registry.mobStats(registry.mobIndex("critter"), Rarity::Common).radius;
+    double largestGap = 0.0;
+    for (int i = 0; i < 8; ++i) {
+        Rig rig(registry);
+        const Vec2 centre = rig.position(rig.player);
+        const double nominal = rig.world.get<Body>(rig.player).radius + radius + 8.0;
+        const double direction = kTau * i / 8.0;
+        const double offset = 110.0;
+        const Entity mob = addMob(rig, centre + Vec2::fromAngle(direction, offset), "brute");
+        // A nearby large mob leaves a narrow free arc at the normal hatch
+        // distance. The brood can also fit farther out in either direction.
+        const double blocker = nominal + offset - radius - 5.0;
+        rig.world.get<Body>(mob).radius = blocker;
+        rig.equip(0, "beetle_egg");
+        CHECK(rig.tickUntil([&] { return rig.petCount() == 1; }, 1000));
+        Query<Pet, Transform, Body>{rig.world}.each([&](Entity, Pet& pet, Transform& at, Body& body) {
+            CHECK_EQ(pet.owner, rig.player);
+            const double distanceFromOwner = distance(centre, at.position);
+            largestGap = std::max(largestGap, distanceFromOwner - nominal);
+            CHECK(distance(rig.position(mob), at.position) >= body.radius + blocker);
+        });
+    }
+    std::printf("Eight hatches, largest excess over normal hatch distance: %.2f units\n", largestGap);
+    CHECK(largestGap <= radius * 0.20 + 1e-6);
 }

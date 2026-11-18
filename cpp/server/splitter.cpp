@@ -24,8 +24,7 @@
 // share one account record (so there is no loadout to keep in step and no way
 // to duplicate one, which is what the browser build's per-body clone did),
 // they cannot hurt each other, they rank as ONE person for loot and XP, and
-// they are each other's only squadmates -- a split flower may not join anyone
-// else's squad while it is two flowers.
+// they share a single squad membership.
 
 #include "server/game_server.h"
 
@@ -94,7 +93,7 @@ void GameServer::parkBody(Entity body) {
     if (Knockback* knockback = world_.tryGet<Knockback>(body)) *knockback = Knockback{};
 }
 
-void GameServer::armSplitterReload(const Session& session, double nowMillis) {
+double GameServer::armSplitterReload(const Session& session, double nowMillis, bool restartReload) {
     // Spend it wherever it can be spent -- that is what takes the petal off
     // the ring and starts the timer.
     double deadline = 0;
@@ -102,14 +101,15 @@ void GameServer::armSplitterReload(const Session& session, double nowMillis) {
         if (body == NULL_ENTITY || !world_.isAlive(body)) continue;
         const int slot = splitterSlotOf(body);
         if (slot < 0) continue;
-        petals_->spendSlot(world_, content(), body, static_cast<std::uint8_t>(slot), nowMillis);
+        petals_->spendSlot(world_, content(), body, static_cast<std::uint8_t>(slot),
+                           nowMillis, true, restartReload);
         const Loadout* loadout = world_.tryGet<Loadout>(body);
         if (loadout != nullptr) {
             deadline = std::max(deadline,
                                 loadout->slots[static_cast<std::size_t>(slot)].reloadReadyAtMillis);
         }
     }
-    if (deadline <= 0.0) return;
+    if (deadline <= 0.0) return nowMillis;
 
     // Then hold BOTH halves to the later of the two deadlines.
     //
@@ -129,6 +129,7 @@ void GameServer::armSplitterReload(const Session& session, double nowMillis) {
         entry.broken = true;
         entry.reloadReadyAtMillis = std::max(entry.reloadReadyAtMillis, deadline);
     }
+    return deadline;
 }
 
 void GameServer::syncSplitProgress(const Session& session) {
@@ -255,13 +256,10 @@ bool GameServer::splitSession(Session& session) {
     if (Transform* moved = world_.tryGet<Transform>(session.entity)) moved->position = left;
     session.splitOther = clone;
     parkBody(clone);
+    // The petal system initializes the slot later this tick.
+    session.splitSwitchReadyAtMillis = -1.0;
 
-    // Preserve an existing team; solo players still see both soul bars.
-    session.splitCreatedSoloSquad=false;
-    if(!squads_.forMember(squadIdOf(session))) {
-        session.splitCreatedSoloSquad=squads_.create(squadIdOf(session),false,rng_)!=nullptr;
-    }
-    if(auto* squad=squads_.forMember(squadIdOf(session)))broadcastSquadUpdate(*squad);
+    refreshSplitSquadRows(session);
     return true;
 }
 
@@ -317,19 +315,14 @@ void GameServer::endSplit(Session& session, double nowMillis, bool armReload) {
                        at != nullptr ? at->realm : Realm::Overworld);
     }
 
-    if(auto* squad=squads_.forMember(squadIdOf(session))) {
-        if(session.splitCreatedSoloSquad && squad->members.size()==1)
-            departSquad(session,listener_.find(session.connection),squadDisplayName(squadIdOf(session)));
-        else broadcastSquadUpdate(*squad);
-    }
-    session.splitCreatedSoloSquad=false;
+    refreshSplitSquadRows(session);
 }
 
 void GameServer::switchSplitHalf(Session& session, double nowMillis) {
     if (!session.split()) return;
-    // Spent on BOTH halves, so the bar reads the same cooldown whichever body
-    // is being steered and a switch back costs the same as a switch out.
-    armSplitterReload(session, nowMillis);
+    // Both halves display the resulting reload. Restart it even when a
+    // fight has broken the petal so a switch always starts a full cooldown.
+    session.splitSwitchReadyAtMillis = armSplitterReload(session, nowMillis, true);
 
     const auto* oldInput = world_.tryGet<PlayerInput>(session.entity);
     const net::InputFrame heldInput = oldInput ? oldInput->current : net::InputFrame{};
@@ -358,7 +351,8 @@ void GameServer::switchSplitHalf(Session& session, double nowMillis) {
     // The roster carries wire ids and the two halves have just swapped places
     // in it, so the party HUD would otherwise point at the body the player is
     // now standing in and call it their squadmate.
-    if (Squad* squad = squads_.forMember(squadIdOf(session))) broadcastSquadUpdate(*squad);
+    enforceSquadBiome(squadIdOf(session));
+    refreshSplitSquadRows(session);
 }
 
 void GameServer::serviceSplitters(double nowMillis) {
@@ -415,6 +409,10 @@ void GameServer::serviceSplitters(double nowMillis) {
                 endSplit(session, nowMillis, false);
                 continue;
             }
+            if (session.splitSwitchReadyAtMillis < 0.0) {
+                const auto& entry = world_.get<Loadout>(session.entity).slots[static_cast<std::size_t>(slot)];
+                session.splitSwitchReadyAtMillis = entry.reloadReadyAtMillis;
+            }
             parkBody(session.splitOther);
             const auto* activeInput = world_.tryGet<PlayerInput>(session.entity);
             auto* spareInput = world_.tryGet<PlayerInput>(session.splitOther);
@@ -458,12 +456,8 @@ void GameServer::handleUsePetal(Session& session, ByteReader& reader) {
     if (loadout == nullptr) return;
     const LoadoutSlot& entry = loadout->slots[slot];
     if (entry.empty()) return;
-    // Only the petals that DO something when they are used answer to this, and
-    // only while the slot is loaded. Both are re-asked here rather than
-    // trusted from the bar: the client decides what to draw, the server decides
-    // what happens.
     if (!petalIsClickToUse(content().petal(entry.configIndex))) return;
-    if (entry.broken) return;
+    if (session.splitSwitchReadyAtMillis < 0.0 || clockMillis_ < session.splitSwitchReadyAtMillis) return;
 
     // A splitter that has not split yet is doing its job on the tick clock --
     // the service above splits on equip -- so a click before that lands has
@@ -472,8 +466,12 @@ void GameServer::handleUsePetal(Session& session, ByteReader& reader) {
     switchSplitHalf(session, clockMillis_);
 }
 
-std::string GameServer::splitSquadRefusal(SquadMemberId who, const std::string& whoLabel) const {
-    (void)who; (void)whoLabel; return {};
+void GameServer::refreshSplitSquadRows(Session& session) {
+    if (Squad* squad = squads_.forMember(squadIdOf(session))) {
+        broadcastSquadUpdate(*squad);
+    } else if (net::Connection* connection = listener_.find(session.connection)) {
+        sendSquadUpdate(*connection, nullptr);
+    }
 }
 
 } // namespace flix

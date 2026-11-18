@@ -188,8 +188,11 @@ enum Toggle : int {
     kInvertDefend,
     kHideOtherPetals,
     kHideOtherPets,
+    kHideOwnPets,
     kDesynchronizedCanvas,
     kScreenShake,
+    kHideMobAnnouncements,
+    kHideCraftAnnouncements,
     kToggleCount,
 };
 
@@ -304,6 +307,9 @@ bool* toggleValue(PanelState& st, ClientSettings& settings, int id) {
         case kInvertDefend: return &settings.invertDefend;
         case kHideOtherPetals: return &settings.render.hideOtherPetals;
         case kHideOtherPets: return &settings.render.hideOtherPets;
+        case kHideOwnPets: return &settings.render.hideOwnPets;
+        case kHideMobAnnouncements: return &settings.hideMobAnnouncements;
+        case kHideCraftAnnouncements: return &settings.hideCraftAnnouncements;
         case kDisableUltraParticles: return &settings.render.disableUltraPetalParticles;
         case kSimplifyCombatEffects: return &settings.render.simplifyCombatEffects;
         case kScreenShake: return &settings.render.screenShake;
@@ -762,7 +768,7 @@ bool SettingsPanel::render(MenuContext& ctx) {
         case Tab::Graphics: {
             p.sliderRow(kCameraZoom, trEnZh("Camera zoom: ", "视野缩放："), "%", settings.zoom,
                         kMinZoom, kMaxZoom, 0.05, 100.0, 0, kInk, 28.0);
-            if (st.dragging == kCameraZoom && ctx.released()) settings.zoomDirty = true;
+            if (st.dragging == kCameraZoom && ctx.released()) settings.settingsDirty = true;
             if (ctx.window.coarsePointer() || settings.requestMobile) {
                 constexpr double gap = 8.0;
                 const double width = (contentW - 2.0 * gap) / 3.0;
@@ -770,7 +776,7 @@ bool SettingsPanel::render(MenuContext& ctx) {
                     if (p.button(Rect{contentX + column * (width + gap), p.cy, width, 34.0},
                                  caption, kActionFill, 13.0, id)) {
                         settings.zoom = clamp(value, kMinZoom, kMaxZoom);
-                        settings.zoomDirty = true;
+                        settings.settingsDirty = true;
                     }
                 };
                 step(0, kZoomLess, trEnZh("Zoom out", "缩小"), settings.zoom - kZoomKeyStep);
@@ -796,6 +802,7 @@ bool SettingsPanel::render(MenuContext& ctx) {
             p.checkbox(kShowHitboxes, tr(Msg::ShowHitboxes));
             p.checkbox(kHideOtherPetals, tr(Msg::HideOtherPetals));
             p.checkbox(kHideOtherPets, tr(Msg::HideOtherPets));
+            p.checkbox(kHideOwnPets, trEnZh("Hide Own Summons", "隐藏自己的召唤物"));
             p.checkbox(kScreenShake, tr(Msg::ScreenShake));
             p.checkbox(kShowStats, tr(Msg::ShowStats));
             p.checkbox(kShowExactValues, tr(Msg::ShowExactValues));
@@ -852,6 +859,8 @@ bool SettingsPanel::render(MenuContext& ctx) {
             if (p.over(field)) ctx.window.setCursorShape(CursorShape::Text);
             p.cy += kFieldHeight + 15.0;
 
+            p.checkbox(kHideMobAnnouncements, trEnZh("Hide mob announcements", "屏蔽怪物播报"));
+            p.checkbox(kHideCraftAnnouncements, trEnZh("Hide crafting and forging announcements", "屏蔽合成及锻造播报"));
             p.checkbox(kShowConsoleLogs, tr(Msg::ShowConsoleLogsOnScreen));
             p.checkbox(kShowAdminCommands, tr(Msg::ShowAdminCommands));
             p.checkbox(kShowAdminsOnLeaderboard, tr(Msg::ShowAdminsOnLeaderboard));
@@ -870,6 +879,7 @@ bool SettingsPanel::render(MenuContext& ctx) {
                     // own alert says "on your next game".
                     settings.tutorialCompleted = false;
                     settings.tutorialStep = 0;
+                    settings.settingsDirty = true;
                     st.tutorialResetArmed = false;
                 } else {
                     st.tutorialResetArmed = true;

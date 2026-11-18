@@ -99,10 +99,7 @@ public:
     /// Public squads with room left, in creation order.
     std::vector<const Squad*> publicSquads() const;
 
-    /// Invites `to` into `from`'s squad. Any member may invite. A target who
-    /// is already in another squad is still inviteable (they switch on
-    /// accept); only someone already in *this* squad is refused. Returns the
-    /// refusal, or "" once the invitation is pending.
+    /// Invites a player or their current squad, provided the combined roster fits.
     std::string invite(SquadMemberId from, SquadMemberId to, std::int64_t nowMillis);
 
     /// The squad whose invitation is waiting on this member's answer, or
@@ -129,7 +126,7 @@ public:
     std::string joinWithCode(const std::string& code, SquadMemberId who, Departure& leftPrevious);
 
     /// Answers the one pending invitation. On success `squadIdOut` names the
-    /// squad joined. The target must have no current squad.
+    /// squad joined or formed by merging both squads.
     std::string accept(SquadMemberId target, std::int64_t nowMillis, std::string& squadIdOut);
     bool decline(SquadMemberId target);
 

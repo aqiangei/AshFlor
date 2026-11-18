@@ -775,6 +775,7 @@ bool ClientSettings::load(const std::string& path) {
         else if (key == "hitboxes") render.hitboxes = number != 0;
         else if (key == "hideOtherPetals") render.hideOtherPetals = number != 0;
         else if (key == "hideOtherPets") render.hideOtherPets = number != 0;
+        else if (key == "hideOwnPets") render.hideOwnPets = number != 0;
         else if (key == "disableUltraPetalParticles") render.disableUltraPetalParticles = number != 0;
         else if (key == "simplifyCombatEffects") render.simplifyCombatEffects = number != 0;
         else if (key == "screenShake") render.screenShake = number != 0;
@@ -812,6 +813,8 @@ bool ClientSettings::load(const std::string& path) {
         }
         else if (key == "stats") showStats = number != 0;
         else if (key == "exactValues") showExactValues = number != 0;
+        else if (key == "hideMobAnnouncements") hideMobAnnouncements = number != 0;
+        else if (key == "hideCraftAnnouncements") hideCraftAnnouncements = number != 0;
         else if (key == "petalRarityGlow") render.rarityGlow = number != 0;
         else if (key == "debugButton") showDebugButton = number != 0;
         else if (key == "adminsOnBoard") showAdminsOnLeaderboard = number != 0;
@@ -877,6 +880,7 @@ bool ClientSettings::save(const std::string& path) const {
          << "hitboxes " << (render.hitboxes ? 1 : 0) << '\n'
          << "hideOtherPetals " << (render.hideOtherPetals ? 1 : 0) << '\n'
          << "hideOtherPets " << (render.hideOtherPets ? 1 : 0) << '\n'
+         << "hideOwnPets " << (render.hideOwnPets ? 1 : 0) << '\n'
          << "disableUltraPetalParticles " << (render.disableUltraPetalParticles ? 1 : 0) << '\n'
          << "simplifyCombatEffects " << (render.simplifyCombatEffects ? 1 : 0) << '\n'
          << "screenShake " << (render.screenShake ? 1 : 0) << '\n'
@@ -884,6 +888,8 @@ bool ClientSettings::save(const std::string& path) const {
          << "chatTabs " << static_cast<int>(chatChannels) << '\n'
          << "stats " << (showStats ? 1 : 0) << '\n'
          << "exactValues " << (showExactValues ? 1 : 0) << '\n'
+         << "hideMobAnnouncements " << (hideMobAnnouncements ? 1 : 0) << '\n'
+         << "hideCraftAnnouncements " << (hideCraftAnnouncements ? 1 : 0) << '\n'
          << "petalRarityGlow " << (render.rarityGlow ? 1 : 0) << '\n'
          << "debugButton " << (showDebugButton ? 1 : 0) << '\n'
          << "adminsOnBoard " << (showAdminsOnLeaderboard ? 1 : 0) << '\n'
@@ -990,7 +996,7 @@ void MenuSystem::close() {
     drag_.clear();
 }
 
-void MenuSystem::noteMobileLoadoutGestures(bool swapRowsTap, bool presetsHeld) {
+void MenuSystem::noteMobileLoadoutGestures(bool swapRowsTap, bool presetsHeld, bool presetTap) {
     if (!inGame_) {
         mobilePresetSticky_ = false;
         return;
@@ -999,9 +1005,14 @@ void MenuSystem::noteMobileLoadoutGestures(bool swapRowsTap, bool presetsHeld) {
     // release so one finger can tap a tile to load or hold a tile ~0.42 s to
     // save. A later short tap on R cancels the bank instead of swapping rows.
     if (presetsHeld) mobilePresetSticky_ = true;
+    if (presetTap) {
+        mobilePresetSticky_ = !mobilePresetSticky_;
+        mobilePresetConfirm_ = -1;
+    }
     if (swapRowsTap) {
         if (mobilePresetSticky_) mobilePresetSticky_ = false;
         else pendingRowSwap_ = true;
+        mobilePresetConfirm_ = -1;
     }
     if (mobilePresetSticky_ || presetsHeld) presetBankShown_ = 1;
 }
@@ -1104,6 +1115,7 @@ bool MenuSystem::handleKeys(Window& window) {
                 if (!window.keyDown(kPresetBankKeys[bank])) continue;
                 pendingPreset_ = bank * kLoadoutPresetsPerBank + i;
                 pendingPresetSave_ = window.shiftHeld();
+                pendingPresetConfirm_ = false;
                 presetTapArmed_[static_cast<std::size_t>(bank)] = false;
                 return true;
             }
@@ -1185,7 +1197,10 @@ Rect InventoryPanel::bounds(int w, int h) { return listPanel(preferredWidth(), w
 /// nothing is dragged into or out of it, so it does not need to stand clear of
 /// the loadout the way the inventory, the forge and the tree do.
 Rect GalleryPanel::bounds(int w, int h) {
-    return cornerPanel(preferredWidth(), GalleryPanel::preferredHeight(), kMenuCornerY, w, h);
+    Rect panel = cornerPanel(preferredWidth(), preferredHeight(), kMenuCornerY, w, h);
+    panel.w = clamp(w - panel.x * 2.0, 0.0, panel.w);
+    panel.h = clamp(h - panel.y - panel.x, 0.0, panel.h);
+    return panel;
 }
 
 Rect ShopPanel::bounds(int, int) {
@@ -1717,6 +1732,8 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
     if (std::fabs(loadoutSlide_ - target) < 0.005) loadoutSlide_ = target;
     if (loadoutSlide_ <= 0.005) {
         rotationDial_ = {};
+        mobilePresetConfirm_ = -1;
+        mobilePresetConfirmRect_ = {};
         // Nothing painted means nothing to hit: a bar that has sunk off-screen
         // must not go on answering for clicks where it used to be, and it has
         // no selection or queued keystroke to carry into the next screen.
@@ -1812,7 +1829,11 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
     if (pendingPreset_ >= 0) {
         const int preset = pendingPreset_;
         pendingPreset_ = -1;
-        if (pendingPresetSave_) {
+        if (pendingPresetConfirm_) {
+            mobilePresetConfirm_ = preset;
+            mobilePresetConfirmSave_ = pendingPresetSave_;
+            pendingPresetConfirm_ = false;
+        } else if (pendingPresetSave_) {
             net.saveLoadoutPreset(preset);
         } else {
             // Nothing to show ahead of the server this time: the presets live
@@ -1825,7 +1846,7 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
         }
         // Load or save finishes the mobile R pick -- close the sticky L bank
         // the way ashflor clears mobile_l_preset_pick after a slot tap.
-        mobilePresetSticky_ = false;
+        if (mobilePresetConfirm_ < 0) mobilePresetSticky_ = false;
     }
 
     // The bar's box is not fixed. It moves wholesale between the two screens
@@ -2251,6 +2272,38 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
         canvas.restore();
     }
 
+    mobilePresetConfirmRect_ = {};
+    if (!touchLayout_ || open_ != MenuId::None || !mobilePresetSticky_) mobilePresetConfirm_ = -1;
+    if (mobilePresetConfirm_ >= 0) {
+        const double width = std::min(310.0, canvas.width() - 16.0);
+        const double top = std::max(8.0, loadoutRects_[0].y - 101.0);
+        const Rect box{(canvas.width() - width) * 0.5, top, width, 90.0};
+        const Rect cancel{box.x + 12.0, top + 40.0, (width - 34.0) * 0.5, 37.0};
+        const Rect accept{cancel.right() + 10.0, cancel.y, cancel.w, cancel.h};
+        mobilePresetConfirmRect_ = box;
+        panelCard(canvas, box, kInventorySkin);
+        TextStyle title;
+        title.size = 20.0;
+        title.align = Align::Centre;
+        title.baseline = Baseline::Middle;
+        const char* action = mobilePresetConfirmSave_ ? trEnZh("Save to ", "保存到 ")
+                                                    : trEnZh("Load ", "切换到 ");
+        text(canvas, action + loadoutPresetName(mobilePresetConfirm_), canvas.width() * 0.5,
+             top + 22.0, title);
+        drawSlotButton(canvas, cancel, trEnZh("Cancel", "取消"), kInventorySkin.fill, cancel.contains(mouse));
+        drawSlotButton(canvas, accept, trEnZh("Confirm", "确认"), kInventorySkin.accent, accept.contains(mouse));
+        if (window.mousePressed(MouseButton::Left)) {
+            if (accept.contains(mouse)) {
+                pendingPreset_ = mobilePresetConfirm_;
+                pendingPresetSave_ = mobilePresetConfirmSave_;
+                pendingPresetConfirm_ = false;
+                mobilePresetConfirm_ = -1;
+            } else if (cancel.contains(mouse)) {
+                mobilePresetConfirm_ = -1;
+            }
+        }
+    }
+
     // Petal card: same lines / dwell / ALT exacts as the inventory. Painted
     // after the bar's slide restore so the box is not translucent-plated with
     // the hotbar, and suppressed while a drag or press is in flight.
@@ -2370,10 +2423,8 @@ void MenuSystem::useLoadoutSlot(NetClient& net, int slot) {
     const auto at = static_cast<std::size_t>(slot);
     if (at >= shown.size() || shown[at].empty()) return;
     if (!petalIsClickToUse(content().petal(shown[at].petalIndex))) return;
-    // A petal still reloading is not there to be clicked. The server refuses
-    // one anyway -- it owns the cooldown -- but a click that flew off and did
-    // nothing is a click the player would try again harder.
-    if (slotReloadProgress(net, slot) < 1.0) return;
+    // Splitter's control cooldown belongs to the session. The displayed
+    // reload can be from combat instead, so let the server decide.
     net.usePetal(slot);
 }
 
@@ -2492,6 +2543,7 @@ void MenuSystem::updateLoadoutInput(Window& window, NetClient& net, double timeS
         pendingPreset_ = loadoutPresetBank_ * kLoadoutPresetsPerBank +
                          (loadoutPressSlot_ - kLoadoutBarPrimary);
         pendingPresetSave_ = true;
+        pendingPresetConfirm_ = mobilePresetSticky_ && window.pointerIsTouch();
         loadoutPressSaved_ = true;
     }
 
@@ -2529,6 +2581,7 @@ void MenuSystem::updateLoadoutInput(Window& window, NetClient& net, double timeS
                 pendingPreset_ = loadoutPresetBank_ * kLoadoutPresetsPerBank +
                                  (loadoutPressSlot_ - kLoadoutBarPrimary);
                 pendingPresetSave_ = false;
+                pendingPresetConfirm_ = mobilePresetSticky_ && window.pointerIsTouch();
             } else if (loadoutPressSlot_ < owned) {
                 clickLoadoutSlot(net, timeSeconds, loadoutPressSlot_);
             }
@@ -3089,6 +3142,14 @@ void MenuSystem::renderOpenPanel(Canvas& canvas, Window& window, NetClient& net,
     if (drawn_ == MenuId::None) return;
     MenuContext ctx{canvas,    window,      net, sprites,    renderer, settings_,
                     drag_,     timeSeconds, dt,  panelRect_, false};
+    if (inGame_ && open_ == MenuId::Inventory && ctx.pressed() && !drag_.active()) {
+        const Vec2 point = ctx.mouse();
+        const bool onTouchControl = touchLayout_ &&
+            std::any_of(touchHitBounds_.begin(), touchHitBounds_.end(), [point](const Rect& bounds) {
+                return bounds.w > 0 && bounds.contains(point);
+            });
+        if (!onTouchControl && !capturesMouse(point)) close();
+    }
     ctx.adminGrantOffered = adminGrantOffered_;
     ctx.profiling = profiling_;
     ctx.altMode = altMode_;
@@ -3570,6 +3631,7 @@ bool MenuSystem::capturesMouse(Vec2 mouse) const {
     if(rotationDial_.w>0 && rotationDial_.contains(mouse))return true;
     if(dungeonEntryRect_.w>0 && dungeonEntryRect_.contains(mouse))return true;
     if (panelRect_.w > 0 && panelRect_.contains(mouse)) return true;
+    if (mobilePresetConfirmRect_.w > 0 && mobilePresetConfirmRect_.contains(mouse)) return true;
     if (releaseRect_.w > 0 && releaseRect_.contains(mouse)) return true;
     if (squadInviteToastRect_.w > 0 && squadInviteToastRect_.contains(mouse)) return true;
     // The bar takes the click for owned slots (drag / column-swap) and, while

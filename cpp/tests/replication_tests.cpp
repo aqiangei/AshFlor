@@ -2055,7 +2055,7 @@ TEST(another_players_petals_pets_and_shots_are_marked_as_theirs) {
     CHECK(foreign(client, f.world, herPetsShot));
     CHECK(petFlagged(client, f.world, herPetsShot));
 
-    // Mine, and nobody's: never flagged, so no switch can hide them.
+    // My summons are marked as pets without the foreign bit.
     CHECK(!foreign(client, f.world, myPetal));
     CHECK(!foreign(client, f.world, myPet));
     CHECK(!foreign(client, f.world, myPetsShot));
@@ -2087,6 +2087,16 @@ TEST(another_players_petals_pets_and_shots_are_marked_as_theirs) {
     CHECK(!hidden(myPetsShot));
     CHECK(!hidden(alice));
     CHECK(!hidden(wild));
+
+    renderer.options.hideOtherPets = false;
+    renderer.options.hideOwnPets = true;
+    CHECK(hidden(myPet));
+    CHECK(hidden(myPetsShot));
+    CHECK(!hidden(herPet));
+    CHECK(!hidden(herPetsShot));
+    CHECK(!hidden(myPetal));
+    CHECK(!hidden(wild));
+    CHECK(!hidden(wildShot));
 }
 
 TEST(todo1106_hide_other_petals_covers_ground_fields_and_lightning_but_not_wild_attacks) {

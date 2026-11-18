@@ -4,16 +4,15 @@
 #include <cmath>
 
 #include "client/ui/draw.h"
+#include "client/ui/i18n.h"
 #include "client/ui/text.h"
 
 namespace flix::ui {
 
 namespace {
 
-// Every measurement here is the browser build's own (src/graphics/
-// mobile-controls.ts, in git history), times kTouchScale. The reference's
-// value is kept beside it so the two can be read against each other: a retune
-// is a change to the number on the left, never to the arithmetic.
+// Keep the movement stick at the reference position. Combat and loadout
+// actions use two compact rows on the right, above the equipment bar.
 
 /// Gap above the loadout bar's footprint that all controls hang from.
 constexpr double kBottomGap = 15.0 * kTouchScale;
@@ -44,15 +43,12 @@ constexpr double kStickHitRadius = kStickRadius * 1.3;
 /// As a fraction of the base radius. Under it the stick reads as centred.
 constexpr double kStickDeadZone = 0.12;
 
-constexpr double kAttackRadius = 46.0 * kTouchScale;
-constexpr double kAttackMargin = 30.0 * kTouchScale;
-constexpr double kRetractRadius = 34.0 * kTouchScale;
-constexpr double kRetractGap = 16.0 * kTouchScale;
-/// Same face as Retract: R is a second key-stand-in, not a combat button.
-constexpr double kSwapRadius = kRetractRadius;
-constexpr double kSwapGap = kRetractGap;
-/// Both buttons take presses slightly outside their face, for the same reason
-/// the stick does.
+constexpr double kAttackRadius = 40.0 * kTouchScale;
+constexpr double kRetractRadius = 35.0 * kTouchScale;
+constexpr double kSwapRadius = 30.0 * kTouchScale;
+constexpr double kPresetRadius = kSwapRadius;
+constexpr double kRightMargin = 18.0 * kTouchScale;
+constexpr double kButtonGap = 6.0 * kTouchScale;
 constexpr double kButtonHitSlack = 1.2;
 
 /// Clear air between the stick's answering ring and the nearest button's, and
@@ -92,38 +88,31 @@ void circle(Canvas& canvas, Vec2 centre, double radius) {
 void MobileControls::layout(int viewWidth, int viewHeight, double loadoutBarHeight) {
     placed_ = true;
 
-    // Everything shrinks together on a viewport too narrow to lay the row
-    // out side by side -- a phone held upright, where the loadout bar does not
-    // fit either and nothing about this HUD is happy. Shrinking is what is
-    // left: the alternative is the stick sitting underneath a button, where
-    // one finger lands on two controls and a hit test decides which one it
-    // drives.
-    //
-    // The width a full-size row asks for, left to right: the icon column it
-    // has to clear, air, the stick's answering ring, air, and everything from
-    // the right edge in to the leftmost point the buttons answer for (R, then
-    // Retract, then Attack).
-    constexpr double kNeeded = kIconColumnRight + 2 * kControlGap + 2 * kStickHitRadius +
-                               kAttackMargin + 2 * kAttackRadius + kRetractGap +
-                               kRetractRadius + kSwapGap + kSwapRadius +
-                               kSwapRadius * kButtonHitSlack;
-    scale_ = std::min(1.0, viewWidth / kNeeded);
+    constexpr double attackHit = kAttackRadius * kButtonHitSlack;
+    constexpr double retractHit = kRetractRadius * kButtonHitSlack;
+    constexpr double swapHit = kSwapRadius * kButtonHitSlack;
+    constexpr double columnGap = attackHit + retractHit + kButtonGap;
+    constexpr double rightWidth = kRightMargin + attackHit + columnGap + retractHit;
+    // A short landscape viewport stacks the minimap and player list down
+    // the right edge. Tuck the controls just beside that column.
+    const double sidebar = viewWidth >= 1200 && viewHeight < 1000 ? 260.0 : 0.0;
+    // Keep the controls on the right and clear of the movement stick.
+    constexpr double needed = kIconColumnRight + 2 * kControlGap +
+                              2 * kStickHitRadius + rightWidth;
+    scale_ = std::min({1.0, (viewWidth - sidebar) / needed,
+                       (viewWidth * 0.5 - sidebar) / (rightWidth + kControlGap)});
 
     const double bottom = viewHeight - loadoutBarHeight - kBottomGap * scale_;
     stickCentre_ = {kStickCentreX * scale_,
                     bottom - (kStickRadius + kStickLift) * scale_};
-    attackCentre_ = {viewWidth - (kAttackMargin + kAttackRadius) * scale_,
-                     bottom - kAttackRadius * scale_};
-    retractCentre_ = {attackCentre_.x - (kAttackRadius + kRetractGap + kRetractRadius) * scale_,
-                      attackCentre_.y};
-    swapCentre_ = {retractCentre_.x - (kRetractRadius + kSwapGap + kSwapRadius) * scale_,
-                   retractCentre_.y};
+    attackCentre_ = {viewWidth - sidebar - (kRightMargin + attackHit) * scale_,
+                     bottom - attackHit * scale_};
+    retractCentre_ = {attackCentre_.x - columnGap * scale_, attackCentre_.y};
+    const double upper = attackCentre_.y - (attackHit + swapHit + kButtonGap) * scale_;
+    swapCentre_ = {attackCentre_.x, upper};
+    presetCentre_ = {retractCentre_.x, upper};
 
-    // The stick's own x is a fraction of the design width rather than of this
-    // window's, so a narrow one has to place it against the room that is
-    // actually left instead. Down to a floor that keeps it off the icons.
-    const double roomFor = swapCentre_.x -
-                           (kSwapRadius * kButtonHitSlack + kStickHitRadius) * scale_ -
+    const double roomFor = retractCentre_.x - (retractHit + kStickHitRadius) * scale_ -
                            kControlGap;
     const double floorX = kIconColumnRight + kControlGap + kStickHitRadius * scale_;
     stickCentre_.x = std::min(stickCentre_.x, std::max(floorX, roomFor));
@@ -133,7 +122,7 @@ double MobileControls::stickHitRadius() const {
     return placed_ ? kStickHitRadius * scale_ : 0.0;
 }
 
-std::array<Rect, 4> MobileControls::hitBounds() const {
+std::array<Rect, 5> MobileControls::hitBounds() const {
     if (!placed_) return {};
     const auto bounds = [](Vec2 centre, double radius) {
         return Rect{centre.x - radius, centre.y - radius, 2 * radius, 2 * radius};
@@ -142,7 +131,8 @@ std::array<Rect, 4> MobileControls::hitBounds() const {
     stick.h = stickApproachBottom() - stick.y;
     return {stick, bounds(swapCentre_, kSwapRadius * kButtonHitSlack * scale_),
             bounds(retractCentre_, kRetractRadius * kButtonHitSlack * scale_),
-            bounds(attackCentre_, kAttackRadius * kButtonHitSlack * scale_)};
+            bounds(attackCentre_, kAttackRadius * kButtonHitSlack * scale_),
+            bounds(presetCentre_, kPresetRadius * kButtonHitSlack * scale_)};
 }
 
 bool MobileControls::hits(double x, double y) const {
@@ -151,7 +141,8 @@ bool MobileControls::hits(double x, double y) const {
     if (within(stickCentre_, x, y, stickR) ||
         within(attackCentre_, x, y, kAttackRadius * kButtonHitSlack * scale_) ||
         within(retractCentre_, x, y, kRetractRadius * kButtonHitSlack * scale_) ||
-        within(swapCentre_, x, y, kSwapRadius * kButtonHitSlack * scale_)) {
+        within(swapCentre_, x, y, kSwapRadius * kButtonHitSlack * scale_) ||
+        within(presetCentre_, x, y, kPresetRadius * kButtonHitSlack * scale_)) {
         return true;
     }
     // Leave a short approach below the joystick without claiming the chat
@@ -179,6 +170,10 @@ void MobileControls::update(const std::vector<TouchEvent>& events, double timeSe
         const TouchPoint& point = event.point;
         switch (event.phase) {
             case TouchPhase::Began:
+                if (within(presetCentre_, point.x, point.y, kPresetRadius * kButtonHitSlack * scale_)) {
+                    if (!preset_.held) preset_ = {point.id, true};
+                    break;
+                }
                 // First free control the finger is over, in left-to-right
                 // combat order after the stick. A finger that lands on a
                 // control already held belongs to nothing: the second thumb on
@@ -222,6 +217,11 @@ void MobileControls::update(const std::vector<TouchEvent>& events, double timeSe
                 }
                 if (attack_.is(point.id)) attack_.held = false;
                 if (retract_.is(point.id)) retract_.held = false;
+                if (preset_.is(point.id)) {
+                    presetTapPending_ = within(presetCentre_, point.x, point.y,
+                                               kPresetRadius * kButtonHitSlack * scale_);
+                    preset_.held = false;
+                }
                 if (swap_.is(point.id)) {
                     // A short release is the row swap (or cancels a sticky L
                     // bank MenuSystem already armed). A long one only ends the
@@ -243,14 +243,22 @@ bool MobileControls::consumeSwapRowsTap() {
     return tap;
 }
 
+bool MobileControls::consumePresetTap() {
+    const bool tap = presetTapPending_;
+    presetTapPending_ = false;
+    return tap;
+}
+
 void MobileControls::reset() {
     stick_.held = false;
     attack_.held = false;
     retract_.held = false;
     swap_.held = false;
+    preset_.held = false;
     swapDownAt_ = -1.0;
     swapLong_ = false;
     swapTapPending_ = false;
+    presetTapPending_ = false;
     knob_ = {0, 0};
 }
 
@@ -294,16 +302,16 @@ void MobileControls::draw(Canvas& canvas) const {
     const auto button = [&](Vec2 centre, double radius, std::uint32_t fill,
                             std::uint32_t ring, bool pressed) {
         circle(canvas, centre, radius);
-        setFill(canvas, fill, 0.55);
+        setFill(canvas, fill, pressed ? 0.58 : 0.34);
         canvas.fill();
         canvas.setLineWidth(static_cast<float>(kRingWidth * scale_));
-        setStroke(canvas, ring, 0.9);
+        setStroke(canvas, ring, pressed ? 0.95 : 0.70);
         canvas.stroke();
         // A press is a wash over the face, not a different fill: the button
         // has to stay the colour it was while a thumb is covering most of it.
         if (!pressed) return;
         circle(canvas, centre, radius);
-        setFill(canvas, kPaper, 0.25);
+        setFill(canvas, kPaper, 0.15);
         canvas.fill();
     };
 
@@ -312,6 +320,7 @@ void MobileControls::draw(Canvas& canvas) const {
            retractPressed());
     button(swapCentre_, kSwapRadius * scale_, kSwapFill, kSwapRing,
            swap_.held);
+    button(presetCentre_, kPresetRadius * scale_, kSwapFill, kSwapRing, preset_.held);
 
     canvas.setLineWidth(static_cast<float>(kGlyphWidth * scale_));
     setStroke(canvas, kPaper, 0.9);
@@ -350,6 +359,8 @@ void MobileControls::draw(Canvas& canvas) const {
     letter.align = Align::Centre;
     letter.baseline = Baseline::Middle;
     text(canvas, "R", swapCentre_.x, swapCentre_.y, letter);
+    letter.size = std::round(28.0 * scale_);
+    text(canvas, trEnZh("Presets", "配装"), presetCentre_.x, presetCentre_.y, letter);
 
     canvas.restore();
 }

@@ -245,6 +245,22 @@ TEST(a_long_press_on_r_opens_presets_without_swapping) {
     CHECK(!f.controls.consumeSwapRowsTap());
 }
 
+TEST(the_mobile_preset_button_has_its_own_tap_and_can_be_cancelled) {
+    Fixture f;
+    const Vec2 at = f.controls.presetCentre();
+    const Vec2 swap = f.controls.swapCentre();
+    CHECK(f.controls.hits(at.x, at.y));
+    f.feed({began(1, at.x, at.y)});
+    CHECK(!f.controls.consumePresetTap());
+    f.feed({ended(1, at.x, at.y)});
+    CHECK(f.controls.consumePresetTap());
+    CHECK(!f.controls.consumePresetTap());
+    CHECK(!f.controls.consumeSwapRowsTap());
+    f.feed({began(2, at.x, at.y), ended(2, swap.x, swap.y)});
+    CHECK(!f.controls.consumePresetTap());
+    CHECK(!f.controls.consumeSwapRowsTap());
+}
+
 TEST(the_controls_sit_clear_of_the_hud_they_share_the_bottom_of_the_screen_with) {
     // The three things already anchored to the bottom of a game: the loadout
     // bar across the middle, the icon column at x <= 73, and the chat column
@@ -307,7 +323,8 @@ TEST(a_landscape_viewport_is_laid_out_at_full_size) {
     MobileControls controls;
     controls.layout(kPhoneWidth, kPhoneHeight, inGameLoadoutBarHeight());
     CHECK_NEAR(controls.stickCentre().x, 150.0 * 2.4, 1e-9);
-    CHECK_NEAR(controls.attackCentre().x, kPhoneWidth - (30.0 + 46.0) * 2.4, 1e-9);
+    CHECK_NEAR(controls.hitBounds()[3].w, 2.0 * 40.0 * kTouchScale * 1.2, 1e-9);
+    CHECK(controls.hitBounds()[3].right() < kPhoneWidth - 250.0);
 }
 
 TEST(the_stick_claims_an_approach_pad_below_it) {
@@ -335,4 +352,27 @@ TEST(an_unchosen_touch_setting_is_the_devices_to_answer) {
     CHECK(!settings.touchControlsWanted(true));
     settings.requestMobile = true;
     CHECK(settings.touchControlsWanted(false));
+}
+
+TEST(feedback_3685_combat_and_row_switch_share_a_clear_right_edge) {
+    for (const auto& [width, height] : {std::pair{1920, 638}, std::pair{624, 1080}}) {
+        MobileControls controls;
+        const double bar = inGameLoadoutBarHeight();
+        controls.layout(width, height, bar);
+        const auto bounds = controls.hitBounds();
+        const Rect attack = bounds[3];
+        CHECK_NEAR(controls.attackCentre().x, controls.swapCentre().x, 1e-9);
+        CHECK(attack.w < 46.0 * kTouchScale * 2.4);
+        for (std::size_t i = 1; i < bounds.size(); ++i) {
+            const Rect a = bounds[i];
+            CHECK(a.x >= width * 0.50);
+            CHECK(a.right() <= width);
+            CHECK(a.y > 0 && a.bottom() <= height - bar);
+            for (std::size_t j = 0; j < i; ++j) {
+                const Rect b = bounds[j];
+                CHECK(a.right() <= b.x || b.right() <= a.x ||
+                      a.bottom() <= b.y || b.bottom() <= a.y);
+            }
+        }
+    }
 }

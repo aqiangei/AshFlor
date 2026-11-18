@@ -101,7 +101,8 @@ constexpr std::uint32_t kHoldMaxStep = 1000000;
 constexpr double kCraftButtonGap = 8.0;
 constexpr double kCraftButtonPadX = 13.0;
 constexpr double kCraftButtonLabelSize = 16.0;
-constexpr double kBulkControlsHeight = 82.0;
+constexpr double kSearchBandHeight = 34.0;
+constexpr double kBulkControlsHeight = 82.0 + kSearchBandHeight;
 /// Face of the Craft All toggle while it is on (panel accent).
 constexpr std::uint32_t kFillAllOnTint = kCraftingSkin.accent;
 
@@ -192,6 +193,7 @@ void CraftingPanel::reopen() {
     bulkArmed_ = false;
     editingBlacklist_ = false;
     grid_.endDrag();
+    searchField_.blur();
     tooltip_.reset();
     touchInspect_.reset();
     heldPetal_ = kNoPetal;
@@ -200,19 +202,22 @@ void CraftingPanel::reopen() {
 
 void CraftingPanel::stage(const Profile& profile, std::uint16_t petalIndex, Rarity rarity,
                           std::uint32_t addBatches) {
-    const int possible = ownedCount(profile, petalIndex, rarity) / kBatch;
-    if (possible <= 0 || !craftsOutOf(rarity) ||
+    const int owned = ownedCount(profile, petalIndex, rarity);
+    if (owned < kBatch || !craftsOutOf(rarity) ||
         (rarity == Rarity::PermanentHyper && !petalCraftsToApex(content(), petalIndex))) return;
 
     if (stagedPetal_ != petalIndex || stagedRarity_ != rarity) {
         stagedPetal_ = petalIndex;
         stagedRarity_ = rarity;
-        batches_ = 0;
+        stagedCount_ = 0;
     }
-    const int add = addBatches == UINT32_MAX
-                        ? possible
-                        : static_cast<int>(std::min(addBatches, static_cast<std::uint32_t>(possible)));
-    batches_ = std::min(possible, batches_ + add);
+    if (addBatches == UINT32_MAX) {
+        stagedCount_ = owned;
+        return;
+    }
+    const auto availableBatches = static_cast<std::uint32_t>(
+        std::max(0, owned - stagedCount_) / kBatch);
+    stagedCount_ += static_cast<int>(std::min(addBatches, availableBatches)) * kBatch;
 }
 
 void CraftingPanel::animate(double dtMs) {
@@ -246,9 +251,9 @@ void CraftingPanel::startRoll(NetClient& net, double timeSeconds) {
     }
     rollBaseMillis_ = rollBaseMillis(profile, stagedPetal_, stagedRarity_);
     rollMillis_ = rollBaseMillis_;
-    net.requestCraft(stagedPetal_, stagedRarity_, batches_ * kBatch);
+    net.requestCraft(stagedPetal_, stagedRarity_, stagedCount_);
     stagedPetal_ = kNoPetal;
-    batches_ = 0;
+    stagedCount_ = 0;
 }
 
 void CraftingPanel::update(NetClient& net, double timeSeconds) {
@@ -344,8 +349,9 @@ bool CraftingPanel::render(MenuContext& ctx) {
     }
 
     const auto removeBatch = [this]() {
-        if (--batches_ <= 0) {
-            batches_ = 0;
+        stagedCount_ -= kBatch;
+        if (stagedCount_ < kBatch) {
+            stagedCount_ = 0;
             stagedPetal_ = kNoPetal;
         }
     };
@@ -355,10 +361,15 @@ bool CraftingPanel::render(MenuContext& ctx) {
     // during a roll, though -- those five are already at the server, and a
     // profile that lands a frame ahead of the result would empty the ring
     // half-way through its own animation.
-    if (phase_ != Phase::Spinning && stagedPetal_ != kNoPetal &&
-        ownedCount(profile, stagedPetal_, stagedRarity_) / kBatch < batches_) {
-        batches_ = ownedCount(profile, stagedPetal_, stagedRarity_) / kBatch;
-        if (batches_ <= 0) stagedPetal_ = kNoPetal;
+    if (phase_ != Phase::Spinning && stagedPetal_ != kNoPetal) {
+        const int owned = ownedCount(profile, stagedPetal_, stagedRarity_);
+        if (owned < stagedCount_) {
+            stagedCount_ = stagedCount_ % kBatch == 0 ? owned / kBatch * kBatch : owned;
+            if (stagedCount_ < kBatch) {
+                stagedCount_ = 0;
+                stagedPetal_ = kNoPetal;
+            }
+        }
     }
 
     animate(ctx.dt * 1000.0);
@@ -465,8 +476,8 @@ bool CraftingPanel::render(MenuContext& ctx) {
         if (!occupied) continue;
         grow += (1.0 - grow) * (1.0 - std::exp(-kGrowRate * ctx.dt * 1000.0));
         const bool growing = grow < kGrowDone;
-        if (phase_ == Phase::Idle && batches_ > 1) {
-            tile.badge = "x" + stackCountText(static_cast<std::uint64_t>(batches_));
+        if (phase_ == Phase::Idle && stagedCount_ >= 2 * kBatch) {
+            tile.badge = "x" + stackCountText(static_cast<std::uint64_t>(stagedCount_ / kBatch));
         }
         slotTile_[at] = tile;
         // drawItemTile SETS the canvas's alpha rather than multiplying it, so
@@ -522,6 +533,9 @@ bool CraftingPanel::render(MenuContext& ctx) {
         drawSlotLine(canvas, card, phase_ == Phase::Spinning
             ? trEnZh("Crafting…", "合成中…")
             : trEnZh("Waiting for the craft result…", "等待服务器返回合成结果…"));
+    } else if (stagedPetal_ != kNoPetal) {
+        drawSlotLine(canvas, card, std::string(trEnZh("Staged x", "已投入 ×")) +
+            std::to_string(stagedCount_));
     } else if (outcome.attempts > 0) {
         const bool chinese = language() == Language::Zh;
         drawSlotLine(canvas, card, std::string(chinese ? "本次合成 ×" : "Crafted x") +
@@ -543,8 +557,7 @@ bool CraftingPanel::render(MenuContext& ctx) {
     }
 
     // --- the grid ----------------------------------------------------------
-    const std::uint32_t held =
-        static_cast<std::uint32_t>(std::max(0, batches_)) * static_cast<std::uint32_t>(kBatch);
+    const auto held = static_cast<std::uint32_t>(stagedCount_);
     SlotCardLayout bulkCard = card;
     bulkCard.listView.y += kBulkControlsHeight;
     bulkCard.listView.h = std::max(0.0, bulkCard.listView.h - kBulkControlsHeight);
@@ -580,6 +593,9 @@ bool CraftingPanel::render(MenuContext& ctx) {
         const auto& ids = ctx.settings.craftBlacklist;
         return std::find(ids.begin(), ids.end(), content().petal(index).id) != ids.end();
     };
+    const Rect searchRect{panel.x + 12.0, bulkCard.listView.y - kSearchBandHeight,
+                          panel.w - 24.0, 28.0};
+    if (editSlotSearch(ctx, searchRect, search_, searchField_)) grid_.reset();
     SlotGrid::Pick inspected;
     const std::optional<SlotGrid::Pick> hovered = grid_.render(
         ctx, bulkCard, kCraftingSkin, SlotGridTiers::PermanentHyper,
@@ -600,11 +616,11 @@ bool CraftingPanel::render(MenuContext& ctx) {
             if (cell.count > 1) cell.badge = "x" + stackCountText(cell.count);
             if (isExcluded(petalIndex)) cell.badge = bulkChinese ? "排除" : "Skip";
             return cell;
-        }, true, &inspected);
+        }, true, &inspected, search_);
 
     // Craft + Craft All toggle side by side, centred on the card's button
     // anchor. Craft All is a mode, not a one-shot: while on, a click on a
-    // craftable petal stages every available batch (Shift-click's behaviour).
+    // craftable petal stages the entire stack (Shift-click's behaviour).
     const bool canSkipRoll = !inRift && phase_ == Phase::Spinning && resultPending_;
     const char* craftLabel = canSkipRoll ? trEnZh("Skip animation", "跳过动画") : tr(Msg::Craft);
     const char* craftAllLabel = tr(Msg::CraftAll);
@@ -617,7 +633,7 @@ bool CraftingPanel::render(MenuContext& ctx) {
                             card.button.h};
     const bool mouseDown = ctx.window.mouseDown(MouseButton::Left);
     const bool canCraft = !inRift && !waiting && phase_ == Phase::Idle &&
-                          stagedPetal_ != kNoPetal && batches_ > 0;
+                          stagedPetal_ != kNoPetal && stagedCount_ >= kBatch;
     const bool craftActionEnabled = canCraft || canSkipRoll;
     const auto craftTint =
         canCraft ? std::optional<std::uint32_t>(rarityColor(upgradeRarity(stagedRarity_)))
@@ -765,7 +781,7 @@ bool CraftingPanel::render(MenuContext& ctx) {
         if(!bulkArmed_){bulkArmed_=true;return true;}
         std::vector<std::uint16_t> excluded;
         for (std::uint16_t i = 0; i < content().petalCount(); ++i) if (isExcluded(i)) excluded.push_back(i);
-        ctx.net.requestBulkCraft(static_cast<Rarity>(bulkTarget_), excluded);bulkArmed_=false;stagedPetal_=kNoPetal;batches_=0;return true;
+        ctx.net.requestBulkCraft(static_cast<Rarity>(bulkTarget_), excluded);bulkArmed_=false;stagedPetal_=kNoPetal;stagedCount_=0;return true;
     }
     if (craftRect.contains(mouse)) {
         if (canSkipRoll) {

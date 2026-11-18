@@ -570,13 +570,15 @@ bool GuildPanel::render(MenuContext& ctx) {
             const Rect card{panel.x + kButtonMargin, band.y + 12.0 - scroll_.offset,
                             panel.w - kButtonMargin * 2, 58.0};
             fillRound(canvas, card, 6.0, kGuildThumb);
-            textAtAlpha(canvas, "@" + pending.fromUsername + " invited you to join",
-                        card.x + 14.0, card.y + 18.0, cardText(kDetailTextSize), 0.9);
             const double declineW = buttonWidth("Decline");
             const double acceptW = buttonWidth("Accept");
             const double buttonY = card.y + (card.h - kButtonHeight) * 0.5;
             const Rect decline{card.right() - 13.0 - declineW, buttonY, declineW, kButtonHeight};
             const Rect accept{decline.x - kButtonGap - acceptW, buttonY, acceptW, kButtonHeight};
+            const std::string title = trEnZh("Guild invitation from @", "公会入会邀请：@") +
+                                      pending.fromUsername;
+            textAtAlpha(canvas, guildLabel(title, kDetailTextSize, accept.x - card.x - 28.0),
+                        card.x + 14.0, card.y + 18.0, cardText(kDetailTextSize), 0.9);
             const auto invitationName = pending.displayName == pending.guildName
                 ? pending.guildName : pending.displayName + " [" + pending.guildName + "]";
             text(canvas, guildLabel(invitationName, kTagSize, accept.x - card.x - 28.0),
@@ -754,11 +756,13 @@ bool GuildPanel::render(MenuContext& ctx) {
                 // of one that is not.
                 rightButtons({{"Leave", GuildAction::Leave}}, kCloseFace, kCloseRim);
                 double x = panel.x + kButtonMargin;
-                x = footerButton(x, "Squad up", kGuildFrame, kGuildThumb, GuildAction::SquadAll)
+                x = footerButton(x, trEnZh("Guild squad invite", "邀请公会成员组队"),
+                                 kGuildFrame, kGuildThumb, GuildAction::SquadAll)
                         .right() +
                     kButtonGap;
                 if (canInvite) {
-                    x = footerButton(x, "Invite", kGuildFrame, kGuildThumb, GuildAction::Invite)
+                    x = footerButton(x, trEnZh("Invite to guild", "邀请加入公会"),
+                                     kGuildFrame, kGuildThumb, GuildAction::Invite)
                             .right() +
                         kButtonGap;
                 }
@@ -777,7 +781,7 @@ bool GuildPanel::render(MenuContext& ctx) {
                     kAcceptFace, kAcceptRim);
                 const Rect field{panel.x + kButtonMargin, buttonY,
                                  left - kButtonGap - (panel.x + kButtonMargin), kFieldHeight};
-                inputField(canvas, field, f.invitee.value, "Username to invite",
+                inputField(canvas, field, f.invitee.value, trEnZh("Username to invite to guild", "输入要邀请入会的昵称"),
                            f.invitee.state.focused, ctx.timeSeconds, &f.invitee.state);
                 fields.push_back({&f.invitee, field, kUsernameLimit, false});
                 break;

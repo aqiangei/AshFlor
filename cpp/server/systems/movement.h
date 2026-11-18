@@ -311,6 +311,7 @@ private:
         Team team = Team::Hostiles;
         Realm realm = Realm::Overworld;
         int ghostTier = -1;
+        double practiceRadius = 0.0;
     };
 
     /// One mob in the separation pass, flattened out of the ECS.
