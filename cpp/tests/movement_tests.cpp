@@ -414,6 +414,24 @@ TEST(a_burrowed_flower_can_walk_through_a_surface_fossil) {
     CHECK_NEAR(distance(fx.positionOf(player), centre), contact, 1e-6);
 }
 
+TEST(a_burrowed_flower_ignores_surface_loose_petals_until_it_surfaces) {
+    Fixture fx;
+    const Vec2 start{5000.0, 5000.0};
+    const Vec2 looseStart = start + Vec2{12.0, 0.0};
+    const Entity player = fx.spawnPlayer(start);
+    const Entity loose = fx.spawnLoose(looseStart, 30.0);
+    fx.world.add<BurrowState>(player, BurrowState{1000.0, true});
+
+    fx.step(1);
+    CHECK_NEAR(distance(fx.positionOf(player), start), 0.0, 1e-9);
+    CHECK_NEAR(distance(fx.positionOf(loose), looseStart), 0.0, 1e-9);
+
+    fx.world.get<BurrowState>(player).untilMillis = 0.0;
+    fx.step(1);
+    CHECK(distance(fx.positionOf(player), start) > 0.0);
+    CHECK(distance(fx.positionOf(loose), looseStart) > 0.0);
+}
+
 TEST(tangible_stationary_hole_blocks_players_even_without_mob_separation) {
     std::string error;
     CHECK(loadContent(testsupport::dataDir(), error));

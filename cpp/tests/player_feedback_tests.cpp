@@ -229,8 +229,8 @@ TEST(feedback_scarce_shop_petals_keep_their_authored_price_premium) {
 TEST(feedback_talent_wiki_values_and_duplicator_eligibility) {
     SkillSet s;s.set(SkillId::Loadout,4);s.set(SkillId::Magnetism,0);CHECK_NEAR(s.magnetismBonus(),1000,1e-9);
     s.set(SkillId::Luck,8);CHECK_NEAR(s.luck(),2.7,1e-9);
-    s.set(SkillId::Summoner,0);CHECK_NEAR(s.summonerScale(),1.15,1e-9);
-    s.set(SkillId::Summoner,8);CHECK_NEAR(s.summonerScale(),4.0456,1e-9);
+    s.set(SkillId::Summoner,0);CHECK_NEAR(s.summonerScale(),1.075,1e-9);
+    s.set(SkillId::Summoner,8);CHECK_NEAR(s.summonerScale(),2.5228,1e-9);
     s.set(SkillId::SharpEdges,5);s.set(SkillId::BodyToxicity,0);CHECK(!s.bodyToxicity());s.set(SkillId::SharpEdges,6);CHECK(s.bodyToxicity());
     s.set(SkillId::Duplicator,2);CHECK_EQ(s.petalCopies(1,0,7,true),2);CHECK_EQ(s.petalCopies(1,1,7,true),1);CHECK_EQ(s.petalCopies(1,0,8,true),1);CHECK_EQ(s.petalCopies(1,0,7,false),1);
     s.set(SkillId::Duplicator,3);CHECK_EQ(s.petalCopies(1,0,8,true),2);CHECK_EQ(s.petalCopies(4,1,8,true),6);

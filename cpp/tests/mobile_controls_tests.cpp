@@ -376,3 +376,17 @@ TEST(feedback_3685_combat_and_row_switch_share_a_clear_right_edge) {
         }
     }
 }
+
+TEST(mobile_right_controls_use_the_freed_sidebar_space) {
+    flix::ui::MobileControls controls;
+    controls.layout(1440, 800, 100, true);
+    const auto open = controls.hitBounds();
+    controls.layout(1440, 800, 100, false);
+    const auto collapsed = controls.hitBounds();
+    for (std::size_t i = 1; i < collapsed.size(); ++i) {
+        CHECK(collapsed[i].x > open[i].x + 200.0);
+        CHECK(collapsed[i].right() <= 1440.0);
+        CHECK(controls.hits(collapsed[i].x + collapsed[i].w / 2.0,
+                            collapsed[i].y + collapsed[i].h / 2.0));
+    }
+}

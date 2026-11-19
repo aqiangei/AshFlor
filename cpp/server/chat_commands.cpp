@@ -541,15 +541,19 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
             out("请在存活时查看本局收集。");
             return true;
         }
-        ByteWriter reply;
-        reply.u8(static_cast<std::uint8_t>(net::ServerMessage::RunLoot));
-        reply.u32(static_cast<std::uint32_t>(session.runLoot.size()));
-        for (const auto& [item, count] : session.runLoot) {
-            reply.u16(item.first);
-            reply.u8(static_cast<std::uint8_t>(item.second));
-            reply.u32(count);
-        }
-        connection.send(reply);
+        const auto sendRunStats = [&](net::ServerMessage message, const auto& entries) {
+            ByteWriter reply;
+            reply.u8(static_cast<std::uint8_t>(message));
+            reply.u32(static_cast<std::uint32_t>(entries.size()));
+            for (const auto& [entry, count] : entries) {
+                reply.u16(entry.first);
+                reply.u8(static_cast<std::uint8_t>(entry.second));
+                reply.u32(count);
+            }
+            connection.send(reply);
+        };
+        sendRunStats(net::ServerMessage::RunLoot, session.runLoot);
+        sendRunStats(net::ServerMessage::RunKills, session.runKills);
         return true;
     }
     if (session.inRift && !effectiveAdmin(session)) return true;

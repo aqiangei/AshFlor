@@ -985,7 +985,7 @@ private:
     /// broadphase: a player fields one or two summons, so the list is shorter
     /// than a single grid cell, and a world with no pets in it must not cost a
     /// query per hostile mob per tick.
-    Entity acquirePetTarget(const Terrain& terrain, Entity self, Vec2 from, Realm realm,
+    Entity acquirePetTarget(const World& world, const Terrain& terrain, Entity self, Vec2 from, Realm realm,
                             double range, TargetScratch& scratch) const;
     /// The nearest contributor on `self`'s bounty ledger standing in `realm`
     /// within `radius` of `from`. The ledger outlives a teleport, so a

@@ -7,6 +7,7 @@
 #include <fstream>
 #include <tuple>
 #include <map>
+#include <unordered_map>
 
 #include "server/loot_eligibility.h"
 #include "shared/core/json.h"
@@ -453,6 +454,7 @@ void LootSystem::run(World& world, const SpatialGrid& grid, const ContentRegistr
     pickups_.clear();
 
     maintainDrops(dt, commands);
+    attractRingDrops(world, grid, dt);
     collectPickups(world, grid, commands, events);
     awardDeaths(world, content, rng, nowMillis);
     // Deaths pay out after the broadphase pass, but their loot is still
@@ -556,6 +558,48 @@ void LootSystem::maintainDrops(double dt, CommandBuffer& commands) {
     });
     for (const Entity e : expired_) {
         if (e != NULL_ENTITY) commands.destroy(e);
+    }
+}
+
+void LootSystem::attractRingDrops(World& world, const SpatialGrid& grid, double dt) {
+    struct Pull { Entity player; Vec2 at; double gap; double speed; };
+    std::unordered_map<Entity, Pull> pulls;
+    collectors_->each([&](Entity player, PlayerTag&, Transform& at, PlayerModifiers& mods) {
+        const auto* hp = world.tryGet<Health>(player);
+        if ((hp && !hp->alive()) || !(mods.ringMagnetism > 0.0)) return;
+        const auto* account = world.tryGet<PlayerAccount>(player);
+        const auto owner = account ? account->connection : 0;
+        const double reach = mods.ringMagnetism;
+        // A long-range ring should not take proportionally longer to reel in loot.
+        const double speed = std::max(360.0, reach / 2.5);
+        grid.query(at.realm, at.position, reach, candidates_);
+        for (Entity candidate : candidates_) {
+            const auto* drop = world.tryGet<DropItem>(candidate);
+            const auto* position = world.tryGet<Transform>(candidate);
+            const auto* life = world.tryGet<Lifetime>(candidate);
+            if (!drop || !position || position->realm != at.realm ||
+                (life && life->remainingSeconds <= 0.0) || drop->riftPrize ||
+                (drop->humansOnly && owner == 0) || !mayPickUp(*drop, player, owner)) continue;
+            const double gap = distanceSq(at.position, position->position);
+            if (gap > reach * reach) continue;
+            const auto old = pulls.find(candidate);
+            if (old == pulls.end() || gap < old->second.gap ||
+                (gap == old->second.gap && player < old->second.player))
+                pulls[candidate] = {player, at.position, gap, speed};
+        }
+    });
+    // One bounded movement per drop, regardless of overlapping rings or players.
+    const double elapsed = std::clamp(dt, 0.0, 0.1);
+    for (const auto& [entity, pull] : pulls) {
+        auto& at = world.get<Transform>(entity);
+        const Vec2 delta = pull.at - at.position;
+        const double distance = std::sqrt(pull.gap);
+        if (distance <= 1e-9) continue;
+        const double step = std::min(pull.speed * elapsed, distance);
+        const Vec2 next = at.position + delta * (step / distance);
+        if (terrain && terrain->segmentBlocked(at.position, next, at.realm)) continue;
+        at.position = terrain ? terrain->resolveCircle(next, kDropWallRadius, at.realm) : next;
+        world.get<DropItem>(entity).terrainSettled = false;
     }
 }
 
@@ -831,6 +875,15 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
         const Rarity mobRarity = apexKill ? Rarity::Apex : type->rarity;
         const Vec2 at = transform->position;
         const Realm realm = transform->realm;
+        const bool guardedScatter = terrain && protectDropScatter && protectDropScatter(realm);
+        // The ordinary resolver can push a pile into a room on the other side
+        // of a pyramid partition. Keep both authored and legacy drops on the
+        // corpse side of the wall while preserving the same random draws.
+        const auto scatterDrop = [&](Vec2 offset) {
+            return guardedScatter
+                ? terrain->resolveLinkedCircle(at, offset, kDropWallRadius, realm)
+                : at + offset;
+        };
         const Health* health = world.tryGet<Health>(corpse);
         const double maxHealth = health != nullptr ? health->max : 0.0;
         const double damageFloor = apexKill ? lootDamageFloor(maxHealth) :
@@ -1008,6 +1061,7 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
                 hyperEternalPool.push_back(entry.petalIndex);
                 hyperWeights.push_back(hyperEternalDropWeight(entry.rates, content.petal(entry.petalIndex).minRarity));
             }
+        const bool ordinaryTrials = !wave && ordinaryMapLoot && ordinaryMapLoot(realm);
         struct ClaimantRolls {
             int trials;
             int orbTier;
@@ -1019,7 +1073,7 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
             const int bonus=bonusMultiplier
                 ? clamp(bonusMultiplier(claimant),1,3) : 1;
             const int orbTier = visibleGarbage ? kRarityCount : wornOrbTier(world,content,claimant,magicOrb);
-            int rolls = bonusLootTrialsForRarity(mobRarity, bonus);
+            int rolls = bonusLootTrialsForRarity(mobRarity, bonus, ordinaryTrials);
             if (hyperKill) {
                 const auto* account = world.tryGet<PlayerAccount>(claimant);
                 const int tenths = hyperRewardTenths(world.get<Bounty>(corpse), claimant,
@@ -1102,7 +1156,8 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
                         if(!petalComesAt(content.petal(petal),rarity))continue;
                         orbGroup_.clear();
                         for(std::size_t j=first;j<eligible_.size();++j)if(eligibleOrbs_[j]==tier)orbGroup_.push_back(eligible_[j]);
-                        stackDrop(petal,rarity,at+Vec2{rng.range(-50.0,50.0),rng.range(-50.0,50.0)},realm,orbGroup_);
+                        const Vec2 scatter{rng.range(-50.0, 50.0), rng.range(-50.0, 50.0)};
+                        stackDrop(petal, rarity, scatterDrop(scatter), realm, orbGroup_);
                         if(visibleGarbage) {
                             auto& paid=garbagePaid[static_cast<std::size_t>(entry-garbageTable.data())];
                             for(const auto claimant:orbGroup_)if(std::find(paid.begin(),paid.end(),claimant)==paid.end())paid.push_back(claimant);
@@ -1130,12 +1185,9 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
                 const std::uint16_t magic =
                     anyOrb ? content.magicFormOf(petalIndex) : kInvalidIndex;
                 const Vec2 scatter{rng.range(-50.0, 50.0), rng.range(-50.0, 50.0)};
-                // Unresolved on purpose, as in the reference: the per-tick pass
-                // is what pushes a drop out of the geometry it landed in. Noted
-                // so the sweep below tests the scattered position, as the
-                // reference's same-step pickup does.
+                const Vec2 dropAt = scatterDrop(scatter);
                 if (magic == kInvalidIndex) {
-                    stackDrop(petalIndex, rarity, at + scatter, realm, eligible_);
+                    stackDrop(petalIndex, rarity, dropAt, realm, eligible_);
                     continue;
                 }
                 for (std::size_t first = 0; first < eligible_.size(); ++first) {
@@ -1160,7 +1212,7 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
                         // odds -- it caps what those odds can produce.
                         if (rarityIndex(groupRarity) > tier) groupRarity = clampRarity(tier);
                     }
-                    stackDrop(groupPetal, groupRarity, at + scatter, realm, orbGroup_);
+                    stackDrop(groupPetal, groupRarity, dropAt, realm, orbGroup_);
                 }
             }
         }
@@ -1216,8 +1268,40 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
             }
         }
 
+        // A wild Eternal kill can award one shared Eternal petal. The roll
+        // belongs to the kill, so bonus trials, parties and splitting bodies
+        // do not turn it into several independent chances.
+        if (mobRarity == Rarity::Unique && !wave && !visibleGarbage &&
+            !world.has<InheritedLootClaims>(corpse) && rng.chance(0.0003)) {
+            std::vector<Entity> recipients;
+            for (const Entity claimant : baseEligible) {
+                const auto* account = world.tryGet<PlayerAccount>(claimant);
+                if (account && qualifiesPersonally(claimant, *account)) recipients.push_back(claimant);
+            }
+            std::vector<std::uint16_t> pool;
+            for (const auto& entry : table) {
+                const auto petal = entry.petalIndex;
+                if (entry.kind != DropTables::Kind::RandomPetal && petal < content.petalCount() &&
+                    allowsAuthoredApexReward(content.petal(petal)) &&
+                    petalComesAt(content.petal(petal), Rarity::Unique) &&
+                    std::find(pool.begin(), pool.end(), petal) == pool.end()) {
+                    pool.push_back(petal);
+                }
+            }
+            if (!recipients.empty() && !pool.empty()) {
+                const auto petal = pool[rng.below(pool.size())];
+                const Entity drop = spawnDrop(world, petal, Rarity::Unique, at, realm, recipients);
+                if (drop != NULL_ENTITY) {
+                    auto& item = world.get<DropItem>(drop);
+                    item.humansOnly = true;
+                    item.singleCopy = true;
+                    fresh_.push_back(drop);
+                }
+            }
+        }
+
         // Each visible type is guaranteed once for each entitled account. The
-        // ordinary 30/60/90 (high-tier 30/45/60) trials run first. Only a type
+        // ordinary rarity trials, including any claimant bonus, run first. Only a type
         // that missed every trial gets one conditional, normally graded copy.
         for(std::size_t i=0;i<garbageTable.size();++i) {
             std::vector<Entity> missing;

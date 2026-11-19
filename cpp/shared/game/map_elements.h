@@ -408,6 +408,7 @@ public:
     /// sprite once and keeps it.
     const std::vector<std::string>& artFiles() const { return artFiles_; }
     const std::vector<TiledDecoration>& decorations() const { return decorations_; }
+    double worldScale() const { return worldScale_; }
 
     /// The map's tile layers, BOTTOM TO TOP: the order to draw them in. Each
     /// holds width()*height() cells, row-major. Layer names are carried for
@@ -532,6 +533,7 @@ private:
     /// the renderer reads these every frame.
     std::vector<std::string> artFiles_;
     std::vector<TiledDecoration> decorations_;
+    double worldScale_ = 1.0;
     std::vector<TiledLayer> layers_;
     int width_ = 0;
     int height_ = 0;

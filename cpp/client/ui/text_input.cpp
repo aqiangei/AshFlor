@@ -350,10 +350,8 @@ bool editText(Window& window, std::string& value, TextFieldState& state, double 
     // one: an SDL layout may hand back a "v", the browser's keydown handler
     // filters it out, and a field that took both would paste and type on the
     // same keystroke.
-    if (!ctrl && !window.altHeld()) {
-        frame.eraseBefore = window.typedErase();
-        frame.typed = window.typedText();
-    }
+    frame.eraseBefore = window.typedErase();
+    if (!ctrl && !window.altHeld()) frame.typed = window.typedText();
     frame.pasted = window.pastedText();
     frame.shift = window.shiftHeld();
     frame.copy = ctrl && window.keyPressed(Key::C);

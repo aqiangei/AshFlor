@@ -30,12 +30,34 @@ namespace flix {
 
 class Camera {
 public:
-    void setWorldExtent(Vec2 extent) { extent_ = extent; }
+    void setWorldExtent(Vec2 extent, bool fitZoomRange = false, bool followEdges = false) {
+        extent_ = extent;
+        fitZoomRange_ = fitZoomRange;
+        followEdges_ = followEdges;
+    }
 
-    /// Frame the target at the current zoom, stopping at map boundaries.
     void snapTo(Vec2 target) {
+        target_ = target;
         const double z = zoom();
-        centre_ = boundedViewportCentre(target, {viewportWidth_ / z, viewportHeight_ / z}, extent_);
+        const Vec2 viewport{viewportWidth_ / z, viewportHeight_ / z};
+        centre_ = boundedViewportCentre(target, viewport, extent_);
+        if (!followsMapEdges(viewport)) return;
+        // Continue following at one eighth speed once the view reaches an edge.
+        // This reveals at most one sixteenth of the viewport outside the map.
+        // The in-map portion is inside the server's existing bounded view.
+        const Vec2 inside{std::clamp(target.x, 0.0, extent_.x), std::clamp(target.y, 0.0, extent_.y)};
+        centre_ += (inside - centre_) * 0.125;
+    }
+
+    bool followsMapEdges(Vec2 viewport) const {
+        return followEdges_ && !fitZoomRange_ &&
+            viewport.x < extent_.x - 1e-6 && viewport.y < extent_.y - 1e-6;
+    }
+
+    void offsetTarget(Vec2 offset) {
+        const double z = zoom();
+        const Vec2 viewport{viewportWidth_ / z, viewportHeight_ / z};
+        snapTo((followsMapEdges(viewport) ? target_ : centre_) + offset);
     }
 
     /// The visible extent in DESIGN units -- Window::width()/height(), never
@@ -56,7 +78,19 @@ public:
         const double z = userZoom * loadoutZoom / uiScale_;
         const double requested = std::isfinite(z) && z > 0.0 ? z : 1.0;
         if (!(extent_.x > 0.0 && extent_.y > 0.0)) return requested;
-        return std::max({requested, viewportWidth_ / extent_.x, viewportHeight_ / extent_.y});
+        const double cover = std::max(viewportWidth_ / extent_.x, viewportHeight_ / extent_.y);
+        const double base = loadoutZoom / uiScale_;
+        const double minimum = kMinimumUserCameraZoom * base;
+        if (fitZoomRange_ && std::isfinite(base) && base > 0.0 && minimum < cover) {
+            // In a small Wave room the old clamp can swallow the whole zoom range.
+            // Fit the widest setting to the floor and keep room to zoom out from
+            // the default, even when worn petals would already show the whole room.
+            const double normal = std::max(base, cover * 1.25);
+            if (userZoom >= 1.0) return normal * userZoom;
+            const double t = (userZoom - kMinimumUserCameraZoom) / (1.0 - kMinimumUserCameraZoom);
+            return lerp(cover, normal, std::clamp(t, 0.0, 1.0));
+        }
+        return std::max(requested, cover);
     }
 
     Vec2 worldToScreen(Vec2 world) const {
@@ -118,6 +152,9 @@ public:
 
 private:
     bool loadoutZoomInMotion_ = false;
+    bool fitZoomRange_ = false;
+    bool followEdges_ = false;
+    Vec2 target_{};
     Vec2 centre_;
     Vec2 extent_;
     int viewportWidth_ = 1280;

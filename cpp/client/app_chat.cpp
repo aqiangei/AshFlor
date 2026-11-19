@@ -1072,6 +1072,7 @@ void App::drawTitleChat(Canvas& canvas, double time) {
     // is no longer on screen as a place a press may land without closing it.
     const double visibleBottom = chatOpen_ ? window_.softKeyboardVisibleBottom(kChatImeClearanceCss) : canvas.height();
     const Rect box = titleChatBox(canvas.width(), canvas.height(), visibleBottom);
+    if (open == MenuId::Crafting && box.w > 0.0) menus_.setCraftChatTop(box.y);
     chatRegion_ = box;
     drawChatField(canvas, box, time);
 }

@@ -439,13 +439,13 @@ void drawPetalCluster(Canvas& canvas, const SpriteCache& sprites, std::uint16_t 
     const bool egg = iconId == "egg";
     const bool beetleEgg = iconId == "beetle_egg";
     const bool battery = iconId == "battery";
-    const bool canFan = equipmentFan && drawCount > 1;
+    const bool canFan = drawCount == 2 || (equipmentFan && drawCount > 1);
     const bool polygon = drawCount >= 3 &&
         (iconId == "stinger" || iconId == "magic_stinger" ||
          iconId == "blood_stinger" || iconId == "triangle");
     const Vec2 extent = canFan || polygon ? sprites.petalExtent(petalIndex) : Vec2{1.0, 1.0};
     const bool slender = std::max(extent.x, extent.y) >= 1.4 * std::min(extent.x, extent.y);
-    const bool fan = canFan && !polygon && (egg || beetleEgg || battery || slender);
+    const bool fan = drawCount == 2 || (canFan && !polygon && (egg || beetleEgg || battery || slender));
     const double upright = !egg && !beetleEgg && extent.x > extent.y ? -kPi * 0.5 : 0.0;
     ClusterShape shape = clusterShape(&sprites, petalIndex, sizeStat, drawCount);
     const int authoredCount = std::max(1, content().petalStats(petalIndex, rarity).count);
@@ -716,7 +716,12 @@ void drawItemTile(Canvas& canvas, const SpriteCache& sprites, Rect rect, const I
             const int diceCount = std::max(1, copies);
             for(int i=0;i<diceCount;++i){
                 canvas.save();
-                if(diceCount>1){const double angle=kTau*i/diceCount;
+                if (diceCount == 2) {
+                    const double turn = i == 0 ? -.65 : .65;
+                    canvas.translate(std::sin(turn) * iconCap * .20,
+                                     iconCap * .16 - std::cos(turn) * iconCap * .20);
+                    canvas.rotate(static_cast<float>(turn));
+                } else if(diceCount>1){const double angle=kTau*i/diceCount;
                     canvas.translate(std::cos(angle)*iconCap*.22,std::sin(angle)*iconCap*.22);}
                 drawRollingDice(canvas,tile.diceFace,tile.timeSeconds,iconCap*(diceCount>1?.42:.72));
                 canvas.restore();

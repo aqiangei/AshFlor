@@ -85,6 +85,7 @@ constexpr double kDeathFlowerMouth = 5.0;
 constexpr double kDeathRingX = 44.0;
 constexpr double kDeathRingY = 29.0;
 constexpr double kDeathRingPhase = 0.96;
+constexpr double kDeathIconMaxDiameter = 32.0;
 
 /// Continue is a gardn button: a 132x40 box under a 6-unit rim at 0.8 of its
 /// fill, which button() derives. Close is the same button, smaller and grey.
@@ -169,7 +170,7 @@ void drawDeathFlower(Canvas& canvas, const WorldRenderer& renderer, const Sprite
             if ((y > 0.0) != front) continue;
             const PetalStats stats = content().petalStats(ring[i].petal, ring[i].rarity);
             drawPetalCluster(canvas, sprites, ring[i].petal, ring[i].rarity, stats.size, 1,
-                             std::cos(angle) * kDeathRingX, y, 0.0, time);
+                             std::cos(angle) * kDeathRingX, y, kDeathIconMaxDiameter, time);
         }
     };
     paintSeats(false);
@@ -207,7 +208,7 @@ void App::sendInputFrame(double dt, bool periodic) {
     // open panel nothing, and being frozen in place with the inventory up is
     // how a player gets eaten. They still stop for the one thing that really is
     // typing -- a focused field, which keyboardCaptured() answers for below.
-    const bool menuOpen = menus_.anyOpen() || minimapExpanded_ || minimapControlUsed_;
+    const bool menuOpen = menus_.anyOpen() || minimapExpanded_ || minimapControlUsed_ || hudPanelControlUsed_;
 
     // Movement follows the cursor, which is the control scheme this game is
     // built around: the flower runs toward the pointer, at a speed set by how
@@ -377,7 +378,7 @@ void App::updatePlaying(double dt) {
         if (pinchDistance_ > 0.0) menus_.settings().settingsDirty = true;
         pinchDistance_ = 0.0;
     };
-    if (menus_.anyOpen() || minimapExpanded_ || minimapControlUsed_ || chatOpen_) {
+    if (menus_.anyOpen() || minimapExpanded_ || minimapControlUsed_ || hudPanelControlUsed_ || chatOpen_) {
         zoomTouches_.clear();
         endPinch();
     } else {
@@ -433,7 +434,7 @@ void App::updatePlaying(double dt) {
             // not also a chat key. Escape is one of theirs now -- it opens the
             // settings panel and no longer leaves the game, which is the red exit
             // button in the top strip's job alone.
-            const bool consumed = menus_.handleKeys(window_);
+            const bool consumed = menus_.handleKeys(window_, net_);
             if (!consumed) {
                 if (boundKeyPressed(window_, menus_.settings().controlKey(ControlAction::Chat)) ||
                     pressedChatBox()) {
@@ -464,8 +465,9 @@ void App::updatePlaying(double dt) {
 
 namespace {
 
-Rect closedDeathRespawnBox(double width) {
-    return {width * 0.5 - 72.0, 18.0, 144.0, 36.0};
+Rect closedDeathRespawnBox(double width, double height) {
+    const double buttonWidth = std::min(184.0, width);
+    return {(width - buttonWidth) * 0.5, height * 0.5 - 24.0, buttonWidth, 48.0};
 }
 
 } // namespace
@@ -498,7 +500,7 @@ void App::updateDead(double dt) {
     if (tutorial_.capturesMouse(mouse)) return;
     if (!deathCardVisible_) {
         if (deathCardSlide_ <= 0.01 && !menus_.anyOpen() && !minimapExpanded_ &&
-            !minimapControlUsed_ && hit(closedDeathRespawnBox(window_.width()), mouse)) {
+            !minimapControlUsed_ && hit(closedDeathRespawnBox(window_.width(), window_.height()), mouse)) {
             net_.requestRespawn();
         }
         return;
@@ -562,7 +564,7 @@ void App::drawDeathCard(Canvas& canvas, double time) {
 }
 
 void App::drawClosedDeathRespawn(Canvas& canvas) {
-    const Rect box = closedDeathRespawnBox(canvas.width());
+    const Rect box = closedDeathRespawnBox(canvas.width(), canvas.height());
     const bool hover = hit(box, {window_.mouseX(), window_.mouseY()});
     ButtonStyle style;
     style.fill = kDeathContinueFill;
@@ -603,6 +605,7 @@ void App::drawRunLoot(Canvas& canvas, double time) {
     auto shown = net_.runLoot();
     std::sort(shown.begin(), shown.end(), [](const Profile::Stack& a, const Profile::Stack& b) {
         if (a.rarity != b.rarity) return rarityIndex(a.rarity) > rarityIndex(b.rarity);
+        if (a.count != b.count) return a.count > b.count;
         const std::string& an = content().petal(a.petalIndex).name;
         const std::string& bn = content().petal(b.petalIndex).name;
         if (an != bn) return an < bn;

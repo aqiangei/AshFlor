@@ -65,7 +65,7 @@ inline constexpr std::array<const char*, kSkillCount> kSkillLabelsZh = {
 
 /// How many buyable tiers each branch has (florrclone costs[].length).
 inline constexpr std::array<int, kSkillCount> kSkillTiers = {
-    9, 5, 5, 3, 9, 9, 9, 9, 3, 9, 8, 2, 1, 4, 1, 1, 9, 10, 10, 3, 2, 10, 9, 3,
+    9, 5, 5, 3, 9, 9, 9, 9, 3, 9, 8, 2, 2, 4, 1, 1, 9, 10, 10, 3, 2, 10, 9, 3,
 };
 
 /// Per-tier point costs from florrclone.
@@ -82,7 +82,7 @@ inline constexpr std::array<std::array<int, 10>, kSkillCount> kSkillCosts = {{
     {{2, 6, 10, 12, 16, 20, 24, 28, 32}},        // reload
     {{2, 3, 4, 5, 6, 7, 8, 9, 0}},               // sharpEdges
     {{10, 20, 0, 0, 0, 0, 0, 0, 0}},             // secondChance
-    {{15, 0, 0, 0, 0, 0, 0, 0, 0}},              // magnetism
+    {{15, 25, 0, 0, 0, 0, 0, 0, 0}},             // magnetism
     {{10, 20, 30, 40, 0, 0, 0, 0, 0}},           // duplicator
     {{10, 0, 0, 0, 0, 0, 0, 0, 0}},              // bodyToxicity
     {{15, 0, 0, 0, 0, 0, 0, 0, 0}},              // concentratedPoison
@@ -96,6 +96,7 @@ inline constexpr std::array<std::array<int, 10>, kSkillCount> kSkillCosts = {{
     {{4, 8, 14}}, // fluid reach
 }};
 
+inline constexpr std::array<double, 2> kMagnetismRange = {1000.0, 1500.0};
 inline constexpr std::array<double, 3> kFluidReachTalentScale = {1.10, 1.20, 1.30};
 inline constexpr std::array<double, 9> kManaRegenTalentScale = {1.08, 1.16, 1.25, 1.35, 1.45, 1.56, 1.68, 1.82, 2.0};
 // zorr's Speed talent is +20% a level over six; our three tiers are its
@@ -145,7 +146,7 @@ inline int skillTierRarityIndex(SkillId id,int tier) {
     if(tier<0)return 0;
     switch(id){case SkillId::Antennae:return antennae[std::min(tier,2)];
     case SkillId::Reach:return reach[std::min(tier,2)];case SkillId::Duplicator:return duplicate[std::min(tier,3)];
-    case SkillId::SecondChance:return second[std::min(tier,1)];case SkillId::Magnetism:return 5;
+    case SkillId::SecondChance:return second[std::min(tier,1)];case SkillId::Magnetism:return tier == 0 ? 5 : 6;
     case SkillId::BodyToxicity:return 6;case SkillId::ConcentratedPoison:return 7;
     case SkillId::Poison:return std::min(tier,2);default:return tier;}
 }
@@ -189,7 +190,7 @@ inline constexpr std::array<double, 9> kPoisonBonus = {
 inline constexpr std::array<double, 3> kReachBonus = {50.0, 100.0, 150.0};
 /// Summon health multiplier.
 inline constexpr std::array<double, 9> kSummonerScale = {
-    1.15, 1.3225, 1.5209, 1.749, 2.0114, 2.3132, 2.66, 3.059, 4.0456,
+    1.075, 1.16125, 1.26045, 1.3745, 1.5057, 1.6566, 1.83, 2.0295, 2.5228,
 };
 /// Second Chance: duration / cooldown ms by tier.
 inline constexpr std::array<double, 2> kSecondChanceDurationMillis = {300.0, 1500.0};
@@ -227,7 +228,7 @@ inline constexpr std::array<double, 10> kDamageTalentBodyScale = {
     1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9,
 };
 inline constexpr std::array<double, 10> kDamageTalentPetalScale = {
-    1.0, 1.1, 1.2, 1.35, 1.6, 2.0, 2.6, 3.3, 4.0, 4.8,
+    1.0, 1.1, 1.2, 1.35, 1.6, 2.0, 2.1, 2.2, 2.3, 2.4,
 };
 inline constexpr std::array<double, 10> kAbsorbTalentScale = {
     1.0, 1.26, 1.59, 2.0, 2.52, 3.17, 4.0, 5.04, 6.35, 8.0,
@@ -340,7 +341,11 @@ struct SkillSet {
     bool magnetismUnlocked() const {
         return level(SkillId::Magnetism) >= 0 && prerequisiteMet(SkillId::Magnetism);
     }
-    double magnetismBonus() const { return magnetismUnlocked() ? 1000.0 : 0.0; }
+    double magnetismBonus() const {
+        const int tier = level(SkillId::Magnetism);
+        return magnetismUnlocked() && tier < skillTierCount(SkillId::Magnetism)
+            ? kMagnetismRange[tier] : 0.0;
+    }
 
     /// florrclone duplicator: tiers unlock higher rarity duplication; bonus copies
     /// for multi-petal slots. Conservative: +1 at tier0, +2 at tier1+.

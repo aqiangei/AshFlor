@@ -30,6 +30,7 @@ namespace flix {
 class Terrain;
 class WorldMaps;
 class EventQueue;
+struct SquadEntityIndex;
 struct ShotLanding;
 
 /// How long a root takes to bank one armour stack, and how many it may hold.
@@ -120,6 +121,7 @@ struct PetalSlotState {
     /// it belongs to the FLOWER, is maximised across every equipped raindrop
     /// and fires whether or not any one of them is due to act.
     double raindropReadyAtMillis = 0;
+    double referenceReloadTickMillis = 0;
     std::uint64_t batteryHurtSerial = 0;
     double batteryRetryUntilMillis = 0.0;
 
@@ -298,7 +300,7 @@ public:
     /// over walls, so the point it landed at can be inside one. Null in a test
     /// with no map.
     void landShots(World& world, const ContentRegistry& registry,
-                   const std::vector<ShotLanding>& landings, const Terrain* terrain);
+                   const std::vector<ShotLanding>& landings, const Terrain* terrain, double nowMillis, EventQueue* events = nullptr);
 
     /// A yggdrasil raised `revived` off the ground.
     ///
@@ -309,6 +311,7 @@ public:
     /// flag that stops a second death being announced. Left unset the flower
     /// still stands up; its own client simply is not told.
     std::function<void(Entity revived, Entity reviver)> onPlayerRevived;
+    const SquadEntityIndex* squads = nullptr;
     std::function<void(Entity)> onTimedSummonManaShortage;
     std::function<bool(Entity target, Entity marker, Rarity rarity)> canMarkPlayer;
     std::function<bool(Entity target, Entity marker, Rarity rarity, bool toVoid, bool frozen)> onPlayerMarked;
@@ -324,6 +327,7 @@ private:
         double jurassicWoundBonus = 0.0;
         double featherCostPerSecond = 0.0;
         double jurassicShieldPerSecond = 0.0;
+        double elementalShieldPerSecond = 0.0;
         double summonRangeBonus = 0.0;
         double summonRangeManaDrain = 0.0;
     };
@@ -409,8 +413,9 @@ private:
     /// `home` is where a homing petal dives: the flower, even while the ring
     /// is laid out around a moon.
     void stepPetalPhysics(World& world, const ContentRegistry& registry, PetalInstance& instance,
-                          Transform& transform, Vec2 home, Vec2 orbit, double attractionRadius,
-                          double spinSpeed, double nowMillis, double dt);
+                          Transform& transform, Vec2 home, Vec2 orbit, Vec2 orbitCarry,
+                          Vec2 carryRotation, double attractionRadius, double spinSpeed,
+                          double nowMillis, double dt);
     void runActions(World& world, const ContentRegistry& registry, Entity player,
                     double nowMillis, double dt);
 
@@ -452,7 +457,7 @@ private:
     /// fires it is the END of a contact, which the action pass -- asked about
     /// contacts only on the tick they begin -- never sees.
     void dischargeCapacitors(World& world, const ContentRegistry& registry, Entity player,
-                             double dt);
+                             double nowMillis, double dt);
 
     /// `health` <= 0 spawns the petal with no Health component at all, which is
     /// what an unbreakable petal is: not one with zero hit points, which would
@@ -489,7 +494,7 @@ private:
     /// which is the flower for a spawn and the petal itself thereafter.
     void runBehaviour(World& world, Entity player, Entity petal, const PetalConfig& config,
                       const PetalStats& stats, Rarity rarity, Vec2 at, PetalTrigger trigger,
-                      double nowMillis, bool copiedFromOtherTier = false);
+                      double nowMillis, bool copiedFromOtherTier = false, double combinationStrength = 1.0);
     /// Remember a petal that just broke, so its break effect can run once the
     /// player's own columns are no longer held open by the slot pass.
     void queueBreakBehaviour(World& world, const ContentRegistry& registry, Entity petal);
@@ -507,10 +512,11 @@ private:
     /// One strike. `damage` is the petal's own stat, already up the rarity
     /// ladder; `rarity` is the tier it came from, which is what puts the
     /// fallback on that same ladder for a petal whose `damage` is 0.
+    void strikeFractal(World& world, Entity player, Vec2 at, Rarity rarity, double nowMillis, double combinationStrength = 1.0);
     bool strikeLightning(World& world, Entity player, Vec2 at, double damage, Rarity rarity,
-                         int bounces = -1, double reachScale = 1.0,
-                         std::optional<double> magicEyeCastAt = std::nullopt, Entity firstTarget = NULL_ENTITY,
-                         bool fromBattery = false, double burnPerSecond = 0.0);
+                         double nowMillis, int bounces = -1, double reachScale = 1.0,
+                         bool magicEye = false, Entity firstTarget = NULL_ENTITY,
+                         bool fromBattery = false, double burnPerSecond = 0.0, bool multiHit = false);
     /// The strike's visual half: one event carrying the bolts' endpoints. The
     /// damage half is a field, and a field has nothing on the wire the client
     /// could draw a strike from.
@@ -540,7 +546,7 @@ private:
     /// Raise the first corpse in `realm` within reach of a yggdrasil. Returns
     /// whether one was raised, which is what spends the petal.
     bool revivePlayerNear(World& world, Entity reviver, Realm realm, Vec2 at, double nowMillis,
-                          bool extraReach);
+                          bool extraReach, Entity onlyTarget = NULL_ENTITY);
     /// The field laid, or NULL_ENTITY when it would be nothing.
     Entity emitGroundEffect(World& world, Entity player, Vec2 at, GroundEffectKind kind,
                             double radius, double damagePerSecond, double slowFactor,
@@ -548,7 +554,7 @@ private:
                             double damagePerHit = 0.0, double damageIntervalMillis = 0.0);
     /// Recover lost/trapped summons on safe ground without replacing them,
     /// healing them or resetting lifetime. Sandstorms have their own leash.
-    void recoverDistantPets(World& world, Entity player);
+    void recoverDistantPets(World& world, Entity player, std::uint16_t meteorMob);
     /// Take back the timed summons (Pet::expiresAtMillis) whose time is up.
     /// Their petal owes no reload for it: it has been hatching more all along.
     void expireTimedPets(World& world, Entity player, double nowMillis);
@@ -593,8 +599,8 @@ private:
     /// summons are not squad members and are not counted.
     int countPetsOfType(World& world, const PetalSlotState& state, std::uint8_t slot,
                         std::uint16_t mobIndex);
-    /// Everything the player has summoned, which is what the entity cap counts.
-    int countOwnedPets(World& world, const PetalSlotState& state);
+    /// Count ordinary summons or the crown allowance independently.
+    int countOwnedPets(World& world, const PetalSlotState& state, bool crownSummons = false);
     /// Take back `slot`'s summons of one mob type, and the bodies of any that
     /// are chain heads, so a squad replaces its predecessor instead of joining
     /// it. Timed summons are left out, and so is every other slot's squad.
@@ -607,7 +613,7 @@ private:
     /// -- is sqrt(2) times as strong.
     int summonPets(World& world, const ContentRegistry& registry, Entity player,
                     std::uint8_t slot, std::uint16_t mobIndex, Rarity rarity, int count, Vec2 at,
-                    PetalSlotState& state, double strength, double expiresAtMillis = 0.0);
+                    PetalSlotState& state, double strength, double expiresAtMillis = 0.0, bool crownSummon = false);
     /// One summoned body, every component a pet carries, at an already
     /// chosen spot and size -- and, if its config has one, its ammunition
     /// ring. summonPets lays chains and broods on top.
@@ -635,6 +641,7 @@ private:
         Rarity rarity = Rarity::Common;
         Vec2 at;
         bool mimicked = false;
+        double combinationStrength = 1.0;
     };
 
     World* bound_ = nullptr;

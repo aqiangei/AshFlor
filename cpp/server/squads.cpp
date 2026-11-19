@@ -195,12 +195,7 @@ std::string SquadRoster::accept(SquadMemberId target, std::int64_t nowMillis,
         for (const SquadMemberId member : previous->members) {
             if (!member.bot()) invites_.erase(member.connection);
         }
-        // Outstanding invitations from the disbanded squad are invalid too.
-        for (auto invite = invites_.begin(); invite != invites_.end();) {
-            if (invite->second.squadId == previousId) invite = invites_.erase(invite);
-            else ++invite;
-        }
-        squads_.erase(previousId);
+        disband(previousId);
     } else {
         squad->members.push_back(target);
     }
@@ -227,7 +222,7 @@ SquadRoster::Departure SquadRoster::leave(SquadMemberId who) {
 
     if (squad->members.empty()) {
         out.disbanded = true;
-        squads_.erase(out.squadId);
+        disband(out.squadId);
         return out;
     }
 
@@ -239,6 +234,15 @@ SquadRoster::Departure SquadRoster::leave(SquadMemberId who) {
         out.promoted = squad->leader;
     }
     return out;
+}
+
+void SquadRoster::disband(const std::string& squadId) {
+    squads_.erase(squadId);
+    // A new invite should not be blocked by an invite to a squad that is gone.
+    for (auto invite = invites_.begin(); invite != invites_.end();) {
+        if (invite->second.squadId == squadId) invite = invites_.erase(invite);
+        else ++invite;
+    }
 }
 
 void SquadRoster::expire(std::int64_t nowMillis) {

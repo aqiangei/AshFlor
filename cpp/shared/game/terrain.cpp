@@ -313,7 +313,7 @@ bool Terrain::install(Realm realm, std::vector<std::uint8_t> tiles, int cols, in
 Vec2 Terrain::spawnPoint(Realm realm) const {
     const Grid& g = grid(realm);
     if (g.cols <= 0 || g.rows <= 0) return {0.0, 0.0};
-    return tileCenter(g.spawnTile % g.cols, g.spawnTile / g.cols);
+    return tileCenter(g.spawnTile % g.cols, g.spawnTile / g.cols, g.scale);
 }
 
 void Terrain::setTile(int tx, int ty, Tile t, Realm realm) {
@@ -635,7 +635,7 @@ int Terrain::collisionDeckedCellCount(Realm realm) const {
 }
 
 double Terrain::collisionOverhangUnits(Realm realm) const {
-    return shapeGrid(realm).overhangUnits;
+    return shapeGrid(realm).overhangUnits * mapScale(realm);
 }
 
 void Terrain::collisionRingsAt(int tx, int ty, Realm realm,
@@ -883,6 +883,7 @@ bool Terrain::setCollisionShapes(const TiledMap& map, Realm realm) {
     }
     store.overhangUnits = std::max(0.0, overhang);
 
+    grid(realm).scale = map.worldScale();
     shapeGrid(realm) = std::move(store);
     return true;
 }
@@ -1167,6 +1168,7 @@ bool Terrain::cellPushCircle(int tx, int ty, Vec2 p, double radius, Realm realm,
 int Terrain::blockingLayerAt(Vec2 p, Realm realm, bool& water, bool outsideBlocks) const {
     water = false;
     const Grid& g = grid(realm);
+    p = p / g.scale;
     const int tx = toTileCoord(p.x);
     const int ty = toTileCoord(p.y);
     if (tx < 0 || ty < 0 || tx >= g.cols || ty >= g.rows) {
@@ -1183,6 +1185,9 @@ int Terrain::blockingLayerAt(Vec2 p, Realm realm, bool& water, bool outsideBlock
 
 std::optional<Terrain::ShapeCollision> Terrain::findCollision(Vec2 position, double radius,
                                                               Realm realm) const {
+    const double scale = mapScale(realm);
+    position = position / scale;
+    radius /= scale;
     const double reach = radius + kCollisionScanBuffer;
     const int minX = std::max(0, toTileCoord(position.x - reach));
     const int maxX = std::min(tileCols(realm) - 1, toTileCoord(position.x + reach));
@@ -1196,16 +1201,16 @@ std::optional<Terrain::ShapeCollision> Terrain::findCollision(Vec2 position, dou
             if (!cellPushCircle(tileX, tileY, position, radius, realm, pushed, flat)) continue;
             // Prefer a face hit over the seam between two cells of one wall, so
             // a body sliding along it is pushed straight off the face.
-            if (flat) return ShapeCollision{pushed, true};
-            if (!corner) corner = ShapeCollision{pushed, false};
+            if (flat) return ShapeCollision{pushed * scale, true};
+            if (!corner) corner = ShapeCollision{pushed * scale, false};
         }
     }
     return corner;
 }
 
 bool Terrain::nearestOpenTile(Vec2 p, int& outTx, int& outTy, Realm realm) const {
-    const int px = toTileCoord(p.x);
-    const int py = toTileCoord(p.y);
+    const int px = toTileCoord(p.x, mapScale(realm));
+    const int py = toTileCoord(p.y, mapScale(realm));
     for (int ring = 0; ring <= kNearestOpenSearchTiles; ++ring) {
         bool found = false;
         double best = 0;
@@ -1268,8 +1273,9 @@ Terrain::WallResolution Terrain::resolveWall(Vec2 position, double radius, Realm
     // the tile loop below run for the rest of the universe. The bound is this
     // realm's own rectangle, so a small map's scan stays small.
     const Vec2 extent = realmExtent(realm);
-    position.x = clamp(position.x, -kTileSize, extent.x + kTileSize);
-    position.y = clamp(position.y, -kTileSize, extent.y + kTileSize);
+    const double pitch = kTileSize * mapScale(realm);
+    position.x = clamp(position.x, -pitch, extent.x + pitch);
+    position.y = clamp(position.y, -pitch, extent.y + pitch);
 
     // This is the same four-pass collision solver used by
     // resolveEntityWallCollisions() in constants.ts, now against the SHAPES the
@@ -1320,8 +1326,8 @@ Vec2 Terrain::resolveCircle(Vec2 position, double radius, Realm realm) const {
         int ty = 0;
         if (!nearestOpenTile(position, tx, ty, realm)) position = spawnPoint(realm);
         else {
-            const Rect open = tileRect(tx, ty);
-            const double inset = std::min(radius + kWallResolveEpsilon, kTileSize * 0.49);
+            const Rect open = tileRect(tx, ty, mapScale(realm));
+            const double inset = std::min(radius + kWallResolveEpsilon, open.w * 0.49);
             position.x = clamp(position.x, open.left() + inset, open.right() - inset);
             position.y = clamp(position.y, open.top() + inset, open.bottom() - inset);
         }
@@ -1365,7 +1371,7 @@ Vec2 Terrain::realmExtent(Realm realm) const {
     // A realm with no map staged still has to answer with something finite --
     // a clamp against zero would collapse every coordinate onto the origin.
     if (g.cols <= 0 || g.rows <= 0) return {kWorldSize, kWorldSize};
-    return {g.cols * kTileSize, g.rows * kTileSize};
+    return {g.cols * kTileSize * g.scale, g.rows * kTileSize * g.scale};
 }
 
 double Terrain::realmSize(Realm realm) const {
@@ -1423,6 +1429,9 @@ bool Terrain::segmentBlocked(Vec2 a, Vec2 b, Realm realm) const {
     }
     if (realm == Realm::Maze) return activeMaze().blocksLine(a, b);
     if (realm == Realm::Arena) return false;   // open floor, edge to edge
+    const double scale = mapScale(realm);
+    a = a / scale;
+    b = b / scale;
 
     // The DDA visits every cell the segment passes through and asks each for
     // the shapes filed in it. A cell it does not visit cannot hold geometry the
@@ -1489,6 +1498,10 @@ bool Terrain::segmentTouchesBlockingTile(Vec2 a, Vec2 b, double eps, Realm realm
         return false;
     }
     if (!std::isfinite(eps) || eps < 0.0) eps = 0.0;
+    const double scale = mapScale(realm);
+    a = a / scale;
+    b = b / scale;
+    eps /= scale;
 
     // Clamped to the grid, as the reference clamps its scan: tiles outside it
     // are air, so skipping them changes nothing and keeps the loop small. No
@@ -1574,8 +1587,9 @@ Vec2 Terrain::findOpenSpawn(Rng& rng, Vec2 around, double radius, Realm realm) c
     if (nearestOpenTile(around, tx, ty, realm)) {
         // Jitter inside the tile so repeated fallbacks do not stack every mob
         // on one point.
-        const Vec2 c = tileCenter(tx, ty);
-        const double j = kTileSize * 0.25;
+        const double scale = mapScale(realm);
+        const Vec2 c = tileCenter(tx, ty, scale);
+        const double j = kTileSize * scale * 0.25;
         return {c.x + rng.range(-j, j), c.y + rng.range(-j, j)};
     }
     return spawnPoint(realm);

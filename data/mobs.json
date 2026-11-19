@@ -2240,6 +2240,78 @@
             }
           ],
           "to": "sawblade"
+        },
+        {
+          "from": [
+            {
+              "petal": "iris",
+              "count": 3
+            },
+            {
+              "petal": "poo",
+              "count": 2
+            }
+          ],
+          "to": [
+            {
+              "petal": "gas",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "from": [
+            {
+              "petal": "rose",
+              "count": 3
+            },
+            {
+              "petal": "fang",
+              "count": 2
+            }
+          ],
+          "to": [
+            {
+              "petal": "blood_rose",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "from": [
+            {
+              "petal": "web",
+              "count": 3
+            },
+            {
+              "petal": "cotton",
+              "count": 2
+            }
+          ],
+          "to": [
+            {
+              "petal": "silk",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "from": [
+            {
+              "petal": "rock",
+              "count": 4
+            },
+            {
+              "petal": "glass",
+              "count": 2
+            }
+          ],
+          "to": [
+            {
+              "petal": "marble",
+              "count": 1
+            }
+          ]
         }
       ]
     },
@@ -3459,6 +3531,78 @@
             }
           ],
           "to": "sawblade"
+        },
+        {
+          "from": [
+            {
+              "petal": "iris",
+              "count": 3
+            },
+            {
+              "petal": "poo",
+              "count": 2
+            }
+          ],
+          "to": [
+            {
+              "petal": "gas",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "from": [
+            {
+              "petal": "rose",
+              "count": 3
+            },
+            {
+              "petal": "fang",
+              "count": 2
+            }
+          ],
+          "to": [
+            {
+              "petal": "blood_rose",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "from": [
+            {
+              "petal": "web",
+              "count": 3
+            },
+            {
+              "petal": "cotton",
+              "count": 2
+            }
+          ],
+          "to": [
+            {
+              "petal": "silk",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "from": [
+            {
+              "petal": "rock",
+              "count": 4
+            },
+            {
+              "petal": "glass",
+              "count": 2
+            }
+          ],
+          "to": [
+            {
+              "petal": "marble",
+              "count": 1
+            }
+          ]
         }
       ]
     },
@@ -5609,20 +5753,15 @@
             },
             {
               "petal": "gas",
-              "count": 6,
-              "name": "Gas",
-              "zh": "毒气"
+              "count": 6
             }
           ],
           "to": [
             {
               "petal": "gas_bomb",
-              "count": 1,
-              "name": "Gas Bomb",
-              "zh": "毒气炸弹"
+              "count": 1
             }
-          ],
-          "previewOnly": true
+          ]
         },
         {
           "rotationSlot": 4,
@@ -5658,12 +5797,9 @@
           "to": [
             {
               "petal": "bubble_bomb",
-              "count": 1,
-              "name": "Bubble Bomb",
-              "zh": "气泡炸弹"
+              "count": 1
             }
-          ],
-          "previewOnly": true
+          ]
         },
         {
           "rotationSlot": 6,
@@ -5680,12 +5816,9 @@
           "to": [
             {
               "petal": "hel_missile",
-              "count": 2,
-              "name": "Hel Missile",
-              "zh": "地狱导弹"
+              "count": 2
             }
-          ],
-          "previewOnly": true
+          ]
         },
         {
           "rotationSlot": 7,
@@ -5696,20 +5829,15 @@
             },
             {
               "petal": "gas",
-              "count": 1,
-              "name": "Gas",
-              "zh": "毒气"
+              "count": 1
             }
           ],
           "to": [
             {
               "petal": "viper",
-              "count": 2,
-              "name": "Viper",
-              "zh": "毒蛇"
+              "count": 2
             }
-          ],
-          "previewOnly": true
+          ]
         },
         {
           "rotationSlot": 8,
@@ -5745,12 +5873,9 @@
           "to": [
             {
               "petal": "hel_honey",
-              "count": 1,
-              "name": "Hel Honey",
-              "zh": "地狱蜂蜜"
+              "count": 1
             }
-          ],
-          "previewOnly": true
+          ]
         },
         {
           "rotationSlot": 10,
@@ -5761,20 +5886,15 @@
             },
             {
               "petal": "gas",
-              "count": 1,
-              "name": "Gas",
-              "zh": "毒气"
+              "count": 1
             }
           ],
           "to": [
             {
               "petal": "irey",
-              "count": 1,
-              "name": "Irey",
-              "zh": "伊雷"
+              "count": 1
             }
-          ],
-          "previewOnly": true
+          ]
         },
         {
           "rotationSlot": 11,
@@ -5810,12 +5930,9 @@
           "to": [
             {
               "petal": "latrine",
-              "count": 1,
-              "name": "Latrine",
-              "zh": "茅厕"
+              "count": 1
             }
-          ],
-          "previewOnly": true
+          ]
         },
         {
           "rotationSlot": 13,
@@ -5832,21 +5949,16 @@
           "to": [
             {
               "petal": "spikeball",
-              "count": 1,
-              "name": "Spikeball",
-              "zh": "刺球"
+              "count": 1
             }
-          ],
-          "previewOnly": true
+          ]
         },
         {
           "rotationSlot": 14,
           "from": [
             {
               "petal": "ring",
-              "count": 1,
-              "name": "Ring",
-              "zh": "戒指"
+              "count": 1
             }
           ],
           "to": [
@@ -5856,12 +5968,9 @@
             },
             {
               "petal": "ring_magnet",
-              "count": 1,
-              "name": "Ring Magnet",
-              "zh": "磁力戒指"
+              "count": 1
             }
-          ],
-          "previewOnly": true
+          ]
         },
         {
           "rotationSlot": 15,
@@ -5946,12 +6055,9 @@
           "to": [
             {
               "petal": "bugatti",
-              "count": 1,
-              "name": "Bugatti",
-              "zh": "布加迪"
+              "count": 1
             }
-          ],
-          "previewOnly": true
+          ]
         },
         {
           "rotationSlot": 20,
@@ -5962,20 +6068,15 @@
             },
             {
               "petal": "blood_rose",
-              "count": 2,
-              "name": "Blood Rose",
-              "zh": "血玫瑰"
+              "count": 2
             }
           ],
           "to": [
             {
               "petal": "vampire_fang",
-              "count": 1,
-              "name": "Vampire Fang",
-              "zh": "吸血尖牙"
+              "count": 1
             }
-          ],
-          "previewOnly": true
+          ]
         },
         {
           "rotationSlot": 21,
@@ -6026,12 +6127,9 @@
           "to": [
             {
               "petal": "bloom",
-              "count": 1,
-              "name": "Bloom",
-              "zh": "绽放"
+              "count": 1
             }
-          ],
-          "previewOnly": true
+          ]
         },
         {
           "rotationSlot": 24,
@@ -6097,12 +6195,9 @@
           "to": [
             {
               "petal": "fractal",
-              "count": 3,
-              "name": "Fractal",
-              "zh": "分形"
+              "count": 3
             }
-          ],
-          "previewOnly": true
+          ]
         },
         {
           "rotationSlot": 28,
@@ -6132,24 +6227,19 @@
             },
             {
               "petal": "marble",
-              "count": 10,
-              "name": "Marble",
-              "zh": "弹珠"
+              "count": 10
             }
           ],
           "to": [
             {
               "petal": "magic_marble",
-              "count": 1,
-              "name": "Magic Marble",
-              "zh": "魔法弹珠"
+              "count": 1
             },
             {
               "petal": "glass",
               "count": 1
             }
-          ],
-          "previewOnly": true
+          ]
         },
         {
           "rotationSlot": 30,
@@ -6229,9 +6319,7 @@
             },
             {
               "petal": "gas",
-              "count": 2,
-              "name": "Gas",
-              "zh": "毒气"
+              "count": 2
             }
           ],
           "to": [
@@ -6239,8 +6327,7 @@
               "petal": "void_elemental",
               "count": 1
             }
-          ],
-          "previewOnly": true
+          ]
         },
         {
           "rotationSlot": 34,
@@ -6307,12 +6394,9 @@
           "to": [
             {
               "petal": "golden_cactus",
-              "count": 1,
-              "name": "Golden Cactus",
-              "zh": "黄金仙人掌"
+              "count": 2
             }
-          ],
-          "previewOnly": true
+          ]
         },
         {
           "rotationSlot": 37,
@@ -6521,20 +6605,15 @@
           "from": [
             {
               "petal": "silk",
-              "count": 2,
-              "name": "Silk",
-              "zh": "丝"
+              "count": 2
             }
           ],
           "to": [
             {
               "petal": "toilet_paper",
-              "count": 2,
-              "name": "Toilet Paper",
-              "zh": "卫生纸"
+              "count": 2
             }
-          ],
-          "previewOnly": true
+          ]
         },
         {
           "rotationSlot": 48,

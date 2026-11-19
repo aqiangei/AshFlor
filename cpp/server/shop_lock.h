@@ -70,4 +70,84 @@ inline bool saveMissingLockedEternals(PlayerRecord& record) {
     }
     return changed;
 }
+inline int shopTierLockMask(const PlayerRecord& record) {
+    const auto& tiers = record.extra["shopTierLocks"];
+    if (!tiers.isObject())
+        return record.extra["lockedShopRotation"].asDouble(-1) >= 0 ? 3 : 0;
+    return (tiers["super"].isArray() ? 1 : 0) | (tiers["unique"].isArray() ? 2 : 0);
+}
+
+inline Json shopTierRows(const std::vector<ShopOffer>& offers, Rarity rarity) {
+    Json rows = Json::array();
+    for (const auto& offer : offers) {
+        if (offer.rarity != rarity) continue;
+        auto row = shopLockRow(offer);
+        rows.push(row);
+    }
+    return rows;
+}
+
+inline void initializeShopTierLocks(PlayerRecord& record) {
+    if (record.extra["shopTierLocks"].isObject()) return;
+    const auto legacy = lockedShopOffers(record);
+    Json tiers = Json::object();
+    if (shopTierLockMask(record)) {
+        tiers["super"] = shopTierRows(legacy, Rarity::Super);
+        tiers["unique"] = shopTierRows(legacy, Rarity::Unique);
+    }
+    record.extra["shopTierLocks"] = std::move(tiers);
+}
+
+inline std::vector<ShopOffer> tierLockedShopOffers(const PlayerRecord& record, std::int64_t current) {
+    if (!record.extra["shopTierLocks"].isObject()) {
+        return shopTierLockMask(record) ? lockedShopOffers(record) : shopOffers(current);
+    }
+    const auto fresh = shopOffers(current);
+    std::vector<ShopOffer> result;
+    result.reserve(fresh.size());
+    for (const auto rarity : {Rarity::Super, Rarity::Unique}) {
+        const auto& rows = record.extra["shopTierLocks"][rarityName(rarity)];
+        if (!rows.isArray()) {
+            for (const auto& offer : fresh) {
+                if (offer.rarity == rarity) result.push_back(offer);
+            }
+            continue;
+        }
+        const std::size_t first = result.size();
+        const auto listed = [&](std::uint16_t index) {
+            return std::any_of(result.begin() + static_cast<std::ptrdiff_t>(first), result.end(),
+                               [index](const ShopOffer& offer) { return offer.petalIndex == index; });
+        };
+        for (const auto& row : rows.items()) {
+            const auto index = content().petalIndex(row["petalType"].asString());
+            if (!shopSellsPetal(index) || !petalComesAt(content().petal(index), rarity)) continue;
+            const int discount = rarity == Rarity::Super ? clamp(row["discountPercent"].asInt(), 0, 30) : 0;
+            const double price = shopOfferPrice(index, rarity, discount);
+            if (listed(index)) continue;
+            result.push_back({index, rarity, price, discount});
+            if (result.size() - first == kShopTierOfferCount) break;
+        }
+        for (const auto& offer : fresh) {
+            if (result.size() - first == kShopTierOfferCount) break;
+            if (offer.rarity == rarity && !listed(offer.petalIndex)) result.push_back(offer);
+        }
+    }
+    return result;
+}
+
+inline void toggleShopTierLock(PlayerRecord& record, int mask, std::int64_t current) {
+    initializeShopTierLocks(record);
+    const int previous = shopTierLockMask(record);
+    const bool unlock = (previous & mask) == mask;
+    const auto offers = tierLockedShopOffers(record, current);
+    for (const auto rarity : {Rarity::Super, Rarity::Unique}) {
+        const int bit = rarity == Rarity::Super ? 1 : 2;
+        if (!(mask & bit)) continue;
+        auto& rows = record.extra["shopTierLocks"][rarityName(rarity)];
+        if (unlock) rows = Json();
+        else if (!(previous & bit)) rows = shopTierRows(offers, rarity);
+    }
+    // Keep the old field as an any-lock indicator for existing account views.
+    record.extra["lockedShopRotation"] = shopTierLockMask(record) ? static_cast<double>(current) : -1.0;
+}
 } // namespace flix

@@ -2766,7 +2766,7 @@ TEST(unabomber_pet_bombs_deal_damage_and_credit_their_summoner) {
     Sim sim;
     const auto owner = sim.spawnPlayer(kOrigin - Vec2{100, 0});
     const auto pet = sim.spawnMob("void_unabomber", kOrigin);
-    sim.world.add<Pet>(pet, Pet{owner, 0, 0, 1.5});
+    sim.world.add<Pet>(pet, Pet{owner, 0, 0, false, 1.5});
     sim.world.get<Faction>(pet) = Faction{Team::Players, false};
     sim.world.get<ContactDamage>(pet).amount *= 1.5;
     const auto victim = sim.spawnMob("soldier_ant", kOrigin + Vec2{200, 0});
@@ -2804,7 +2804,7 @@ TEST(pet_damage_talent_scales_hornet_projectiles_without_changing_fire_rate) {
         Sim sim;
         const auto owner = sim.spawnPlayer(kOrigin - Vec2{100,0});
         const auto pet = sim.spawnMob("hornet", kOrigin);
-        sim.world.add<Pet>(pet, Pet{owner,0,0,scale});
+        sim.world.add<Pet>(pet, Pet{owner, 0, 0, false, scale});
         sim.world.get<Faction>(pet) = Faction{Team::Players,false};
         sim.spawnMob("soldier_ant", kOrigin + Vec2{200,0});
         const auto shot = fireAndCatch(sim);
@@ -4745,4 +4745,45 @@ TEST(summon_bulb_targeting_matches_between_serial_and_workers) {
         sim.tickIntent();
         for (const Entity pet : pets) CHECK_EQ(sim.brainOf(pet).target, prey);
     }
+}
+
+#include "server/systems/combat.h"
+
+
+TEST(corruption_equipped_makes_the_wild_gambler_and_its_ring_neutral) {
+    CHECK(contentReady());
+    Sim sim;
+    const Entity gambler = sim.spawnMob("gambler", kOrigin);
+    const Entity flower = sim.spawnPlayer(kOrigin + Vec2{110.0, 0.0});
+    sim.brainOf(gambler).kind = AiKind::Hostile;
+    sim.brainOf(gambler).target = flower;
+    const Entity ringPetal = sim.world.create();
+    sim.world.add<MobRingPetal>(ringPetal, MobRingPetal{gambler, 0, 0.0});
+
+    sim.world.ensure<PlayerVisuals>(flower).equippedCorruption = true;
+    CHECK(!CombatSystem::canDamage(sim.world, gambler, flower));
+    CHECK(!CombatSystem::canDamage(sim.world, ringPetal, flower));
+    CHECK(!CombatSystem::canDamage(sim.world, flower, gambler));
+    CombatSystem combat;
+    CHECK_NEAR(combat.applyDamage(sim.world,flower,gambler,3.0,sim.now).applied,0.0,1e-9);
+    sim.world.get<Health>(flower).hitCooldownUntilMillis=0;
+    CHECK_NEAR(combat.applyDamage(sim.world,flower,ringPetal,3.0,sim.now+1000).applied,0.0,1e-9);
+    CHECK_NEAR(combat.applyDamage(sim.world,gambler,flower,3.0,sim.now+2000).applied,0.0,1e-9);
+    const Entity beetle = sim.spawnMob("beetle", kOrigin + Vec2{-180.0, 0.0});
+    CHECK(CombatSystem::canDamage(sim.world, beetle, flower));
+    sim.tickIntent(2);
+    CHECK_EQ(sim.brainOf(gambler).target, NULL_ENTITY);
+
+    sim.world.get<PlayerVisuals>(flower).equippedCorruption = false;
+    sim.world.get<PlayerVisuals>(flower).nearbyCorruption = true;
+    CHECK(CombatSystem::canDamage(sim.world, ringPetal, flower));
+    sim.world.get<PlayerVisuals>(flower).nearbyCorruption = false;
+    sim.world.get<PlayerVisuals>(flower).corrupted = true;
+    CHECK(CombatSystem::canDamage(sim.world, ringPetal, flower));
+    sim.world.get<PlayerVisuals>(flower).corrupted = false;
+    sim.world.get<Health>(flower).hitCooldownUntilMillis=0;
+    CHECK(combat.applyDamage(sim.world,flower,ringPetal,3.0,sim.now+3000).applied>0);
+    CHECK(CombatSystem::canDamage(sim.world, ringPetal, flower));
+    sim.tickIntent(2);
+    CHECK_EQ(sim.brainOf(gambler).target, flower);
 }

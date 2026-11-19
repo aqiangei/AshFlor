@@ -6,6 +6,7 @@
 #include "shared/game/npc.h"
 #include "test_data.h"
 #include "server/systems/combat.h"
+#include "server/systems/loot.h"
 #include "server/systems/movement.h"
 #include "server/systems/npcs.h"
 #include "server/systems/petals.h"
@@ -73,6 +74,7 @@ const char* const kPetalsJson = R"JSON({
   "charm":    {"name":"Charm","damage":1,"health":5,"size":1,"cooldown":2000,"count":1,"playerModifiers":{"evasion":0.1},"color":"#FFF824"},
   "briny":    {"name":"Briny","damage":1,"health":5,"size":1,"cooldown":2000,"count":1,"playerModifiers":{"damageReflection":0.25},"color":"#FFFFFF"},
   "brinier":  {"name":"Brinier","damage":1,"health":5,"size":1,"cooldown":2000,"count":1,"playerModifiers":{"damageReflection":0.4},"color":"#FFFFFF"},
+  "jurassic_meteor_egg": {"name":"Meteor Egg","health":5,"cooldown":1000,"petMobType":"jurassic_meteor","petCount":1},
   "summoner": {"name":"Summoner","damage":1,"health":4,"size":1,"cooldown":1000,"count":1,"petMobType":"critter","petMobRarity":"common","petCount":2,"color":"#AA00AA"},
   "stormcaller":{"name":"Stormcaller","damage":1,"health":10,"size":1,"cooldown":1000,"count":1,"petMobType":"critter","petCount":1,"petLifetimeMs":20000,"petManaCost":20,"color":"#42E3F5"},
   "toxic":    {"name":"Toxic","damage":2,"health":5,"size":1,"cooldown":1000,"count":1,"poison":0.05,"poisonDuration":3000,"color":"#00AA00"},
@@ -117,6 +119,7 @@ const char* const kPetalsJson = R"JSON({
 })JSON";
 
 const char* const kMobsJson = R"JSON({
+  "jurassic_meteor": {"name":"Meteor","health":500,"speed":0,"size":1.43,"ai_type":"stationary"},
   "critter": {"name":"Critter","health":10,"damage":1,"size":1,"speed":0.2,"range":300,"cooldown":500,"color":"#FF0000","section":[0],"ai_type":"hostile"},
   "brute":   {"name":"Brute","health":500,"damage":5,"size":6,"speed":0.2,"range":300,"cooldown":500,"color":"#AA3300","section":[0],"ai_type":"hostile"},
   "puffball": {"name":"Puffball","health":10,"damage":1,"size":1,"speed":0,"range":300,"cooldown":500,"color":"#FFFFFF","section":[0],"ai_type":"passive","petal_ring":{"petalType":"pearl","count":4,"spin":false,"shootOnHit":true}},
@@ -2267,13 +2270,37 @@ TEST(magnetism_talent_adds_reach_on_top_of_worn_magnetism) {
         skills().set(SkillId::Magnetism, tier);
         rig.tick();
         CHECK_NEAR(rig.modifiers().magnetism,
-                   1050.0, 1e-9);
+                   tier == 0 ? 1050.0 : 1550.0, 1e-9);
     }
 
     // Held without the fifth Loadout upgrade, the branch grants nothing.
     skills().set(SkillId::Loadout, 3);
     rig.tick();
     CHECK_NEAR(rig.modifiers().magnetism, 50.0, 1e-9);
+}
+
+TEST(magnetism_tier_two_collects_an_eligible_drop_outside_tier_one_range) {
+    const auto& registry = testsupport::shippedContent();
+    Rig rig(registry);
+    rig.world.add<PlayerSkillTree>(rig.player).skills.set(SkillId::Loadout, 4);
+    LootSystem loot;
+    SpatialGrid grid;
+    Rng rng(19);
+    const Vec2 at = rig.position(rig.player) + Vec2{1300.0, 0.0};
+    const Entity drop = loot.spawnDrop(rig.world, registry.petalIndex("rose"), Rarity::Common,
+                                       at, Realm::Overworld, {rig.player});
+    grid.insert(drop, Realm::Overworld, at, 1.0);
+    const auto collectWithTier = [&](int tier) {
+        rig.world.get<PlayerSkillTree>(rig.player).skills.set(SkillId::Magnetism, tier);
+        rig.tick();
+        loot.run(rig.world, grid, registry, rng, rig.now, 0.0, rig.commands, rig.events);
+        rig.commands.flush();
+        return loot.pickups().size();
+    };
+    CHECK_EQ(collectWithTier(0), std::size_t(0));
+    CHECK(rig.world.isAlive(drop));
+    CHECK_EQ(collectWithTier(1), std::size_t(1));
+    CHECK(!rig.world.isAlive(drop));
 }
 
 TEST(worn_evasion_grows_a_step_a_tier_and_copies_are_independent_rolls) {
@@ -3922,6 +3949,32 @@ TEST(pet_recovery_preserves_the_same_far_summon_and_egg_cooldown) {
     CHECK_EQ(dead.count(), std::size_t(0));
 }
 
+TEST(meteor_recalls_at_follow_distance_and_keeps_its_health) {
+    if (!contentLoaded()) return;
+    Rig rig;
+    rig.equip(0, "jurassic_meteor_egg");
+    rig.equip(1, "summoner");
+    CHECK(rig.tickUntil([&] { return rig.petCount() == 3; }));
+    const Entity meteor = rig.world.get<PetalSlotState>(rig.player).slots[0].pets.front();
+    const Entity ordinary = rig.world.get<PetalSlotState>(rig.player).slots[1].pets.front();
+    const auto at = rig.position(rig.player);
+    const auto near = at + Vec2{kPetFollowDistance - 30.0, 0.0};
+    rig.world.get<Transform>(meteor).position = near;
+    rig.tick();
+    CHECK_EQ(distance(rig.position(meteor), near), 0.0);
+
+    const auto far = at + Vec2{kPetFollowDistance + 30.0, 0.0};
+    rig.world.get<Transform>(meteor).position = far;
+    rig.world.get<Transform>(ordinary).position = far;
+    const double health = rig.world.get<Health>(meteor).max * 0.5;
+    rig.world.get<Health>(meteor).current = health;
+    rig.tick();
+    CHECK_EQ(rig.world.get<PetalSlotState>(rig.player).slots[0].pets.front(), meteor);
+    CHECK_EQ(rig.world.get<Health>(meteor).current, health);
+    CHECK(distance(rig.position(meteor), at) < kPetHomeDistance);
+    CHECK(distance(rig.position(ordinary), at) > kPetFollowDistance);
+}
+
 TEST(a_pet_just_inside_the_recall_distance_is_kept) {
     if (!contentLoaded()) return;
     Rig rig;
@@ -4243,7 +4296,7 @@ TEST(a_summoning_shot_brings_one_summon_per_landing_up_to_its_cap) {
         rig.system.landShots(rig.world, fixture().registry,
                              {ShotLanding{rig.player, 2, saucer, Rarity::Common,
                                           Realm::Overworld, at}},
-                             nullptr);
+                             nullptr, rig.now);
     };
     const auto summons = [&] { return rig.world.get<PetalSlotState>(rig.player).shotSummons; };
 
@@ -4303,7 +4356,7 @@ TEST(a_summoning_shot_landing_after_its_petal_came_off_summons_nothing) {
     rig.system.landShots(rig.world, fixture().registry,
                          {ShotLanding{rig.player, 2, petalId("saucer"), Rarity::Common,
                                       Realm::Overworld, {1500, 1000}}},
-                         nullptr);
+                         nullptr, rig.now);
     CHECK_EQ(rig.petCount(), std::size_t(0));
 }
 
@@ -6643,6 +6696,37 @@ TEST(lightning_discharges_on_first_garbage_contact_then_reloads_once) {
     CHECK_EQ(countStrikes(rig), 1u);
 }
 
+TEST(lightning_chain_skips_intangible_invisible_and_invulnerable_targets) {
+    Rig rig(testsupport::shippedContent());
+    rig.freezeRing();
+    rig.equip(0, "lightning");
+    rig.settleEquips();
+    rig.settleRing();
+    const auto at = rig.position(rig.petals(0).front());
+    const auto contact = addMob(rig, at);
+    const auto intangible = addMob(rig, at + Vec2{55.0, 0.0});
+    rig.world.add<Intangible>(intangible);
+    const auto ghost = addMob(rig, at + Vec2{75.0, 0.0});
+    rig.world.ensure<MobType>(ghost) = MobType{rig.registry.mobIndex("ghost"), Rarity::Super};
+    rig.world.add<GhostTag>(ghost);
+    const auto protectedMob = addMob(rig, at + Vec2{95.0, 0.0});
+    rig.world.get<Health>(protectedMob).invulnerableUntilMillis = rig.now + 1000.0;
+    const auto reachable = addMob(rig, at + Vec2{150.0, 0.0});
+
+    rig.tick();
+    const auto* strike = firstStrike(rig);
+    CHECK(strike != nullptr);
+    if (strike) CHECK_EQ(strike->points.size(), 2u);
+
+    CombatSystem combat;
+    ricochetCombatTick(rig, combat);
+    CHECK(rig.healthOf(contact) < 10000.0);
+    CHECK(rig.healthOf(reachable) < 10000.0);
+    for (const Entity excluded : {intangible, ghost, protectedMob}) {
+        CHECK_NEAR(rig.healthOf(excluded), 10000.0, 1e-8);
+    }
+}
+
 TEST(lightning_broken_without_a_mob_contact_does_not_discharge) {
     Rig rig;
     rig.equip(0, "lightning");
@@ -6887,6 +6971,91 @@ TEST(feedback_3697_egg_hatches_on_open_ground_crowded_by_moving_mobs) {
                 CHECK(!rig.terrain.resolveWall(at.position, body.radius, at.realm).collided);
             });
     }
+}
+
+TEST(feedback_3687_recalled_white_holes_use_separate_safe_landing_points) {
+    Rig rig(testsupport::shippedContent());
+    for (int slot = 0; slot < 3; ++slot) {
+        rig.equip(slot, "void_white_hole_egg", Rarity::Legendary);
+    }
+    CHECK(rig.tickUntil([&] { return rig.petCount() == 3; }));
+    const auto pets = Query<Pet>{rig.world}.collect();
+    if (pets.size() != 3) return;
+
+    const Vec2 owner = rig.position(rig.player);
+    const auto radius = [&](Entity pet) { return rig.world.get<Body>(pet).radius; };
+    const double initialReach = radius(pets[2]) + rig.world.get<Body>(rig.player).radius + 12.0;
+    const Vec2 occupiedPoint = owner + Vec2{initialReach, 0.0};
+    rig.world.get<Transform>(pets[2]).position = occupiedPoint;
+    const Vec2 offset{kPetRecallDistance + 10.0, 0.0};
+    rig.world.get<Transform>(pets[0]).position = owner + offset;
+    rig.world.get<Transform>(pets[1]).position = owner - offset;
+    const double firstHealth = rig.healthOf(pets[0]);
+    const double secondHealth = rig.healthOf(pets[1]);
+
+    rig.tick();
+    CHECK_EQ(rig.petCount(), std::size_t(3));
+    CHECK_NEAR(rig.healthOf(pets[0]), firstHealth, 1e-8);
+    CHECK_NEAR(rig.healthOf(pets[1]), secondHealth, 1e-8);
+    CHECK_NEAR(distance(rig.position(pets[2]), occupiedPoint), 0.0, 1e-8);
+    for (int i = 0; i < 2; ++i) {
+        CHECK(distance(rig.position(pets[i]), owner) < kPetHomeDistance);
+        for (int j = i + 1; j < 3; ++j) {
+            CHECK(distance(rig.position(pets[i]), rig.position(pets[j])) + 1e-8 >=
+                  radius(pets[i]) + radius(pets[j]));
+        }
+    }
+}
+
+TEST(a_large_black_hole_recalls_inside_a_walkable_corridor) {
+    Rig rig(testsupport::shippedContent());
+    rig.useHatchTerrain = true;
+    constexpr int row = 10;
+    for (int col = 0; col < rig.terrain.tileCols(); ++col) {
+        rig.terrain.setTile(col, row - 1, Tile::Solid);
+        rig.terrain.setTile(col, row + 1, Tile::Solid);
+        if (col < 9 || col > 11) rig.terrain.setTile(col, row, Tile::Solid);
+    }
+    const Vec2 owner{10.5 * kTileSize, (row + 0.5) * kTileSize};
+    rig.world.get<Transform>(rig.player).position = owner;
+    rig.equip(0, "void_black_hole_egg", Rarity::Unique);
+    CHECK(rig.tickUntil([&] { return rig.petCount() == 1; }, 1500));
+    const auto pets = Query<Pet>{rig.world}.collect();
+    if (pets.size() != 1) return;
+    const Entity pet = pets.front();
+    const double radius = rig.world.get<Body>(pet).radius;
+    CHECK(radius > kTileSize * 0.5);
+    rig.world.get<Transform>(pet).position = owner + Vec2{kPetRecallDistance + 10.0, 0};
+    const double health = rig.healthOf(pet);
+
+    rig.tick();
+    const auto& recalled = rig.world.get<Transform>(pet);
+    CHECK(distance(recalled.position, owner) < kPetHomeDistance);
+    CHECK(!rig.terrain.segmentBlocked(owner, recalled.position, recalled.realm));
+    CHECK(!rig.terrain.resolveWall(recalled.position, kMobWallRadius, recalled.realm).collided);
+    CHECK(rig.terrain.resolveWall(recalled.position, radius, recalled.realm).collided);
+    CHECK_EQ(rig.petCount(), std::size_t(1));
+    CHECK_NEAR(rig.healthOf(pet), health, 1e-8);
+}
+
+TEST(feedback_3691_crowded_hatch_uses_nearby_landing_before_distant_empty_ground) {
+    const auto& registry = testsupport::shippedContent();
+    Rig rig(registry);
+    rig.useHatchTerrain = true;
+    const Vec2 owner{10.5 * kTileSize, 10.5 * kTileSize};
+    rig.world.get<Transform>(rig.player).position = owner;
+    const Entity blocker = addMob(rig, owner, "crab");
+    rig.world.get<Body>(blocker).radius = 130.0;
+    rig.world.add<Motion>(blocker, Motion{Vec2{40, 0}});
+    rig.equip(0, "beetle_egg", Rarity::Common);
+    CHECK(rig.tickUntil([&] { return rig.petCount() > 0; }, 1500));
+    Query<Pet, Transform, Body>{rig.world}.each(
+        [&](Entity, Pet&, Transform& at, Body& body) {
+            const double gap = distance(owner, at.position);
+            std::printf("nearby hatch distance %.3f, body radius %.3f\n", gap, body.radius);
+            CHECK(gap <= rig.world.get<Body>(rig.player).radius + body.radius * 1.2 + 8.001);
+            CHECK(!rig.terrain.resolveWall(at.position, body.radius, at.realm).collided);
+        });
 }
 
 TEST(large_black_hole_egg_still_needs_room_away_from_a_fixed_summon) {
@@ -7254,6 +7423,9 @@ TEST(apex_missiles_keep_their_projectile_techniques) {
         shots.each([&](Entity, ProjectileTag&, Projectile& shot, Motion& motion) {
             CHECK_NEAR(motion.velocity.length(), projectile.speed * (magic ? 1.0 : 1.20), 1e-8);
             CHECK_NEAR(shot.remainingDistance, projectile.distance * (magic ? 1.15 : 1.0), 1e-8);
+            const double phDamage = registry.petalStats(index, Rarity::PermanentHyper).damage;
+            CHECK(phDamage > 0);
+            CHECK_NEAR(shot.damage / phDamage, 2.0, 1e-12);
         });
     }
 }
@@ -8284,28 +8456,24 @@ TEST(hyper_final_clay_shot_spends_one_impact_on_wild_mobs) {
 
 TEST(hyper_final_triangle_counts_only_other_hyper_triangles) {
     const auto& registry = testsupport::shippedContent();
-    const auto damage = [&](Rarity other) {
+    const auto damage = [&](std::uint8_t copies, bool attacking = false) {
         Rig rig(registry);
-        rig.setFlags(net::InputAttack);
+        if (attacking) rig.setFlags(net::InputAttack);
         const auto triangle = hyperContactPetal(rig, "triangle", Rarity::Apex);
         auto& mods = rig.world.get<PlayerModifiers>(rig.player);
-        ++mods.triangleCounts[rarityIndex(Rarity::Apex)];
-        ++mods.triangleCounts[rarityIndex(other)];
+        mods.triangleCounts[petalTier(Rarity::Apex)] = copies;
+        mods.triangleCounts[petalTier(Rarity::Unique)] = 1;
         const auto mob = hyperContactMob(rig, triangle);
         CombatSystem combat;
         ricochetCombatTick(rig, combat);
         return 1e9 - rig.healthOf(mob);
     };
-    const double base = damage(Rarity::Unique);
-    CHECK(base > 0.0);
-    // Same-tier stacking adds the petal's ordinary Triangle bonus before the
-    // Hyper technique, so compare against the same-grade base and stack stats.
     const auto stats = registry.petalStats(registry.petalIndex("triangle"), Rarity::Apex);
-    CHECK_NEAR(base, stats.damage, 1e-6);
-    TriangleCounts counts{};
-    counts[rarityIndex(Rarity::Apex)] = 2;
-    CHECK_EQ(triangleBonusDamage(Rarity::Apex, counts), 98415.0);
-    CHECK_NEAR(damage(Rarity::Apex), (base + triangleBonusDamage(Rarity::Apex, counts)) * 1.06, 1e-6);
+    CHECK_NEAR(damage(1), stats.damage, 1e-6);
+    CHECK_NEAR(damage(2), stats.damage * 1.8, 1e-6);
+    CHECK_NEAR(damage(10), stats.damage * 8.2, 1e-6);
+    // The existing Hyper attack technique applies after the same-tier bonus.
+    CHECK_NEAR(damage(2, true), stats.damage * 1.8 * 1.06, 1e-6);
 }
 
 TEST(permanent_hyper_uses_the_same_stats_and_techniques_as_contested_hyper) {
@@ -8552,6 +8720,79 @@ TEST(summon_bulb_bonus_uses_active_stack_and_ignores_poo) {
     CHECK_NEAR(rig.modifiers().petTargetRangeScale, 1.0, 1e-9);
 }
 
+TEST(feedback_3641_faster_keeps_attack_orbit_radius) {
+    const auto& registry = testsupport::shippedContent();
+    using R = Rarity;
+    for (int splitters = 0; splitters <= 2; ++splitters) {
+        Rig rig(registry);
+        auto& skills = rig.world.add<PlayerSkillTree>(rig.player).skills;
+        skills.set(SkillId::Loadout, 4);
+        skills.set(SkillId::Duplicator, 3);
+        skills.set(SkillId::Rotation, 4);
+        rig.equip(0, splitters > 0 ? "arctic_splitter" : "amethyst", R::PermanentHyper);
+        rig.equip(1, splitters == 2 ? "arctic_splitter" : "sand",
+                  splitters == 2 ? R::PermanentHyper : R::Apex);
+        rig.equip(2, "dust", R::Apex);
+        rig.equip(3, "dust", R::PermanentHyper);
+        rig.equip(4, "lentil", R::Unique);
+        rig.equip(5, "dust", R::PermanentHyper);
+        rig.equip(6, "dust", R::PermanentHyper);
+        rig.equip(7, "sand", R::PermanentHyper);
+        rig.equip(8, "amethyst", R::PermanentHyper);
+        rig.equip(9, "pharaoh_s_crown", R::PermanentHyper);
+        rig.setFlags(net::InputAttack);
+        rig.settleEquips();
+        const auto radius = [&](int slot) {
+            auto petals = rig.petals(slot);
+            CHECK(!petals.empty());
+            return petals.empty() ? 0.0 :
+                (rig.position(petals.front()) - rig.position(rig.player)).length();
+        };
+        double baseRadius = 0.0;
+        double sandRadius = 0.0;
+        double previousTurn = 0.0;
+        for (int faster = 0; faster <= 2; ++faster) {
+            if (faster == 1) rig.equip(8, "faster", R::PermanentHyper);
+            if (faster == 2) rig.equip(6, "faster", R::PermanentHyper);
+            rig.settleEquips();
+            rig.settleRing();
+            const double before = rig.ring().spin;
+            rig.tick();
+            const double turn = wrapAngle(rig.ring().spin - before);
+            const double dust = radius(3);
+            double sandMean = 0.0;
+            for (int i = 0; i < 60; ++i) {
+                sandMean += radius(7) / 60.0;
+                rig.tick();
+            }
+            std::printf("splitters=%d faster=%d dust=%.3f sand=%.3f turn=%.4f\n",
+                        splitters, faster, dust, sandMean, turn);
+            CHECK(turn > previousTurn);
+            previousTurn = turn;
+            if (faster == 0) {
+                baseRadius = dust;
+                sandRadius = sandMean;
+                CHECK(dust > 850.0 * splitters);
+            } else {
+                CHECK_NEAR(dust, baseRadius, 1.0);
+                CHECK_NEAR(sandMean, sandRadius, 4.0);
+            }
+        }
+        // A stationary enemy on the original attack radius is still in
+        // contact range at the double-Faster rotation speed.
+        if (splitters == 1 && !rig.petals(3).empty()) {
+            const Vec2 centre = rig.position(rig.player);
+            const Vec2 from = rig.position(rig.petals(3).front()) - centre;
+            const double nextAngle = std::atan2(from.y, from.x) + previousTurn;
+            rig.tick();
+            const Entity mob = addMob(rig, centre + Vec2::fromAngle(nextAngle, baseRadius), "ladybug");
+            CombatSystem combat;
+            ricochetCombatTick(rig, combat);
+            CHECK(rig.healthOf(mob) < 10000.0);
+        }
+    }
+}
+
 TEST(feedback_3442_ready_egg_checks_nearby_angles_before_hatching_farther_out) {
     const auto& registry = fixture().registry;
     CHECK(contentLoaded());
@@ -8579,4 +8820,80 @@ TEST(feedback_3442_ready_egg_checks_nearby_angles_before_hatching_farther_out) {
     }
     std::printf("Eight hatches, largest excess over normal hatch distance: %.2f units\n", largestGap);
     CHECK(largestGap <= radius * 0.20 + 1e-6);
+}
+
+TEST(pharaoh_crown_does_not_block_the_last_regular_summon_slot) {
+    Rig rig(testsupport::shippedContent());
+    rig.equip(0, "pharaoh_s_crown", Rarity::Unique);
+    CHECK(rig.tickUntil([&] { return rig.petCount() == 1; }, 140));
+    auto& state = rig.world.get<PetalSlotState>(rig.player);
+    for (int i = 0; i < 29; ++i) {
+        const auto pet = rig.world.create();
+        rig.world.add<Pet>(pet, Pet{rig.player, 9, 0});
+        rig.world.add<Health>(pet, Health{100, 100});
+        state.slots[9].pets.push_back(pet);
+    }
+    rig.equip(1, "square");
+    rig.tick(140);
+    int regular = 0, crowns = 0;
+    Query<Pet>{rig.world}.each([&](Entity e, Pet& pet) {
+        if (!rig.world.has<Dead>(e)) { if (pet.slot == 0) ++crowns; else ++regular; }
+    });
+    std::printf("crown/ordinary coexist: crowns=%d regular=%d\n", crowns, regular);
+    CHECK_EQ(regular, 30);
+    CHECK(crowns > 0 && crowns <= 6);
+    rig.equip(2, "square");
+    rig.tick(140);
+    int nextRegular = 0;
+    Query<Pet>{rig.world}.each([&](Entity e, Pet& pet) {
+        if (!rig.world.has<Dead>(e) && pet.slot != 0) ++nextRegular;
+    });
+    CHECK_EQ(nextRegular, 30);
+}
+
+TEST(feedback_3746_recall_preserves_the_side_of_black_and_white_holes) {
+    for (const char* egg : {"void_white_hole_egg", "void_black_hole_egg"}) {
+        for (const Vec2 direction : {Vec2{1, 0}, Vec2{-1, 0}, Vec2{0, 1}, Vec2{0, -1}}) {
+            Rig rig(testsupport::shippedContent());
+            rig.equip(0, egg, Rarity::Legendary);
+            CHECK(rig.tickUntil([&] { return rig.petCount() == 1; }));
+            const auto pets = Query<Pet>{rig.world}.collect();
+            if (pets.size() != 1) continue;
+            const Entity pet = pets.front();
+            const Vec2 owner = rig.position(rig.player);
+            rig.world.get<Transform>(pet).position = owner + direction * (kPetRecallDistance + 10.0);
+            const double health = rig.healthOf(pet);
+            rig.tick();
+            const Vec2 delta = rig.position(pet) - owner;
+            std::printf("3746 %s direction %.0f,%.0f landing %.3f,%.3f\n", egg, direction.x, direction.y, delta.x, delta.y);
+            CHECK(delta.x * direction.x + delta.y * direction.y > 0.0);
+            CHECK(delta.length() < kPetHomeDistance);
+            CHECK_NEAR(rig.healthOf(pet), health, 1e-8);
+            CHECK_EQ(rig.petCount(), std::size_t(1));
+        }
+    }
+}
+
+TEST(feedback_3746_recall_keeps_a_safe_left_bearing_beside_a_right_wall) {
+    for (const char* egg : {"void_white_hole_egg", "void_black_hole_egg"}) {
+        Rig rig(testsupport::shippedContent());
+        rig.useHatchTerrain = true;
+        for (int row = 0; row < rig.terrain.tileRows(); ++row)
+            rig.terrain.setTile(11, row, Tile::Solid);
+        const Vec2 owner{10.5 * kTileSize, 10.5 * kTileSize};
+        rig.world.get<Transform>(rig.player).position = owner;
+        rig.equip(0, egg, Rarity::Legendary);
+        CHECK(rig.tickUntil([&] { return rig.petCount() == 1; }, 1500));
+        const auto pets = Query<Pet>{rig.world}.collect();
+        if (pets.size() != 1) continue;
+        const Entity pet = pets.front();
+        rig.world.get<Transform>(pet).position = owner - Vec2{kPetRecallDistance + 10.0, 0};
+        const double health = rig.healthOf(pet);
+        rig.tick();
+        const auto& at = rig.world.get<Transform>(pet);
+        CHECK(at.position.x < owner.x);
+        CHECK(!rig.terrain.segmentBlocked(owner, at.position, at.realm));
+        CHECK(!rig.terrain.resolveWall(at.position, rig.world.get<Body>(pet).radius, at.realm).collided);
+        CHECK_NEAR(rig.healthOf(pet), health, 1e-8);
+    }
 }

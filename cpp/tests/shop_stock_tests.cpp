@@ -475,5 +475,155 @@ TEST(apex_kill_pays_the_normal_top_tier_star_bounty) {
     }, 200);
     CHECK(credited);
     if (!credited) return;
-    CHECK_EQ(client.profile().stars, starsBefore + 250.0);
+    CHECK_EQ(client.profile().stars, starsBefore + 1000.0);
+}
+
+TEST(tier_shop_locks_keep_the_other_tier_refreshing_and_preserve_quotes) {
+    std::string error;CHECK(loadContent(dataDir(),error));
+    for(int bit:{1,2}) {
+        PlayerRecord r;
+        toggleShopTierLock(r,bit,100);
+        CHECK_EQ(shopTierLockMask(r),bit);
+        const auto before=tierLockedShopOffers(r,100);
+        const auto after=tierLockedShopOffers(r,103);
+        const auto fresh=shopOffers(103);
+        CHECK_EQ(before.size(),after.size());
+        for(std::size_t i=0;i<after.size();++i){
+            const bool locked=after[i].rarity==(bit==1?Rarity::Super:Rarity::Unique);
+            CHECK_EQ(after[i].petalIndex,locked?before[i].petalIndex:fresh[i].petalIndex);
+            CHECK_EQ(after[i].price,locked?before[i].price:fresh[i].price);
+        }
+        toggleShopTierLock(r,3,103);
+        CHECK_EQ(shopTierLockMask(r),3);
+        const auto both=tierLockedShopOffers(r,104);
+        for(std::size_t i=0;i<both.size();++i)CHECK_EQ(both[i].petalIndex,after[i].petalIndex);
+        toggleShopTierLock(r,3,104);
+        CHECK_EQ(shopTierLockMask(r),0);
+    }
+}
+TEST(tier_shop_locks_migrate_saved_whole_shelf_and_roundtrip_prices) {
+    const auto dir=tempDir("tier-shop-save");
+    const auto path=dir+"/inventory.json";
+    std::remove(path.c_str());
+    Database db;std::string error;CHECK(db.load(path,error));db.setPasswordCost(4);
+    auto a=db.createUser("locks","password123");CHECK(a.ok());if(!a.ok())return;
+    const auto id=a.account->id;
+    auto& r=db.progress(id);
+    r.extra["lockedShopRotation"]=100;
+    captureShopLock(r,100);
+    const auto original=lockedShopOffers(r);
+    initializeShopTierLocks(r);
+    CHECK_EQ(shopTierLockMask(r),3);
+    const auto migrated=tierLockedShopOffers(r,200);
+    CHECK_EQ(original.size(),migrated.size());
+    for(std::size_t i=0;i<original.size();++i)CHECK_EQ(original[i].price,migrated[i].price);
+    toggleShopTierLock(r,1,200);
+    CHECK_EQ(shopTierLockMask(r),2);
+    db.markDirty();CHECK(db.save());
+    Database reloaded;CHECK(reloaded.load(path,error));
+    CHECK_EQ(shopTierLockMask(*reloaded.findProgress(id)),2);
+    const auto saved=tierLockedShopOffers(*reloaded.findProgress(id),201);
+    for(std::size_t i=5;i<saved.size();++i){
+        CHECK_EQ(saved[i].petalIndex,original[i].petalIndex);
+        CHECK_EQ(saved[i].price,original[i].price);
+    }
+}
+TEST(tier_shop_locks_network_purchase_and_relogin_use_the_mixed_shelf) {
+    const auto dir=twoMapDataDir("tier-shop-network");
+    const auto hour=shopRotation(shopClockNow())-2;
+    Harness h("tier-shop-network",[&](const std::string& path){
+        seedUser(path,"buyer","password123");
+        Database db;std::string error;CHECK(db.load(path,error));
+        auto& r=db.progress(db.findUser("buyer")->id);r.stars=1e15;
+        r.extra["lockedShopRotation"]=static_cast<double>(hour);captureShopLock(r,hour);
+        db.markDirty();CHECK(db.save());
+    },dir,0);
+    CHECK(h.ready);if(!h.ready)return;
+    NetClient c;CHECK(loginAs(h,c,"buyer","password123"));
+    CHECK(h.stepUntil({&c},[&]{return c.shopLockMask==3;}));
+    c.toggleShopLock(1);
+    CHECK(h.stepUntil({&c},[&]{return c.shopLockMask==2;}));
+    const auto shelf=c.lockedShopOffers;
+    CHECK_EQ(shelf.size(),10u);if(shelf.size()!=10)return;
+    for(int slot:{0,5}){
+        const auto offer=shelf[slot];
+        const double stars=c.profile().stars;
+        c.shopOutcome().pending=false;
+        c.requestBuyPetal(offer.petalIndex,offer.rarity,slot,1);
+        CHECK(h.stepUntil({&c},[&]{return c.shopOutcome().pending;}));
+        CHECK(c.shopOutcome().ok);
+        CHECK(h.stepUntil({&c},[&]{return c.profile().stars==stars-offer.price;}));
+    }
+    c.disconnect();h.step(5,{});
+    NetClient again;CHECK(loginAs(h,again,"buyer","password123"));
+    CHECK(h.stepUntil({&again},[&]{return again.shopLockMask==2;}));
+    for(int i=5;i<10;++i)CHECK_EQ(again.lockedShopOffers[i].price,shelf[i].price);
+    again.toggleShopLock(3);
+    CHECK(h.stepUntil({&again},[&]{return again.shopLockMask==3;}));
+    again.toggleShopLock(3);
+    CHECK(h.stepUntil({&again},[&]{return again.shopLockMask==0;}));
+}
+
+
+TEST(tier_shop_locks_repair_partial_and_old_ultra_shelves_before_migration) {
+    std::string error;CHECK(loadContent(dataDir(),error));
+    for(int shape:{0,1,2}) {
+        PlayerRecord r;
+        r.extra["lockedShopRotation"]=100;
+        captureShopLock(r,100);
+        Json partial=Json::array();
+        const auto offers=shopOffers(100);
+        for(std::size_t i=0;i<offers.size();++i) {
+            if(shape==0 && offers[i].rarity!=Rarity::Super)continue;
+            if(shape==1 && i>=2 && i<5)continue;
+            auto row=shopLockRow(offers[i]);
+            if(shape==1 && i>=5)row["rarity"]="ultra";
+            if(shape==2 && i%2==0)continue;
+            partial.push(row);
+        }
+        r.extra["lockedShopOffers"]=partial;
+        const auto repaired=lockedShopOffers(r);
+        initializeShopTierLocks(r);
+        const auto migrated=tierLockedShopOffers(r,200);
+        CHECK_EQ(migrated.size(),10u);
+        CHECK_EQ(shopTierLockMask(r),3);
+        for(std::size_t i=0;i<migrated.size();++i) {
+            CHECK_EQ(migrated[i].petalIndex,repaired[i].petalIndex);
+            CHECK_EQ(migrated[i].rarity,repaired[i].rarity);
+            CHECK_EQ(migrated[i].price,repaired[i].price);
+        }
+        for(const auto* tier:{"super","unique"})
+            for(const auto& row:r.extra["shopTierLocks"][tier].items())CHECK(row["price"].isNull());
+    }
+}
+
+TEST(tier_shop_locks_fill_a_retired_slot_without_duplicate_cards) {
+    std::string error;
+    CHECK(loadContent(dataDir(), error));
+    constexpr std::int64_t hour = 103;
+    const auto fresh = shopOffers(hour);
+    CHECK_EQ(fresh.size(), 2 * kShopTierOfferCount);
+    if (fresh.size() != 2 * kShopTierOfferCount) return;
+    const auto& retained = fresh[kShopTierOfferCount - 1];
+    PlayerRecord record;
+    auto retired = shopLockRow(retained);
+    retired["petalType"] = "withdrawn-shop-test-petal";
+    Json super = Json::array();
+    super.push(retired);
+    super.push(shopLockRow(retained));
+    record.extra["shopTierLocks"]["super"] = std::move(super);
+
+    const auto offers = tierLockedShopOffers(record, hour);
+    CHECK_EQ(offers.size(), fresh.size());
+    if (offers.size() != fresh.size()) return;
+    CHECK_EQ(offers[0].petalIndex, retained.petalIndex);
+    CHECK_EQ(offers[0].discountPercent, retained.discountPercent);
+    for (std::size_t i = 0; i < kShopTierOfferCount; ++i) {
+        CHECK(offers[i].rarity == Rarity::Super);
+        for (std::size_t j = 0; j < i; ++j) CHECK(offers[i].petalIndex != offers[j].petalIndex);
+    }
+    for (std::size_t i = kShopTierOfferCount; i < offers.size(); ++i) {
+        CHECK_EQ(offers[i].petalIndex, fresh[i].petalIndex);
+        CHECK_EQ(offers[i].price, fresh[i].price);
+    }
 }

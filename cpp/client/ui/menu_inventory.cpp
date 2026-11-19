@@ -454,10 +454,10 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
                 description = zh ? "泰坦锻造材料。" : "Titan forging material.";
             }
         }
-        if (config.id == "triangle" && rarity == Rarity::Unique) {
+        if (config.id == "triangle") {
             description = language() == Language::Zh
-                ? "主栏中每多装备一枚永恒三角，所有永恒三角都会获得额外伤害。"
-                : "Each additional Eternal Triangle on the active bar adds damage to every Eternal Triangle.";
+                ? "主栏每多装备一片同稀有度的三角，该档每片增加自身 80% 的基础伤害。"
+                : "Each extra same-tier Triangle on the active bar adds 80% of base damage to each Triangle of that tier.";
         }
         if (petalLendsBasic(config)) {
             const auto basicRarity = crownBasicRarity(rarity);
@@ -637,10 +637,28 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         special("潜地持续：", "Burrow duration: ",config.burrowDurationMillis/1000.0,"s");
         lines.push_back({chinese?"准备后按防御潜地；仍会被Worm和沙漠蜈蚣命中，不可穿墙。":"Defend after charging to burrow. Worms and Desert Centipedes can still hit you; walls remain solid.",12.0});
     }
+    if(config.id=="arctic_nuke") {
+        special("整套爆炸基础总预算：", "Total base blast budget: ",180.0*petalDamageScale(rarity));
+        lines.push_back({chinese?"主爆炸占75%，所有子爆炸共用其余25%；增加子爆炸数量不会增加整套总伤害。":"The main blast uses 75%; all sub-blasts share the remaining 25%. Extra sub-blasts do not increase the total budget.",12.0});
+    }
+    if (config.spill.kind != SpillKind::None) {
+        special("流体基础半径：", "Base spill radius: ", spillBaseRadius(config.spill, rarity));
+        if (config.spill.kind == SpillKind::Elixir) {
+            special("液池基础治疗/秒：", "Base pool healing per second: ",
+                    config.spill.strength * petalHealScale(rarity));
+        } else if (config.spill.kind != SpillKind::Blood) {
+            const double scale = config.spill.kind == SpillKind::Nitrogen
+                ? petalStrengthScale(rarity) : referenceOffenseScale(config, rarity);
+            special("液池基础伤害/秒：", "Base pool damage per second: ",
+                    config.spill.strength * scale * fluidDamageScale(config.spill.kind));
+        }
+    }
     if (config.id == "void_soap") {
         special("流体半径：+", "Spill radius: +", soapSpillRadiusBonus(rarity) * 100.0, "%");
         special("流体半径叠加上限：+", "Spill radius bonus cap: +",
                 (kSoapMaxSpillRadiusScale - 1.0) * 100.0, "%");
+        lines.push_back({chinese ? "多块肥皂的半径加成相加，再与流体范围天赋相乘。"
+                                 : "Soap bonuses add together, then multiply with the Fluid Reach talent.", 12.0});
     }
     if (stats.flowerRadiusBonus > 0) special("增加花朵半径：+", "Flower radius: +", stats.flowerRadiusBonus);
     if (stats.summonRangeBonus > 0) special("召唤物追击范围：+", "Summon pursuit range: +", stats.summonRangeBonus);
@@ -775,8 +793,8 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     }
     if (config.id == "magic_bone") {
         TooltipLine stacking{chinese
-            ? "对野怪的伤害按未破损的同阶或更高阶魔法骨头计数，超凡与 Apex 算同一档。第 1 片无加成，从第 2 片起每片追加 24% ÷ 序号，合计最高 35%。"
-            : "Damage to wild mobs counts unbroken Magic Bones of this tier or higher. Hyper and Apex share a tier. Copy n adds 24% / n from the second onward, capped at 35% total.", 12.0};
+            ? "魔法骨头自身对野怪的接触伤害按未破损的同阶或更高阶魔法骨头计数，超凡与 Apex 算同一档。第 1 片无加成，从第 2 片起每片追加 24% ÷ 序号，合计最高 35%。"
+            : "Each Magic Bone's contact damage to wild mobs counts unbroken Magic Bones of its tier or higher. Hyper and Apex share a tier. Copy n adds 24% / n from the second onward, capped at 35% total.", 12.0};
         stacking.maxWidth = 290.0;
         lines.push_back(std::move(stacking));
     }
@@ -825,27 +843,33 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
                 std::clamp(std::min(rarityIndex(rarity), rarityIndex(Rarity::Unique)) - 3, 1, 5));
     }
     if (config.spill.kind != SpillKind::None)
-        special("基础流体半径：", "Base spill radius: ", config.spill.radius);
+        special("基础流体半径：", "Base spill radius: ", spillBaseRadius(config.spill, rarity));
     if (config.id == "blood")
         special("基础血池半径：", "Base blood pool radius: ", bloodPoolRadius(rarity));
     if (config.radiation.present) {
         if (config.id == "uranium")
-            special("基础辐射伤害/秒：", "Base radiation damage per second: ", uraniumRadiationDps(stats, rarity));
+            special("基础辐射伤害/秒：", "Base radiation damage per second: ", uraniumRadiationDps(stats, rarity) * kRadiationDamageScale);
         if(config.id=="uranium")
             special("辐射自伤上限（每秒最大生命）：", "Self-radiation cap (% max HP/s): ", 4.0, "%");
         const double poison = config.radiation.burnDamage > 0.0 ? config.radiation.poisonDamage :
             config.radiation.poisonPerSecond;
         if (poison > 0.0)
-            special("基础辐射毒伤/秒：", "Base radiation poison per second: ", poison * petalStrengthScale(rarity));
+            special("基础辐射毒伤/秒：", "Base radiation poison per second: ", poison * referenceOffenseScale(config, rarity) * kRadiationDamageScale);
         if (config.radiation.burnDamage > 0.0)
             special("基础辐射灼烧强度：", "Base radiation burn strength: ",
-                    config.radiation.burnDamage * petalStrengthScale(rarity));
+                    config.radiation.burnDamage * referenceOffenseScale(config, rarity) * kRadiationDamageScale);
         if (config.id == "void_stardust")
             special("中毒持续：", "Poison duration: ", config.radiation.poisonDurationMillis / 1000.0, "s");
         special("基础辐射半径：", "Base radiation radius: ", baseRadiationRadius(config, rarity));
         special("辐射间隔：", "Radiation interval: ", config.radiation.intervalMillis / 1000.0, "s");
         if (config.radiation.selfPoisonScale > 0)
             special("自身中毒倍率：", "Self-poison multiplier: ", config.radiation.selfPoisonScale);
+    }
+    if(config.id=="void_balloon")
+        special("向上漂移速度：","Upward drift speed: ",balloonDriftSpeed(rarity));
+    if(config.id=="arctic_nitro") {
+        special("喷口方向推进速度：","Nozzle-directed boost speed: ",nitroDriftSpeed(rarity));
+        special("持续喷射时间：","Boost duration: ",nitroUseMillis(rarity)/1000.0,"s");
     }
     if (stats.conditionalHealPerSecond > 0) {
         special("低于75%生命时治疗：", "Healing below 75% health: ",
@@ -1158,7 +1182,17 @@ void InventoryPanel::reset() {
     touchInspect.reset();
     thumbDrag() = {};
     showRunLoot_ = false;
+    showRunKills_ = false;
     runLootScroll_ = {};
+}
+
+void InventoryPanel::openRunLoot(NetClient& net, DragState& drag) {
+    searchField_.blur();
+    drag.clear();
+    runLootScroll_ = {};
+    showRunLoot_ = true;
+    showRunKills_ = false;
+    net.requestRunLoot();
 }
 
 bool InventoryPanel::renderRunLoot(MenuContext& ctx) {
@@ -1167,69 +1201,97 @@ bool InventoryPanel::renderRunLoot(MenuContext& ctx) {
     const Vec2 mouse = ctx.mouse();
     const bool zh = language() == Language::Zh;
     panelCard(canvas, panel, kInventorySkin);
-    panelTitle(canvas, panel, tr(Msg::CollectedThisRun),
-               zh ? "已拾取并计入本局的花瓣" : "Petals collected in this run");
-
+    panelTitle(canvas, panel, zh ? "本局" : "This Run", "");
     const Rect close = closeButtonRect(panel);
     panelClose(canvas, close, close.contains(mouse));
-    if (ctx.pressed() && close.contains(mouse)) {
+    const Rect back{panel.x + kControlsPad, panel.y + kControlsY, 100.0, kControlsHeight};
+    drawSlotButton(canvas, back, zh ? "返回背包" : "Back", kInventorySkin.fill,
+                   back.contains(mouse), false);
+    if (ctx.pressed() && (close.contains(mouse) || back.contains(mouse))) {
         showRunLoot_ = false;
         return true;
     }
-    const Rect back{panel.x + kControlsPad, panel.y + kControlsY, 124.0, kControlsHeight};
-    drawSlotButton(canvas, back, zh ? "返回背包" : "Back to bag", kInventorySkin.fill,
-                   back.contains(mouse), back.contains(mouse) && ctx.pressed());
-    if (ctx.pressed() && back.contains(mouse)) {
-        showRunLoot_ = false;
-        return true;
-    }
-    if (const auto& loot = ctx.net.runLootOverview(); loot && !loot->empty()) {
-        constexpr double kRowHeight = 48.0;
-        const Rect view{panel.x + kGridPadding, back.bottom() + 12.0,
-                        panel.w - kGridPadding - kGridGutter,
-                        std::max(0.0, panel.bottom() - back.bottom() - 22.0)};
-        runLootScroll_.viewHeight = view.h;
-        runLootScroll_.contentHeight = static_cast<double>(loot->size()) * kRowHeight;
-        if (view.contains(mouse)) runLootScroll_.offset -= ctx.window.wheelDelta() * kRowHeight;
-        runLootScroll_.offset -= touchScroll(ctx.window, view, runLootScroll_.maxOffset() > 0);
-        runLootScroll_.offset = clamp(runLootScroll_.offset, 0.0, runLootScroll_.maxOffset());
 
-        canvas.save();
-        canvas.beginPath();
-        canvas.rect(view.x, view.y, view.w, view.h);
-        canvas.clip();
-        TextStyle nameStyle;
-        nameStyle.size = 16.0;
-        TextStyle countStyle = nameStyle;
-        countStyle.align = Align::Right;
-        const auto first = static_cast<std::size_t>(runLootScroll_.offset / kRowHeight);
-        for (std::size_t i = first; i < loot->size(); ++i) {
-            const double y = view.y + static_cast<double>(i) * kRowHeight - runLootScroll_.offset;
-            if (y >= view.bottom()) break;
-            const auto& stack = (*loot)[i];
-            const auto& petal = content().petal(stack.petalIndex);
-            ItemTile tile;
-            tile.petalIndex = stack.petalIndex;
-            tile.rarity = stack.rarity;
-            tile.timeSeconds = ctx.timeSeconds;
-            drawItemTile(canvas, ctx.sprites, {view.x + 3.0, y + 4.0, 40.0, 40.0}, tile);
-            const std::string label = std::string(rarityTr(stack.rarity)) + " " +
-                                      petalNameTr(petal.id, petal.name.c_str());
-            text(canvas, ellipsize(label, nameStyle.size, std::max(0.0, view.w - 128.0)),
-                 view.x + 54.0, y + kRowHeight * 0.5, nameStyle);
-            text(canvas, "x" + stackCountText(stack.count), view.right() - 12.0,
-                 y + kRowHeight * 0.5, countStyle);
+    constexpr double gap = 6.0;
+    const double tabWidth = (panel.right() - kControlsPad - back.right() - 2.0 * gap) * 0.5;
+    for (int i = 0; i < 2; ++i) {
+        const bool kills = i == 1;
+        const Rect tab{back.right() + gap + i * (tabWidth + gap), back.y, tabWidth, back.h};
+        if (ctx.pressed() && tab.contains(mouse) && showRunKills_ != kills) {
+            showRunKills_ = kills;
+            runLootScroll_ = {};
         }
-        canvas.restore();
-        scrollbar(canvas, view, runLootScroll_.contentHeight, runLootScroll_.offset, kPaper);
-    } else {
+        const char* label = kills ? (zh ? "本局击杀" : "Kills") : (zh ? "本局收集" : "Collected");
+        drawSlotButton(canvas, tab, label, kInventorySkin.fill, tab.contains(mouse),
+                       showRunKills_ == kills);
+    }
+
+    const auto& loot = ctx.net.runLootOverview();
+    const auto& kills = ctx.net.runKillsOverview();
+    const bool ready = showRunKills_ ? kills.has_value() : loot.has_value();
+    const std::size_t size = ready ? (showRunKills_ ? kills->size() : loot->size()) : 0;
+    if (size == 0) {
         TextStyle style;
         style.size = 16.0;
         style.align = Align::Centre;
-        const char* status = loot ? (zh ? "本局还没有收集到花瓣" : "No petals collected yet")
-                                  : (zh ? "正在读取本局收集…" : "Loading collected petals…");
+        const char* status = !ready ? (zh ? "正在读取本局记录…" : "Loading this run…")
+            : showRunKills_ ? (zh ? "本局还没有击杀" : "No kills yet")
+                            : (zh ? "本局还没有收集到花瓣" : "No petals collected yet");
         text(canvas, status, panel.x + panel.w * 0.5, back.bottom() + 40.0, style);
+        return true;
     }
+
+    constexpr double side = 50.0;
+    constexpr double pitch = 60.0;
+    const double top = back.bottom() + 10.0;
+    const Rect view{panel.x + kGridPadding, top, panel.w - 2.0 * kGridPadding,
+                    std::max(0.0, panel.bottom() - top - 12.0)};
+    const auto columnsFor = [&](double width) {
+        return std::max<std::size_t>(1, static_cast<std::size_t>(std::max(0.0, width + pitch - side) / pitch));
+    };
+    const auto rowsFor = [size](std::size_t columns) { return (size + columns - 1) / columns; };
+    auto columns = columnsFor(view.w);
+    if (rowsFor(columns) * pitch - (pitch - side) > view.h)
+        columns = columnsFor(view.w - kListScrollbarGutter);
+    runLootScroll_.viewHeight = view.h;
+    runLootScroll_.contentHeight = rowsFor(columns) * pitch - (pitch - side);
+    if (view.contains(mouse)) runLootScroll_.offset -= ctx.window.wheelDelta() * pitch;
+    ctx.scrollbarOwnsPointer |= updateListScroll(ctx.window, view, runLootScroll_);
+    const Rect body = listScrollContent(view, runLootScroll_);
+
+    canvas.save();
+    canvas.beginPath();
+    canvas.rect(body.x, body.y, body.w, body.h);
+    canvas.clip();
+    const auto first = static_cast<std::size_t>(runLootScroll_.offset / pitch) * columns;
+    for (std::size_t i = first; i < size; ++i) {
+        const double y = body.y + (i / columns) * pitch - runLootScroll_.offset;
+        if (y >= body.bottom()) break;
+        const auto rowCount = std::min(columns, size - (i / columns) * columns);
+        const double rowWidth = rowCount * pitch - (pitch - side);
+        const Rect cell{body.x + (body.w - rowWidth) * 0.5 + (i % columns) * pitch, y, side, side};
+        ItemTile tile;
+        tile.timeSeconds = ctx.timeSeconds;
+        if (showRunKills_) {
+            const auto& kill = (*kills)[i];
+            tile.rarity = kill.rarity;
+            tile.badge = "x" + stackCountText(kill.count);
+            tile.showName = false;
+            drawItemTile(canvas, ctx.sprites, cell, tile);
+            const double radius = content().mobStats(kill.mobIndex, Rarity::Common).radius;
+            ctx.sprites.drawMobPicture(canvas, kill.mobIndex, kill.rarity,
+                cell.x + side * 0.5, cell.y + side * 0.53, side * 0.72, side * 0.58,
+                ctx.timeSeconds, radius);
+        } else {
+            const auto& item = (*loot)[i];
+            tile.petalIndex = item.petalIndex;
+            tile.rarity = item.rarity;
+            if (item.count > 1) tile.badge = "x" + stackCountText(item.count);
+            drawItemTile(canvas, ctx.sprites, cell, tile);
+        }
+    }
+    canvas.restore();
+    drawListScrollbar(canvas, view, runLootScroll_, kPaper);
     return true;
 }
 
@@ -1278,15 +1340,11 @@ bool InventoryPanel::render(MenuContext& ctx) {
                           std::max(60.0, searchRight - searchX), kControlsHeight};
     if (canViewRunLoot) {
         const bool hovered = runLootButton.contains(mouse);
-        drawSlotButton(canvas, runLootButton, tr(Msg::CollectedThisRun), kInventorySkin.fill,
+        drawSlotButton(canvas, runLootButton, "This Run", kInventorySkin.fill,
                        hovered, hovered && ctx.pressed());
         if (hovered && ctx.pressed()) {
-            searchField_.blur();
-            ctx.drag.clear();
-            runLootScroll_ = {};
-            showRunLoot_ = true;
-            ctx.net.requestRunLoot();
-            return renderRunLoot(ctx);
+            openRunLoot(ctx.net, ctx.drag);
+            return true;
         }
     }
 
@@ -1395,6 +1453,16 @@ bool InventoryPanel::render(MenuContext& ctx) {
         // The browser's wheel listener is on the whole canvas, so the title and
         // the controls row scroll the grid too.
         scroll_.offset -= ctx.wheel() * kWheelStep;
+    }
+    // Scroll/hold gestures may suppress the synthetic mouse press that normally
+    // blurs search. Release the caret on the real grid touch before the app's
+    // per-frame keyboard ensure can reopen the IME while inspecting a petal.
+    for (const auto& touch : ctx.window.touchEvents()) {
+        if (touch.phase == TouchPhase::Began &&
+            view.contains({touch.point.x, touch.point.y})) {
+            searchField_.blur();
+            break;
+        }
     }
     // A finger drags the grid itself, not the header: the search field and
     // the toggle keep answering the moment they are touched. Skip while the

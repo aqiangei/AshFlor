@@ -181,7 +181,7 @@ const std::vector<Branch>& branches() {
         {SkillId::Antennae, {{4, 2.5}, {5, 2}, {6, 1.5}}},
         {SkillId::Reach, {{6, 2.5}, {7, 2}, {8, 1.5}}},
         {SkillId::Duplicator, {{8, 2.5}, {9.5, 2.5}, {9, 2}, {9.5, 1.5}}},
-        {SkillId::Magnetism, {{9, 4}}},
+        {SkillId::Magnetism, {{9, 4}, {10, 4}}},
         {SkillId::Reload,
          {{4, 4.5}, {6, 4}, {7.5, 4}, {8, 4.5}, {8, 5}, {7, 5.5}, {5, 5.5}, {5, 4.5}, {6, 5}}},
         {SkillId::Rotation, {{5, 6}, {7, 6}, {9, 5.5}, {9.5, 5}, {9.5, 4.5}}},
@@ -368,7 +368,13 @@ std::vector<TipRow> description(SkillId skill, int tier) {
             break;
         case SkillId::Prestige:
             row({{tier == 1 ? (cn ? "解锁二级声望：普通怪物提高两个稀有度，最高永恒。" : "Unlock Prestige II: ordinary enemies rise two rarities, up to Eternal.")
-                            : (cn ? "解锁声望地图：通常提升一个稀有度，最高超级；自然刷新的究极怪有 75% 晋升。" : "Unlock Prestige worlds: enemies usually rise a tier, up to Super. Ambient Ultra mobs have a 75% chance to rise.")}});
+                            : (cn ? "解锁声望地图：常规升阶提高一档，最高超级。" : "Unlock Prestige worlds: ordinary promotion raises mobs one tier, up to Super.")}});
+            if (tier == 0) {
+                row({{cn ? "自然抽到究极时，75% 升为超级，25% 保留究极。"
+                         : "An ambient Ultra roll becomes Super 75% of the time and stays Ultra otherwise."}});
+                row({{cn ? "永恒怪另有独立刷新判定。"
+                         : "Eternal spawns have a separate roll."}});
+            }
             row({{cn ? "不提高经验档位；重置天赋会退出声望地图。" : "XP tiers stay unchanged; resetting talents returns you to ordinary worlds."}});
             break;
         case SkillId::Damage:
@@ -465,11 +471,11 @@ std::vector<TipRow> description(SkillId skill, int tier) {
             break;
         case SkillId::Magnetism: {
             if (cn) {
-                std::snprintf(buffer, sizeof buffer, "花瓣拾取范围增加 %.0f。",
-                              1000.0);
+                std::snprintf(buffer, sizeof buffer, "总拾取范围加成：+%.0f。",
+                              kMagnetismRange[tier]);
             } else {
-                std::snprintf(buffer, sizeof buffer, "Increases petal pick up range by %.0f.",
-                              1000.0);
+                std::snprintf(buffer, sizeof buffer, "Total pickup range bonus: +%.0f.",
+                              kMagnetismRange[tier]);
             }
             row({{buffer}});
             break;

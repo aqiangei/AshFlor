@@ -134,6 +134,14 @@ EM_JS(void, c2d_flush, (int id, const int* ops, int count, const char* text, con
       // animated one draws its current decoded frame, and being drawn is what
       // keeps it animating (see cppRemoteAnimate).
       case 54:{const R=Module.cppRemoteImages,e=R&&R.get(I[p+9]);if(e){e.drawnAt=performance.now();if(e.parked)e.resume();const im=e.frame||(e.state===1?e.img:null);if(im)x.drawImage(im,F[p+1],F[p+2],F[p+3],F[p+4]);}break;}
+      case 55:{
+        const image = Module.cppCanvasImages.get(I[p+9]);
+        const alpha = x.globalAlpha;
+        x.globalAlpha = alpha * F[p+5];
+        x.drawImage(image, F[p+1], F[p+2], F[p+3], F[p+4]);
+        x.globalAlpha = alpha;
+        break;
+      }
     }
   }
 });
@@ -160,6 +168,9 @@ EM_JS(int, c2d_hit, (int id,double a,double b,int stroke,const char* rule), { co
 EM_JS(double, c2d_measure, (int id,const char* text), { return Module.cppCanvasContexts[id].ctx.measureText(UTF8ToString(text)).width; });
 EM_JS(int, c2d_get_pixels, (int id,int x,int y,int w,int h,std::uint8_t* out), { const d=Module.cppCanvasContexts[id].ctx.getImageData(x,y,w,h).data; HEAPU8.set(d,out); return d.length; });
 EM_JS(void, c2d_put_pixels, (int id,const std::uint8_t* data,int sw,int sh,int dx,int dy), { const d=new ImageData(new Uint8ClampedArray(HEAPU8.slice(data,data+sw*sh*4)),sw,sh); Module.cppCanvasContexts[id].ctx.putImageData(d,dx,dy); });
+EM_JS(int, c2d_image_is_cached, (int key), {
+  return Module.cppCanvasImages?.has(key) ? 1 : 0;
+});
 EM_JS(void, c2d_image, (int id,int key,const std::uint8_t* data,int iw,int ih,double dx,double dy,double dw,double dh,double alpha), {
   // putImageData ignores the transform, so the pixels go to a scratch surface
   // first and reach the destination through drawImage, which does not.
@@ -2678,6 +2689,13 @@ void Canvas::drawImage(const std::uint8_t* rgba,int iw,int ih,float dx,float dy,
     const PageFrame& f = frameFor(web_.matrix, kFitAffine | kFitAxis | kFitPositive);
     if (!f.same()) mapBox(f, dx, dy, dw, dh);
   }
+  // A retained SVG raster is already on the page. Keep its draw in order
+  // with the surrounding clip and transform instead of flushing for every
+  // sprite. A miss still flushes before the upload can evict a queued image.
+  if (cacheKey && c2d_image_is_cached(static_cast<int>(cacheKey))) {
+    pushRef(contextId_, 55, static_cast<int>(cacheKey), dx, dy, dw, dh, alpha, 0, 0, 0);
+    return;
+  }
   canvasFlushOps();
   c2d_image(contextId_,static_cast<int>(cacheKey),rgba,iw,ih,dx,dy,dw,dh,alpha);
 #else
@@ -3050,7 +3068,7 @@ const char* canvasOpName(int code) {
     case 46: return "clip";          case 47: return "fillText";
     case 48: return "strokeText";    case 50: return "fill(cached path)";
     case 51: return "drawImage";     case 52: return "drawImage(sub)";
-    case 53: return "fill(new path)"; case 54: return "drawImage(remote)";
+    case 53: return "fill(new path)"; case 54: return "drawImage(remote)"; case 55: return "drawImage(cached raster)";
     default: return nullptr;
   }
 }

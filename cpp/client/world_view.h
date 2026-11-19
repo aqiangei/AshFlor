@@ -127,6 +127,7 @@ struct RemoteEntity {
     /// eases it. Stepped by interpolate().
     MobPlateEase plate;
     double radius = 10;
+    double effectAgeSeconds = 0.0;
     std::uint8_t state = 0;
 
     /// The three flag families used only by the player sprite. They arrive for
@@ -374,6 +375,11 @@ public:
     }
 
     const std::unordered_map<std::uint32_t, RemoteEntity>& entities() const { return entities_; }
+    bool applyBossDamage(ByteReader& reader);
+    const std::vector<net::BossDamageRow>* bossDamage(std::uint32_t netId) const {
+        const auto it = bossDamage_.find(netId);
+        return it == bossDamage_.end() ? nullptr : &it->second;
+    }
     void setGuildNames(std::unordered_map<std::string,std::string> names) {
         guildNames_ = std::move(names);
         for(auto& [id,entity]:entities_) {
@@ -460,6 +466,7 @@ private:
     std::unordered_map<std::string,std::string> guildNames_;
     std::vector<ViewEvent> events_;
     std::vector<net::PracticeMeter> practiceMeters_;
+    std::unordered_map<std::uint32_t, std::vector<net::BossDamageRow>> bossDamage_;
     std::vector<RemoteEntity> removedPetals_;
     SelfState self_;
     Realm realm_ = Realm::Overworld;

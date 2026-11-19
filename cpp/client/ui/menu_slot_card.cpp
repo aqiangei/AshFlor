@@ -293,9 +293,13 @@ double slotCardHeight(std::size_t rows, double extraControlsHeight) {
                         kListBottomPad + extraControlsHeight);
 }
 
-Rect slotCardBounds(double width, double height, int, int viewHeight) {
+Rect slotCardBounds(double width, double height, int, int viewHeight, double minimumHeight) {
     const double bottom = static_cast<double>(viewHeight) - kWindowBottom;
-    const double fitted = std::max(0.0, std::min(height, bottom - kWindowTopMin));
+    // On short views the material grid needs room more than the player plate
+    // needs clearance. Keep the crafting title below the top icon strip.
+    constexpr double kShortViewTop = 56.0;
+    const double top = clamp(bottom - minimumHeight, kShortViewTop, kWindowTopMin);
+    const double fitted = std::max(0.0, std::min(height, bottom - top));
     return {kWindowX, bottom - fitted, width, fitted};
 }
 

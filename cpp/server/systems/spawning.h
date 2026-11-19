@@ -221,7 +221,7 @@ inline constexpr double kLatentSleepMargin = 500.0;
 ///
 /// It says nothing about how many mobs the world holds: the map is stocked to
 /// its own area whatever this is, and the rest of that population is latent.
-inline constexpr int kMaxLiveMobs = 3000;
+inline constexpr int kMaxLiveMobs = 20000;
 
 /// Every escort -- a hole's or a server's guard and waves, a queen's soldiers
 /// -- comes up out of the CENTRE of whatever spawned it, this far off it on a
@@ -387,8 +387,10 @@ inline constexpr Rarity kAnnouncedGhostRarity = Rarity::Apex; // The player-faci
 /// ANIMAL: a centipede's body segments share its tier and are not more of it,
 /// and a player's pets are not wild at all.
 inline constexpr double kUniqueSpawnCooldownMillis = 5.0 * 60.0 * 1000.0;
-inline constexpr int kEternalPopulationTarget = 3;
-inline constexpr int kHyperPopulationTarget = 1;
+inline constexpr int kEternalPopulationTarget = 9;
+inline constexpr int kPrestigeEternalPopulationTarget = 2;
+inline constexpr int kHyperPopulationTarget = 3;
+inline constexpr int kNaturalApexPopulationTarget = 3;
 inline constexpr double kNaturalApexChance = 0.10;
 // AshFlor BJ: no apex time gate — one per biome may stand; when it dies the
 // next upgrade may place another immediately (cooldown was 2h upstream).
@@ -470,6 +472,7 @@ public:
     /// anything. It does not shrink the map's population, only how much of it
     /// is awake at once.
     int mobCap = kMaxLiveMobs;
+    bool populationDue(double nowMillis) const { return nowMillis >= nextPopulationMillis_; }
     double latentWakeMargin = kLatentWakeMargin;
 
     void sizePlacementGrids(const Terrain& terrain) {
@@ -879,7 +882,7 @@ private:
     /// only those that have outrun what was woken for them (wakeAhead).
     void promoteLatent(World& world, const Terrain& terrain, const ContentRegistry& content,
                        const std::vector<Viewer>& seers, const std::vector<Viewer>& viewers,
-                       Rng& rng, double nowMillis, bool relocateBlocked);
+                       Rng& rng, double nowMillis);
     /// Between passes: wakes round every viewer that has moved further than
     /// half of kLatentWakeMargin from everywhere a wake was last done from.
     void wakeAhead(World& world, const Terrain& terrain, const ContentRegistry& content, Rng& rng,
@@ -1132,6 +1135,7 @@ private:
     Realm prestigeSewersRealm_ = Realm::Arena;
     Realm prestigeHelRealm_ = Realm::Arena;
     Realm prestigeFactoryRealm_ = Realm::Arena;
+    Realm prestigeTwoFactoryRealm_ = Realm::Arena;
     std::array<bool, kMaxRealms> riftRealms_{};
     std::array<bool, kMaxRealms> inactiveRiftRealms_{};
     double riftDifficulty_ = 0;
@@ -1180,11 +1184,8 @@ private:
         std::uint32_t index = 0;
         double distanceSq = 0.0;
         std::optional<double> facing;
-        bool blockedByPlayer = false;
-        const Viewer* refillViewer = nullptr;
     };
     std::vector<WakeCandidate> wakeList_;
-    std::size_t relocationCursor_ = 0;
     std::vector<Entity> doomed_;
     std::vector<Entity> scratchChildren_;
 };

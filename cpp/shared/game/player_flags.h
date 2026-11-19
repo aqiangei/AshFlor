@@ -45,6 +45,8 @@ enum EquipFlag : std::uint16_t {
     EquipBandage = 1 << 8,
     EquipPharaohCrown = 1 << 9,
     EquipMagicEye = 1 << 10,
+    EquipCatEars = 1 << 11,
+    EquipHalo = 1 << 12,
 };
 
 enum PlayerRenderFlag : std::uint32_t {
@@ -54,6 +56,7 @@ enum PlayerRenderFlag : std::uint32_t {
     PlayerRenderGlitch  = 1 << 2,
     PlayerRenderBurrowed = 1 << 3,
     PlayerRenderSwallowed = 1 << 4,
+    PlayerRenderBlinded = 1 << 5,
 };
 
 inline constexpr bool isSelectablePlayerSkin(std::uint32_t flags) {

@@ -1466,6 +1466,7 @@ TEST(a_fast_projectile_cannot_step_over_a_body_between_ticks) {
     Arena a;
     const Entity player = a.player({500, 2000});
     const Entity mob = a.mob({800, 1000}, 100.0);
+    a.world.add<NetId>(mob, NetId{77});
 
     // A fast missile flies further in a tick than its own hit reach is wide:
     // this one covered 200 units in the tick and is 25 units of reach across.
@@ -1478,6 +1479,14 @@ TEST(a_fast_projectile_cannot_step_over_a_body_between_ticks) {
     a.step(0.0);
     CHECK_NEAR(a.health(mob), 75.0, 1e-9);
     CHECK(a.world.has<Dead>(shot));
+    bool foundDamage = false;
+    for (const auto& event : a.events.events()) {
+        if (event.kind != net::EventKind::Damage || event.netId != 77) continue;
+        foundDamage = true;
+        CHECK_NEAR(event.position.x, 780.0, 1e-9);
+        CHECK_NEAR(event.position.y, 1000.0, 1e-9);
+    }
+    CHECK(foundDamage);
 }
 
 TEST(a_planted_meteor_intercepts_a_wild_missile_swept_past_it) {
@@ -2263,11 +2272,20 @@ TEST(a_petal_hits_with_its_config_stats_and_its_own_cooldown) {
     Arena a;
     const Entity player = a.player({1000, 1000});
     const Entity mob = a.mob({1040, 1000}, 200.0, 60.0);
+    a.world.add<NetId>(mob, NetId{77});
     const Entity petal = equipPetal(a, player, f.sting, Rarity::Common, {1025, 1000});
 
     a.step(0.0, f.registry);
     CHECK_NEAR(a.health(mob), 190.0, 1e-9);          // sting: 10 damage at common
     CHECK(a.world.get<Knockback>(mob).impulse.x > 0.0);
+    bool foundDamage = false;
+    for (const auto& event : a.events.events()) {
+        if (event.kind != net::EventKind::Damage || event.netId != 77) continue;
+        foundDamage = true;
+        CHECK_NEAR(event.position.x, 1025.0, 1e-9);
+        CHECK_NEAR(event.position.y, 1000.0, 1e-9);
+    }
+    CHECK(foundDamage);
     // Damage dealt by a petal is answerable to the flower wearing it.
     CHECK_EQ(CombatSystem::creditedPlayer(a.world, petal), player);
     CHECK_NEAR(a.world.get<Bounty>(mob).contributors.at(0).damage, 10.0, 1e-9);

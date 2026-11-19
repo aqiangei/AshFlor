@@ -345,20 +345,16 @@ TEST(clicking_the_loaded_splitter_swaps_halves_and_pays_a_reload) {
         if(world.get<NetId>(half).value==steered)activeBeforeClick=half;
     CHECK(activeBeforeClick!=NULL_ENTITY);
     if(activeBeforeClick==NULL_ENTITY)return;
-    Entity combatPetal = NULL_ENTITY;
-    Query<PetalInstance>{world}.without<Dead>().each([&](Entity petal, PetalInstance& state) {
-        if (state.owner == activeBeforeClick && state.slot == 0) combatPetal = petal;
+    // Both bodies keep the splitter on the bar with no physical petal to hit.
+    for (const Entity half : bodiesNamed(world, "alice")) {
+        CHECK_EQ(world.get<Loadout>(half).slots[0].configIndex, splitter);
+    }
+    int orbitingSplitters = 0;
+    Query<PetalInstance>{world}.without<Dead>().each([&](Entity, PetalInstance& state) {
+        if (state.configIndex == splitter) ++orbitingSplitters;
     });
-    CHECK(combatPetal != NULL_ENTITY);
-    if (combatPetal == NULL_ENTITY) return;
-    world.add<Dead>(combatPetal);
-    CHECK(h.stepUntil({&alice}, [&] {
-        const auto* loadout = world.tryGet<Loadout>(activeBeforeClick);
-        return loadout && loadout->slots[0].broken;
-    }));
+    CHECK_EQ(orbitingSplitters, 0);
     const auto beforeSwitchDeadline = world.get<Loadout>(activeBeforeClick).slots[0].reloadReadyAtMillis;
-    h.step(5, {&alice});
-    CHECK(world.get<Loadout>(activeBeforeClick).slots[0].broken);
     auto& held=world.get<PlayerInput>(activeBeforeClick).current;
     held.moveStrength=1;held.moveAngle=.75;held.flags=net::InputDefend;
     alice.usePetal(0);
@@ -1134,4 +1130,139 @@ TEST(wave_splitter_switches_and_leaves_as_one_participant) {
     CHECK(h.stepUntil({&alice}, [&] { return alice.view().realm() == origin; }));
     CHECK(!world.has<WavePlayer>(spare));
     CHECK(h.stepUntil({&alice}, [&] { return alice.waveResultNotice().sequence > 0; }));
+}
+
+
+// A single network input triggers both equipped copies. The parked half
+// must carry the burst into the next movement tick without receiving walk input.
+TEST(splitter_bubbles_pop_and_move_both_halves) {
+    for (const std::string bubble : {"bubble", "magic_bubble"}) {
+        const std::string testName = "splitter-" + bubble;
+        Harness h(testName.c_str(), {}, testsupport::dataDir(), 0);
+        CHECK(h.ready);
+        if (!h.ready) return;
+        NetClient alice;
+        CHECK(loginNew(h, alice, "alice", "hunter2!"));
+        alice.joinGame(1280, 720, {}, "alice");
+        CHECK(h.stepUntil({&alice}, [&] { return alice.status() == NetClient::Status::Playing; }));
+        CHECK(equipSplitter(h, alice, "alice", content().petalIndex(kSplitterPetalId)));
+        auto& world = h.server.world();
+        CHECK(h.stepUntil({&alice}, [&] { return bodiesNamed(world, "alice").size() == 2; }));
+        const auto halves = bodiesNamed(world, "alice");
+        if (halves.size() != 2) return;
+        const Entity parked = world.get<NetId>(halves[0]).value == alice.view().self().netId
+            ? halves[1] : halves[0];
+        for (const auto half : halves) world.get<Health>(half).invulnerableUntilMillis = 1e18;
+
+        const auto wear = [&](int slot, const std::string& id) {
+            const auto index = content().petalIndex(id);
+            alice.sendChat("/admin give alice " + id + " common 1");
+            if (!h.stepUntil({&alice}, [&] { return alice.profile().stackCount(index, Rarity::Common) > 0; }))
+                return false;
+            alice.setLoadoutSlot(slot, index, Rarity::Common);
+            return h.stepUntil({&alice}, [&] {
+                const auto& loadout = alice.profile().loadout;
+                return loadout.size() > static_cast<std::size_t>(slot) && loadout[slot].petalIndex == index;
+            });
+        };
+        if (bubble == "magic_bubble") CHECK(wear(2, "mana_orb"));
+        CHECK(wear(1, bubble));
+        const auto ready = [&](Entity body) {
+            bool found = false;
+            Query<PetalInstance>{world}.without<Dead>().each([&](Entity, PetalInstance& petal) {
+                if (petal.owner == body && petal.slot == 1) found = true;
+            });
+            return found;
+        };
+        CHECK(h.stepUntil({&alice}, [&] { return ready(halves[0]) && ready(halves[1]); }, 250));
+
+        net::InputFrame input;
+        input.sequence = 100;
+        input.flags = net::InputDefend;
+        if (bubble == "magic_bubble") {
+            alice.sendInput(input);
+            h.step(4, {&alice});
+            CHECK(ready(halves[0]) && ready(halves[1]));
+            input.sequence++;
+            input.moveStrength = 1.0;
+        }
+        alice.sendInput(input);
+        CHECK(h.stepUntil({&alice}, [&] { return !ready(halves[0]) && !ready(halves[1]); }, 8));
+        const auto origin = world.get<Transform>(parked).position;
+        CHECK(world.get<Motion>(parked).velocity.length() > kPlayerMaxSpeed);
+        CHECK_EQ(world.get<PlayerInput>(parked).current.moveStrength, 0.0);
+        if (bubble == "magic_bubble") CHECK(world.get<Motion>(parked).velocity.x > kPlayerMaxSpeed);
+        input.sequence++;
+        input.flags = 0;
+        input.moveStrength = 0.0;
+        alice.sendInput(input);
+        h.step(2, {&alice});
+        CHECK(distance(world.get<Transform>(parked).position, origin) > 40.0);
+    }
+}
+
+TEST(feedback3719_run_loot_orders_rarity_then_quantity) {
+    Harness h("splitter-death-loot", {}, flix::testsupport::dataDir(), 0);
+    NetClient alice;
+    if (!h.ready || !loginNew(h, alice, "alice", "hunter2!")) { CHECK(false); return; }
+    alice.joinGame(1280, 720, {}, "alice");
+    if (!h.stepUntil({&alice}, [&] { return alice.status() == NetClient::Status::Playing; }) ||
+        !equipSplitter(h, alice, "alice", content().petalIndex(kSplitterPetalId))) {
+        CHECK(false); return;
+    }
+    auto& world = h.server.world();
+    auto* session = GameServerPeer::sessionOf(h.server, "alice");
+    if (!session || !h.stepUntil({&alice}, [&] { return session->split(); })) { CHECK(false); return; }
+
+    const auto rock = content().petalIndex("rock");
+    const auto rose = content().petalIndex("rose");
+    session->runLoot[{rock, Rarity::Rare}] = 200;
+    session->runLoot[{rose, Rarity::Unique}] = 1;
+    session->runLoot[{rock, Rarity::Unique}] = 8;
+    const auto bee = content().mobIndex("bee");
+    const auto crab = content().mobIndex("crab");
+    session->runKills[{bee, Rarity::Rare}] = 30;
+    session->runKills[{crab, Rarity::Ascendant}] = 1;
+    const Entity target = world.create();
+    world.add<MobTag>(target);
+    world.add<MobType>(target, MobType{crab, Rarity::Ascendant, 1.0});
+    auto location = world.get<Transform>(session->entity);
+    location.position.x += 50.0;
+    world.add<Transform>(target, location);
+    world.add<Health>(target, Health{100, 100, 0, 0});
+    world.add<Body>(target, Body{20, 1});
+    world.add<Faction>(target, Faction{Team::Hostiles, false});
+    world.add<Bounty>(target);
+    for (const Entity body : bodiesNamed(world, "alice"))
+        world.get<Health>(body).invulnerableUntilMillis = 1e12;
+    CHECK(GameServerPeer::practiceCombat(h.server).applyDamage(
+        world, target, session->entity, 1000.0, h.clock).killed);
+    const double beforeStars = world.get<PlayerProgress>(session->entity).stars;
+    GameServerPeer::bankKills(h.server);
+    CHECK_EQ(world.get<PlayerProgress>(session->entity).stars - beforeStars, 1000);
+    CHECK_EQ((session->runKills[{crab, Rarity::Ascendant}]), 2u);
+    world.destroy(target);
+    alice.requestRunLoot();
+    CHECK(h.stepUntil({&alice}, [&] {
+        return alice.runLootOverview().has_value() && alice.runKillsOverview().has_value();
+    }));
+    const auto& kills = alice.runKillsOverview();
+    CHECK(kills && kills->size() == 2);
+    if (kills && kills->size() == 2) {
+        CHECK_EQ((*kills)[0].mobIndex, crab);
+        CHECK_EQ((*kills)[0].rarity, Rarity::Ascendant);
+        CHECK_EQ((*kills)[0].count, 2u);
+        CHECK_EQ((*kills)[1].mobIndex, bee);
+        CHECK_EQ((*kills)[1].rarity, Rarity::Rare);
+        CHECK_EQ((*kills)[1].count, 30u);
+    }
+    const auto& loot = alice.runLootOverview();
+    CHECK(loot && loot->size() == 3);
+    if (!loot || loot->size() != 3) return;
+    CHECK_EQ((*loot)[0].rarity, Rarity::Unique);
+    CHECK_EQ((*loot)[0].count, 8u);
+    CHECK_EQ((*loot)[1].rarity, Rarity::Unique);
+    CHECK_EQ((*loot)[1].count, 1u);
+    CHECK_EQ((*loot)[2].rarity, Rarity::Rare);
+    CHECK_EQ((*loot)[2].count, 200u);
 }

@@ -188,6 +188,10 @@ Vec2 CraftingPanel::size(const Profile& profile) {
     return {slotCardWidth(tiers), slotCardHeight(SlotGrid::rows(profile, tiers), kBulkControlsHeight)};
 }
 
+double CraftingPanel::minimumHeight() {
+    return slotCardHeight(1, kBulkControlsHeight);
+}
+
 void CraftingPanel::reopen() {
     // Keep the staged stack, scroll position and any server result on the ring.
     bulkArmed_ = false;

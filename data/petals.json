@@ -4383,7 +4383,7 @@
     "description": "Physics are for the magicless.",
     "color": "rgba(255, 255, 255, 0)",
     "count": 1,
-    "requiredMana": 5,
+    "requiredMana": 3,
     "defendOnly": true,
     "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 128 128\"><image x=\"14.3\" y=\"13.3\" width=\"99.5\" height=\"99.5\" href=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMcAAADHCAMAAACa27f0AAADAFBMVEVK9O9K8+8AAABK9u9K9O8A//9N+fJ7//9J6ehK7u0+//kAf3////8A/39K/9k86OgA/wBV1P8/3983/9I/v79V1NR/f/9P798/798/v/8Af/8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB3fEF/AAABAHRSTlMyhQBoTwERAhErCAIBAgYMAQYKBgQGAhAQBAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAfAMKqgAAB2hJREFUeNrlnWt72ywMhhVL4CRdu27d3tP//6EvkKR1Es5GAnt82OG6mtS3H0kYLCSYGo6X+fqPNw1AdqAdB/en+z+Avv3M/NLyV0Oj71GvStm/tT6BvfpDaFgiOGntPmQ+NRLH+4XhzWgQBnjAMdq8XVjeB+GYLYQxJMxl+JLGmJlFmftzqAsElTJ86XJBUV057I0810N8opyv39WF4yLFSogbylpRqjmsUZ+hBcQVxYoyK2EOe+t0Q4oLia7XpIpDvbQyKI95vSgpDsVD8UmiRDgcxYFtVJJAuWNwUrhhSIrdBIrdG/DAPRCKHR5KTYqfwpEcC40LxjKphXGdi0CgRAzAg9xwxtWeQ01HOsgO6++NOcz3HfEgPQq8BLJtqvJSbqPu49m2BTw29bUe/xy39XqhbR3zQCArTpU4uCOA8HA0Re6eM5VAW5vCKMISBgtsKwME0hiKsoWAkpEtC2U4CSQx8ua+UogiFJqTIAmO17wHkSqIG0peAFZrOFQWxgqKXBL8OwECazFWQuSiYGJuhyhGMt42ocgisfG3jkOl4y1Cu4EZ8beGY04aVTMx8iQxpjWXcyR9A+kEbccpQRLzEajFIOAYVAsCIYyfKGhSucaFwUUiVKnBRZGUBEMzu5/jr+gzFXJiJCSh6b98jnkioWBbHoLJH7SgeOLgx4iD+KcRKHUOAolBpUHLxxFxDpTBiDoJqSwONQ2AEQfxCAIlzoEgObDEReB5awTHwIiA4PcnkEeOObyMlcaIgNDTK3fItip5jAjIk2XBQ6gKWlUPjDAI/nwIWpAZqwQjVVbUeoxZkGlVfTAiE+KDZcGdVc04GEYYBOc7y4IsORD6DcwSBJYY/+B4GEGQ++esBce3kJP3xQiCkLliD4d5zJVxDvoa61xkKQikYy61ZcDlyEOhdOyFpBzYkgKfRw4KJgUBOTl8EJkkaUEgJQdxU2SRUEoQSAQrlMDA9FsgTIQsSLyvIRmMJAiFFiIvdxyKVw7MGFQniFpyKF45ENeDUHxSh+vGGzDKgdgCBANPWfPSrvxyyGJUgaBe2FUo6JKMi2eCUCz0QsTLURojAYIRTweH8RvZ5MB2HP6b/duBQHj91EGOGkFgwcFnVsjOQTeO90C0og5yxEEoHLHAPpPAMHJUGxYEzaqPHBWC0IUjsDPdxcurBHHJQGAeGPVAZlVjWNowQCjq9jIrxOIpxDEE3KObWVUIQo5j+oEb58Afxs/VdBriEXHNs8lpUuBfeiAMyuEVxCxCgNE9qsJVDYdxEPDPHjQsB/m3G8A/e2yLw8wg4HVzhGH9I+AgwOjmshzUc/et0Y4cGQ7cFsfJ6+gT/BqOo2LLGn+Bby3Y7JUHg1l5HQRNWQXOVzckxHGAXXO0eyPIgOF1kEAYg36C1HHQcBwwJEfb/cSOHNBcjsAVI28exolay+GfQLg5Gr7/6MwBrTF6cVBL5+jIkQ0Cazgk8q2oKYb/wQQl8saoJUY3u2qRXzIKRwKEYCscpwgJrc5XlOMIpcNVHFz3XjIJZh2fnlGImmQmkyjHXd2MgoTRITlYMsX3wwG74GDeL2EJFrgPjsC+j8YdcJj9xBk35iDe/d05sN9+2hgH7/sPubDL+z5Kzs13xKEPmzKs4PtajZvnsO/POfMZpMyKmPNL5NxjZs33kXIPm+/DmX8lJIfLv5q25SDhfDjG/EQhswL2fFGZI6q3fNEjbprjmr/LmU8tYlb0mRcOWzGsaH77xHjeQECOz/MGrOc/+OUgkfM4QmZ1PXd33oRhRcyK/7yajFkJnB9krgCyPD/Ie56TVY6785zM52s5q2bcn69VAU8fyLKyzjtznz9nk+Ph/Ll96B1bkKAcr7L1Gbjk+PZUL+N4GFiQ7HoZMuVkGmOQtw6LPgxrWQX1ZEYWpKS+j1y9pWYlyfz1lvZS/ypS53Vb9cj2Uh/OtOI7b6he33lW4fqJejP1E3W4fuK26lnO0fqi3zdSX/QYrS+6l3qvm6m/q+dd1EM+Jush76U+9W7qhdughUPXb0el/qh6+nvpb7CbfhPxFged+38otYt+LLqoH0t0OuzZH+ejrD/ObvoV7aZ/1G76ee2mv9pu+t2lo5Zs/8F5D/0g9Zp+kLkgw/fndA3jBuiXqtf2S3WvQLv3r/13ff9a1wKXuvYTzmnD+wf1d873do5+26ib9dsuavLcuP85qZb9zy9Ntzv0o89u457Lkd+wuuEgnUtRwCEuSYEYRRw2bJzlJKFzVpyq4HC35ygjiXkQKRCjlMPeISVgXGhOc6gijEIOd5PY/d34d5kYFRz8JDUUNRxXEh7rwjqKOo5JmWYuZwYSR/FSg1HH4Rx+0o09HkFPpe69lsMmDUzTW0MSRzGr2sup5rjeumMT80I6TvVarORwe3X2K1aimGXk53d14rjew496FAPxsVKKJhy3a9C6nMUwuPfgqyHacFyd3gawfBa7J+FS02fV5AracNh7ermrWl8KK0VXvAbhuPzQQBwLWcx409cF+WVJe61I5Jbr+u3yI++zavmr/wczpZ2YPJiAuAAAAABJRU5ErkJggg==\"/></svg>",
     "isAdminPetal": false,
@@ -6156,6 +6156,7 @@
       }
     },
     "biomeDropOnly": true,
+    "baseMaxMana": 13.2,
     "passiveMana": 0.85
   },
   "beetle_egg": {
@@ -8814,15 +8815,13 @@
   },
   "splitter": {
     "name": "Splitter",
-    "damage": 5,
-    "health": 15,
+    "damage": 0,
     "size": 1,
     "cooldown": 10000,
     "price": 1000000,
-    "description": "Fractures your soul into two.\n\n<c val=\"#FFE763\">Select this petal again to control the other half.</c>",
+    "description": "Equip to split your soul into two bodies. This utility petal does not orbit or take combat damage.\n\n<c val=\"#FFE763\">Select this petal again to control the other half.</c>",
     "color": "#9B59B6",
-    "count": 1,
-    "defendOnly": true,
+    "count": 0,
     "image": "<svg width=\"32\" height=\"32\" viewBox=\"-30 -30 60 60\" xmlns=\"http://www.w3.org/2000/svg\">\n  <defs>\n    <clipPath id=\"eye-clip\">\n      <ellipse cx=\"-7\" cy=\"-4.8\" rx=\"3.2\" ry=\"6.5\" />\n      <ellipse cx=\"7\" cy=\"-4.8\" rx=\"3.2\" ry=\"6.5\" />\n    </clipPath>\n    <clipPath id=\"split-clip\">\n      <path d=\"M 0 -30 L -10 -10 L 4 10 L 0 30 L -30 30L -30 -30\"/>\n    </clipPath>\n  </defs>\n\n  <g clip-path=\"url(#split-clip)\">\n\n  <circle cx=\"0\" cy=\"0\" r=\"26.5\" fill=\"#CFBB50\" />\n\n  <circle cx=\"0\" cy=\"0\" r=\"23.5\" fill=\"#FFE763\" />\n\n  <path d=\"M -6 10 Q 0 14.5 6 10\" fill=\"none\" stroke=\"#000\" stroke-width=\"1.7\" stroke-linecap=\"round\" />\n\n  <ellipse cx=\"-7\" cy=\"-4.8\" rx=\"3.2\" ry=\"6.5\" fill=\"#000\" />\n  <ellipse cx=\"7\" cy=\"-4.8\" rx=\"3.2\" ry=\"6.5\" fill=\"#000\" />\n\n  <g clip-path=\"url(#eye-clip)\">\n    <circle cx=\"-5.2\" cy=\"-4.8\" r=\"3\" fill=\"#fff\" />\n    <circle cx=\"8.8\" cy=\"-4.8\" r=\"3\" fill=\"#fff\" />\n  </g>\n\n  <ellipse cx=\"-7\" cy=\"-4.8\" rx=\"3.2\" ry=\"6.5\" fill=\"none\" stroke=\"#000\" stroke-width=\"1\" />\n  <ellipse cx=\"7\" cy=\"-4.8\" rx=\"3.2\" ry=\"6.5\" fill=\"none\" stroke=\"#000\" stroke-width=\"1\" />\n  </g>\n</svg>",
     "isAdminPetal": false,
     "tradable": false,
@@ -9183,13 +9182,7 @@
     "color": "#977bb8",
     "count": 1,
     "description": "A petal found in the Void.",
-    "zh": "铜棒",
-    "projectile": {
-      "count": 1,
-      "speed": 620,
-      "distance": 650,
-      "damage": 4.21
-    }
+    "zh": "铜棒"
   },
   "void_corium": {
     "name": "Corium",
@@ -9204,11 +9197,12 @@
     "description": "Irradiates nearby enemies with poison and heat.",
     "zh": "堆芯",
     "radiation": {
-      "radius": 330,
+      "radius": 300,
       "intervalMs": 1000,
       "poisonPerSecond": 168,
       "poisonDurationMs": 1000,
-      "pulseDamage": 112.5
+      "poisonDamage": 168,
+      "burnDamage": 112.5
     }
   },
   "void_cross": {
@@ -9262,9 +9256,10 @@
     "size": 0.9,
     "price": 0,
     "color": "#977bb8",
-    "count": 1,
+    "count": 0,
     "description": "A petal found in the Void.",
-    "zh": "暗物质"
+    "zh": "暗物质",
+    "noPhysics": true
   },
   "void_dizzy": {
     "name": "Dizzy",
@@ -9295,7 +9290,8 @@
     "zh": "光盘",
     "petalArmor": 3.0,
     "burnPerSecond": 3.0,
-    "burnMillis": 3000
+    "burnMillis": 3000,
+    "armorPiercing": true
   },
   "void_elemental": {
     "name": "Elemental",
@@ -9308,7 +9304,15 @@
     "color": "#977bb8",
     "count": 1,
     "description": "A petal found in the Void.",
-    "zh": "元素之力"
+    "zh": "元素之力",
+    "petalArmor": 3,
+    "poison": 0.01,
+    "poisonDuration": 1000,
+    "burnPerSecond": 7,
+    "burnMillis": 3000,
+    "passiveHeal": 4,
+    "baseMaxMana": 13.2,
+    "passiveMana": 4
   },
   "void_eyeball": {
     "name": "Eyeball",
@@ -9384,7 +9388,9 @@
       "speed": 620,
       "distance": 650,
       "damage": 21.32
-    }
+    },
+    "burnPerSecond": 4,
+    "burnMillis": 3000
   },
   "void_gunpowder": {
     "name": "Gunpowder",
@@ -9408,11 +9414,12 @@
     "size": 0.9,
     "price": 0,
     "color": "#977bb8",
-    "count": 1,
+    "count": 0,
     "description": "A petal found in the Void.",
     "zh": "光环",
     "passiveHeal": 1.35,
-    "stackable": false
+    "stackable": false,
+    "noPhysics": true
   },
   "void_horn": {
     "name": "Horn",
@@ -9436,9 +9443,10 @@
     "size": 0.9,
     "price": 0,
     "color": "#977bb8",
-    "count": 1,
+    "count": 0,
     "description": "A petal found in the Void.",
-    "zh": "小猫"
+    "zh": "小猫",
+    "noPhysics": true
   },
   "void_knife": {
     "name": "Knife",
@@ -9567,7 +9575,8 @@
     "color": "#977bb8",
     "count": 1,
     "description": "A petal found in the Void.",
-    "zh": "球"
+    "zh": "球",
+    "petalArmor": 10
   },
   "void_pipe_bomb": {
     "name": "Pipe Bomb",
@@ -9602,7 +9611,11 @@
       "speed": 620,
       "distance": 650,
       "damage": 4.21
-    }
+    },
+    "poison": 0.02,
+    "poisonDuration": 2000,
+    "burnPerSecond": 20,
+    "burnMillis": 3000
   },
   "void_powder": {
     "name": "Powder",
@@ -9642,9 +9655,10 @@
     "size": 0.9,
     "price": 0,
     "color": "#977bb8",
-    "count": 1,
+    "count": 0,
     "description": "A petal found in the Void.",
-    "zh": "相对论"
+    "zh": "相对论",
+    "noPhysics": true
   },
   "void_sad": {
     "name": "Sad",
@@ -9657,7 +9671,8 @@
     "color": "#977bb8",
     "count": 1,
     "description": "A petal found in the Void.",
-    "zh": "悲伤"
+    "zh": "悲伤",
+    "petalArmor": 5
   },
   "void_scar": {
     "name": "Scar",
@@ -9771,10 +9786,15 @@
     "description": "Radiates poison around the petal.",
     "zh": "星尘",
     "radiation": {
-      "radius": 110,
+      "radius": 100,
       "intervalMs": 500,
       "poisonPerSecond": 22.4,
       "poisonDurationMs": 500
+    },
+    "projectile": {
+      "count": 1,
+      "speed": 403,
+      "distance": 650
     }
   },
   "void_thorn": {
@@ -9790,11 +9810,13 @@
     "description": "A petal found in the Void.",
     "zh": "棘刺",
     "projectile": {
-      "count": 1,
-      "speed": 620,
-      "distance": 650,
-      "damage": 36.61
-    }
+      "count": 3,
+      "speed": 1250,
+      "distance": 1500,
+      "spreadAngle": 2.0943951023931953
+    },
+    "burnPerSecond": 20,
+    "burnMillis": 3000
   },
   "void_trident": {
     "name": "Trident",
@@ -9808,12 +9830,7 @@
     "count": 1,
     "description": "A petal found in the Void.",
     "zh": "三叉戟",
-    "projectile": {
-      "count": 1,
-      "speed": 620,
-      "distance": 650,
-      "damage": 78
-    }
+    "petalArmor": 5
   },
   "void_void_mark": {
     "name": "Void Mark",
@@ -9839,7 +9856,9 @@
     "color": "#977bb8",
     "count": 1,
     "description": "A petal found in the Void.",
-    "zh": "星座"
+    "zh": "星座",
+    "burnPerSecond": 30,
+    "burnMillis": 3000
   },
   "void_alien_egg": {
     "name": "Alien Egg",
@@ -11134,7 +11153,8 @@
       "lingerMs": 1400,
       "frostFactor": 0.5
     },
-    "biomeDropOnly": true
+    "biomeDropOnly": true,
+    "armorPiercing": true
   },
   "lava": {
     "name": "Lava",
@@ -11263,16 +11283,13 @@
     "color": "#7c8567",
     "count": 1,
     "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 128 128\"><image x=\"12.7\" y=\"13.8\" width=\"102.6\" height=\"100.4\" href=\"data:image/png;base64,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\"/></svg>",
-    "spill": {
-      "kind": "lava",
-      "onHit": false,
-      "radius": 155.25,
-      "strength": 6.72,
-      "chargeMs": 1000,
-      "durationMs": 2100,
-      "lingerMs": 1200
-    },
-    "biomeDropOnly": true
+    "biomeDropOnly": true,
+    "radiation": {
+      "radius": 225,
+      "intervalMs": 1000,
+      "poisonDamage": 0,
+      "burnDamage": 36
+    }
   },
   "scales": {
     "name": "Scales",
@@ -11476,6 +11493,7 @@
     "count": 1,
     "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 128 128\"><image x=\"2.0\" y=\"36.4\" width=\"124.0\" height=\"55.3\" href=\"data:image/png;base64,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\"/></svg>",
     "passiveHeal": 1.5,
+    "baseMaxMana": 13.2,
     "passiveMana": 0.65,
     "requiredMana": 0.25,
     "biomeDropOnly": true
@@ -12139,6 +12157,7 @@
     "description": "Orbits in a cluster whose size grows with rarity."
   },
   "bio_atom_egg": {
+    "description": "Hatches into a friendly Atom.",
     "name": "Atom Egg",
     "health": 5,
     "damage": 0,
@@ -12152,6 +12171,7 @@
     "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 128 128\"><ellipse cx=\"64\" cy=\"64\" rx=\"46.47\" ry=\"46.47\" fill=\"#ff00ff\"/><ellipse cx=\"64\" cy=\"64\" rx=\"41.44\" ry=\"41.44\" fill=\"none\" stroke=\"rgba(0,0,0,0.2)\" stroke-width=\"10.05\"/></svg>"
   },
   "bio_bacteria_egg": {
+    "description": "Hatches into a friendly Bacteria.",
     "name": "Bacteria Egg",
     "health": 5,
     "damage": 0,
@@ -12165,6 +12185,7 @@
     "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 128 128\"><ellipse cx=\"64\" cy=\"64\" rx=\"40.19\" ry=\"54.00\" fill=\"#69f569\"/><ellipse cx=\"64\" cy=\"64\" rx=\"35.16\" ry=\"48.98\" fill=\"none\" stroke=\"rgba(0,0,0,0.2)\" stroke-width=\"10.05\"/></svg>"
   },
   "bio_bacteriophage_egg": {
+    "description": "Hatches into a friendly Bacteriophage.",
     "name": "Bacteriophage Egg",
     "health": 5,
     "damage": 0,
@@ -12178,6 +12199,7 @@
     "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 128 128\"><ellipse cx=\"64\" cy=\"64\" rx=\"40.19\" ry=\"54.00\" fill=\"#e980e9\"/><ellipse cx=\"64\" cy=\"64\" rx=\"35.16\" ry=\"48.98\" fill=\"none\" stroke=\"rgba(0,0,0,0.2)\" stroke-width=\"10.05\"/></svg>"
   },
   "bio_barrel_egg": {
+    "description": "Hatches into a friendly Barrel.",
     "name": "Barrel Egg",
     "health": 5,
     "damage": 0,
@@ -12191,6 +12213,7 @@
     "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 128 128\"><ellipse cx=\"64\" cy=\"64\" rx=\"40.19\" ry=\"54.00\" fill=\"#00ff66\"/><ellipse cx=\"64\" cy=\"64\" rx=\"35.16\" ry=\"48.98\" fill=\"none\" stroke=\"rgba(0,0,0,0.2)\" stroke-width=\"10.05\"/></svg>"
   },
   "bio_biologist_egg": {
+    "description": "Hatches into a friendly Biologist.",
     "name": "Biologist Egg",
     "health": 5,
     "damage": 0,
@@ -12204,6 +12227,7 @@
     "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 128 128\"><ellipse cx=\"64\" cy=\"64\" rx=\"40.19\" ry=\"54.00\" fill=\"#444444\"/><ellipse cx=\"64\" cy=\"64\" rx=\"35.16\" ry=\"48.98\" fill=\"none\" stroke=\"rgba(0,0,0,0.2)\" stroke-width=\"10.05\"/></svg>"
   },
   "bio_cancer_egg": {
+    "description": "Hatches into a friendly Cancer.",
     "name": "Cancer Egg",
     "health": 5,
     "damage": 0,
@@ -12217,6 +12241,7 @@
     "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 128 128\"><ellipse cx=\"64\" cy=\"64\" rx=\"40.19\" ry=\"54.00\" fill=\"#115533\"/><ellipse cx=\"64\" cy=\"64\" rx=\"35.16\" ry=\"48.98\" fill=\"none\" stroke=\"rgba(0,0,0,0.2)\" stroke-width=\"10.05\"/></svg>"
   },
   "bio_parasite_egg": {
+    "description": "Hatches into a friendly Parasite.",
     "name": "Parasite Egg",
     "health": 5,
     "damage": 0,
@@ -12230,6 +12255,7 @@
     "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 128 128\"><ellipse cx=\"64\" cy=\"64\" rx=\"40.19\" ry=\"54.00\" fill=\"#888888\"/><ellipse cx=\"64\" cy=\"64\" rx=\"35.16\" ry=\"48.98\" fill=\"none\" stroke=\"rgba(0,0,0,0.2)\" stroke-width=\"10.05\"/></svg>"
   },
   "bio_red_blood_cell_egg": {
+    "description": "Hatches into a friendly Red Blood Cell.",
     "name": "Red Blood Cell Egg",
     "health": 5,
     "damage": 0,
@@ -12243,6 +12269,7 @@
     "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 128 128\"><ellipse cx=\"64\" cy=\"64\" rx=\"40.19\" ry=\"54.00\" fill=\"#c88888\"/><ellipse cx=\"64\" cy=\"64\" rx=\"35.16\" ry=\"48.98\" fill=\"none\" stroke=\"rgba(0,0,0,0.2)\" stroke-width=\"10.05\"/></svg>"
   },
   "bio_stem_cell_egg": {
+    "description": "Hatches into a friendly Stem Cell.",
     "name": "Stem Cell Egg",
     "health": 5,
     "damage": 0,
@@ -12256,6 +12283,7 @@
     "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 128 128\"><ellipse cx=\"64\" cy=\"64\" rx=\"40.19\" ry=\"54.00\" fill=\"#445588\"/><ellipse cx=\"64\" cy=\"64\" rx=\"35.16\" ry=\"48.98\" fill=\"none\" stroke=\"rgba(0,0,0,0.2)\" stroke-width=\"10.05\"/></svg>"
   },
   "bio_virus_egg": {
+    "description": "Hatches into a friendly Virus.",
     "name": "Virus Egg",
     "health": 5,
     "damage": 0,
@@ -12269,6 +12297,7 @@
     "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 128 128\"><ellipse cx=\"64\" cy=\"64\" rx=\"40.19\" ry=\"54.00\" fill=\"#c888a8\"/><ellipse cx=\"64\" cy=\"64\" rx=\"35.16\" ry=\"48.98\" fill=\"none\" stroke=\"rgba(0,0,0,0.2)\" stroke-width=\"10.05\"/></svg>"
   },
   "bio_white_blood_cell_egg": {
+    "description": "Hatches into a friendly White Blood Cell.",
     "name": "White Blood Cell Egg",
     "health": 5,
     "damage": 0,
@@ -12349,7 +12378,8 @@
       "9": {
         "count": 5
       }
-    }
+    },
+    "armorPiercing": true
   },
   "arctic_snowflake": {
     "name": "Snowflake",
@@ -12369,7 +12399,8 @@
       "distance": 1000,
       "speed": 1000,
       "spreadAngle": 1.0471975511965976
-    }
+    },
+    "armorPiercing": true
   },
   "arctic_blueberries": {
     "name": "Blueberries",
@@ -12390,7 +12421,8 @@
     "slowFactor": 0.6,
     "slowDuration": 200,
     "clumped": true,
-    "petalArmor": 6
+    "petalArmor": 6,
+    "armorPiercing": true
   },
   "arctic_frozen_mark": {
     "name": "Frozen Mark",
@@ -12470,9 +12502,10 @@
     "size": 0.9,
     "price": 2,
     "color": "#a0d5db",
-    "count": 1,
+    "count": 0,
     "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 128 128\"><image x=\"-0.1\" y=\"16.1\" width=\"128.2\" height=\"95.9\" href=\"data:image/png;base64,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\"/></svg>",
-    "description": "Found in the Arctic."
+    "description": "Found in the Arctic.",
+    "noPhysics": true
   },
   "arctic_spider_cave_egg": {
     "name": "Arctic Spider Cave Egg",
@@ -12691,7 +12724,8 @@
       "spreadAngle": 0.18
     },
     "slowFactor": 0.6,
-    "slowDuration": 200
+    "slowDuration": 200,
+    "armorPiercing": true
   },
   "arctic_nitrogen": {
     "name": "Nitrogen",
@@ -12704,8 +12738,15 @@
     "count": 1,
     "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 128 128\"><image x=\"5.5\" y=\"0.0\" width=\"117.1\" height=\"127.9\" href=\"data:image/png;base64,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\"/></svg>",
     "description": "Chills targets on hit.",
-    "slowFactor": 0.6,
-    "slowDuration": 1000
+    "armorPiercing": true,
+    "spill": {
+      "kind": "nitrogen",
+      "radius": 20,
+      "durationMs": 10000,
+      "strength": 0,
+      "health": 5,
+      "frostFactor": 0.6
+    }
   },
   "arctic_ice": {
     "name": "Ice",
@@ -12789,7 +12830,8 @@
     "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 128 128\"><image x=\"0.9\" y=\"24.6\" width=\"126.1\" height=\"77.9\" href=\"data:image/png;base64,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\"/></svg>",
     "description": "Chills targets on hit.",
     "slowFactor": 0.6,
-    "slowDuration": 1000
+    "slowDuration": 1000,
+    "armorPiercing": true
   },
   "arctic_ice_dragon_egg": {
     "name": "Ice Dragon Egg",
@@ -12866,8 +12908,7 @@
       "speed": 600,
       "spreadAngle": 0.18
     },
-    "slowFactor": 0.6,
-    "slowDuration": 1000
+    "lightningDamage": true
   },
   "arctic_ice_hornet_egg": {
     "name": "Ice Hornet Egg",
@@ -13398,7 +13439,9 @@
     "color": "#a0d5db",
     "count": 1,
     "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 128 128\"><image x=\"-0.3\" y=\"31.7\" width=\"127.4\" height=\"65.9\" href=\"data:image/png;base64,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\"/></svg>",
-    "description": "Found in the Arctic."
+    "description": "Found in the Arctic.",
+    "poison": 0.02,
+    "poisonDuration": 2000
   },
   "arctic_spider_yoba_egg": {
     "name": "Spider Yoba Egg",
@@ -13468,10 +13511,7 @@
     "color": "#a0d5db",
     "count": 1,
     "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 128 128\"><image x=\"1.6\" y=\"25.0\" width=\"125.1\" height=\"78.0\" href=\"data:image/png;base64,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\"/></svg>",
-    "description": "Found in the Arctic.",
-    "playerModifiers": {
-      "speed": 1.1
-    }
+    "description": "Found in the Arctic."
   },
   "arctic_stalagmite_egg": {
     "name": "Stalagmite Egg",
@@ -13541,7 +13581,7 @@
     "color": "#a0d5db",
     "count": 1,
     "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 128 128\"><image x=\"4.0\" y=\"4.0\" width=\"120.0\" height=\"120.0\" href=\"data:image/png;base64,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\"/></svg>",
-    "description": "Found in the Arctic.",
+    "description": "Restores health on consumption and briefly slows your movement and petal rotation.",
     "burstHeal": 15,
     "burstHealChargeMs": 700
   },
@@ -13662,5 +13702,389 @@
     "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 100\"><circle cx=\"47\" cy=\"55\" r=\"34\" fill=\"#83cdf3\" stroke=\"#3874ae\" stroke-width=\"7\"/><path d=\"M28 52 Q29 37 44 35\" fill=\"none\" stroke=\"#eafaff\" stroke-width=\"7\" stroke-linecap=\"round\"/><path d=\"M65 31l9-16 3 14 14 2-10 9-1 14-11-9-13 3z\" fill=\"#d6a2ff\" stroke=\"#8853b8\" stroke-width=\"4\"/><circle cx=\"59\" cy=\"72\" r=\"8\" fill=\"#acdffa\"/></svg>",
     "zh": "魔法泡泡炸弹",
     "description": "Explodes on contact with a wild mob, dealing light damage and pushing nearby wild mobs away."
+  },
+  "ring": {
+    "zh": "燃烧戒指",
+    "description": "Ignites wild enemies for five seconds on contact.",
+    "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"64\" height=\"64\" viewBox=\"0 0 64 64\"><g fill=\"#f0a83b\" stroke=\"#343549\" stroke-width=\"2.6\" stroke-linejoin=\"round\" stroke-linecap=\"round\"><path fill-rule=\"evenodd\" d=\"M32 9 52 20 56 43 34 56 12 47 8 24ZM32 19 18 28l4 12 12 6 12-8-3-12Z\"/><path d=\"M36 7 47 8 52 17 42 22 33 16Z\" fill=\"#ff6551\"/></g></svg>",
+    "damage": 1,
+    "health": 1,
+    "size": 1,
+    "cooldown": 6000,
+    "price": 0,
+    "count": 1,
+    "color": "#ffb520",
+    "biomeDropOnly": true,
+    "burnPerSecond": 40,
+    "burnMillis": 5000,
+    "name": "Ring"
+  },
+  "ring_magnet": {
+    "zh": "磁力戒指",
+    "description": "Slowly pulls eligible drops toward you on the current map. Walls block the pull, and only the strongest ring applies.",
+    "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"64\" height=\"64\" viewBox=\"0 0 64 64\"><g fill=\"#69bef1\" stroke=\"#343549\" stroke-width=\"2.6\" stroke-linejoin=\"round\" stroke-linecap=\"round\"><path d=\"M9 15h13v23a10 10 0 0 0 20 0V15h13v23a23 23 0 0 1-46 0Z\"/><path d=\"M9 15h13v11H9Z\" fill=\"#ff696c\"/><path d=\"M42 15h13v11H42Z\" fill=\"#d8f6ff\"/><circle cx=\"32\" cy=\"30\" r=\"4\" fill=\"#ffe59b\"/></g></svg>",
+    "damage": 2,
+    "health": 30,
+    "size": 1,
+    "cooldown": 800,
+    "price": 0,
+    "count": 1,
+    "color": "#853636",
+    "biomeDropOnly": true,
+    "stackable": false,
+    "playerModifiers": {
+      "magnetism": 300
+    },
+    "rarityStats": {
+      "0": {
+        "magnetism": 300
+      },
+      "1": {
+        "magnetism": 500
+      },
+      "2": {
+        "magnetism": 700
+      },
+      "3": {
+        "magnetism": 900
+      },
+      "4": {
+        "magnetism": 1100
+      },
+      "5": {
+        "magnetism": 1300
+      },
+      "6": {
+        "magnetism": 1500
+      },
+      "7": {
+        "magnetism": 1700
+      },
+      "8": {
+        "magnetism": 2300
+      },
+      "9": {
+        "magnetism": 2900
+      }
+    },
+    "name": "Ring Magnet"
+  },
+  "gas_bomb": {
+    "zh": "毒气炸弹",
+    "description": "Poisons nearby enemies when it bursts on contact or breaks.",
+    "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"64\" height=\"64\" viewBox=\"0 0 64 64\"><g fill=\"#73bb70\" stroke=\"#343549\" stroke-width=\"2.6\" stroke-linejoin=\"round\" stroke-linecap=\"round\"><path d=\"M26 9h12v11l16 33H10l16-33Z\"/><path d=\"M19 44h26m-19-9h12\" fill=\"none\" stroke=\"#e7ffad\"/><path d=\"m37 9 11-4\" fill=\"none\"/></g></svg>",
+    "damage": 1,
+    "health": 1,
+    "cooldown": 2000,
+    "size": 1,
+    "price": 0,
+    "count": 1,
+    "biomeDropOnly": true,
+    "color": "#7f8070",
+    "name": "Gas Bomb"
+  },
+  "bubble_bomb": {
+    "zh": "泡泡炸弹",
+    "description": "Pushes nearby wild enemies away when it bursts.",
+    "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"64\" height=\"64\" viewBox=\"0 0 64 64\"><g fill=\"#82d5f5\" stroke=\"#343549\" stroke-width=\"2.6\" stroke-linejoin=\"round\" stroke-linecap=\"round\"><path d=\"M30 17 36 5l13 3\" fill=\"none\"/><path d=\"m32 17 18 8 6 16-11 14H19L8 41l6-16Z\"/><circle cx=\"24\" cy=\"34\" r=\"6\" fill=\"#dbfcff\"/><circle cx=\"41\" cy=\"42\" r=\"4\" fill=\"#dbfcff\"/></g></svg>",
+    "damage": 0,
+    "health": 1,
+    "cooldown": 3000,
+    "size": 1,
+    "price": 0,
+    "count": 1,
+    "biomeDropOnly": true,
+    "color": "#7f8070",
+    "name": "Bubble Bomb"
+  },
+  "hel_missile": {
+    "zh": "地狱导弹",
+    "description": "Fires while attacking and ignites wild enemies on impact.",
+    "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"64\" height=\"64\" viewBox=\"0 0 64 64\"><g fill=\"#ed7543\" stroke=\"#343549\" stroke-width=\"2.6\" stroke-linejoin=\"round\" stroke-linecap=\"round\"><path d=\"m54 8-9 28-19 13-13-13 13-19Z\"/><path d=\"m22 41-14 3 5-12m10 16 1 11 10-16\" fill=\"#fdc560\"/><path d=\"m42 20-10 8\" fill=\"none\" stroke=\"#fff0b9\"/></g></svg>",
+    "damage": 30,
+    "health": 1,
+    "cooldown": 1500,
+    "burnPerSecond": 6,
+    "burnMillis": 3000,
+    "projectile": {
+      "count": 1,
+      "distance": 500,
+      "speed": 330,
+      "spreadAngle": 0
+    },
+    "size": 1,
+    "price": 0,
+    "count": 1,
+    "biomeDropOnly": true,
+    "color": "#7f8070",
+    "name": "Hel Missile"
+  },
+  "viper": {
+    "zh": "毒蛇导弹",
+    "description": "Fires while attacking and poisons the target on impact.",
+    "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"64\" height=\"64\" viewBox=\"0 0 64 64\"><g fill=\"#72c07d\" stroke=\"#343549\" stroke-width=\"2.6\" stroke-linejoin=\"round\" stroke-linecap=\"round\"><path d=\"m55 11-12 29-16 9-15-13 9-19Z\"/><path d=\"m33 23 8 1-7 8 2 3-12 4 4-8-3-2Z\" fill=\"#e9fdb5\" stroke=\"none\"/><path d=\"m15 42-8 12 15-7\" fill=\"none\"/></g></svg>",
+    "damage": 30,
+    "health": 1,
+    "cooldown": 1500,
+    "poison": 0.01,
+    "poisonDuration": 3000,
+    "projectile": {
+      "count": 1,
+      "distance": 500,
+      "speed": 330,
+      "spreadAngle": 0
+    },
+    "size": 1,
+    "price": 0,
+    "count": 1,
+    "biomeDropOnly": true,
+    "color": "#7f8070",
+    "name": "Viper"
+  },
+  "golden_cactus": {
+    "zh": "黄金仙人掌",
+    "description": "Raises the maximum health of equipped petals. Only the strongest copy applies.",
+    "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"64\" height=\"64\" viewBox=\"0 0 64 64\"><g fill=\"#ffc65d\" stroke=\"#343549\" stroke-width=\"2.6\" stroke-linejoin=\"round\" stroke-linecap=\"round\"><path d=\"M24 56V33h-7Q8 33 8 24v-8h9v10h7V7h14v30h8V22h10v13q0 11-10 11h-8v10Z\"/><path d=\"M31 14v35m15-22 4 2m-34-9 4-2\" fill=\"none\" stroke=\"#fff0b0\"/></g></svg>",
+    "damage": 10,
+    "health": 5,
+    "size": 1,
+    "cooldown": 2500,
+    "price": 0,
+    "count": 1,
+    "color": "#d9ac15",
+    "biomeDropOnly": true,
+    "stackable": false,
+    "name": "Golden Cactus"
+  },
+  "hel_honey": {
+    "zh": "地狱蜂蜜",
+    "description": "Makes your honey bait burn nearby enemies.",
+    "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"64\" height=\"64\" viewBox=\"0 0 64 64\"><g fill=\"#ee9b3f\" stroke=\"#343549\" stroke-width=\"2.6\" stroke-linejoin=\"round\" stroke-linecap=\"round\"><path d=\"m32 7 21 12v26L32 57 11 45V19Z\"/><path d=\"M31 47c-12-7-8-18 3-27-1 8 5 9 6 16 1 5-3 10-9 11Z\" fill=\"#ef5b46\"/></g></svg>",
+    "damage": 8,
+    "health": 25,
+    "size": 1,
+    "cooldown": 1000,
+    "price": 0,
+    "count": 1,
+    "biomeDropOnly": true,
+    "name": "Hel Honey"
+  },
+  "irey": {
+    "zh": "毒蜂蜜",
+    "description": "Makes your honey bait poison nearby enemies.",
+    "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"64\" height=\"64\" viewBox=\"0 0 64 64\"><g fill=\"#a3be49\" stroke=\"#343549\" stroke-width=\"2.6\" stroke-linejoin=\"round\" stroke-linecap=\"round\"><path d=\"m16 17 18-9 20 14v23l-21 12-23-14V24Z\"/><path d=\"M33 18q-13 15-13 21c0 14 26 14 26 0 0-6-6-12-13-21Z\" fill=\"#56833c\"/><circle cx=\"29\" cy=\"39\" r=\"3\" fill=\"#d5f6a1\" stroke=\"none\"/></g></svg>",
+    "damage": 5,
+    "health": 25,
+    "size": 1,
+    "cooldown": 1000,
+    "price": 0,
+    "count": 1,
+    "biomeDropOnly": true,
+    "name": "Irey"
+  },
+  "bugatti": {
+    "zh": "疾驰轮",
+    "description": "Raises top movement speed while making acceleration and turning less responsive.",
+    "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"64\" height=\"64\" viewBox=\"0 0 64 64\"><g fill=\"#605bc1\" stroke=\"#343549\" stroke-width=\"2.6\" stroke-linejoin=\"round\" stroke-linecap=\"round\"><path d=\"m9 38 10-18h22l10 15 8 4v11H5V40Z\"/><path d=\"M21 25h18l7 11H15Z\" fill=\"#a5e5ff\"/><circle cx=\"17\" cy=\"50\" r=\"7\" fill=\"#343145\"/><circle cx=\"46\" cy=\"50\" r=\"7\" fill=\"#343145\"/></g></svg>",
+    "damage": 25,
+    "health": 15,
+    "cooldown": 2000,
+    "noPhysics": false,
+    "count": 1,
+    "size": 1,
+    "price": 0,
+    "biomeDropOnly": true,
+    "color": "#858585",
+    "name": "Bugatti"
+  },
+  "vampire_fang": {
+    "zh": "吸血獠牙",
+    "description": "Heals you when your flower lands body damage. Healing locks prevent the recovery.",
+    "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"64\" height=\"64\" viewBox=\"0 0 64 64\"><g fill=\"#fff1d4\" stroke=\"#343549\" stroke-width=\"2.6\" stroke-linejoin=\"round\" stroke-linecap=\"round\"><path d=\"M12 12q20 4 40 0l-5 16-8 25-5-24h-4l-5 24-8-25Z\"/><path d=\"m25 48 3 8-3 4-3-4Zm14 0 3 8-3 4-3-4Z\" fill=\"#d04468\" stroke=\"none\"/></g></svg>",
+    "damage": 15,
+    "health": 10,
+    "cooldown": 2500,
+    "size": 1,
+    "price": 0,
+    "biomeDropOnly": true,
+    "color": "#858585",
+    "count": 1,
+    "name": "Vampire Fang"
+  },
+  "blood_rose": {
+    "zh": "血玫瑰",
+    "description": "Restores health and shield when absorbed, but briefly restricts your vision.",
+    "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"64\" height=\"64\" viewBox=\"0 0 64 64\"><g fill=\"#cc3a62\" stroke=\"#343549\" stroke-width=\"2.6\" stroke-linejoin=\"round\" stroke-linecap=\"round\"><path d=\"M32 57V23m0 25q12-15 24-9m-24 9Q17 32 9 39\" fill=\"none\" stroke=\"#37835a\"/><path d=\"M32 10c-15-10-27 12-13 21l13 9 13-9c14-9 2-31-13-21Z\"/><path d=\"M22 16q2 14 21 9\" fill=\"none\" stroke=\"#ff9eab\"/></g></svg>",
+    "damage": 0,
+    "health": 5,
+    "cooldown": 2000,
+    "burstHeal": 9,
+    "burstShield": 6,
+    "burstHealChargeMs": 500,
+    "size": 1,
+    "price": 0,
+    "biomeDropOnly": true,
+    "color": "#858585",
+    "count": 1,
+    "name": "Blood Rose"
+  },
+  "toilet_paper": {
+    "zh": "卫生纸",
+    "description": "After your health has been above 90%, surviving a hit that drops it below 10% gives this petal tenfold damage for ten seconds.",
+    "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"64\" height=\"64\" viewBox=\"0 0 64 64\"><g fill=\"#fcf3e6\" stroke=\"#343549\" stroke-width=\"2.6\" stroke-linejoin=\"round\" stroke-linecap=\"round\"><path d=\"M12 16q0-8 13-8h15q12 0 12 8v33l-12 6-10-4-7 5-11-4Z\"/><ellipse cx=\"32\" cy=\"16\" rx=\"20\" ry=\"8\"/><ellipse cx=\"32\" cy=\"16\" rx=\"7\" ry=\"3\" fill=\"#ac8874\"/><path d=\"M19 33h24\" stroke=\"#c4a99c\" stroke-dasharray=\"2 4\"/></g></svg>",
+    "damage": 100,
+    "health": 10,
+    "cooldown": 1250,
+    "size": 1,
+    "price": 0,
+    "biomeDropOnly": true,
+    "color": "#858585",
+    "count": 1,
+    "name": "Toilet Paper"
+  },
+  "fractal": {
+    "zh": "分形闪电",
+    "description": "Bursts into branching lightning that selects each target at most once per cast.",
+    "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"64\" height=\"64\" viewBox=\"0 0 64 64\"><g fill=\"#76e1eb\" stroke=\"#343549\" stroke-width=\"2.6\" stroke-linejoin=\"round\" stroke-linecap=\"round\"><path d=\"m30 57 5-17-5-10 5-12-8-8m9 9 12-7 6-8M31 30l-13-3-8 8m24 9 12-6 7 5\" fill=\"none\" stroke=\"#73dbec\" stroke-width=\"5\"/><path d=\"m30 57 5-17-5-10 5-12-8-8m9 9 12-7 6-8M31 30l-13-3-8 8m24 9 12-6 7 5\" fill=\"none\" stroke=\"#defcff\" stroke-width=\"2\"/></g></svg>",
+    "damage": 0,
+    "health": 1,
+    "cooldown": 3000,
+    "noPhysics": false,
+    "size": 1,
+    "price": 0,
+    "biomeDropOnly": true,
+    "color": "#858585",
+    "count": 1,
+    "name": "Fractal"
+  },
+  "bloom": {
+    "zh": "复苏花",
+    "description": "Passively restores health. Attack after charging to revive downed squadmates on the same map.",
+    "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"64\" height=\"64\" viewBox=\"0 0 64 64\"><g fill=\"#ae81e9\" stroke=\"#343549\" stroke-width=\"2.6\" stroke-linejoin=\"round\" stroke-linecap=\"round\"><path d=\"m32 4 9 15 17 2-6 16 6 14-17 1-9 9-9-9-17-1 6-14-6-16 17-2Z\"/><circle cx=\"32\" cy=\"33\" r=\"11\" fill=\"#ffe0a4\"/><path d=\"m27 33 4 4 7-9\" fill=\"none\"/></g></svg>",
+    "damage": 0,
+    "health": 1,
+    "size": 1,
+    "price": 0,
+    "biomeDropOnly": true,
+    "color": "#b5298e",
+    "cooldown": 3000,
+    "count": 1,
+    "passiveHeal": 2,
+    "name": "Bloom"
+  },
+  "gas": {
+    "zh": "毒气",
+    "description": "Poisons enemies for two seconds on contact.",
+    "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"64\" height=\"64\" viewBox=\"0 0 64 64\"><g fill=\"#78c774\" stroke=\"#343549\" stroke-width=\"2.6\" stroke-linejoin=\"round\" stroke-linecap=\"round\"><path d=\"M13 45C4 28 18 17 28 23c4-17 25-17 27-2 12 3 8 27-4 29-8 9-33 9-38-5Z\"/><path d=\"M20 36q8-7 15 0t12-6\" fill=\"none\" stroke=\"#dcffd2\"/></g></svg>",
+    "damage": 2,
+    "health": 200,
+    "cooldown": 2000,
+    "size": 2,
+    "poison": 0.016,
+    "poisonDuration": 2000,
+    "damageCooldown": 1000,
+    "price": 0,
+    "count": 1,
+    "biomeDropOnly": true,
+    "color": "#99744e",
+    "name": "Gas"
+  },
+  "latrine": {
+    "zh": "毒泥池",
+    "description": "After charging, leaves a breakable pool. Poison from overlapping pools can stack.",
+    "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"64\" height=\"64\" viewBox=\"0 0 64 64\"><g fill=\"#ad7535\" stroke=\"#343549\" stroke-width=\"2.6\" stroke-linejoin=\"round\" stroke-linecap=\"round\"><path d=\"M8 37h48l-6 18H14Z\"/><path d=\"M20 9h24v21H20Z\" fill=\"#c7ad8b\"/><ellipse cx=\"32\" cy=\"38\" rx=\"24\" ry=\"9\" fill=\"#694632\"/><ellipse cx=\"32\" cy=\"38\" rx=\"14\" ry=\"4\" fill=\"#98cb65\" stroke=\"none\"/></g></svg>",
+    "damage": 0,
+    "health": 5,
+    "cooldown": 2000,
+    "stackable": true,
+    "spill": {
+      "kind": "latrine",
+      "radius": 20,
+      "strength": 5,
+      "durationMs": 10000,
+      "chargeMs": 1000,
+      "lingerMs": 2000,
+      "health": 5
+    },
+    "price": 0,
+    "count": 1,
+    "biomeDropOnly": true,
+    "color": "#99744e",
+    "size": 1,
+    "name": "Latrine"
+  },
+  "silk": {
+    "zh": "丝线",
+    "description": "Detaches to cling to a wild enemy, dealing ongoing damage to that target while the original slot reloads.",
+    "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"64\" height=\"64\" viewBox=\"0 0 64 64\"><g fill=\"#f1d8ad\" stroke=\"#343549\" stroke-width=\"2.6\" stroke-linejoin=\"round\" stroke-linecap=\"round\"><path d=\"M32 9c17 0 22 10 22 23S44 55 31 55 9 45 9 32 17 9 32 9Z\"/><path d=\"M18 39 40 15M22 48l25-24M33 51l17-15m-7 14 12 7\" fill=\"none\" stroke=\"#ac7964\"/></g></svg>",
+    "damage": 12,
+    "health": 500,
+    "cooldown": 2000,
+    "damageCooldown": 1000,
+    "price": 0,
+    "count": 1,
+    "biomeDropOnly": true,
+    "color": "#99744e",
+    "size": 1,
+    "name": "Silk"
+  },
+  "marble": {
+    "zh": "弹珠",
+    "description": "Rolls out while attacking, bounces off walls, and hits each target at most once per second.",
+    "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"64\" height=\"64\" viewBox=\"0 0 64 64\"><g fill=\"#519bc6\" stroke=\"#343549\" stroke-width=\"2.6\" stroke-linejoin=\"round\" stroke-linecap=\"round\"><circle cx=\"32\" cy=\"32\" r=\"23\"/><path d=\"M13 42q17 2 25-29 22 8 15 28-19-7-28 12Z\" fill=\"#f3a95c\"/><circle cx=\"22\" cy=\"20\" r=\"4\" fill=\"#fff3cd\" stroke=\"none\"/></g></svg>",
+    "damage": 100,
+    "health": 35,
+    "cooldown": 1500,
+    "petalArmor": 69420,
+    "damageCooldown": 1000,
+    "projectile": {
+      "count": 1,
+      "speed": 150,
+      "distance": 2250,
+      "spreadAngle": 0
+    },
+    "price": 0,
+    "count": 1,
+    "biomeDropOnly": true,
+    "color": "#99744e",
+    "size": 1,
+    "name": "Marble"
+  },
+  "magic_marble": {
+    "zh": "魔法弹珠",
+    "description": "Consumes mana to form, bounces off walls, and shatters into three glass fragments.",
+    "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"64\" height=\"64\" viewBox=\"0 0 64 64\"><g fill=\"#8a6bd2\" stroke=\"#343549\" stroke-width=\"2.6\" stroke-linejoin=\"round\" stroke-linecap=\"round\"><circle cx=\"32\" cy=\"32\" r=\"23\"/><path d=\"m26 13 4 17-10 7 10 5-2 12m2-24 19-5m-19 17 14 7\" fill=\"none\" stroke=\"#e6f7ff\"/><path d=\"m51 5 3 5 5 2-5 3-3 5-2-5-5-3 5-2Z\" fill=\"#ffdcad\" stroke=\"none\"/></g></svg>",
+    "damage": 100,
+    "health": 35,
+    "cooldown": 2000,
+    "petalArmor": 69420,
+    "damageCooldown": 1000,
+    "requiredMana": 3,
+    "projectile": {
+      "count": 1,
+      "speed": 150,
+      "distance": 2250,
+      "spreadAngle": 0
+    },
+    "price": 0,
+    "count": 1,
+    "biomeDropOnly": true,
+    "color": "#99744e",
+    "size": 1,
+    "name": "Magic Marble"
+  },
+  "spikeball": {
+    "zh": "尖刺球",
+    "description": "Breaks or bursts on contact, scattering nine needles that share its damage budget.",
+    "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"64\" height=\"64\" viewBox=\"0 0 64 64\"><g fill=\"#a9c1d0\" stroke=\"#343549\" stroke-width=\"2.6\" stroke-linejoin=\"round\" stroke-linecap=\"round\"><path d=\"m32 3 6 16 16-9-6 17 14 5-14 6 6 16-16-8-6 15-6-15-16 8 6-16-14-6 14-5-6-17 16 9Z\"/><circle cx=\"32\" cy=\"32\" r=\"8\" fill=\"#f0ac63\"/></g></svg>",
+    "damage": 160,
+    "health": 1,
+    "cooldown": 3000,
+    "price": 0,
+    "count": 1,
+    "biomeDropOnly": true,
+    "color": "#99744e",
+    "size": 1,
+    "name": "Spikeball"
   }
 }

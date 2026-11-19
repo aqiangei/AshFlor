@@ -18,6 +18,7 @@
 // (ui::healthBar), which keeps to the same rule under this layer's alpha.
 
 #include "client/app.h"
+#include "client/ui/menu_widgets.h"
 
 #include <algorithm>
 #include <cmath>
@@ -697,9 +698,10 @@ double App::drawBossBars(Canvas& canvas, bool altHeld) {
     canvas.save();
     canvas.setGlobalAlpha(static_cast<float>(kHudLayerAlpha));
 
+    double barY = kTopMargin;
+    double bottom = 0.0;
     for (std::size_t i = 0; i < shown; ++i) {
         const RemoteEntity& boss = *bosses[i].entity;
-        const double barY = kTopMargin + static_cast<double>(i) * kRowSpacing;
 
         // Max health is not on the wire -- only the fraction is -- so it is
         // recomputed from the same config the server sized the mob from. The
@@ -743,12 +745,45 @@ double App::drawBossBars(Canvas& canvas, bool altHeld) {
                            formatNumber(maxHealth, true)
                      : std::string(rarityTr(boss.rarity)),
              centreX, barY + kBarHeight + kTierDrop, tier);
+
+        bottom = barY + kBarHeight + kTierDrop - descent(kTierSize);
+        barY += kRowSpacing;
+        const auto* ranks = net_.view().bossDamage(boss.netId);
+        if (!ranks || ranks->empty()) continue;
+
+        // Keep this readout legible in a small landscape window.
+        const double pointsPerUnit = std::max(
+            0.1, window_.uiScale() / (window_.devicePixelRatio() * window_.renderScale()));
+        const double rankSize = clamp(10.0 / pointsPerUnit, 16.0, 30.0);
+        const double rankWidth = clamp(205.0 / pointsPerUnit, kBarWidth,
+                                       std::max(kBarWidth, window_.width() * .55));
+        const double rankHeight = 3.8 * rankSize;
+        const double y = bottom + 4.0;
+        const double x = centreX - rankWidth * .5;
+        setFill(canvas, kBossTrack);
+        canvas.beginPath();
+        canvas.roundRect(x, y, rankWidth, rankHeight, 9.0);
+        canvas.fill();
+        TextStyle label;
+        label.size = rankSize;
+        label.align = Align::Centre;
+        text(canvas, trEnZh("Current damage", "当前伤害"), centreX, y + .8 * rankSize, label);
+        const double cellWidth = rankWidth / ranks->size();
+        for (std::size_t rank = 0; rank < ranks->size(); ++rank) {
+            const auto& row = (*ranks)[rank];
+            const double middle = x + (static_cast<double>(rank) + .5) * cellWidth;
+            const std::string who = row.name.empty() ? trEnZh("Left", "已离场") : row.name;
+            label.fill = rank == 0 ? 0xffda72u : kPaper;
+            text(canvas, ellipsize(std::to_string(rank + 1) + ". " + who,
+                                  label.size, cellWidth - 10.0), middle, y + 2.0 * rankSize, label);
+            text(canvas, formatNumber(row.damage, false), middle, y + 3.2 * rankSize, label);
+        }
+        bottom = y + rankHeight;
+        barY += rankHeight;
     }
 
     canvas.restore();
-    // The last row's tier line, which is the lowest thing in the block.
-    const double lastBarY = kTopMargin + static_cast<double>(shown - 1) * kRowSpacing;
-    return lastBarY + kBarHeight + kTierDrop - descent(kTierSize);
+    return bottom;
 }
 
 void App::drawWaveResult(Canvas& canvas) {

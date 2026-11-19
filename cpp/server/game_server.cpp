@@ -782,6 +782,7 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     // once a tick; the pointer never moves.
     loot_->squads = &squadIndex_;
     combat_->squads = &squadIndex_;
+    petals_->squads = &squadIndex_;
 
     // The annotation layer is a read-only service, so the systems that need it
     // hold a pointer rather than being handed it per call. Left null they fall
@@ -891,6 +892,18 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     movement_->takesTeleporters = [this](Entity entity) { return botForEntity(entity) == nullptr; };
     loot_->terrain = terrain_.get();
     loot_->immutableWorldTerrain = true;
+    loot_->protectDropScatter = [this](Realm realm) {
+        const auto* map = worldMaps_.forRealm(realm);
+        return map && map->biome() == "pyramid";
+    };
+    loot_->ordinaryMapLoot = [this](Realm realm) {
+        if (!isWorldRealm(realm) || isRiftRealm(realm)) return false;
+        const auto* map = worldMaps_.forRealm(realm);
+        if (!map) return false;
+        const auto& id = map->templateId();
+        return id != "worm" && id != "wave" && id != "dps_test" &&
+               id.rfind("termite_mound", 0) != 0;
+    };
     loot_->allowsBossParticipationFloor = [this](Realm realm) {
         if (isRiftRealm(realm)) return false;
         const auto* map = worldMaps_.forRealm(realm);
@@ -1978,6 +1991,12 @@ void GameServer::tick(double wallMillis, double nowMillis) {
     // destroy, and leaving it queued would keep the departed body in the world
     // and in every query until somebody joined.
     if (playerCount() == 0) {
+        // Keep world populations stocked on the normal cadence without
+        // simulating AI or waiting for a connection to enter a map.
+        if (spawning_->populationDue(nowMillis)) {
+            spawning_->run(world_, *terrain_, content(), {}, rng_, nowMillis, 0.0, commands_);
+            persistBossClocks();
+        }
         events_.clear();
         commands_.flush();
         listener_.flush();
@@ -2242,7 +2261,7 @@ void GameServer::runSystems(double nowMillis, double dt) {
     combat_->runWorldPhase(world_, grid_, content(), nowMillis, dt, true);
     // A summoning shot -- the spaceship's -- is only SEEN landing by combat;
     // the summon is the ring's, made once combat has stopped walking the world.
-    petals_->landShots(world_, content(), combat_->shotLandings(), terrain_.get());
+    petals_->landShots(world_, content(), combat_->shotLandings(), terrain_.get(), nowMillis,&events_);
     servicePracticeTrials(nowMillis);
     markTickPhase("combat");
     spawning_->run(world_, *terrain_, content(), activePlayers_, rng_, nowMillis,
@@ -2637,6 +2656,90 @@ void GameServer::replicate(double nowMillis, double wallMillis) {
     for (auto& job : snapshotJobs_) {
         if (auto* connection = listener_.find(job.connection))
             if (!job.output.empty()) connection->send(job.output);
+    }
+    if (count != 0 && nowMillis >= bossDamageDueMillis_) {
+        bossDamageDueMillis_ = nowMillis + 500.0;
+        sendBossDamage();
+    }
+}
+
+void GameServer::sendBossDamage() {
+    struct Ranking {
+        std::uint32_t netId;
+        const Transform* at;
+        std::vector<net::BossDamageRow> rows;
+    };
+    std::vector<Ranking> rankings;
+    Query<MobTag, NetId, Transform, MobType, Health, Bounty> mobs(world_);
+    mobs.without<Dead, Pet, WaveEnemy>();
+    mobs.each([&](Entity e, MobTag&, NetId& id, Transform& at, MobType& type,
+                  Health& health, Bounty& bounty) {
+        if ((type.rarity != Rarity::Apex && type.rarity != Rarity::Ascendant) ||
+            !health.alive() || bounty.contributors.empty()) return;
+        const auto& config = content().mob(type.configIndex);
+        if (config.chainBody || config.id == "target_dummy") return;
+        const auto* subdivision = world_.tryGet<CancerSubdivision>(e);
+        if (subdivision && subdivision->spawnedCopy) return;
+
+        std::vector<Bounty::Share> ranked;
+        for (const auto& share : bounty.contributors) {
+            if (!std::isfinite(share.damage) || share.damage <= 0) continue;
+            const auto live = refreshedShare(world_, share);
+            if (world_.isAlive(live.player) && !world_.has<PlayerTag>(live.player)) continue;
+            ranked.push_back(live);
+        }
+        if (ranked.empty()) return;
+        // Exact ties retain the damage ledger's first-hit order.
+        std::stable_sort(ranked.begin(), ranked.end(), [](const auto& a, const auto& b) {
+            return a.damage > b.damage;
+        });
+        Ranking ranking{id.value, &at, {}};
+        for (std::size_t i = 0; i < std::min(ranked.size(), net::kBossDamageRows); ++i) {
+            const auto& share = ranked[i];
+            const Session* owner = sessionForEntity(share.player);
+            std::string name;
+            if (owner && (share.owner == 0 || owner->connection == share.owner)) {
+                name = owner->displayName.empty() ? owner->username : owner->displayName;
+            } else if (botForEntity(share.player)) {
+                name = squadDisplayName(SquadMemberId::ofBot(share.player));
+            }
+            ranking.rows.push_back({std::move(name), share.damage});
+        }
+        rankings.push_back(std::move(ranking));
+    });
+
+    std::vector<const Ranking*> visible;
+    for (const auto& job : snapshotJobs_) {
+        auto* connection = listener_.find(job.connection);
+        const auto* viewer = world_.tryGet<Transform>(job.viewer);
+        if (!connection || !viewer || job.output.empty()) continue;
+        visible.clear();
+        for (const auto& rank : rankings) {
+            if (rank.at->realm == viewer->realm && job.view->tracked.count(rank.netId))
+                visible.push_back(&rank);
+        }
+        const auto count = std::min(visible.size(), net::kBossDamageTargets);
+        if (visible.size() > count) {
+            std::partial_sort(visible.begin(), visible.begin() + count, visible.end(),
+                [&](const Ranking* a, const Ranking* b) {
+                    const auto da = distanceSq(a->at->position, viewer->position);
+                    const auto db = distanceSq(b->at->position, viewer->position);
+                    return da == db ? a->netId < b->netId : da < db;
+                });
+        }
+        ByteWriter message;
+        message.u8(static_cast<std::uint8_t>(net::ServerMessage::BossDamage));
+        message.u8(static_cast<std::uint8_t>(count));
+        for (std::size_t i = 0; i < count; ++i) {
+            const Ranking& rank = *visible[i];
+            message.u32(rank.netId);
+            message.u8(static_cast<std::uint8_t>(rank.rows.size()));
+            for (const auto& row : rank.rows) {
+                message.str(row.name);
+                message.f64(row.damage);
+            }
+        }
+        connection->send(message);
     }
 }
 
@@ -3850,6 +3953,8 @@ void GameServer::sendProfile(Session& session, net::Connection& connection) {
         ++leaseCount;
     }
     w.patchU16(leaseCountAt, leaseCount);
+    w.u8(session.pendingPresetRotationStep);
+    session.pendingPresetRotationStep = 0;
 
     connection.send(w);
     clearProfileDue(session);
@@ -3960,10 +4065,13 @@ void GameServer::sendDropBonus(Session& session, net::Connection& connection) {
     const auto now=dropBonusNow();auto& record=database_.progress(session.userId);
     if(resumeDropBonusAfterMaintenance(record,now))database_.markDirty();
     const auto rotation=static_cast<std::int64_t>(record.extra["lockedShopRotation"].asDouble(-1));
-    if(rotation>=0 && (!record.extra["lockedShopOffers"].isArray() || record.extra["lockedShopOffersRotation"].asDouble(-1)!=rotation)) {
+    if(!record.extra["shopTierLocks"].isObject() && rotation>=0 && (!record.extra["lockedShopOffers"].isArray() || record.extra["lockedShopOffersRotation"].asDouble(-1)!=rotation)) {
         captureShopLock(record,rotation);database_.markDirty();
     }
-    if(saveMissingLockedEternals(record))database_.markDirty();
+    if (!record.extra["shopTierLocks"].isObject()) {
+        if(saveMissingLockedEternals(record))database_.markDirty();
+        initializeShopTierLocks(record); database_.markDirty();
+    }
     const auto& b=record.extra["dailyDropBonus"];
     const bool claimed = dropBonusClaimedToday(b, now);
     ByteWriter w;w.u8(static_cast<std::uint8_t>(net::ServerMessage::DailyDropBonusState));
@@ -3986,21 +4094,21 @@ void GameServer::sendDropBonus(Session& session, net::Connection& connection) {
         }
     };
     const auto current = shopRotation(shopClockNow());
-    writeOffers(lockedShopOffers(record));
+    writeOffers(shopTierLockMask(record) ? tierLockedShopOffers(record, current) : std::vector<ShopOffer>{});
     w.i64(current); writeOffers(shopOffers(current));
+    w.u8(static_cast<std::uint8_t>(shopTierLockMask(record)));
     connection.send(w);
 }
 void GameServer::handleDropBonus(Session& session, net::Connection& connection, ByteReader& reader) {
-    const auto claim=reader.u8();if(!reader.ok()||!session.authenticated()||claim>4)return;
+    const auto claim=reader.u8();if(!reader.ok()||!session.authenticated()||claim>6)return;
     auto& record=database_.progress(session.userId);
     if(claim==1 && claimDropBonus(record,dropBonusNow())) database_.markDirty();
     if ((claim == 3 || claim == 4) && setDropBonusEnabled(record, dropBonusNow(), claim == 4))
         database_.markDirty();
-    if(claim==2){const auto old=record.extra["lockedShopRotation"].asDouble(-1);
-        record.extra["lockedShopRotation"]=Json(old<0?static_cast<double>(shopRotation(shopClockNow())):-1.0);
-        if(old<0)captureShopLock(record,static_cast<std::int64_t>(record.extra["lockedShopRotation"].asDouble()));
-        else {record.extra["lockedShopOffers"]=Json();record.extra["lockedShopOffersRotation"]=Json();}
-        database_.markDirty();}
+    if (claim == 2 || claim == 5 || claim == 6) {
+        toggleShopTierLock(record, claim == 5 ? 1 : (claim == 6 ? 2 : 3), shopRotation(shopClockNow()));
+        database_.markDirty();
+    }
     sendDropBonus(session,connection);
 }
 
@@ -4156,6 +4264,7 @@ void GameServer::handleJoin(Session& session, net::Connection& connection, ByteR
         entity = prizeBody;
 
     session.runLoot.clear();
+    session.runKills.clear();
     views_[session.connection].reset();
     if (riftRequested) {
         sendSystem(connection, "Rift is entered through the portals in Garden, Desert or Jungle. /rift shows the schedule.");
@@ -4241,9 +4350,9 @@ void GameServer::handleInput(Session& session, const net::Connection& connection
     }
     if (PlayerInput* state = world_.tryGet<PlayerInput>(steered)) {
         if(session.controlling==0 && session.controlledBy==0 &&
-           (std::abs(input.moveAngle-state->current.moveAngle)>.1 ||
+           (std::abs(angleDelta(state->current.moveAngle,input.moveAngle))>.1 ||
             std::abs(input.moveStrength-state->current.moveStrength)>.1 ||
-            std::abs(input.aimAngle-state->current.aimAngle)>.1 || input.flags!=state->current.flags))
+            std::abs(angleDelta(state->current.aimAngle,input.aimAngle))>.1 || input.flags!=state->current.flags))
             session.councilActiveUntil=wallClockMillis_+30000;
         state->current = input;
     }
@@ -4639,6 +4748,8 @@ void GameServer::handleSwapLoadoutRows(Session& session, net::Connection& connec
 void GameServer::handleSaveLoadoutPreset(Session& session, net::Connection& connection,
                                          ByteReader& reader) {
     const std::uint8_t preset = reader.u8();
+    const std::uint8_t rotationStep = reader.u8();
+    if (rotationStep < 1 || rotationStep > 4) return;
     if (!reader.ok() || !session.authenticated()) return;
     if (preset >= kLoadoutPresetCount) return;
     // An arena run wears a scratch ring out of a scratch bag, and that is not
@@ -4660,6 +4771,7 @@ void GameServer::handleSaveLoadoutPreset(Session& session, net::Connection& conn
     const std::string name = loadoutPresetName(preset);
     record.loadoutPresets[name] = std::move(saved);
     savePresetSkills(record, name);
+    record.extra["loadoutPresetRotation"][name] = static_cast<int>(rotationStep);
     database_.markDirty();
     // The profile carries the presets, and the bar's K/L row is drawn from it.
     sendProfile(session, connection);
@@ -4669,6 +4781,8 @@ void GameServer::handleSaveLoadoutPreset(Session& session, net::Connection& conn
 void GameServer::handleLoadLoadoutPreset(Session& session, net::Connection& connection,
                                          ByteReader& reader) {
     const std::uint8_t preset = reader.u8();
+    const std::uint8_t rotationStep = reader.u8();
+    if (rotationStep < 1 || rotationStep > 4) return;
     if (!reader.ok() || !session.authenticated()) return;
     if (preset >= kLoadoutPresetCount) return;
     // Loaded against the run's bag, a preset of the account's petals would
@@ -4681,8 +4795,15 @@ void GameServer::handleLoadLoadoutPreset(Session& session, net::Connection& conn
     if (loadoutLockedInMaze(session)) return;
 
     PlayerRecord& record = database_.progress(session.userId);
+    const int previousPreset = record.extra["activeLoadoutPreset"].asInt(-1);
+    if (!record.extra["presetAutosaveOff"].asBool() &&
+        previousPreset >= 0 && previousPreset < kLoadoutPresetCount)
+        record.extra["loadoutPresetRotation"][loadoutPresetName(previousPreset)] = static_cast<int>(rotationStep);
     autoSaveActivePreset(record);
     const std::string name = loadoutPresetName(preset);
+    const int savedRotationStep = std::as_const(record.extra)["loadoutPresetRotation"][name].asInt(0);
+    session.pendingPresetRotationStep = savedRotationStep >= 1 && savedRotationStep <= 4
+        ? static_cast<std::uint8_t>(savedRotationStep) : 0;
     // A preset never saved is an empty loadout, and loads as one: every petal
     // goes back into the bag. Copied either way -- equipPreset rewrites the
     // record the preset lives in.
@@ -4821,7 +4942,7 @@ void GameServer::handleCraft(Session& session, net::Connection& connection, Byte
     database_.markDirty();
 
     const Rarity made = upgradeRarity(rarity);
-    if (upgrades > 0 && !quiet)
+    if (upgrades > 0 && (!quiet || made == Rarity::Super))
         announceRareCraft(session, petalIndex, made, upgrades, count - petalsReturned);
 
     w.boolean(upgrades > 0);
@@ -5800,7 +5921,7 @@ void GameServer::announceRareCraft(const Session& session, std::uint16_t petalIn
     // and says so.
     const bool forged = titanForge || made == Rarity::Universal;
     if (made == Rarity::Super || made == Rarity::Unique) return;
-    if (made != Rarity::Unique && made != Rarity::Apex && made != Rarity::Ascendant && !forged) return;
+    if (made != Rarity::Apex && made != Rarity::Ascendant && !forged) return;
     if (petalIndex >= content().petalCount()) return;
 
     // In the tier's own colour, the one every other surface draws it in.
@@ -5858,8 +5979,8 @@ void GameServer::bankKills() {
         // delivered the last hit. The drop path already pays these rights.
         // The gallery entry and the star bounty go to every player who earned
         // LOOT rights on the corpse, not to the finisher alone: five flowers
-        // that bring down an apex are five apex kills and five lots of 250
-        // stars. Same ledger and the same selectLootRecipients() the XP and
+        // that bring down an Apex each get one kill and the full star bounty.
+        // Same ledger and the same selectLootRecipients() the XP and
         // drop paths call -- squads, per-tier slot cap and 1% damage floor
         // included -- so the three cannot disagree about who was in on a kill.
         ranked.clear();
@@ -5908,6 +6029,10 @@ void GameServer::bankKills() {
                 continue;
             }
             paidAccounts.push_back(session->connection);
+            if (!waveEnemy || dungeons_->inWave(world_, session->entity)) {
+                auto& total = session->runKills[{type->configIndex, type->rarity}];
+                if (total != UINT32_MAX) ++total;
+            }
             if (waveEnemy) {
                 if (dungeons_->inWave(world_, session->entity))
                     petals_->onKill(world_, content(), share.player, clockMillis_);
@@ -6193,8 +6318,7 @@ void GameServer::handleBuyPetal(Session& session, net::Connection& connection, B
         return;
     }
     if (offerSlot != net::kNoShopOffer) {
-        const auto locked=static_cast<std::int64_t>(record.extra["lockedShopRotation"].asDouble(-1));
-        const std::vector<ShopOffer> offers = (locked>=0?lockedShopOffers(record):shopOffers(purchaseRotation));
+        const std::vector<ShopOffer> offers = tierLockedShopOffers(record, purchaseRotation);
         const auto slot = static_cast<std::size_t>(offerSlot);
         if (slot >= offers.size() || offers[slot].petalIndex != petalIndex ||
             offers[slot].rarity != rarity) {
@@ -9006,10 +9130,14 @@ bool GameServer::canMarkPlayer(Entity target, Entity marker, Rarity rarity) {
     if (!at || !from || at->realm != from->realm || !progress || !ownerProgress ||
         progress->level < 20 || ownerProgress->level < 20) return false;
     const auto* map = worldMaps_.forRealm(at->realm);
-    // Ordinary biomes only. Do not extract players from arena/dungeon runs or
-    // move a victim around Hel repeatedly. Prestige stays in prestige.
-    if (!map || (map->id() != map->biome() && !map->prestige()) ||
-        map->biome() == "hel") return false;
+    // Open-world maps can share a biome label. A plain map with an authored
+    // prestige twin is also part of the open world, even if its id differs.
+    if (!map || map->biome() == "hel" || isRiftRealm(at->realm)) return false;
+    if (map->id() != map->biome() && !map->prestige()) {
+        bool hasPrestigeTwin = false;
+        worldMaps_.prestigeRealm(at->realm, hasPrestigeTwin);
+        if (!hasPrestigeTwin) return false;
+    }
     if (const auto* loadout = world_.tryGet<Loadout>(target)) {
         for (const auto& slot : loadout->slots) {
             if (slot.configIndex != kNoPetal &&
@@ -9537,6 +9665,7 @@ void GameServer::moveEntityToRealm(Entity entity, Realm realm, Vec2 position) {
     //
     // One pass over the world rather than a per-owner index, because this runs
     // when somebody takes a teleporter and not per tick.
+    const auto gamma = content().petalIndex("void_gamma_ray");
     Query<Transform> everything{world_};
     everything.each([&](Entity other, Transform& at) {
         if (other == entity) return;
@@ -9549,7 +9678,13 @@ void GameServer::moveEntityToRealm(Entity entity, Realm realm, Vec2 position) {
         Entity owner = NULL_ENTITY;
         if (const PetalInstance* petal = world_.tryGet<PetalInstance>(other)) owner = petal->owner;
         else if (const Pet* pet = world_.tryGet<Pet>(other)) owner = pet->owner;
-        else if (const Projectile* shot = world_.tryGet<Projectile>(other)) owner = shot->creditTo;
+        else if (const Projectile* shot = world_.tryGet<Projectile>(other)) {
+            // Keep in-flight hole rays out of the arrival. The movement pass
+            // expires them once their source or summoner has left this map.
+            if (gamma != kInvalidIndex && shot->petalConfigIndex == gamma &&
+                shot->slot == kLoadoutSlots) return;
+            owner = shot->creditTo;
+        }
         if (owner != entity) return;
         at.realm = realm;
         // Petals are re-placed around the ring by their own system on the next
@@ -9779,7 +9914,7 @@ Realm GameServer::activeJurassicRealm(Realm realm) const {
     const Realm active = jurassicLayouts_[static_cast<std::size_t>(jurassicCycle_) % jurassicLayouts_.size()];
     if (!map->prestige()) return active;
     bool found = false;
-    const auto twin = worldMaps_.prestigeRealm(active, found);
+    const auto twin = worldMaps_.prestigeRealm(active, found, map->prestigeLevel());
     return found ? twin : realm;
 }
 

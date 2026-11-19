@@ -75,7 +75,7 @@ int GameServer::splitterSlotOf(Entity body) const {
     return -1;
 }
 
-void GameServer::parkBody(Entity body) {
+void GameServer::parkBody(Entity body, bool stopMotion) {
     if (body == NULL_ENTITY || !world_.isAlive(body)) return;
     // An empty frame rather than no frame: movement reads PlayerInput every
     // tick, and only the ACTIVE half is ever written by handleInput. Left
@@ -88,8 +88,11 @@ void GameServer::parkBody(Entity body) {
         input->current.aimAngle = previous.aimAngle;
         input->current.aimDistance = previous.aimDistance;
         input->current.flags = net::InputNoPetPointer;
+        input->mirroredBubbleHeading.reset();
     }
-    if (Motion* motion = world_.tryGet<Motion>(body)) motion->velocity = {0, 0};
+    if (stopMotion) {
+        if (Motion* motion = world_.tryGet<Motion>(body)) motion->velocity = {0, 0};
+    }
     if (Knockback* knockback = world_.tryGet<Knockback>(body)) *knockback = Knockback{};
 }
 
@@ -331,7 +334,10 @@ void GameServer::switchSplitHalf(Session& session, double nowMillis) {
     if (dungeons_) dungeons_->switchWaveBody(session.splitOther, session.entity);
     // The steering frame belongs to the connection, not its previous body.
     // Retain held movement/defend so a ready magic bubble works immediately.
-    if (auto* input = world_.tryGet<PlayerInput>(session.entity)) input->current = heldInput;
+    if (auto* input = world_.tryGet<PlayerInput>(session.entity)) {
+        input->current = heldInput;
+        input->mirroredBubbleHeading.reset();
+    }
 
     // The client learns which flower is its own from the SELF FLAG on a spawn
     // record, and it already holds both of these bodies -- so nothing in the
@@ -413,7 +419,9 @@ void GameServer::serviceSplitters(double nowMillis) {
                 const auto& entry = world_.get<Loadout>(session.entity).slots[static_cast<std::size_t>(slot)];
                 session.splitSwitchReadyAtMillis = entry.reloadReadyAtMillis;
             }
-            parkBody(session.splitOther);
+            // The parked half receives no walk input. Let a burst already
+            // in progress keep its ordinary movement and collision response.
+            parkBody(session.splitOther, false);
             const auto* activeInput = world_.tryGet<PlayerInput>(session.entity);
             auto* spareInput = world_.tryGet<PlayerInput>(session.splitOther);
             if (activeInput && spareInput) {
@@ -421,6 +429,8 @@ void GameServer::serviceSplitters(double nowMillis) {
                                           | net::InputNoPetPointer;
                 spareInput->current.aimAngle = activeInput->current.aimAngle;
                 spareInput->current.aimDistance = activeInput->current.aimDistance;
+                if (activeInput->current.moveStrength > 0.0)
+                    spareInput->mirroredBubbleHeading = activeInput->current.moveAngle;
             }
             syncSplitProgress(session);
             continue;

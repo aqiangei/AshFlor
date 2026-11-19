@@ -28,6 +28,7 @@
 
 #include "svg.h"
 
+#include "client/interpolation.h"
 #include "client/ui/content_i18n.h"
 #include "client/ui/item_tile.h"
 #include "client/ui/menu_icons.h"
@@ -49,7 +50,6 @@ namespace {
 
 /// Shared window size for the offers, daily bonus and star guide tabs.
 constexpr double kWindowWidth = 746.0;
-constexpr double kWindowHeight = 541.4;
 constexpr double kWindowPad = 13.0;
 /// The window and its rim -- the fill's 0.81 shade -- and every plate on it.
 constexpr std::uint32_t kWindowFill = 0x7EEF6Du;
@@ -85,7 +85,7 @@ constexpr double kOffersHeadingSize = 20.0;
 constexpr double kSubSize = 14.0;
 constexpr double kHeadingMiddle = kHeaderTop + kOffersHeadingSize * kLineHeight * 0.5;
 constexpr double kSubMiddle = kHeaderTop + kOffersHeadingSize * kLineHeight + kSubSize * kLineHeight * 0.5;
-constexpr double kHeaderHeight = (kOffersHeadingSize + kSubSize) * kLineHeight;
+constexpr double kHeaderHeight = (kOffersHeadingSize + kSubSize) * kLineHeight + 35.0;
 
 /// Lock: 25 tall and its label plus 25 wide, right-aligned with the cards and
 /// centred on the two header lines.
@@ -136,6 +136,7 @@ constexpr double kBalanceHeight = 38.0;
 constexpr double kBalanceStar = 20.0;
 constexpr double kBalanceSize = 20.0;
 constexpr double kBalanceInset = 5.0;
+constexpr double kWindowHeight = kFooterMiddle + kBalanceHeight * 0.5 + kWindowPad;
 
 constexpr std::size_t kCodeMaxLength = 64;
 
@@ -756,7 +757,7 @@ bool ShopPanel::render(MenuContext& ctx) {
     Rect redeemButton{};
     Rect bonusButton{};
     Rect bonusToggle{};
-    Rect lockButton{};
+    std::array<Rect, 3> lockButtons{};
     std::array<Rect, kShopOfferCount> offerTiles{};
     int hoveredOffer = -1;
 
@@ -785,22 +786,29 @@ bool ShopPanel::render(MenuContext& ctx) {
         const std::int64_t remaining = shopRotationEnd(
             ctx.net.currentShopRotation >= 0 ? ctx.net.currentShopRotation : shopRotation(shopClockNow())) - shopClockNow();
         const std::string caption = showingLocked
-            ? trEnZh("Super and Eternal offers locked", "超级和永恒商品已锁定")
+            ? (ctx.net.shopLockMask == 1 ? trEnZh("Super locked; Eternal refreshes hourly", "超级已锁定，永恒每小时刷新") : ctx.net.shopLockMask == 2 ? trEnZh("Eternal locked; Super refreshes hourly", "永恒已锁定，超级每小时刷新") : trEnZh("Super and Eternal offers locked", "超级和永恒商品已锁定"))
             : rotationCaption(remaining) + (preview ? trEnZh(" — Preview; unlock in Shop to buy", " · 仅预览，购买请先在商店页解锁") : "");
         text(canvas, caption, panel.x + panel.w * 0.5, panel.y + kSubMiddle,
              shopText(kSubSize));
 
         // Keep lock controls on the original tab; browsing never changes the lock.
         if (tab_ == Tab::Offers) {
-            const char* lockLabel = ctx.net.lockedShopRotation>=0?trEnZh("Unlock","解锁"):trEnZh("Lock", "锁定");
-            const double width = measure(lockLabel, kLockSize) + textPad(kLockSize) + kLockExtra;
-            const double right = panel.x + kGridLeft + 4.0 * kCellWidth + kPlateWidth;
-            const Rect lock{right - width, panel.y + kHeaderTop + (kHeaderHeight - kLockHeight) * 0.5,
-                            width, kLockHeight};
-            lockButton=lock;
-            drawFlorrButton(canvas, lock, kLockFace, kButtonBorder, kButtonRadius, lock.contains(under), pressing(lock));
-            text(canvas, lockLabel, lock.x + lock.w * 0.5, lock.y + lock.h * 0.5,
-                 shopText(kLockSize));
+            const double width = 116.0;
+            const double right = panel.x + panel.w * 0.5 + 183.0;
+            const std::array<const char*, 3> labels{{
+                trEnZh("Lock Super", "锁定超级"), trEnZh("Lock Eternal", "锁定永恒"),
+                trEnZh("Lock both", "锁定两档")}};
+            for (int i = 0; i < 3; ++i) {
+                const int mask = i + 1;
+                const bool active = (ctx.net.shopLockMask & mask) == mask;
+                const std::string label = active
+                    ? (i == 0 ? trEnZh("Unlock Super", "解锁超级") : i == 1 ? trEnZh("Unlock Eternal", "解锁永恒") : trEnZh("Unlock both", "解锁两档"))
+                    : labels[i];
+                const Rect lock{right - (3-i) * (width+6), panel.y + kHeaderTop + kHeaderHeight-kLockHeight-5.0, width, kLockHeight};
+                lockButtons[i] = lock;
+                drawFlorrButton(canvas, lock, kLockFace, kButtonBorder, kButtonRadius, lock.contains(under), pressing(lock));
+                text(canvas, label, lock.x + lock.w*0.5, lock.y + lock.h*0.5, shopText(kLockSize));
+            }
         }
 
         for (std::size_t i = 0; i < state.offers.size() && i < kShopOfferCount; ++i) {
@@ -881,21 +889,25 @@ bool ShopPanel::render(MenuContext& ctx) {
                         usable ? std::nullopt : std::optional<std::uint32_t>(kButtonIdleRim));
         text(canvas, trEnZh("Redeem", "兑换"), redeemButton.x + redeemButton.w * 0.5,
              redeemButton.y + redeemButton.h * 0.5, shopText(kTabSize));
-        const auto now=shopClockNow()*1000;
         if (live && ctx.timeSeconds >= state.nextBonusQuery) {
             ctx.net.requestDailyDropBonus(false);
             state.nextBonusQuery = ctx.timeSeconds + 5.0;
         }
+        const auto now = wallClockMillis();
+        const bool hasBonusState = ctx.net.dropBonusUpdatedAt > 0;
+        const auto reportedRemaining = ctx.net.dropBonusUntil - ctx.net.dropBonusUpdatedAt;
+        const bool hasBonusTime = hasBonusState && reportedRemaining > 0;
+        const bool canClaim = hasBonusState && ctx.net.dropBonusNextClaim <= ctx.net.dropBonusUpdatedAt;
+        // An estimate can hit zero before the next server update. Only the
+        // reported state changes which actions are available.
         const auto elapsed = ctx.net.dropBonusPaused ? 0 :
             std::max<std::int64_t>(0, now - ctx.net.dropBonusUpdatedAt) *
             ctx.net.dropBonusCountdownRate / net::kTicksPerSecond;
         const auto left = std::max<std::int64_t>(0, std::min(
             ctx.net.dropBonusNextClaim - now,
-            ctx.net.dropBonusUntil - ctx.net.dropBonusUpdatedAt - elapsed));
-        bonusCanClaim = live && ctx.net.dropBonusUpdatedAt > 0 && ctx.net.dropBonusNextClaim <= now;
-        bonusCanToggle = live && left > 0;
-        const int nextDay=ctx.net.dropBonusStreak+1;
-        const int multiplier=left>0?ctx.net.dropBonusMultiplier:(nextDay%4==0?3:2);
+            reportedRemaining - elapsed));
+        bonusCanClaim = live && canClaim;
+        bonusCanToggle = live && hasBonusTime;
         const double y=box.bottom()+28;
         text(canvas,trEnZh("Daily Drop Bonus","每日掉落 Bonus"),panel.x+panel.w*.5,y,shopText(20));
         text(canvas,trEnZh("1 hour: 2x / 2x / 2x / 3x. Ultra and below.","每日1小时：2倍 / 2倍 / 2倍 / 3倍，究极及以下怪物。"),
@@ -905,28 +917,32 @@ bool ShopPanel::render(MenuContext& ctx) {
         text(canvas,trEnZh("Unused time expires at midnight (UTC+8), even while paused.","北京时间零点清空剩余时长，暂停时也会清空。"),
             panel.x+panel.w*.5,y+74,shopText(12));
         const double center = panel.x + panel.w * 0.5;
-        bonusButton = {left > 0 ? center - 225 : center - 150, y + 96, left > 0 ? 170.0 : 300.0, 42};
+        bonusButton = {center - 225, y + 96, 170, 42};
         const bool hot = bonusCanClaim && bonusButton.contains(under);
-        drawFlorrButton(canvas, bonusButton, bonusCanClaim ? 0x55B8D4u : kButtonIdle,
+        if (hot) cursor = CursorShape::Hand;
+        drawFlorrButton(canvas, bonusButton, canClaim ? 0x55B8D4u : kButtonIdle,
                         kButtonBorder, kButtonRadius, hot, hot && pressing(bonusButton));
-        const char* claimLabel = !bonusCanClaim ? trEnZh("Claimed today", "今日已领取")
-            : trEnZh("Claim 1 hour", "领取 1 小时");
+        const char* claimLabel = !hasBonusState ? trEnZh("Checking…", "同步中…")
+            : canClaim ? trEnZh("Claim 1 hour", "领取 1 小时") : trEnZh("Claimed today", "今日已领取");
         text(canvas, claimLabel, bonusButton.x + bonusButton.w * 0.5,
              bonusButton.y + bonusButton.h * 0.5, shopText(16));
 
-        if (left > 0) {
-            bonusToggle = {bonusButton.right() + 10, bonusButton.y, 270, bonusButton.h};
-            const bool toggleHot = bonusCanToggle && bonusToggle.contains(under);
-            drawFlorrButton(canvas, bonusToggle, 0x55B8D4u, kButtonBorder, kButtonRadius,
-                            toggleHot, toggleHot && pressing(bonusToggle));
-            std::string label = ctx.net.dropBonusPaused ? trEnZh("Resume", "继续") : trEnZh("Pause", "暂停");
-            label += multiplier == 3 ? trEnZh(" enhanced bonus · ", "强化加成 · ") :
-                                       trEnZh(" bonus · ", "普通加成 · ");
-            label += std::to_string(left / 60000) + ":" + (left / 1000 % 60 < 10 ? "0" : "") +
-                     std::to_string(left / 1000 % 60);
-            text(canvas, label, bonusToggle.x + bonusToggle.w * 0.5,
-                 bonusToggle.y + bonusToggle.h * 0.5, shopText(16));
+        bonusToggle = {bonusButton.right() + 10, bonusButton.y, 270, bonusButton.h};
+        const bool toggleHot = bonusCanToggle && bonusToggle.contains(under);
+        if (toggleHot) cursor = CursorShape::Hand;
+        drawFlorrButton(canvas, bonusToggle, hasBonusTime ? 0x55B8D4u : kButtonIdle,
+                        kButtonBorder, kButtonRadius, toggleHot, toggleHot && pressing(bonusToggle));
+        std::string label = trEnZh("Pause bonus", "暂停加成");
+        if (hasBonusTime) {
+            label = ctx.net.dropBonusPaused ? trEnZh("Resume", "继续") : trEnZh("Pause", "暂停");
+            label += ctx.net.dropBonusMultiplier == 3 ? trEnZh(" enhanced bonus · ", "强化加成 · ")
+                                                     : trEnZh(" bonus · ", "普通加成 · ");
+            const auto seconds = (left + 999) / 1000;
+            label += std::to_string(seconds / 60) + ":" + (seconds % 60 < 10 ? "0" : "") +
+                     std::to_string(seconds % 60);
         }
+        text(canvas, label, bonusToggle.x + bonusToggle.w * 0.5,
+             bonusToggle.y + bonusToggle.h * 0.5, shopText(16));
     } else {
         text(canvas, trEnZh("Earn Stars by Defeating Mythic+ Mobs", "击败神话及以上怪物获得星星"),
              panel.x + panel.w * 0.5, panel.y + kHeadingMiddle, shopText(kOffersHeadingSize));
@@ -1238,7 +1254,7 @@ bool ShopPanel::render(MenuContext& ctx) {
         return true;
     }
 
-    if(clicked(lockButton)){ctx.net.toggleShopLock();return true;}
+    for (int i = 0; i < 3; ++i) if (clicked(lockButtons[i])) {ctx.net.toggleShopLock(i+1);return true;}
     if (bonusCanClaim && clicked(bonusButton)) {
         ctx.net.requestDailyDropBonus(true);
         return true;

@@ -14,6 +14,14 @@ TEST(council_weights_votes_snapshot_and_persistence) {
     const auto aid=a.account->id,bid=b.account->id;
     db.progress(aid).totalXp=1000;db.progress(bid).totalXp=1000;
     db.progress(aid).setItemCount(Rarity::Apex,"petal_basic",1);
+    auto& kills = db.progress(aid).mobKills;
+    kills["ant"][rarityName(Rarity::Apex)] = 30;
+    kills["ant"][rarityName(Rarity::Ascendant)] = 3;
+    kills["bee"][rarityName(Rarity::Ascendant)] = 4;
+    Json detail=Json::object();detail["action"]="player";detail["id"]=aid;
+    CHECK_EQ(council::request(db,"",detail)["apexKills"].asInt(),7);
+    detail["id"]=bid;
+    CHECK_EQ(council::request(db,"",detail)["apexKills"].asInt(),0);
     auto rows=council::weights(db);CHECK_EQ(rows.size(),2u);
     CHECK_EQ(rows[0]["units"].asInt()+rows[1]["units"].asInt(),1000000);
     CHECK(rows[0]["units"].asInt()>rows[1]["units"].asInt());
@@ -248,4 +256,69 @@ TEST(council_delegated_account_can_close_after_reload_and_in_both_shard_views) {
  CHECK(!council::request(loaded,outsider,close)["error"].isNull());
  out=council::request(loaded,token,close);CHECK(out["error"].isNull());CHECK(out["polls"][0]["closed"].asBool());
  CHECK(!loaded.findUserById(id)->admin);std::remove(path.c_str());
+}
+
+
+#include "test.h"
+#include "server_harness.h"
+#include "server/council.h"
+#include <array>
+#include <cmath>
+#include <cstdio>
+using namespace flix;
+using namespace flix::testsupport;
+
+TEST(playtime3756_real_input_idle_hold_disconnect_and_angle_seam) {
+    const std::array<const char*,11> names{{"idle3756","move3756","attack3756","turn3756","left3756","seam3756","jitter3756","replay3756","view3756","nosend3756","moveSeam3756"}};
+    const auto dir=twoMapDataDir("playtime3756");
+    Harness h("playtime3756",[&](const std::string& path){for(auto n:names)seedUser(path,n,"testpassword");},dir,0);
+    CHECK(h.ready);if(!h.ready)return;
+    std::array<NetClient,11> clients;
+    std::array<std::string,11> ids;
+    std::vector<NetClient*> connected;
+    for(std::size_t n=0;n<names.size();++n){
+        CHECK(loginAs(h,clients[n],names[n],"testpassword"));
+        clients[n].joinGame(1280,720);
+        CHECK(h.stepUntil({&clients[n]},[&]{auto* s=GameServerPeer::sessionOf(h.server,names[n]);return s&&s->playing();}));
+        auto* s=GameServerPeer::sessionOf(h.server,names[n]);
+        if(!s||!s->playing())return;
+        ids[n]=s->userId;connected.push_back(&clients[n]);
+    }
+    const auto seconds=[&](int n){return h.server.database().findProgress(ids[n])->extra["councilActiveSeconds"].asDouble();};
+    std::array<double,11> initial{},at35{},at60{},final{};
+    for(int n=0;n<11;++n)initial[n]=seconds(n);
+    const double start=h.clock;
+    for(int tick=0;tick<1800;++tick){
+        if(tick%20==0){
+            const int sec=tick/20;
+            for(int n=0;n<11;++n){
+                if((n==4&&sec>=10)||(n==9&&sec>0))continue;
+                net::InputFrame in;in.sequence=static_cast<std::uint32_t>(sec+1);
+                if(n==1||n==4||n==9)in.moveStrength=1;
+                if(n==2)in.flags=net::InputAttack;
+                if(n==3)in.aimAngle=(sec/20)%2?.5:0;
+                if(n==5)in.aimAngle=sec%2?kPi-.001:-kPi+.001;
+                if(n==6)in.aimAngle=sec%2?.001:-.001;
+                if(n==7){in.sequence=1;in.flags=sec%2?net::InputAttack:0;}
+                if(n==8){in.viewportWidth=sec%2?1280:1920;in.viewportHeight=720;in.flags=sec%2?net::InputHideForeignPets:0;}
+                if(n==10)in.moveAngle=sec%2?kPi-.001:-kPi+.001;
+                CHECK(clients[n].sendInput(in));
+            }
+            if(sec==10){clients[4].disconnect();connected.erase(std::find(connected.begin(),connected.end(),&clients[4]));}
+        }
+        h.step(1,connected);
+        if(tick==699)for(int n=0;n<11;++n)at35[n]=seconds(n)-initial[n];
+        if(tick==1199)for(int n=0;n<11;++n)at60[n]=seconds(n)-initial[n];
+    }
+    CHECK_NEAR((h.clock-start)/1000,90,.001);
+    for(int n=0;n<11;++n){
+        final[n]=seconds(n)-initial[n];
+        std::printf("CASE %s at35=%.3f at60=%.3f at90=%.3f\n",names[n],at35[n],at60[n],final[n]);
+        CHECK(final[n]<=91);
+        if(n==3){CHECK(final[n]>=60);continue;}
+        if(n==4){CHECK(final[n]<=11);CHECK_NEAR(final[n],at35[n],.001);continue;}
+        if(n==1||n==2||n==5||n==9||n==10){CHECK(final[n]>=28);CHECK(final[n]<=31);CHECK_NEAR(final[n],at35[n],.001);continue;}
+        CHECK_NEAR(final[n],0,.001);
+    }
+    CHECK(GameServerPeer::sessionOf(h.server,names[4])==nullptr);
 }

@@ -199,6 +199,7 @@ const std::array<ControlMeta, kControlCount> kControls = {{
     {"Retract petals",        Key::LeftShift,  MenuId::None},
     {"Swap loadout rows",     Key::R,          MenuId::None},
     {"Toggle detail display (backup)", Key::G, MenuId::None},
+    {"This Run",               Key::Y,          MenuId::None},
 }};
 
 /// The two icon groups, which are NOT the same button at two positions.
@@ -780,6 +781,7 @@ bool ClientSettings::load(const std::string& path) {
         else if (key == "simplifyCombatEffects") render.simplifyCombatEffects = number != 0;
         else if (key == "screenShake") render.screenShake = number != 0;
         else if (key == "chat") showChat = number != 0;
+        else if (key == "hudPanelsCollapsed") hudPanelsCollapsed = number != 0;
         else if (key == "chatTabs") {
             chatChannels = static_cast<std::uint8_t>(number & kChatChannelsAll);
             sawChatTabs = true;
@@ -885,6 +887,7 @@ bool ClientSettings::save(const std::string& path) const {
          << "simplifyCombatEffects " << (render.simplifyCombatEffects ? 1 : 0) << '\n'
          << "screenShake " << (render.screenShake ? 1 : 0) << '\n'
          << "chat " << (showChat ? 1 : 0) << '\n'
+         << "hudPanelsCollapsed " << (hudPanelsCollapsed ? 1 : 0) << '\n'
          << "chatTabs " << static_cast<int>(chatChannels) << '\n'
          << "stats " << (showStats ? 1 : 0) << '\n'
          << "exactValues " << (showExactValues ? 1 : 0) << '\n'
@@ -1017,7 +1020,7 @@ void MenuSystem::noteMobileLoadoutGestures(bool swapRowsTap, bool presetsHeld, b
     if (mobilePresetSticky_ || presetsHeld) presetBankShown_ = 1;
 }
 
-bool MenuSystem::handleKeys(Window& window) {
+bool MenuSystem::handleKeys(Window& window, NetClient& net) {
     // A settings row waiting for a key must swallow every key: binding the
     // inventory to G should not also open the bestiary on the way past.
     if (settings_panel_.capturingKey()) return true;
@@ -1145,6 +1148,12 @@ bool MenuSystem::handleKeys(Window& window) {
         }
         if (boundPressed(settings_.controlKey(ControlAction::ToggleHitboxes))) {
             settings_.render.hitboxes = !settings_.render.hitboxes;
+            return true;
+        }
+        if (net.status() == NetClient::Status::Playing && !net.dead() &&
+            boundPressed(settings_.controlKey(ControlAction::ThisRun))) {
+            if (open_ != MenuId::Inventory) toggle(MenuId::Inventory);
+            inventory_.openRunLoot(net, drag_);
             return true;
         }
     }
@@ -1275,7 +1284,10 @@ Rect MenuSystem::panelBounds(MenuId id, int viewWidth, int viewHeight) {
 }
 
 Rect MenuSystem::craftPanelBounds(int w, int h) const {
-    return slotCardBounds(craftSize_.x, craftSize_.y, w, h);
+    const double minimumHeight = nearbyNpc_ == NpcService::None && !absorbMode_
+        ? CraftingPanel::minimumHeight() : 0.0;
+    const int height = craftChatTop_ >= 0.0 ? std::min(h, static_cast<int>(craftChatTop_)) : h;
+    return slotCardBounds(craftSize_.x, craftSize_.y, w, height, minimumHeight);
 }
 
 const SvgDocument* MenuSystem::icon(int index) {
@@ -1696,6 +1708,10 @@ bool sameLoadout(const std::vector<Profile::Slot>& a, const std::vector<Profile:
 void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
                                 const SpriteCache& sprites, const WorldRenderer& renderer,
                                 double timeSeconds) {
+    if (const int step = net.takePresetRotationStep(); step > 0) {
+        settings_.rotationStep = step;
+        settings_.settingsDirty = true;
+    }
     if (!window.keyDown(Key::Delete)) unequipKeyHeld_ = false;
     const Profile& profile = net.profile();
     // Whether K or L (or mobile R long-press) is down this frame; see
@@ -1834,7 +1850,7 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
             mobilePresetConfirmSave_ = pendingPresetSave_;
             pendingPresetConfirm_ = false;
         } else if (pendingPresetSave_) {
-            net.saveLoadoutPreset(preset);
+            net.saveLoadoutPreset(preset, settings_.rotationStep);
         } else {
             // Nothing to show ahead of the server this time: the presets live
             // on the account, and which rarity each petal comes back at is
@@ -1842,7 +1858,7 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
             // with it, so the bar goes straight to the answer rather than
             // holding a stale guess until its grace runs out.
             expectedLoadout_.clear();
-            net.loadLoadoutPreset(preset);
+            net.loadLoadoutPreset(preset, settings_.rotationStep);
         }
         // Load or save finishes the mobile R pick -- close the sticky L bank
         // the way ashflor clears mobile_l_preset_pick after a slot tap.
@@ -2216,7 +2232,7 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
     canvas.restore();
 
     rotationDial_ = {};
-    if (inGame_ && loadoutSlide_ > .99) {
+    if (inGame_ && !net.dead() && loadoutSlide_ > .99) {
         const bool touch = touchLayout_;
         // Keep each touch target at least 44 CSS pixels high even when the
         // fixed design canvas is scaled down on a phone.
@@ -2349,7 +2365,10 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
                 if (!worn.empty() && content().petal(worn.configIndex).id == "triangle")
                     ++counts[petalTier(worn.rarity)];
             }
-            triangleBonus = triangleBonusDamage(equipped.rarity, counts);
+            const auto& config = content().petal(equipped.configIndex);
+            const auto stats = equippedPetalStats(content(), equipped);
+            triangleBonus = triangleBonusDamage(petalContactDamage(config, stats, equipped.rarity),
+                                                equipped.rarity, counts);
         }
         auto lines = equippedPetalTooltipLines(slot.petalIndex, equipped, profile.skills,
                                                     reloadScale, tipIndex, triangleBonus);
@@ -2581,7 +2600,7 @@ void MenuSystem::updateLoadoutInput(Window& window, NetClient& net, double timeS
                 pendingPreset_ = loadoutPresetBank_ * kLoadoutPresetsPerBank +
                                  (loadoutPressSlot_ - kLoadoutBarPrimary);
                 pendingPresetSave_ = false;
-                pendingPresetConfirm_ = mobilePresetSticky_ && window.pointerIsTouch();
+                pendingPresetConfirm_ = false;
             } else if (loadoutPressSlot_ < owned) {
                 clickLoadoutSlot(net, timeSeconds, loadoutPressSlot_);
             }

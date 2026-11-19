@@ -301,7 +301,7 @@ void App::updateLobby() {
         } else if (window_.keyPressed(Key::Escape)) {
             nameField_.blur();
         }
-    } else if (!menus_.handleKeys(window_)) {
+    } else if (!menus_.handleKeys(window_, net_)) {
         if (window_.keyPressed(Key::Enter)) chatOpen_ = true;
     }
     if (!layout.pickerView.contains(mouse)) scrollChat();

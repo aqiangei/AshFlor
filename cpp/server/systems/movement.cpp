@@ -568,10 +568,12 @@ void MovementSystem::movePlayers(World& world, const Terrain& terrain,
         if (terrain.inWater(transform.position, transform.realm)) maxSpeed *= kWaterSpeedScale;
 
         MoveState state{transform.position, motion.velocity};
-        const Vec2 target = desiredVelocity(input.current.moveAngle, input.current.moveStrength, maxSpeed);
+        Vec2 target = desiredVelocity(input.current.moveAngle, input.current.moveStrength, maxSpeed);
         const Vec2 intent = maxSpeed > 0.0 && std::isfinite(target.x) && std::isfinite(target.y)
                                 ? target / maxSpeed : Vec2{};
-        integrateVelocity(state, target, dt);
+        if(const auto* mods=world.tryGet<PlayerModifiers>(e))target+=mods->petalDriftVelocity;
+        const auto* response=world.tryGet<PlayerModifiers>(e);
+        integrateVelocity(state, target, dt * (response?response->accelerationScale:1.0));
         // In slow protection, give a changed command extra weight on its
         // first step. Displacement and existing momentum keep the world dt.
         if (steeringBoost > 0.0) {
@@ -603,13 +605,13 @@ void MovementSystem::movePlayers(World& world, const Terrain& terrain,
         // often enough that without it, diagonal seams are passable.
         const StepOutcome movement = stepCollide(terrain, transform.realm, transform.position, velocity, body.radius, dt, true,
                     true);
-        // Loose petals before NPCs: a wax gives way and an NPC does not, so an
-        // NPC is the last word on where the flower may stand, as a wall is.
-        if (!looseDiscs_.empty()) shoveLooseBodies(terrain, transform, body);
+        const auto* burrow = world.tryGet<BurrowState>(e);
+        const bool underground = burrow && burrow->active && nowMillis < burrow->untilMillis;
+        // Loose petals are on the surface. A burrowed flower cannot shove them
+        // or be pushed aside by them, just as with surface mobs.
+        if (!underground && !looseDiscs_.empty()) shoveLooseBodies(terrain, transform, body);
         const auto* visuals = world.tryGet<PlayerVisuals>(e);
         if (!stationaryMobGrid_.empty() && (!visuals || !(visuals->equipFlags & EquipCutter))) {
-            const auto* burrow = world.tryGet<BurrowState>(e);
-            const bool underground = burrow && burrow->active && nowMillis < burrow->untilMillis;
             pushOutOfStationaryMobs(world, terrain, transform, body.radius, underground ? e : NULL_ENTITY);
         }
         if (!npcDiscs_.empty()) pushOutOfNpcs(terrain, transform, body.radius);
@@ -983,8 +985,21 @@ void MovementSystem::moveProjectiles(World& world, const Terrain& terrain, doubl
     spentProjectiles_.clear();
     const auto javascript = content().petalIndex("javascript");
     const auto mechaMissile = content().petalIndex("mecha_missile");
+    const auto gamma = content().petalIndex("void_gamma_ray");
     queries_->projectiles.each([&](Entity e, ProjectileTag&, Transform& transform,
                                    Motion& motion, Projectile& projectile) {
+        // The holes' mob-fired rays end when the shooter or its summoner
+        // dies, and never follow either entity to another map.
+        if (gamma != kInvalidIndex && projectile.petalConfigIndex == gamma &&
+            projectile.slot == kLoadoutSlots) {
+            const auto* source = world.tryGet<Transform>(projectile.owner);
+            const auto* summoner = world.tryGet<Transform>(projectile.creditTo);
+            if (!source || source->realm != transform.realm || !isStanding(world, projectile.owner) ||
+                (projectile.creditTo != projectile.owner &&
+                 (!summoner || summoner->realm != transform.realm || !isStanding(world, projectile.creditTo)))) {
+                projectile.remainingDistance = 0.0;
+            }
+        }
         if (!(projectile.remainingDistance > 0.0)) {
             // Park immediately so a spent shot cannot move or hit anything
             // else before the lifecycle phase reaps it below.

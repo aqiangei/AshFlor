@@ -637,20 +637,24 @@ public:
     /// Tile index for a world coordinate. Clamped before the cast: a runaway
     /// coordinate (1e30 from a bad teleport) would otherwise be undefined
     /// behaviour here and an unbounded loop in every caller that walks tiles.
-    static int toTileCoord(double world) {
-        const double t = std::floor(world / kTileSize);
+    double mapScale(Realm realm) const { return grid(realm).scale; }
+
+    static int toTileCoord(double world, double scale = 1.0) {
+        const double t = std::floor(world / (kTileSize * scale));
         // Written as a failed > test so NaN takes this branch too.
         if (!(t > -kTileCoordLimit)) return -kTileCoordLimit;
         if (t > kTileCoordLimit) return kTileCoordLimit;
         return static_cast<int>(t);
     }
 
-    static Vec2 tileCenter(int tx, int ty) {
-        return {(tx + 0.5) * kTileSize, (ty + 0.5) * kTileSize};
+    static Vec2 tileCenter(int tx, int ty, double scale = 1.0) {
+        const double pitch = kTileSize * scale;
+        return {(tx + 0.5) * pitch, (ty + 0.5) * pitch};
     }
 
-    static Rect tileRect(int tx, int ty) {
-        return {tx * kTileSize, ty * kTileSize, kTileSize, kTileSize};
+    static Rect tileRect(int tx, int ty, double scale = 1.0) {
+        const double pitch = kTileSize * scale;
+        return {tx * pitch, ty * pitch, pitch, pitch};
     }
 
     /// Raw row-major grid, one byte per tile, for the renderer and for the
@@ -778,6 +782,7 @@ private:
         /// Where spawnPoint() stands, as a tile index: the open cell nearest
         /// the middle of the map.
         int spawnTile = 0;
+        double scale = 1.0;
     };
 
     Grid& grid(Realm realm) { return grids_[realmIndex(realm)]; }

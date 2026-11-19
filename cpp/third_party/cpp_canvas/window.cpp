@@ -261,14 +261,10 @@ EM_JS(int, web_coarse_pointer, (), {
 // font is not decoration either -- iOS zooms the whole page when a smaller
 // field takes focus, and the zoom does not come back.
 //
-// Two paths bring text out of it, because keyboards disagree about what a key
-// is. A desktop keyboard -- and iOS's -- sends a keydown naming the character,
-// which the key handler below types and cancels, so the element never changes.
-// Android's keyboards send "Unidentified" for every key and do their work on
-// the element itself: composing a word, swapping in a suggestion, deleting
-// through it. For those, the element's value is read after each change and
-// the difference is queued as "erase N, then insert this" -- the only form
-// that a correction ("helo" -> "hello") survives.
+// Browser text and IME edits go through this element. The value difference
+// is queued as "erase N, then insert this", so suggestions and corrections
+// survive. Named Backspace goes through the same queue before the browser
+// can discard an edit at the start of the hidden field.
 //
 // The value always starts with one space the player did not type. Deleting it
 // is how a Backspace past everything typed since the field was tapped shows
@@ -300,15 +296,38 @@ EM_JS(void, web_soft_keyboard, (int wanted), {
     Module.cppSoftUp = false;
     node.__last = ' ';
     node.__composing = false;
+    const resetBuffer = () => {
+      node.value = ' ';
+      node.__last = node.value;
+      node.setSelectionRange(1, 1);
+    };
+    const queueEdit = (erase, text = '') => {
+      const queued = Array.from(Module.cppSoftText);
+      while (erase > 0 && queued.length > 0) { queued.pop(); --erase; }
+      Module.cppSoftErase += erase;
+      Module.cppSoftText = queued.join('') + text;
+    };
+    node.__eraseBackward = () => {
+      queueEdit(1);
+      resetBuffer();
+    };
     // Back to the lone space, but never mid-word: resetting under a keyboard
     // that is composing throws its word away. Only once the space is gone, or
     // once the box has grown long enough to be worth trimming.
     const settle = () => {
       if (node.__composing) return;
       if (node.value.startsWith(' ') && node.value.length <= 64) return;
-      node.value = ' ';
-      node.__last = ' ';
+      resetBuffer();
     };
+    node.addEventListener('beforeinput', (event) => {
+      // Some virtual keyboards send no named key. If the hidden field has
+      // nothing before its caret, there will be no input diff to relay.
+      if (event.inputType !== 'deleteContentBackward' || !event.cancelable ||
+          event.isComposing || node.__composing ||
+          (node.selectionStart === node.value.length && node.selectionEnd === node.value.length)) return;
+      event.preventDefault();
+      node.__eraseBackward();
+    });
     node.addEventListener('compositionstart', () => { node.__composing = true; });
     // Safari can deliver the final input AFTER compositionend. Trimming here
     // would erase that committed word before its input event can read it.
@@ -321,7 +340,8 @@ EM_JS(void, web_soft_keyboard, (int wanted), {
       // A paste is the page's own paste listener's to deliver; taking it here
       // too would put it in twice. So is a character a keydown already typed,
       // should a keyboard both name the key and insert it.
-      const keyed = kind === 'insertText' && event.data === Module.cppSoftKeyed &&
+      const keyed = kind === 'insertText' && Module.cppSoftKeyed != null &&
+                    event.data === Module.cppSoftKeyed &&
                     performance.now() - (Module.cppSoftKeyedAt || 0) < 100;
       Module.cppSoftKeyed = null;
       const pastedByPage = kind === 'insertFromPaste' &&
@@ -329,13 +349,8 @@ EM_JS(void, web_soft_keyboard, (int wanted), {
       if (!pastedByPage && !keyed) {
         let same = 0;
         while (same < before.length && same < after.length && before[same] === after[same]) ++same;
-        let erase = before.length - same;
-        // Folded into what is already queued for this frame: an erase takes
-        // back queued text before it reaches anything the field holds.
-        const queued = Array.from(Module.cppSoftText);
-        while (erase > 0 && queued.length > 0) { queued.pop(); --erase; }
-        Module.cppSoftErase += erase;
-        Module.cppSoftText = queued.join('') + after.slice(same).join('');
+        // An erase takes back queued text before it reaches the canvas.
+        queueEdit(before.length - same, after.slice(same).join(''));
       }
       settle();
     });
@@ -347,7 +362,8 @@ EM_JS(void, web_soft_keyboard, (int wanted), {
       // Fresh for a new field tap only. Re-focusing chat every frame must NOT
       // clear __composing or the buffer -- that is what kills IME mid-word.
       node.value = ' ';
-      node.__last = ' ';
+      node.__last = node.value;
+      node.setSelectionRange(1, 1);
       node.__composing = false;
     }
     // On iOS an animation-frame focus can succeed in DOM while the keyboard
@@ -404,6 +420,12 @@ EM_JS(double, web_soft_visible_bottom, (const char* element, double fit, double 
 EM_JS(int, web_ime_busy, (), {
   const node = document.getElementById('__flix_soft_keyboard');
   return (node && node.__composing) ? 1 : 0;
+});
+EM_JS(int, web_soft_backspace, (), {
+  const node = document.getElementById('__flix_soft_keyboard');
+  if (!node || node.__composing) return 0;
+  node.__eraseBackward();
+  return 1;
 });
 // What the keyboard did to the element since the last frame, taken once.
 EM_JS(int, web_soft_erase_take, (), {
@@ -1237,6 +1259,12 @@ struct Window::Impl {
       return EM_TRUE;
     }
 
+    // Treat named Backspace as a text edit, even if the hidden bridge lost
+    // focus. Queue it alongside DOM text, then cancel the native default to
+    // avoid a duplicate. The game-input limiter does not gate DOM edits.
+    if (impl->softKeyboardUp && key == Key::Backspace &&
+        web_soft_backspace() != 0) return EM_TRUE;
+
     // The input guard's key rule (see input_guard.h): a key faster than a
     // person types is not pressed, typed or held. Still answered below the
     // way a kept key would be, so the page does not act on it instead -- a
@@ -1250,10 +1278,7 @@ struct Window::Impl {
     // has to be heard.
     if (i < kKeyCount) impl->droppedKeys[i] = dropped && !impl->down[i];
 
-    // A focused DOM input reports Backspace through its input diff. Feeding
-    // the same key into TextEditFrame would erase a second character.
-    const bool softBackspace = impl->softKeyboardUp && key == Key::Backspace;
-    if (!dropped && !softBackspace && i < kKeyCount) {
+    if (!dropped && i < kKeyCount) {
       // `repeat` is the browser auto-repeating a held key: it must feed text
       // fields but must not read as a fresh press to game logic -- except for
       // the two erase keys, which a field has to see repeat on.
@@ -1328,6 +1353,7 @@ struct Window::Impl {
 
   static EM_BOOL onBlur(int type, const EmscriptenFocusEvent* event, void* userData) {
     Impl* impl = implOf(userData);
+    impl->pointerInside = false;
     if (impl->eventTrusted) impl->pointerPhysics.noteFocusChange(emscripten_get_now());
     for (std::size_t i = 0; i < kButtonCount; ++i) {
       if (impl->mouseHeld[i]) { impl->mouseHeld[i] = false; impl->pendingUpEdge[i] = true; }

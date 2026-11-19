@@ -553,6 +553,7 @@ private:
     /// The face, at an explicit mouth curve. A corpse is the one caller that
     /// needs a mouth the live attack/defend bits would never produce, and the
     /// digger the one that needs a body that is not flower yellow.
+    void drawReferenceHeadwear(Canvas&,std::uint16_t,double timeSeconds) const;
     void drawFace(Canvas&, std::uint8_t faceFlags, std::uint16_t equipFlags, double eyeX,
                   double eyeY, double mouth, double timeSeconds,
                   std::uint32_t bodyColor = 0xFFE763u) const;
@@ -788,8 +789,13 @@ private:
     /// as a column of tiny ones. Keyed by net id with a poison bit above it:
     /// one shared bucket would let a poison tick land inside a petal hit's
     /// window and repaint the whole total purple.
-    std::unordered_map<std::uint64_t, double> damageTextAt_;
-    std::unordered_map<std::uint64_t, double> damagePending_;
+    struct DamageNumberBucket {
+        double amount = 0.0;
+        double lastShown = -1.0;
+        double lastHit = 0.0;
+        Vec2 lastImpact;
+    };
+    std::unordered_map<std::uint64_t, DamageNumberBucket> damageNumbers_;
 
 #ifdef __EMSCRIPTEN__
     // The web build's glitch buffers: ONE atlas holding every body that is

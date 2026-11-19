@@ -56,6 +56,7 @@ constexpr double kTradeSpinMs = 1000.0;
 /// profile will say how.
 constexpr double kTradeTimeoutSeconds = 8.0;
 constexpr double kRefusalSeconds = 3.0;
+constexpr double kTradeConfirmDelay = 0.35;
 
 bool tradable(std::uint16_t petalIndex) {
     return knownPetal(petalIndex) && content().petal(petalIndex).tradable;
@@ -79,6 +80,7 @@ void TradePanel::reset() {
     stagedPetal_ = kNoPetal;
     phase_ = Phase::Idle;
     resultPending_ = false;
+    tradeConfirmReady_.reset();
     refusal_.clear();
 }
 
@@ -133,6 +135,7 @@ bool TradePanel::render(MenuContext& ctx) {
         (waiting || (knownPetal(stagedPetal_) &&
                      profile.stackCount(stagedPetal_, stagedRarity_) == 0))) {
         stagedPetal_ = kNoPetal;
+        tradeConfirmReady_.reset();
     }
 
     const bool trading = phase_ == Phase::Trading;
@@ -176,13 +179,20 @@ bool TradePanel::render(MenuContext& ctx) {
     // be traded.
     const bool canTrade = !waiting && phase_ == Phase::Idle && tradable(stagedPetal_);
     const bool overButton = card.button.contains(mouse);
-    drawSlotButton(canvas, card.button, trEnZh("Trade", "兑换"),
-                   canTrade ? std::optional<std::uint32_t>(rarityColor(stagedRarity_))
+    const bool confirming = canTrade && tradeConfirmReady_.has_value();
+    const bool canConfirm = !confirming || now >= *tradeConfirmReady_;
+    const char* buttonLabel = confirming ? trEnZh("Confirm trade", "确认兑换")
+                                         : trEnZh("Trade", "兑换");
+    drawSlotButton(canvas, card.button, buttonLabel,
+                   canTrade && canConfirm ? std::optional<std::uint32_t>(rarityColor(stagedRarity_))
                             : std::nullopt,
                    overButton, overButton && ctx.window.mouseDown(MouseButton::Left));
 
     if (waiting) {
         drawSlotLine(canvas, card, traderCooldownText(cooldown), kSlotCardWaitInk);
+    } else if (confirming) {
+        drawSlotLine(canvas, card, trEnZh("Trade 1 petal for 1 coin? Tap the slot to cancel.",
+                                        "用 1 个花瓣兑换 1 枚硬币？点花瓣槽取消。"));
     } else {
         drawSlotLine(canvas, card, trEnZh("Trade a petal for a coin of the same rarity",
                                          "用一片花瓣兑换一枚同品质硬币"));
@@ -211,6 +221,7 @@ bool TradePanel::render(MenuContext& ctx) {
     // On press, as the forge and the oracle answer.
     const bool rightPressed = panel.contains(mouse) && ctx.window.mousePressed(MouseButton::Right);
     if (phase_ == Phase::Idle && rightPressed) {
+        tradeConfirmReady_.reset();
         stagedPetal_ = kNoPetal;
         return true;
     }
@@ -227,6 +238,12 @@ bool TradePanel::render(MenuContext& ctx) {
 
     if (overButton) {
         if (canTrade) {
+            if (stagedRarity_ >= Rarity::Super && !confirming) {
+                tradeConfirmReady_ = now + kTradeConfirmDelay;
+                return true;
+            }
+            if (!canConfirm) return true;
+            tradeConfirmReady_.reset();
             phase_ = Phase::Trading;
             phaseStarted_ = now;
             offeredPetal_ = stagedPetal_;
@@ -240,6 +257,7 @@ bool TradePanel::render(MenuContext& ctx) {
         return true;
     }
 
+    tradeConfirmReady_.reset();
     if (phase_ == Phase::Idle && card.slotRect.contains(mouse)) {
         stagedPetal_ = kNoPetal;
         return true;

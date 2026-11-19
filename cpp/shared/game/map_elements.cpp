@@ -315,6 +315,7 @@ void MapData::reset(Realm realm) {
     darkColor_ = 0;
     artFiles_.clear();
     decorations_.clear();
+    worldScale_ = 1.0;
     layers_.clear();
     sourcePath_.clear();
     width_ = height_ = 0;
@@ -355,10 +356,23 @@ bool MapData::loadTiled(const std::string& path, std::string& errorOut, Realm re
     // "the ground no band covers" would configure nothing, because that ground
     // never grows a mob to roll it against.
 
+    worldScale_ = map.worldScale();
     adopt(map.elements());
+    for (auto& element : elements_) {
+        auto& box = element.bounds;
+        box = {box.x * worldScale_, box.y * worldScale_,
+               box.w * worldScale_, box.h * worldScale_};
+        for (Vec2& point : element.polygon) point *= worldScale_;
+    }
 
     artFiles_ = map.artFiles();
     decorations_ = map.decorations();
+    for (auto& decoration : decorations_) {
+        decoration.x *= worldScale_;
+        decoration.y *= worldScale_;
+        decoration.width *= worldScale_;
+        decoration.height *= worldScale_;
+    }
     layers_ = map.layers();
     width_ = map.width();
     height_ = map.height();
