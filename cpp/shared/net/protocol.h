@@ -27,7 +27,13 @@ using ConnectionId = std::uint32_t;
 // Version 128: snapshot update records are smaller. The mask is a varint with
 // the common fields in its low seven bits, a short move is two bytes, and the
 // state byte carries only the bits a client draws from.
-inline constexpr std::uint16_t kProtocolVersion = 135; // Adds the living player's run loot query reply.
+inline constexpr std::uint16_t kProtocolVersion = 140; // Adds the read-only boss damage HUD.
+inline constexpr std::size_t kBossDamageRows = 3;
+inline constexpr std::size_t kBossDamageTargets = 6;
+struct BossDamageRow {
+    std::string name;
+    double damage = 0;
+};
 
 /// "Not one of the rotating store's cards": a purchase at the full ladder
 /// price. Any other value is a slot index the server checks against the offers
@@ -145,9 +151,9 @@ enum class ClientMessage : std::uint8_t {
                         ///< every column at once: the R key. One message rather
                         ///< than ten SwapLoadouts, which would each have sent a
                         ///< whole Profile back.
-    SaveLoadoutPreset,  ///< u8 preset -- copies the account's loadout, both rows,
+    SaveLoadoutPreset,  ///< u8 preset, u8 rotationStep (1..4) -- copies the account's loadout, both rows,
                         ///< into saved preset `preset` (loadoutPresetName).
-    LoadLoadoutPreset,  ///< u8 preset -- re-equips a saved preset out of the
+    LoadLoadoutPreset,  ///< u8 preset, u8 outgoing rotationStep (1..4) -- re-equips a saved preset out of the
                         ///< bag and the current loadout together, stepping a
                         ///< petal down a rarity at a time when the saved one is
                         ///< not there. Resolved server-side in one pass: the
@@ -268,6 +274,7 @@ enum class ServerMessage : std::uint8_t {
                         ///< loadouts (loadoutPresetName), only those that exist
                         ///< then u16 count, {u16 petal, u8 completed (0..2)}* titan ledger (v73).
                         ///< then u16 count, {u8 loadout slot (255 = bag), u32 remaining millis}*.
+                        ///< then u8 restored rotation step (1..4), 0 if unchanged (v139).
     JoinAccepted,       ///< u32 selfNetId, f32 x, f32 y, u32 tick, i64 mazeDay,
                         ///< MapGrid (see below). `mazeDay` is the maze the
                         ///< server is playing, so the client builds the same
@@ -485,6 +492,8 @@ enum class ServerMessage : std::uint8_t {
     SkinReviewQueue,    ///< u8 count, followed by CustomSkin rows awaiting review.
     RiftStatus,         ///< bool admissionOpen.
     RunLoot,            ///< u32 count, {u16 petal, u8 rarity, u32 count}* (own run).
+    RunKills,           ///< u32 count, {u16 mob, u8 rarity, u32 count}* (own run).
+    BossDamage,         ///< u8 count, {u32 mob net ID, u8 rows, {str name, f64 damage}*}*.
 };
 
 // ---------------------------------------------------------------------------

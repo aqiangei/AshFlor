@@ -11,6 +11,8 @@ namespace flix {
 namespace {
 
 constexpr double kRiftMinute = 60000.0;
+constexpr double kRiftCooldownMin = 60.0;
+constexpr double kRiftCooldownMax = 120.0;
 constexpr double kRiftAdmission = 3 * kRiftMinute;
 constexpr double kRiftMatch = 60 * kRiftMinute;
 constexpr double kRiftResults = 3 * kRiftMinute;
@@ -97,6 +99,7 @@ void GameServer::enterRift(Session& session, Vec2 position) {
     riftEntrants_.insert(session.userId);
     if (riftEntrants_.size() == kRiftCapacity) broadcastRiftStatus();
     session.runLoot.clear();
+    session.runKills.clear();
     const Entity flower = finishPlayerSpawn(session, main, position);
     world_.get<NetId>(flower) = netId;
     world_.get<PlayerLocation>(flower).viewport = viewport;
@@ -130,6 +133,7 @@ void GameServer::leaveRift(Session& session) {
     world_.get<PlayerLocation>(flower).viewport = viewport;
     world_.ensure<TeleporterState>(flower).cooldownUntilMillis = clockMillis_ + kTeleporterCooldownMillis;
     session.runLoot.clear();
+    session.runKills.clear();
     sendRealmChange(session, world_.get<Transform>(flower).position);
     if (auto* peer = listener_.find(session.connection)) {
         sendProfile(session, *peer);
@@ -145,7 +149,7 @@ void GameServer::serviceRift(bool settle) {
         bool found = false;
         worldMaps_.realmOfId("rift_main", found);
         spawning_->setRiftSpawning(0.0, {});
-        riftDeadline_ = found ? wallClockMillis_ + rng_.range(120, 240) * kRiftMinute
+        riftDeadline_ = found ? wallClockMillis_ + rng_.range(kRiftCooldownMin, kRiftCooldownMax) * kRiftMinute
                               : std::numeric_limits<double>::infinity();
     }
     if (!settle) {
@@ -165,7 +169,7 @@ void GameServer::serviceRift(bool settle) {
             spawning_->clearRiftPopulation();
             spawning_->setRiftSpawning(0.0, {});
             riftPhase_ = RiftPhase::Cooldown;
-            riftDeadline_ = wallClockMillis_ + rng_.range(120, 240) * kRiftMinute;
+            riftDeadline_ = wallClockMillis_ + rng_.range(kRiftCooldownMin, kRiftCooldownMax) * kRiftMinute;
         } else if (riftPhase_ == RiftPhase::Cooldown) {
             static constexpr const char* layouts[] = {
                 "rift_pyramid", "rift_pyramid_alt", "rift_pyramid_west", "rift_pyramid_east"

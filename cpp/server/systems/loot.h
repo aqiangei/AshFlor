@@ -214,6 +214,8 @@ public:
     /// terrain or a drop scattered into a rock or into water stays there for
     /// its whole lifetime, visible and out of reach.
     const Terrain* terrain = nullptr;
+    /// Keeps random scattering on the corpse side of walls in partitioned maps.
+    std::function<bool(Realm)> protectDropScatter;
 
     /// Called for each pickup as it happens, in addition to pickups(). Either
     /// is enough; the callback exists for a runtime that would rather not walk
@@ -222,6 +224,7 @@ public:
     // A Rift prize must be credited to the account before its drop is consumed.
     std::function<bool(const Pickup&)> collectRiftPrize;
     /// Maps allowed to offer a participation floor on a natural boss kill.
+    std::function<bool(Realm)> ordinaryMapLoot;
     std::function<bool(Realm)> allowsBossParticipationFloor;
     std::function<int(Entity)> bonusMultiplier; // claimant-specific independent trials; Super+ uses 1.5x / 2x.
 
@@ -285,6 +288,7 @@ public:
 
 private:
     void bind(World& world);
+    void attractRingDrops(World& world, const SpatialGrid& grid, double dt);
     void collectPickups(World& world, const SpatialGrid& grid, CommandBuffer& commands,
                         EventQueue& events);
     /// New and enlarged stacks can be picked up on the tick they are awarded.

@@ -127,6 +127,7 @@ enum class ControlAction : std::uint8_t {
     /// every later row's saved key to its neighbour.
     SwapLoadoutRows,
     ToggleAltDisplay,
+    ThisRun,
     Count,
 };
 
@@ -265,6 +266,7 @@ struct ClientSettings {
     /// Window::setDesynchronized the way renderScale reaches setRenderScale.
     bool desynchronizedCanvas = false;
     bool showChat = true;
+    bool hudPanelsCollapsed = false;
     /// Which of the chat box's channel tabs its transcript shows, one bit per
     /// tab in strip order: Local, Global, Squad, Guild, Whisper, Admin. All on
     /// by default. The server's own lines belong to no tab and always show.
@@ -496,6 +498,7 @@ struct MenuContext {
 /// The petal inventory: every stack the account owns, grouped by tier.
 class InventoryPanel {
 public:
+    void openRunLoot(NetClient&, DragState&);
     /// Returns false when the panel asked to be closed.
     bool render(MenuContext&);
     void reset();
@@ -516,6 +519,7 @@ private:
     ui::TextFieldState searchField_;
     std::size_t dropMap_ = 0;
     bool showRunLoot_ = false;
+    bool showRunKills_ = false;
     ui::Scroller runLootScroll_;
     bool renderRunLoot(MenuContext&);
     std::unordered_map<std::string, std::vector<bool>> mapDrops_;
@@ -628,7 +632,8 @@ double slotCardWidth(SlotGridTiers tiers);
 double slotCardHeight(std::size_t rows, double extraControlsHeight = 0.0);
 /// Where a slot card of this size stands, seated: at x = 95, its bottom 20
 /// above the view's, and never reaching up over the HUD in the top-left.
-Rect slotCardBounds(double width, double height, int viewWidth, int viewHeight);
+Rect slotCardBounds(double width, double height, int viewWidth, int viewHeight,
+                    double minimumHeight = 0.0);
 
 /// Draws the window, its title and its close button, and lays out the rest;
 /// `button` is the action button's label, which sizes it.
@@ -854,6 +859,7 @@ public:
     void reopen();
     /// The window's width and height for this account: the grid's columns
     /// set the one and its rows the other.
+    static double minimumHeight();
     static Vec2 size(const Profile&);
     /// Whether the Switch button was pressed since the last call: the menu
     /// system turns the window over to Absorb.
@@ -1127,6 +1133,7 @@ private:
 
     Phase phase_ = Phase::Idle;
     double phaseStarted_ = 0;
+    std::optional<double> tradeConfirmReady_;
     /// What went to the trader on the click. The slot is emptied at once --
     /// the petal is the server's now -- so this is drawn while the trade is
     /// out, and a refusal puts it back.
@@ -1289,10 +1296,16 @@ private:
     };
 
     void buildBiomeRows(const WorldMaps& maps);
+    void buildDropIndex(int orbTier);
 
     ui::Scroller scroll_;
+    ui::TextFieldState dropSearchField_;
+    std::string dropSearch_;
+    std::vector<std::uint16_t> dropIndex_;
+    int indexedOrbTier_ = -1;
     bool groupByBiome_ = false;
     bool hideNpcs_ = false;
+    bool garbageCatalog_ = false;
     std::vector<BiomeRows> biomeRows_;
 };
 
@@ -1656,7 +1669,7 @@ class MenuSystem {
 public:
     /// Handles the menu hotkeys, Escape among them. Returns true when the key
     /// was consumed, so the game does not also act on it.
-    bool handleKeys(Window&);
+    bool handleKeys(Window&, NetClient&);
 
     /// Mobile R button: a short tap swaps the two loadout rows; holding past
     /// the long-press threshold arms a sticky L preset bank on the secondary
@@ -1756,6 +1769,7 @@ public:
     /// The first y below the top icon row, strip inset included.
     double stripBottom() const;
     double stripRight() const;
+    Rect rotationDialBounds() const { return rotationDial_; }
     Rect feedbackButton() const;
 
     /// True while the strip's changelog button should shake: while the
@@ -1781,6 +1795,7 @@ public:
     /// The craft menu's card for a `w` x `h` view as it stands this frame: the
     /// forge's, or the oracle's, the trader's or the titan's while the flower
     /// is at one.
+    void setCraftChatTop(double top) { craftChatTop_ = top; }
     Rect craftPanelBounds(int w, int h) const;
 
     /// Feeds the debug panel one frame of samples. See DebugPanel::recordFrame
@@ -1917,6 +1932,7 @@ private:
     double talentsOpen_ = 0;
     /// That window's size as the open card last measured it -- it depends on
     /// the account's petals, which craftPanelBounds() is not handed.
+    double craftChatTop_ = -1.0;
     Vec2 craftSize_{610.0, 700.0};
     ClientSettings settings_;
     ShardSelection shardSelection_;

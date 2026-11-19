@@ -139,7 +139,7 @@ double replicatedRadius(World& world, Entity e) {
     if (const GroundEffect* effect = world.tryGet<GroundEffect>(e)) {
         const auto kind = effect->kind;
         const bool spill = kind == GroundEffectKind::Blood ||
-            (kind >= GroundEffectKind::AcidSpill && kind <= GroundEffectKind::ElixirSpill);
+            isFluidField(kind);
         if ((spill || kind == GroundEffectKind::Web || kind == GroundEffectKind::ElectricWeb ||
              kind == GroundEffectKind::BlinkLanding) &&
             effect->radius > 0.0) return effect->radius;
@@ -271,6 +271,7 @@ PlayerVisualState computePlayerVisuals(World& world, Entity e, double nowMillis)
     }
     if (const Afflictions* afflictions = world.tryGet<Afflictions>(e)) {
         if (afflictions->poisoned(nowMillis)) out.faceFlags |= FacePoisoned;
+        if (nowMillis < afflictions->blindUntilMillis) out.renderFlags |= PlayerRenderBlinded;
         // A dandelion's lockout, which the client washes the body toward white
         // for. Derived from the timer rather than stored on PlayerVisuals for
         // the reason poison is: the affliction expires on its own clock, and a

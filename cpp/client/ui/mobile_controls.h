@@ -50,7 +50,7 @@ public:
     /// `loadoutBarHeight` is what the loadout bar occupies from the bottom
     /// edge: the bar is centred and reaches nearly to the edge on its own, so
     /// everything here hangs ABOVE it rather than below.
-    void layout(int viewWidth, int viewHeight, double loadoutBarHeight);
+    void layout(int viewWidth, int viewHeight, double loadoutBarHeight, bool rightSidebarVisible = true);
 
     /// Whether a finger landing here belongs to these controls.
     ///

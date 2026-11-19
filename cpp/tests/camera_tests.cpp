@@ -224,6 +224,38 @@ TEST(map_edge_camera_fills_the_view_when_the_map_is_smaller_than_the_requested_v
     CHECK_NEAR(camera.zoom(), 950.0 / 520.0, 1e-9);
 }
 
+TEST(wave_camera_responds_at_both_ends_of_the_zoom_range_without_showing_past_its_edges) {
+    constexpr double roomSize = 4096.0;
+    Camera camera;
+    camera.setWorldExtent({roomSize, roomSize}, true);
+    for (const Vec2 viewport : {Vec2{1920, 1080}, Vec2{850, 1080}}) {
+        camera.setViewport(static_cast<int>(viewport.x), static_cast<int>(viewport.y));
+        for (const double loadout : {1.0, 0.09}) {
+            camera.loadoutZoom = loadout;
+            double previous = 0;
+            for (const double setting : {kMinimumUserCameraZoom, kMinimumUserCameraZoom + 0.05,
+                                         0.95, 1.0, 1.05, 3.95, 4.0}) {
+                camera.userZoom = setting;
+                camera.snapTo({roomSize - 20.0, 20.0});
+                CHECK(camera.zoom() > previous);
+                previous = camera.zoom();
+                const Rect view = camera.visibleWorld();
+                CHECK_NEAR(view.top(), 0.0, 1e-9);
+                CHECK_NEAR(view.right(), roomSize, 1e-9);
+                CHECK(view.left() >= -1e-9 && view.bottom() <= roomSize + 1e-9);
+                if (setting == kMinimumUserCameraZoom) {
+                    CHECK_NEAR(std::max(view.w, view.h), roomSize, 1e-9);
+                }
+                if (setting == 1.0 && loadout == 1.0) CHECK_NEAR(camera.zoom(), 1.0, 1e-9);
+            }
+        }
+    }
+
+    camera.setWorldExtent({38400, 38400});
+    camera.userZoom = 1.0;
+    CHECK_NEAR(camera.zoom(), camera.loadoutZoom, 1e-9);
+}
+
 TEST(the_camera_multiplies_the_setting_by_what_the_loadout_asks) {
     Camera camera;
     camera.setViewport(1920, 1080);

@@ -22,8 +22,9 @@ struct BossFloorAudit {
     std::vector<int> floorCopiesByKill;
 };
 Counts kills(const char* id,Rarity rarity,int count,bool orb=false,int bonus=1,int* maxEternal=nullptr,bool splitAccount=false,double damage=100.0,
-             BossFloorAudit* audit=nullptr, bool finisher=false){
+             BossFloorAudit* audit=nullptr, bool finisher=false, bool ordinaryMap=false){
     const auto& c=registry();World w;CommandBuffer commands{w};EventQueue events;SpatialGrid grid;Rng rng{81927};LootSystem loot;loot.bonusMultiplier=[bonus](Entity){return bonus;};
+    loot.ordinaryMapLoot = [ordinaryMap](Realm realm) { return ordinaryMap && realm == Realm::Overworld; };
     if (audit) loot.allowsBossParticipationFloor = [audit](Realm) { return audit->enabled; };
     int priorMeaningful = 0;
     int priorPrivateFloor = 0;
@@ -57,6 +58,21 @@ Counts kills(const char* id,Rarity rarity,int count,bool orb=false,int bonus=1,i
 }
 int total(const Counts& counts,const std::string& name){int n=0;for(const auto&[key,value]:counts)if(key.first==name)n+=value;return n;}
 }
+TEST(wild_eternal_has_one_rare_shared_eternal_roll) {
+    constexpr int trials = 24000;
+    int largest = 0;
+    const auto drops = kills("ladybug", Rarity::Unique, trials, false, 3, &largest, true);
+    int eternal = 0;
+    for (const auto& [key, count] : drops) {
+        if (key.second != rarityIndex(Rarity::Unique)) continue;
+        CHECK(key.first == "rose" || key.first == "light");
+        eternal += count;
+    }
+    CHECK_EQ(largest, 1);
+    CHECK(eternal > 0);
+    CHECK(eternal <= 18);
+}
+
 TEST(apex_reward_roll_is_personal_and_independent_of_drop_bonus) {
     constexpr int trials = 1200;
     for (int bonus : {1, 3}) {
@@ -196,9 +212,16 @@ TEST(apex_rarity_preserves_legacy_names_and_sets_craft_terms) {
     const auto index = c.petalIndex("missile");
     const auto hyper = c.petalStats(index, Rarity::PermanentHyper);
     const auto apex = c.petalStats(index, Rarity::Ascendant);
-    CHECK_NEAR(apex.damage / hyper.damage, 1.25, 1e-12);
-    CHECK_NEAR(apex.health / hyper.health, 1.30, 1e-12);
+    CHECK_NEAR(apex.damage / hyper.damage, 2.0, 1e-12);
+    CHECK_NEAR(apex.health / hyper.health, 2.0, 1e-12);
     CHECK_EQ(apex.reloadMillis, hyper.reloadMillis);
+    CHECK_NEAR(petalDamageScale(Rarity::Ascendant) / petalDamageScale(Rarity::PermanentHyper),
+               2.0, 1e-12);
+    CHECK_NEAR(petalStrengthScale(Rarity::Ascendant) / petalStrengthScale(Rarity::PermanentHyper),
+               1.25, 1e-12);
+    const auto glitch = c.petalIndex("glitch");
+    CHECK_EQ(c.petalStats(glitch, Rarity::Ascendant).damage,
+             c.petalStats(glitch, Rarity::PermanentHyper).damage);
     CHECK(hyperTechnique("missile", Rarity::Ascendant, false) == HyperTechnique::MissileSpeed);
     const auto hornet = c.mobIndex("hornet");
     CHECK_NEAR(c.mobStats(hornet, Rarity::Ascendant).health /
@@ -540,4 +563,27 @@ TEST(ordinary_and_void_ghosts_drop_splitter_with_the_existing_high_tier_rates) {
         }
         CHECK(total(kills(id, Rarity::Super, 600), "splitter") > 0);
     }
+}
+
+TEST(ordinary_map_uses_fifty_trials_and_preserves_per_roll_rates) {
+    const auto ordinary = [](Rarity rarity, int bonus) {
+        return kills("ant_egg", rarity, 1, false, bonus, nullptr, false, 100.0,
+                     nullptr, false, true);
+    };
+    CHECK_EQ(total(ordinary(Rarity::Common, 1), "egg"), 50);
+    CHECK_EQ(total(ordinary(Rarity::Common, 2), "egg"), 100);
+    CHECK_EQ(total(ordinary(Rarity::Common, 3), "egg"), 150);
+    CHECK_EQ(total(ordinary(Rarity::Super, 1), "egg"), 20);
+    CHECK_EQ(total(kills("ant_egg", Rarity::Common, 1), "egg"), 30);
+
+    constexpr int count = 2000;
+    const auto apex = [](int count) {
+        return kills("crab", Rarity::Ascendant, count, false, 1, nullptr, true,
+                     100.0, nullptr, false, true);
+    };
+    int paid = 0;
+    for (const auto& [key, number] : apex(count)) {
+        if (key.second == rarityIndex(Rarity::Ascendant)) paid += number;
+    }
+    CHECK_NEAR(static_cast<double>(paid) / count, 0.02, 0.01);
 }

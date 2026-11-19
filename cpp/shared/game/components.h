@@ -14,6 +14,7 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -259,6 +260,9 @@ struct PoisonStack {
     Entity source = NULL_ENTITY;
     double perSecond = 0;
     double untilMillis = 0;
+    // A stacking puddle keeps a separate identity, while source stays its
+    // credited owner so poison kills still pay after the puddle expires.
+    Entity emitter = NULL_ENTITY;
 };
 
 /// Damage-over-time and movement debuffs.
@@ -274,6 +278,9 @@ struct BurnStack {
 };
 
 struct Afflictions {
+    double blindUntilMillis = 0;
+    bool toiletArmed = false;
+    double toiletBoostUntilMillis = 0;
     double cancer = 0.0;
     double burnPerSecond = 0.0;
     double burnUntilMillis = 0.0;
@@ -291,6 +298,11 @@ struct Afflictions {
     double frostFactor = 1.0;
     double frostUntilMillis = 0.0;
     double frostSpeed(double now) const { return now < frostUntilMillis ? frostFactor : 1.0; }
+    void applyFrost(double factor, double durationMillis, double now) {
+        if (factor > frostSpeed(now) || factor >= 1.0) return;
+        frostFactor = factor;
+        frostUntilMillis = std::max(frostUntilMillis, now + durationMillis);
+    }
 
     double slowFactor = 1.0;      ///< multiplies speed; 1 = unaffected
     double slowUntilMillis = 0;
@@ -561,6 +573,7 @@ struct PlayerInput {
     Vec2 previousWalkIntent; ///< Unit direction scaled by the last applied walk strength.
     Entity summonFocus = NULL_ENTITY; ///< Wild mob most recently hit by the flower itself.
     double summonFocusUntilMillis = 0.0;
+    std::optional<double> mirroredBubbleHeading; ///< Steering for a parked split half's bubble only.
 };
 
 /// Account-scoped identity. Cold: read on join, on save, and when someone
@@ -659,6 +672,10 @@ struct PlayerModifiers {
     std::array<std::uint8_t, kRarityCount> triangleCounts{};
     double maxHealthScale = 1.0;
     double speedScale = 1.0;
+    double accelerationScale = 1.0;
+    double bodyHitHeal = 0.0;
+    double lightningReduction = 0.0;
+    Vec2 petalDriftVelocity{}; ///< live directional boosters; world units/second
     /// The flower's BODY damage: equipped petal damage modifiers times the
     /// Damage talent on the gentle STAT curve (1.0 -> 1.9).
     double damageScale = 1.0;
@@ -692,6 +709,7 @@ struct PlayerModifiers {
     double sizeScale = 1.0;
     double luck = 1.0;          ///< TypeScript's neutral luck value
     double magnetism = 0.0;     ///< adds to pickup radius
+    double ringMagnetism = 0.0; ///< slow attraction, never instant pickup reach
     double aggroRadiusBonus = 0.0;
     /// What a mob's aggro range is multiplied by against this flower: the
     /// strongest worn poo times the strongest worn bulb; 1.0 is noticed as
@@ -1065,6 +1083,7 @@ struct Pet {
     /// timed pet is no part of its type's squad: it is not counted toward a
     /// squad's size and a squad being replaced does not recall it.
     double expiresAtMillis = 0;
+    bool crownSummon = false; ///< Crown beetles use a separate six-body allowance.
     double damageTalentScale = 1.0; ///< Refreshed from owner talents; shared with ranged attacks.
     double crystalLeafShield = 0.0;
     double crystalLeafShieldUntilMillis = 0.0;
@@ -1364,6 +1383,9 @@ struct PetalInstance {
     /// cracking open. Without it the behaviour fires on every overlapping tick
     /// instead of once per life.
     bool collisionFired = false;
+    // Sapphire drops the current life of matching petals; their own reload
+    // and effects still belong to their original slots.
+    bool sapphireGrounded = false;
 
     /// Shots left on a petal that is spent by BEING USED rather than by being
     /// killed: the battery's three discharges. Zero on every other petal, and
@@ -1456,6 +1478,10 @@ struct Projectile {
     /// shot flies over them. A carrot's. The map edge turns it too.
     bool bouncesOffWalls = false;
     bool wildOnly = false;
+    bool fragmented = false;
+    double effectStrength = 1.0;
+    double nextRadiationMillis = 0.0;
+    double collisionHalfWidth = 0.0; ///< nonzero for a long, narrow beam
 };
 
 struct Lifetime {
@@ -1555,7 +1581,13 @@ enum class GroundEffectKind : std::uint8_t {
     Blood = 16,
     Fire = 17,
     BlinkLanding = 18,
+    LatrineSpill = 19,
+    NitrogenSpill = 20,
 };
+inline bool isFluidField(GroundEffectKind kind) {
+    return (kind>=GroundEffectKind::AcidSpill && kind<=GroundEffectKind::ElixirSpill) || kind==GroundEffectKind::LatrineSpill || kind==GroundEffectKind::NitrogenSpill;
+}
+
 
 /// What is left lying where a mob with `remains_ms` died -- florr's opened
 /// tomb, its lid gone and its insides dark. Nothing touches it and it
@@ -1659,7 +1691,17 @@ struct BurrowState {
     std::uint16_t wormIndex=UINT16_MAX,desertCentipedeIndex=UINT16_MAX;
 };
 
+struct AttachedSilk { Entity owner = NULL_ENTITY; Entity target = NULL_ENTITY; };
 struct PlantedMeteor { Entity owner = NULL_ENTITY; };
+struct PlantedMine {
+    Entity owner = NULL_ENTITY;
+    Rarity rarity = Rarity::Common;
+    double armedAtMillis = 0;
+    double expiresAtMillis = 0;
+    bool detonated = false;
+    double combinationStrength = 1.0;
+};
+
 
 struct HoneyBait { Entity owner = NULL_ENTITY; Vec2 velocity{}; double travel = 0; };
 struct WormSwallow {
@@ -1840,6 +1882,8 @@ FLIX_COMPONENT(flix::TotemRegeneration);
 FLIX_COMPONENT(flix::WebFlight);
 FLIX_COMPONENT(flix::HoneyBait);
 FLIX_COMPONENT(flix::PlantedMeteor);
+FLIX_COMPONENT(flix::PlantedMine);
+FLIX_COMPONENT(flix::AttachedSilk);
 FLIX_COMPONENT(flix::WormSwallow);
 FLIX_COMPONENT(flix::PoisonImmune);
 FLIX_COMPONENT(flix::BurrowState);

@@ -132,6 +132,10 @@ inline Json request(Database& db,const std::string& token,const Json& input,
         const auto id=input["id"].asString();const auto* a=db.findUserById(id);const auto* p=db.findProgress(id);
         if(!a||a->admin||a->guest||!p) return error("该玩家暂无公开详情");
         Json out=Json::object();out["id"]=id;out["name"]=a->username;out["current"]=Json::array();out["history"]=Json::array();
+        std::uint64_t apexKills = 0;
+        for (const auto& mob : p->mobKills.keys())
+            apexKills += std::max(0, p->killCount(mob, Rarity::Ascendant));
+        out["apexKills"] = static_cast<double>(apexKills);
         const auto current=currentHyperHoldings(*p,static_cast<double>(db.nowMillis()));
         for(const auto& [petal,count]:current) if(count>0) {Json row=Json::object();row["petal"]=petal;row["count"]=static_cast<double>(count);out["current"].push(row);}
         for(const auto& [petal,record]:p->extra["hyperHistory"].members()) {

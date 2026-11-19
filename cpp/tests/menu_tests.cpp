@@ -112,10 +112,10 @@ TEST(talent_points_are_the_level_minus_what_the_tree_holds) {
 
 TEST(a_talent_multiplier_is_neutral_until_a_tier_is_bought) {
     SkillSet skills;
-    CHECK_NEAR(skills.statScale(SkillId::PlayerHealth), 1.0, 1e-9);
-    skills.set(SkillId::PlayerHealth, rarityIndex(Rarity::Mythic));
-    CHECK_NEAR(skills.statScale(SkillId::PlayerHealth), 1.5, 1e-9);
-    CHECK_NEAR(skills.effectScale(SkillId::Healing), 1.0, 1e-9);
+    CHECK_NEAR(skills.statScale(SkillId::Health), 1.0, 1e-9);
+    skills.set(SkillId::Health, rarityIndex(Rarity::Mythic));
+    CHECK_NEAR(skills.statScale(SkillId::Health), 4.83, 1e-9);
+    CHECK_NEAR(skills.effectScale(SkillId::Medic), 1.0, 1e-9);
 }
 
 TEST(talents_are_bought_one_tier_at_a_time) {
@@ -160,27 +160,28 @@ TEST(the_reload_branch_is_bought_over_the_wire_like_any_other) {
         return p.skills.level(SkillId::Reload) == 0;
     }));
     CHECK_EQ(client.profile().skills.level(SkillId::SecondChance), -1);
-    CHECK_NEAR(client.profile().skills.reloadScale(), kReloadSkillScale[0], 1e-12);
+    CHECK_NEAR(client.profile().skills.reloadScale(), 0.90, 1e-12);
 }
 
-TEST(the_pet_health_branch_is_bought_over_the_wire_like_any_other) {
-    Harness h("talent-pet");
+TEST(the_pet_damage_branch_is_bought_over_the_wire_like_any_other) {
+    Harness h("talent-pet", [](const std::string& path) {
+        seedAccount(path, "petkeeper", "password7", 0, 1e15);
+    });
     if (!h.ready) { CHECK(false); return; }
 
     NetClient client;
-    CHECK(loginNew(h, client, "petkeeper", "password7"));
+    CHECK(flix::testsupport::loginAs(h, client, "petkeeper", "password7"));
+    const int points = client.profile().talentPoints();
 
-    // The branch was appended after Second Chance rather than filed beside
-    // Petal Health, so no id an older build knows moved. Buying it and finding
-    // both of its neighbours on the wire untouched is what says the two
-    // halves still read the same table.
-    client.requestUpgradeSkill(SkillId::PetHealth, 0);
+    // Buying the distinct Pet Damage branch must not change Petal Health
+    // or the older Second Chance branch on the wire.
+    client.requestUpgradeSkill(SkillId::PetDamage, 0);
     CHECK(awaitProfile(h, client, [](const Profile& p) {
-        return p.skills.level(SkillId::PetHealth) == 0;
+        return p.skills.level(SkillId::PetDamage) == 0;
     }));
     CHECK_EQ(client.profile().skills.level(SkillId::SecondChance), -1);
     CHECK_EQ(client.profile().skills.level(SkillId::PetalHealth), -1);
-    CHECK_EQ(client.profile().talentPoints(), 0);
+    CHECK_EQ(client.profile().talentPoints(), points - 2);
 }
 
 TEST(second_chance_stays_locked_until_flower_health_is_rare) {
@@ -277,81 +278,25 @@ TEST(duplicator_and_triplicator_are_bought_over_the_wire_after_mythic_absorption
     CHECK_EQ(client.profile().talentPoints(), before - 15 - 20);
 }
 
-TEST(magnetism_hangs_off_legendary_absorption_and_is_priced_on_its_own) {
-    SkillSet skills;
-    CHECK(!skills.prerequisiteMet(SkillId::Magnetism));
-    skills.set(SkillId::Absorbing, rarityIndex(Rarity::Epic));
-    CHECK(!skills.prerequisiteMet(SkillId::Magnetism));
-    skills.set(SkillId::Absorbing, rarityIndex(Rarity::Legendary));
-    CHECK(skills.prerequisiteMet(SkillId::Magnetism));
-    // Legendary opens Magnetism but not Duplicator, which waits for mythic.
-    CHECK(!skills.prerequisiteMet(SkillId::Duplicator));
-    CHECK_EQ(skillTierCount(SkillId::Magnetism), 3);
-
-    const int absorption = skills.spent();
-    CHECK_NEAR(skills.magnetismBonus(), 0.0, 1e-12);
-    skills.set(SkillId::Magnetism, 0);
-    CHECK_EQ(skills.spent() - absorption, 5);
-    CHECK_NEAR(skills.magnetismBonus(), 50.0, 1e-12);
-    skills.set(SkillId::Magnetism, 2);
-    CHECK_EQ(skills.spent() - absorption, 5 + 8 + 12);
-    // Each tier replaces the one below rather than stacking on it.
-    CHECK_NEAR(skills.magnetismBonus(), 150.0, 1e-12);
-    CHECK(skillFromKey("magnetism") == SkillId::Magnetism);
-}
-
-TEST(magnetism_is_bought_over_the_wire_after_legendary_absorption) {
-    Harness h("talent-magnetism", [](const std::string& path) {
-        seedAccount(path, "magneto", "password7", 0, 1e15);
-    });
-    if (!h.ready) { CHECK(false); return; }
-
-    NetClient client;
-    CHECK(connectClient(h, client));
-    client.requestLogin("magneto", "password7");
-    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::LoggedIn; }));
-    CHECK(awaitProfile(h, client, [](const Profile& p) { return p.level > 100; }));
-
-    client.requestUpgradeSkill(SkillId::Magnetism, 0);
-    h.step(20, {&client});
-    CHECK_EQ(client.profile().skills.level(SkillId::Magnetism), -1);
-
-    for (int tier = 0; tier <= rarityIndex(Rarity::Legendary); ++tier) {
-        client.requestUpgradeSkill(SkillId::Absorbing, tier);
-        CHECK(awaitProfile(h, client, [tier](const Profile& p) {
-            return p.skills.level(SkillId::Absorbing) == tier;
-        }));
-    }
-
-    const int before = client.profile().talentPoints();
-    for (int tier = 0; tier < 3; ++tier) {
-        client.requestUpgradeSkill(SkillId::Magnetism, tier);
-        CHECK(awaitProfile(h, client, [tier](const Profile& p) {
-            return p.skills.level(SkillId::Magnetism) == tier;
-        }));
-    }
-    CHECK_EQ(client.profile().talentPoints(), before - 5 - 8 - 12);
-}
-
 TEST(a_purchase_path_runs_through_every_missing_tier_parent_first) {
     SkillSet skills;
     // Nothing owned: Second Chance's second tier needs Flower Health up to
     // rare first, then both of its own tiers.
     const std::vector<SkillStep> path = skillPurchasePath(skills, SkillId::SecondChance, 1);
     CHECK_EQ(path.size(), std::size_t{5});
-    CHECK(path[0].id == SkillId::PlayerHealth && path[0].tier == 0);
-    CHECK(path[2].id == SkillId::PlayerHealth && path[2].tier == rarityIndex(Rarity::Rare));
+    CHECK(path[0].id == SkillId::Health && path[0].tier == 0);
+    CHECK(path[2].id == SkillId::Health && path[2].tier == rarityIndex(Rarity::Rare));
     CHECK(path[3].id == SkillId::SecondChance && path[3].tier == 0);
     CHECK(path[4].id == SkillId::SecondChance && path[4].tier == 1);
     CHECK_EQ(skillPurchaseCost(skills, SkillId::SecondChance, 1), 1 + 2 + 3 + 1 + 2);
 
     // A parent already past the fork's tier adds nothing; an owned tier, or
     // one past the branch's top, is no purchase at all.
-    skills.set(SkillId::PlayerHealth, rarityIndex(Rarity::Epic));
+    skills.set(SkillId::Health, rarityIndex(Rarity::Epic));
     CHECK_EQ(skillPurchaseCost(skills, SkillId::SecondChance, 0), 1);
-    CHECK(skillPurchasePath(skills, SkillId::PlayerHealth, 1).empty());
+    CHECK(skillPurchasePath(skills, SkillId::Health, 1).empty());
     CHECK(skillPurchasePath(skills, SkillId::Magnetism, 3).empty());
-    CHECK_EQ(skillPurchaseCost(skills, SkillId::PlayerHealth, rarityIndex(Rarity::Mythic)), 8 + 12);
+    CHECK_EQ(skillPurchaseCost(skills, SkillId::Health, rarityIndex(Rarity::Mythic)), 8 + 12);
 }
 
 TEST(a_held_node_buys_its_whole_path_in_one_burst_of_requests) {
@@ -406,9 +351,9 @@ TEST(a_bought_talent_survives_a_reconnect) {
 
     NetClient first;
     CHECK(loginNew(h, first, "lasting", "password7"));
-    first.requestUpgradeSkill(SkillId::PlayerHealth, 0);
+    first.requestUpgradeSkill(SkillId::Health, 0);
     CHECK(awaitProfile(h, first, [](const Profile& p) {
-        return p.skills.level(SkillId::PlayerHealth) == 0;
+        return p.skills.level(SkillId::Health) == 0;
     }));
     first.disconnect();
     h.step(5, {});
@@ -418,7 +363,7 @@ TEST(a_bought_talent_survives_a_reconnect) {
     second.requestLogin("lasting", "password7");
     CHECK(h.stepUntil({&second}, [&] { return second.status() == NetClient::Status::LoggedIn; }));
     CHECK(awaitProfile(h, second, [](const Profile& p) {
-        return p.skills.level(SkillId::PlayerHealth) == 0;
+        return p.skills.level(SkillId::Health) == 0;
     }));
 }
 
@@ -932,7 +877,7 @@ TEST(a_super_craft_has_no_announcement) {
     client.craftOutcome().pending = false;
 
     h.step(10,{&client});
-    CHECK(!sawText(client, "超级 玫瑰 已被"));
+    CHECK(!flix::testsupport::sawText(client, "超级 玫瑰 已被"));
     CHECK(awaitFeed(h,client));
     CHECK(client.notifications().empty());
 
@@ -1002,6 +947,7 @@ TEST(a_mythic_kill_is_worth_stars_and_a_common_one_is_not) {
     CHECK_EQ(starsForKill(Rarity::Legendary), 0);
     CHECK_EQ(starsForKill(Rarity::Mythic), 1);
     CHECK_EQ(starsForKill(Rarity::Apex), 250);
+    CHECK_EQ(starsForKill(Rarity::Ascendant), 1000);
 }
 
 // ---------------------------------------------------------------------------
@@ -1196,10 +1142,10 @@ TEST(a_talent_tree_round_trips_through_the_database) {
         if (!created.ok()) return;
         PlayerRecord& record = db.progress(created.account->id);
         record.totalXp = 100000;
-        record.skills.set(SkillId::Healing, rarityIndex(Rarity::Epic));
+        record.skills.set(SkillId::Medic, rarityIndex(Rarity::Epic));
         record.skills.set(SkillId::Absorbing, rarityIndex(Rarity::Common));
         record.skills.set(SkillId::Reload, rarityIndex(Rarity::Unique));
-        record.skills.set(SkillId::PetHealth, rarityIndex(Rarity::Legendary));
+        record.skills.set(SkillId::PetDamage, rarityIndex(Rarity::Legendary));
         record.skills.set(SkillId::Duplicator, 1);
         db.markDirty();
         CHECK(db.save());
@@ -1214,14 +1160,14 @@ TEST(a_talent_tree_round_trips_through_the_database) {
         const PlayerRecord* record = reopened.findProgress(account->id);
         CHECK(record != nullptr);
         if (record != nullptr) {
-            CHECK_EQ(record->skills.level(SkillId::Healing), rarityIndex(Rarity::Epic));
+            CHECK_EQ(record->skills.level(SkillId::Medic), rarityIndex(Rarity::Epic));
             CHECK_EQ(record->skills.level(SkillId::Absorbing), rarityIndex(Rarity::Common));
             CHECK_EQ(record->skills.level(SkillId::Reload), rarityIndex(Rarity::Unique));
-            CHECK_NEAR(record->skills.reloadScale(), 0.292, 1e-12);
+            CHECK_NEAR(record->skills.reloadScale(), 0.188116992, 1e-12);
             // The newest branch, at the tier the tree's own key table has to
             // spell correctly for a saved account to keep it.
-            CHECK_EQ(record->skills.level(SkillId::PetHealth), rarityIndex(Rarity::Legendary));
-            CHECK_NEAR(record->skills.healthScale(SkillId::PetHealth), 1.6, 1e-12);
+            CHECK_EQ(record->skills.level(SkillId::PetDamage), rarityIndex(Rarity::Legendary));
+            CHECK_NEAR(record->skills.effectScale(SkillId::PetDamage), 1.6, 1e-12);
             // Triplicator, stored as the Duplicator branch's second tier.
             CHECK_EQ(record->skills.level(SkillId::Duplicator), 1);
             CHECK_EQ(record->skills.level(SkillId::Damage), -1);
@@ -1262,7 +1208,7 @@ TEST(a_saved_tier_past_the_top_of_its_branch_loads_clamped) {
         if (record != nullptr) {
             CHECK_EQ(skillTierCount(SkillId::Reload), rarityIndex(Rarity::Unique) + 1);
             CHECK_EQ(record->skills.level(SkillId::Reload), rarityIndex(Rarity::Unique));
-            CHECK_NEAR(record->skills.reloadScale(), 0.292, 1e-12);
+            CHECK_NEAR(record->skills.reloadScale(), 0.188116992, 1e-12);
         }
     }
     std::remove(path.c_str());

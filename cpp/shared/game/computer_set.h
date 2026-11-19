@@ -29,6 +29,24 @@ inline PetalStats computerSetStats(const ContentRegistry& registry, World& world
  std::uint16_t index, Rarity rarity, PetalStats stats){
  if(const auto* mods=world.tryGet<PlayerModifiers>(owner))
   applyComputerSet(registry.petal(index),mods->computerParts[static_cast<std::size_t>(rarityIndex(rarity))],stats);
+ // Golden Cactus affects real health pools and projectile durability, once.
+ double bonus=0.0;
+ if(const auto* loadout=world.tryGet<Loadout>(owner)) {
+  static constexpr double values[]={.01,.02,.03,.05,.08,.13,.21,.34,.55,.825};
+  for(int slot=0;slot<std::min(loadout->activeSlots,kLoadoutActiveSlots);++slot) {
+   const auto& item=loadout->slots[slot];
+   if(!item.empty()&&registry.petal(item.configIndex).id=="golden_cactus")
+    bonus=std::max(bonus,values[ladderIndex(item.rarity)]);
+  }
+ }
+ if(stats.health>0.0&&stats.breakable)stats.health*=1.0+bonus;
+ if(registry.petal(index).id=="void_scythe") {
+  int equipped=0;
+  if(const auto* loadout=world.tryGet<Loadout>(owner))
+   for(int slot=0;slot<std::min(loadout->activeSlots,kLoadoutActiveSlots);++slot)
+    equipped+=!loadout->slots[slot].empty();
+  stats.damage/=std::max(1,equipped);stats.health/=std::max(1,equipped);
+ }
  return stats;
 }
 }

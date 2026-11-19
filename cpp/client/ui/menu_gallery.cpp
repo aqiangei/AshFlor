@@ -30,6 +30,8 @@
 #include "shared/core/json.h"
 #include "shared/game/config.h"
 #include "shared/game/drop_rates.h"
+#include "shared/game/garbage_contents.h"
+#include "shared/core/text.h"
 #include "shared/game/map_elements.h"
 
 namespace flix {
@@ -63,7 +65,9 @@ constexpr double kThumbWidth = 8.0;
 
 /// Where the scrollable content starts, measured down from the card's top.
 constexpr double kControlsTop = kPad + kTitleHeight + kControlsGap;
-constexpr double kContentTop = kControlsTop + kControlsHeight + kControlsGap;
+constexpr double kSearchTop = kControlsTop + kControlsHeight + kControlsGap;
+constexpr double kSearchHeight = 30.0;
+constexpr double kContentTop = kSearchTop + kSearchHeight + kControlsGap;
 
 /// The card is a fixed size however big the window is. It is a corner overlay
 /// now -- pinned under the top icon row rather than standing beside the icon
@@ -750,14 +754,35 @@ std::vector<GalleryDropPreview> galleryDropPreview(std::uint16_t mob,Rarity rari
     return out;
 }
 
+void GalleryPanel::buildDropIndex(int orbTier) {
+    indexedOrbTier_ = orbTier;
+    const std::size_t petalCount = content().petalCount();
+    dropIndex_.assign(content().mobCount() * petalCount, 0);
+    static_assert(kTierColumns <= 16);
+    for (std::uint16_t mob = 0; mob < content().mobCount(); ++mob) {
+        for (int tier = 0; tier < kTierColumns; ++tier) {
+            const Rarity rarity = tier == kLadderRarityCount ? Rarity::Ascendant : clampRarity(tier);
+            const auto bit = static_cast<std::uint16_t>(1u << tier);
+            const auto include = [&](std::uint16_t petal) {
+                if (petal < petalCount) dropIndex_[mob * petalCount + petal] |= bit;
+            };
+            if (content().mob(mob).id == "garbage") {
+                // Bags use their visible contents on the server, not the authored mob table.
+                for (const auto petal : garbageEligiblePetals(content(), rarity)) include(petal);
+            } else {
+                for (const auto& drop : galleryDropPreview(mob, rarity, orbTier)) include(drop.petalIndex);
+            }
+        }
+    }
+}
+
 double GalleryPanel::preferredWidth() { return kCardWidth; }
 
 double GalleryPanel::preferredHeight() { return kCardHeight; }
 
 void GalleryPanel::reset() {
-    // Deliberately empty. The browser panel's scroll offset is a member that
-    // toggling never touches, so reopening the bestiary returns the player to
-    // the row they were reading rather than to the bees.
+    // Keep the current view and scroll position, but release the keyboard.
+    dropSearchField_.blur();
 }
 
 bool GalleryPanel::render(MenuContext& ctx) {
@@ -782,27 +807,67 @@ bool GalleryPanel::render(MenuContext& ctx) {
     const Rect closeRect = closeButtonRect(panel);
     panelClose(canvas, closeRect, closeRect.contains(mouse));
 
+    const Rect searchRect{panel.x + kPad, panel.y + kSearchTop,
+                          std::max(0.0, panel.w - 2.0 * kPad), kSearchHeight};
+    if (editSlotSearch(ctx, searchRect, dropSearch_, dropSearchField_)) scroll_.offset = 0.0;
+    const std::string query = trimmed(lowerCase(dropSearch_));
+    const bool searching = !query.empty();
+    const int orbTier = galleryOrbTier(profile);
+    if ((searching || garbageCatalog_) && indexedOrbTier_ != orbTier) buildDropIndex(orbTier);
+
     const WorldMaps* maps = ctx.renderer.worldMaps();
-    const double controlWidth = std::min(184.0, std::max(0.0, (panel.w - 2.0 * kPad - kControlsGap) * 0.5));
+    const double controlWidth = std::min(184.0, std::max(0.0, (panel.w - 2.0 * kPad - 2.0 * kControlsGap) / 3.0));
     const Rect orderButton{panel.x + kPad, panel.y + kControlsTop, controlWidth, kControlsHeight};
     const Rect npcButton{orderButton.right() + kControlsGap, orderButton.y, controlWidth, kControlsHeight};
-    if (maps && ctx.pressed() && orderButton.contains(mouse)) {
-        groupByBiome_ = !groupByBiome_;
-        if (groupByBiome_ && biomeRows_.empty()) buildBiomeRows(*maps);
+    const Rect bagButton{npcButton.right() + kControlsGap, orderButton.y, controlWidth, kControlsHeight};
+    if (ctx.pressed() && bagButton.contains(mouse)) {
+        garbageCatalog_ = !garbageCatalog_;
+        if (garbageCatalog_ && indexedOrbTier_ != orbTier) buildDropIndex(orbTier);
         scroll_.offset = 0.0;
     }
-    if (ctx.pressed() && npcButton.contains(mouse)) {
+    const bool canChangeOrder = maps && !searching && !garbageCatalog_;
+    if (canChangeOrder && ctx.pressed() && orderButton.contains(mouse)) {
+        groupByBiome_ = !groupByBiome_;
+        scroll_.offset = 0.0;
+    }
+    if (!garbageCatalog_ && ctx.pressed() && npcButton.contains(mouse)) {
         hideNpcs_ = !hideNpcs_;
         scroll_.offset = 0.0;
     }
-    drawSlotButton(canvas, orderButton, groupByBiome_ ? trEnZh("Default order", "恢复原顺序")
+    const bool byBiome = maps && (searching || groupByBiome_);
+    if (byBiome && !garbageCatalog_ && biomeRows_.empty()) buildBiomeRows(*maps);
+    drawSlotButton(canvas, orderButton, searching ? trEnZh("By biome", "按群系")
+                                      : groupByBiome_ ? trEnZh("Default order", "恢复原顺序")
                                                       : trEnZh("Group by biome", "按群系排列"),
-                   maps ? (groupByBiome_ ? kGallerySkin.accent : kGallerySkin.fill)
-                        : std::optional<std::uint32_t>{},
-                   maps && orderButton.contains(mouse));
+                   canChangeOrder ? (groupByBiome_ ? kGallerySkin.accent : kGallerySkin.fill)
+                                  : std::optional<std::uint32_t>{},
+                   canChangeOrder && orderButton.contains(mouse));
     drawSlotButton(canvas, npcButton, hideNpcs_ ? trEnZh("Show NPCs", "显示 NPC")
                                                 : trEnZh("Hide NPCs", "隐藏 NPC"),
-                   hideNpcs_ ? kGallerySkin.accent : kGallerySkin.fill, npcButton.contains(mouse));
+                   garbageCatalog_ ? std::optional<std::uint32_t>{}
+                                   : (hideNpcs_ ? kGallerySkin.accent : kGallerySkin.fill),
+                   !garbageCatalog_ && npcButton.contains(mouse));
+    drawSlotButton(canvas, bagButton, garbageCatalog_ ? trEnZh("Back to monsters", "返回怪物")
+                                                       : trEnZh("Garbage drops", "垃圾袋掉落"),
+                   garbageCatalog_ ? kGallerySkin.accent : kGallerySkin.fill, bagButton.contains(mouse));
+
+    const auto matchesPetal = [&](std::uint16_t i) {
+        const auto& petal = content().petal(i);
+        return !searching || lowerCase(petal.id).find(query) != std::string::npos ||
+               lowerCase(petal.name).find(query) != std::string::npos ||
+               std::string_view(petalNameZh(petal.id)).find(query) != std::string::npos;
+    };
+    std::vector<std::uint16_t> matches;
+    if (searching || garbageCatalog_) {
+        for (std::uint16_t i = 0; i < content().petalCount(); ++i)
+            if (matchesPetal(i)) matches.push_back(i);
+    }
+    std::vector<std::uint16_t> mobTiers(content().mobCount(), 0);
+    if (searching && !garbageCatalog_) {
+        for (std::size_t mob = 0; mob < mobTiers.size(); ++mob)
+            for (const auto petal : matches)
+                mobTiers[mob] |= dropIndex_[mob * content().petalCount() + petal];
+    }
 
     // --- layout ------------------------------------------------------------
     const double contentTop = panel.y + kContentTop;
@@ -820,11 +885,13 @@ bool GalleryPanel::render(MenuContext& ctx) {
         bool heading;
     };
     std::vector<Label> labels;
+    std::vector<const char*> catalogNames;
     std::vector<Cell> cells;
     cells.reserve(content().mobCount() * kTierColumns);
     double y = kContentTop;
     const auto showMob = [&](std::uint16_t mobIndex) {
-        return !hideNpcs_ || !content().mob(mobIndex).npc.present;
+        return (!hideNpcs_ || !content().mob(mobIndex).npc.present) &&
+               (!searching || mobTiers[mobIndex] != 0);
     };
     const auto addRow = [&](std::uint16_t mobIndex) {
         if (!showMob(mobIndex)) return;
@@ -842,7 +909,26 @@ bool GalleryPanel::render(MenuContext& ctx) {
         }
         y += cellStep;
     };
-    if (groupByBiome_) {
+    const int catalogColumns = std::max(1, static_cast<int>(view.w / 150.0));
+    if (garbageCatalog_) {
+        labels.push_back({y + kGroupLabelHeight * 0.5,
+                          trEnZh("Possible contents across all bag rarities", "全品质垃圾袋可能开出的花瓣"), true});
+        y += kGroupLabelHeight;
+        const auto garbage = content().mobIndex("garbage");
+        if (garbage < content().mobCount()) {
+            for (const auto petal : matches) {
+                if (!dropIndex_[garbage * content().petalCount() + petal]) continue;
+                const auto& config = content().petal(petal);
+                catalogNames.push_back(petalNameTr(config.id, config.name.c_str()));
+            }
+        }
+        const auto rows = (catalogNames.size() + catalogColumns - 1) / catalogColumns;
+        y += rows * kRowLabelHeight;
+        if (catalogNames.empty()) {
+            labels.push_back({y + kRowLabelHeight * 0.5, trEnZh("No matching drops", "没有匹配的掉落物"), false});
+            y += kRowLabelHeight;
+        }
+    } else if (byBiome) {
         for (const auto& group : biomeRows_) {
             if (std::none_of(group.mobs.begin(), group.mobs.end(), showMob)) continue;
             const char* name = group.id.empty() ? trEnZh("Other creatures", "其他生物")
@@ -853,6 +939,10 @@ bool GalleryPanel::render(MenuContext& ctx) {
         }
     } else {
         for (const auto mob : mobRows().order) addRow(mob);
+    }
+    if (searching && !garbageCatalog_ && cells.empty()) {
+        labels.push_back({y + kRowLabelHeight * 0.5, trEnZh("No matching drops", "没有匹配的掉落物"), false});
+        y += kRowLabelHeight;
     }
     // The trailing row gap counts: the reference measures from the first row's
     // top to the cursor AFTER the last row's gap, which is one gap of slack at
@@ -927,8 +1017,20 @@ bool GalleryPanel::render(MenuContext& ctx) {
         text(canvas, label.text, startX + 3.0, panel.y + label.y - scroll_.offset, style);
     }
 
+    const double catalogColumnWidth = view.w / catalogColumns;
+    const TextStyle catalogStyle = galleryStyle(14.0, kPaper);
+    for (std::size_t i = 0; i < catalogNames.size(); ++i) {
+        const double row = kContentTop + kGroupLabelHeight + (i / catalogColumns + 0.5) * kRowLabelHeight;
+        if (row + kRowLabelHeight < bandTop || row - kRowLabelHeight > bandTop + view.h) continue;
+        const double x = view.x + (i % catalogColumns) * catalogColumnWidth + 4.0;
+        text(canvas, ellipsize(catalogNames[i], 14.0, catalogColumnWidth - 8.0),
+             x, panel.y + row - scroll_.offset, catalogStyle);
+    }
+
     for (std::size_t i = 0; i < cells.size(); ++i) {
         const Cell& cell = cells[i];
+        const int tier = cell.rarity == Rarity::Ascendant ? kLadderRarityCount : rarityIndex(cell.rarity);
+        const bool dropMatch = searching && (mobTiers[cell.mobIndex] & (1u << tier));
         // Culled in the CARD's space, which is the space cell.rect.y is
         // measured in: a cell is on screen when it lands inside the band the
         // content area occupies, kContentTop down from the card's top. The
@@ -942,7 +1044,7 @@ bool GalleryPanel::render(MenuContext& ctx) {
 
         const bool known = cell.kills > 0;
 
-        setFill(canvas, known ? rarityColor(cell.rarity) : kGallerySkin.accent);
+        setFill(canvas, known || dropMatch ? rarityColor(cell.rarity) : kGallerySkin.accent);
         canvas.beginPath();
         canvas.roundRect(static_cast<float>(rect.x), static_cast<float>(rect.y),
                          static_cast<float>(rect.w), static_cast<float>(rect.h),
@@ -1002,10 +1104,12 @@ bool GalleryPanel::render(MenuContext& ctx) {
     }
 
     // --- tooltip -----------------------------------------------------------
-    // Only over a mob the account has actually killed. A locked cell says
-    // nothing, which is what keeps the grid a checklist.
-    if (hovered >= 0 && cells[static_cast<std::size_t>(hovered)].kills > 0) {
+    // Ordinary browsing keeps the checklist locked until a kill. A search
+    // also lets the player inspect rarities that can supply the desired petal.
+    if (hovered >= 0) {
         const Cell& cell = cells[static_cast<std::size_t>(hovered)];
+        const int tier = cell.rarity == Rarity::Ascendant ? kLadderRarityCount : rarityIndex(cell.rarity);
+        if (cell.kills == 0 && !(searching && (mobTiers[cell.mobIndex] & (1u << tier)))) return !closing;
         const MobConfig& config = content().mob(cell.mobIndex);
         const MobStats stats = content().mobStats(cell.mobIndex, cell.rarity);
 
@@ -1056,7 +1160,17 @@ bool GalleryPanel::render(MenuContext& ctx) {
         if(config.id=="garbage") {
             stat(trEnZh("Drops exactly the visible petal types.","开袋掉落与外观中的花瓣种类一致。"),6.0);
             stat(trEnZh("Each visible type is guaranteed at least once.","每个可见种类至少掉落1件。"),0.0);
-            stat(std::string(trEnZh("Normal rarity rolls; independent trials: ","稀有度正常判定；基础独立掉落次数："))+std::to_string(baseLootTrialsForRarity(cell.rarity)),0.0);
+            stat(trEnZh("Open Garbage drops to see the full pool.", "点击「垃圾袋掉落」查看全部可能内容。"),0.0);
+            const int standardTrials = baseLootTrialsForRarity(cell.rarity);
+            const int ordinaryTrials = baseLootTrialsForRarity(cell.rarity, true);
+            if (ordinaryTrials == standardTrials) {
+                stat(std::string(trEnZh("Base independent trials: ", "基础独立掉落次数：")) +
+                         std::to_string(standardTrials), 0.0);
+            } else {
+                stat(std::string(trEnZh("Base independent trials: ", "基础独立掉落次数：")) +
+                         std::to_string(ordinaryTrials) + trEnZh(" on ordinary maps, ", "（普通地图），") +
+                         std::to_string(standardTrials) + trEnZh(" elsewhere", "（其他地图）"), 0.0);
+            }
         }
         const std::vector<DropRow> rows = config.id=="garbage" ? std::vector<DropRow>{} : computeMobDrops(cell.mobIndex, cell.rarity, usedTiers, galleryOrbTier(ctx.net.profile()));
         std::vector<int> columns;

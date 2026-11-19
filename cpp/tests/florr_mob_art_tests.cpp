@@ -360,6 +360,25 @@ TEST(nazar_beetle_mandibles_face_its_heading) {
     }
 }
 
+TEST(nazar_beetle_carapace_is_aligned_with_the_contact_centre) {
+    for (double heading : {0.0, kPi * 0.5, kPi, kPi * 1.5}) {
+        const auto frame = mobFrame("nazar_beetle", heading, 0, {});
+        int left = kRingSize, right = -1, top = kRingSize, bottom = -1;
+        for (int y = 0; y < kRingSize; ++y) for (int x = 0; x < kRingSize; ++x) {
+            const auto i = static_cast<std::size_t>(4 * (y * kRingSize + x));
+            // This colour belongs to the edge of the closed carapace path.
+            if (frame[i] != 0x0f || frame[i + 1] != 0x0f || frame[i + 2] != 0x99) continue;
+            left = std::min(left, x);
+            right = std::max(right, x);
+            top = std::min(top, y);
+            bottom = std::max(bottom, y);
+        }
+        CHECK(left < right && top < bottom);
+        CHECK_NEAR((left + right + 1) * 0.5, kRingSize * 0.5, 2.0);
+        CHECK_NEAR((top + bottom + 1) * 0.5, kRingSize * 0.5, 2.0);
+    }
+}
+
 TEST(cutter_remains_visible_with_builtin_and_custom_flower_skins) {
     CustomSkin skin;
     skin.id = "test-cutter";

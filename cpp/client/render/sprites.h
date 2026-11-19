@@ -156,6 +156,7 @@ private:
         bool distanceAnimated = false;
         bool articulatedEyes = false;
         double facingOffset = 0.0; ///< Align the source art's head with the game's +X bearing.
+        Vec2 bodyCentreOffset; ///< Source body centre relative to the middle of the fitted square.
         /// The same document in a summon's colours (kPetBodyColor), drawn in
         /// its place for a pet. Only a palette marker can say which of a
         /// document's colours is the body, so this is null for every other

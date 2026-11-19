@@ -51,7 +51,7 @@ TEST(reference_talents_preserve_old_indices_and_price_every_tier) {
     CHECK_EQ(skills.spent(), 260);
     CHECK_EQ(availableTalentPoints(200, skills), 140);
     CHECK_NEAR(skills.statScale(SkillId::Damage), 1.9, 1e-12);
-    CHECK_NEAR(skills.effectScale(SkillId::Damage), 4.8, 1e-12);
+    CHECK_NEAR(skills.effectScale(SkillId::Damage), 2.4, 1e-12);
     CHECK_EQ(absorbXpTotal(50 * absorbUnits(Rarity::Rare), skills), 400.0);
     skillRefundTo(skills, SkillId::Damage, -1);
     CHECK_EQ(skills.spent(), 130);
@@ -200,7 +200,7 @@ TEST(reference_damage_talent_updates_live_petals_and_body_then_refunds_cleanly) 
     world.get<PlayerSkillTree>(player).skills.set(SkillId::SharpEdges, 0);
     world.get<PlayerSkillTree>(player).skills.set(SkillId::Damage, 9);
     tick(60); // clear the previous petal swing's source cooldown
-    CHECK_NEAR(petalDamage(), base * 4.8, 1e-8);
+    CHECK_NEAR(petalDamage(), base * 2.4, 1e-8);
     CHECK_NEAR(world.get<PlayerModifiers>(player).damageScale, 1.38 * 1.9, 1e-12);
     skillRefundTo(world.get<PlayerSkillTree>(player).skills, SkillId::Damage, -1);
     tick(60);

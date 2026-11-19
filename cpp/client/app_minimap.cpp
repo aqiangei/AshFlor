@@ -42,6 +42,21 @@ namespace {
 
 constexpr double kMinimapSize = 200.0;
 constexpr double kMinimapPadding = 10.0;
+double hudPanelDensity(const Window& window) {
+    return window.uiScale() / (window.devicePixelRatio() * window.renderScale());
+}
+double hudPanelScale(double density) { return std::max(1.0, 1.0 / density); }
+double hudPanelTop(double width) { return width < 960.0 ? 160.0 : kMinimapPadding; }
+constexpr double kHudPanelToggleHeight = 32.0;
+double hudPanelHeaderHeight(double density) {
+    return (kHudPanelToggleHeight + 10.0) * hudPanelScale(density);
+}
+Rect hudPanelToggle(double width, double density) {
+    const double scale = hudPanelScale(density);
+    const double buttonWidth = std::min(124.0 * scale, std::max(0.0, width - 2.0 * kMinimapPadding));
+    return {width - kMinimapPadding - buttonWidth, hudPanelTop(width),
+            buttonWidth, kHudPanelToggleHeight * scale};
+}
 /// Online list under the map: a bit wider than the map for name/guild/map,
 /// and tall so a busy server scrolls instead of crowding the HUD.
 constexpr double kRosterWidth = 240.0;
@@ -333,14 +348,15 @@ const Canvas* App::minimapStatic(bool rarityGlow) {
         walls.fill(run);
         run.clear();
     };
+    const double worldScale = terrain.mapScale(realm);
     eachMinimapSolid(terrain, realm, [&](const MinimapSolid& solid) {
         if (!run.empty() && solid.water != runWater) fillRun();
         runWater = solid.water;
         if (solid.ring == nullptr) {
             // The whole-cell fallback: a blocking cell the map has no shapes
             // for, whose collision IS its square. See eachMinimapSolid().
-            const Vec2 corner = toBox(solid.origin);
-            const float side = static_cast<float>(kTileSize * fit.scale);
+            const Vec2 corner = toBox(solid.origin * worldScale);
+            const float side = static_cast<float>(kTileSize * worldScale * fit.scale);
             run.rect(static_cast<float>(corner.x), static_cast<float>(corner.y), side, side);
             return;
         }
@@ -353,7 +369,7 @@ const Canvas* App::minimapStatic(bool rarityGlow) {
         // 2026-10-03.
         const std::vector<Vec2>& ring = *solid.ring;
         for (std::size_t i = 0; i < ring.size(); ++i) {
-            const Vec2 point = toBox(ring[i] + solid.origin);
+            const Vec2 point = toBox((ring[i] + solid.origin) * worldScale);
             if (i == 0) run.moveTo(static_cast<float>(point.x), static_cast<float>(point.y));
             else run.lineTo(static_cast<float>(point.x), static_cast<float>(point.y));
         }
@@ -426,7 +442,7 @@ bool App::canShowMinimap() const {
 Rect App::minimapBounds(bool expanded) const {
     const double w = window_.width();
     const double h = window_.height();
-    if (!expanded) return {w - kMinimapSize - kMinimapPadding, kMinimapPadding, kMinimapSize, kMinimapSize};
+    if (!expanded) return {w - kMinimapSize - kMinimapPadding, hudPanelTop(w) + hudPanelHeaderHeight(hudPanelDensity(window_)), kMinimapSize, kMinimapSize};
     const double side = std::max(1.0, std::min({w - 32.0, h - 84.0, 620.0}));
     return {(w - side) * 0.5, (h - side) * 0.5, side, side};
 }
@@ -437,6 +453,38 @@ Rect App::minimapCloseBounds() const {
 }
 
 void App::updateMinimapControls() {
+    auto& settings = menus_.settings();
+    const Rect toggle = hudPanelToggle(window_.width(), hudPanelDensity(window_));
+    const Vec2 pointer{window_.mouseX(), window_.mouseY()};
+    const auto& touchEvents = window_.touchEvents();
+    const bool pressed = window_.mousePressed(MouseButton::Left) && toggle.contains(pointer);
+    const bool enabled = !menus_.anyOpen() && !minimapExpanded_;
+    bool touched = false;
+    bool captured = !hudPanelTouches_.empty() || hudPanelMouseHeld_;
+    hudPanelTouches_.erase(std::remove_if(hudPanelTouches_.begin(), hudPanelTouches_.end(), [&](auto id) {
+        return std::none_of(window_.touches().begin(), window_.touches().end(),
+                            [&](const auto& point) { return point.id == id; });
+    }), hudPanelTouches_.end());
+    for (const auto& event : touchEvents) {
+        const Vec2 at{event.point.x, event.point.y};
+        if (enabled && event.phase == TouchPhase::Began && toggle.contains(at) &&
+            !tutorial_.capturesMouse(at)) {
+            hudPanelTouches_.push_back(event.point.id);
+            touched = true;
+        }
+    }
+    hudPanelMouseHeld_ = window_.mouseDown(MouseButton::Left) &&
+        (hudPanelMouseHeld_ || (enabled && pressed));
+    // Own the entire press, including release and dragging outside the button.
+    hudPanelControlUsed_ = captured || !hudPanelTouches_.empty() || hudPanelMouseHeld_ ||
+        (enabled && toggle.contains(pointer));
+    if (enabled && !tutorial_.capturesMouse(pointer) && (pressed || touched)) {
+        settings.hudPanelsCollapsed = !settings.hudPanelsCollapsed;
+        settings.settingsDirty = true;
+        onlineRosterBox_ = {};
+        hudPanelControlUsed_ = true;
+        return;
+    }
     if (!canShowMinimap() || menus_.anyOpen()) {
         minimapExpanded_ = false;
         return;
@@ -584,8 +632,14 @@ void App::drawMinimap(Canvas& canvas, bool expanded) {
         dot(at, 4.0, squadmate ? 0xFF69B4u : kInk, squadmate, markerLabel,
             playerLabelPriority(net_.guild(), row.guild, squadmate));
     }
-    // Self last, so the blue dot is never hidden under someone standing on it.
-    dot(me, 3.0, 0x0000FFu, true, selfName, MapLabelPriority::Self);
+    // Keep the self marker clear of the minimap edge even at a world boundary.
+    constexpr double selfRadius = 7.0;
+    const Vec2 projected = fit.toBox(me);
+    const Vec2 selfAt{
+        x + clamp(projected.x, selfRadius, side - selfRadius),
+        y + clamp(projected.y, selfRadius, side - selfRadius),
+    };
+    labels.push_back({{selfAt.x, selfAt.y - selfRadius - 2.0}, selfName, MapLabelPriority::Self});
 
     // The camera's own rectangle, inside the clip, with hitboxes on. The
     // reference strokes it from cameraX/cameraY, which are the world-space TOP
@@ -604,6 +658,13 @@ void App::drawMinimap(Canvas& canvas, bool expanded) {
         canvas.stroke();
     }
     paintMapLabels(canvas, box, labels);
+    // The dark edge and white ring keep the blue centre visible on any map colour.
+    setFill(canvas, kInk);
+    canvas.fillCircle(static_cast<float>(selfAt.x), static_cast<float>(selfAt.y), selfRadius);
+    setFill(canvas, 0xFFFFFFu);
+    canvas.fillCircle(static_cast<float>(selfAt.x), static_cast<float>(selfAt.y), 5.5f);
+    setFill(canvas, 0x0D57E8u);
+    canvas.fillCircle(static_cast<float>(selfAt.x), static_cast<float>(selfAt.y), 3.5f);
     canvas.restore();
 
     canvas.save();
@@ -657,6 +718,19 @@ bool App::scrollOnlineRoster() {
 
 void App::drawOnlineRoster(Canvas& canvas) {
     onlineRosterBox_ = {};
+    const auto& settings = menus_.settings();
+    const Rect toggle = hudPanelToggle(canvas.width(), hudPanelDensity(window_));
+    const bool hovered = toggle.contains({window_.mouseX(), window_.mouseY()});
+    const bool zh = ui::language() == ui::Language::Zh;
+    const std::string caption = settings.hudPanelsCollapsed
+        ? (zh ? "展开在线列表" : "Show online list")
+        : (zh ? "收起在线列表" : "Hide online list");
+    ui::ButtonStyle toggleStyle;
+    toggleStyle.textSize = 13.0 * hudPanelScale(hudPanelDensity(window_));
+    toggleStyle.shrinkToFit = true;
+    ui::button(canvas, toggle, caption, hovered, hovered && window_.mouseDown(MouseButton::Left), toggleStyle);
+    if (hovered) window_.setCursorShape(CursorShape::Hand);
+    if (settings.hudPanelsCollapsed) return;
     const auto& roster = net_.onlineRoster();
     // Nothing to show until the first push; keeps the corner clean on connect.
     if (roster.empty() && !net_.haveSession()) {
@@ -665,9 +739,25 @@ void App::drawOnlineRoster(Canvas& canvas) {
     }
 
     const double x = canvas.width() - kRosterWidth - kMinimapPadding;
-    const double y = kMinimapPadding + kMinimapSize + kRosterGap;
+    double y = hudPanelTop(canvas.width()) + hudPanelHeaderHeight(hudPanelDensity(window_)) + kMinimapSize + kRosterGap;
+    if (net_.view().realm() == Realm::Arena) {
+        std::size_t players = 0;
+        for (const auto& entry : net_.view().entities())
+            if (entry.second.kind == net::EntityKind::Player) ++players;
+        const double boardHeight = 62.0 + 24.0 * std::min<std::size_t>(10, players);
+        y = std::max(y, hudPanelTop(canvas.width()) + 10.0 + hudPanelHeaderHeight(hudPanelDensity(window_)) + boardHeight + kRosterGap);
+    }
     // Leave room above the bottom HUD / chat; never eat the whole screen.
-    const double maxH = std::max(120.0, canvas.height() - y - 140.0);
+    double bottom = canvas.height() - 140.0;
+    if (touchControlsVisible()) {
+        for (const Rect& control : mobile_.hitBounds())
+            if (control.right() > x && control.x < canvas.width() && control.y > y)
+                bottom = std::min(bottom, control.y - 10.0);
+    }
+    const Rect rotation = menus_.rotationDialBounds();
+    if (rotation.w > 0 && rotation.right() > x && rotation.x < canvas.width() && rotation.y > y)
+        bottom = std::min(bottom, rotation.y - 10.0);
+    const double maxH = std::max(48.0, bottom - y);
     const double boxH = std::min(kRosterHeight, maxH);
     onlineRosterBox_ = {x, y, kRosterWidth, boxH};
 
@@ -974,7 +1064,7 @@ void App::drawArenaLeaderboard(Canvas& canvas) {
     const double rowsH = shown * kRowH + (shown > 0 ? shown - 1 : 0) * kRowGap;
     const double panelH = kHeaderH + kPanelPad * 2.0 + rowsH + kPanelPad;
     const double x = canvas.width() - panelW - 20.0;
-    const double y = 20.0;
+    const double y = hudPanelTop(canvas.width()) + 10.0 + hudPanelHeaderHeight(hudPanelDensity(window_));
 
     canvas.save();
     canvas.setLineJoin("round");

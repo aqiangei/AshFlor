@@ -1411,6 +1411,8 @@ PetalConfig parsePetal(Ctx& ctx, const std::string& id, const Json& src,
     // the TypeScript build, whose loader THREW on an equipFlags name its own
     // EquipmentFlags enum did not have; the rule has stayed in code since.
     if (p.id == "lightning_cutter") p.equipFlags |= EquipLightningCutter;
+    if(p.id=="arctic_ears")p.equipFlags|=EquipCatEars;
+    if(p.id=="void_halo")p.equipFlags|=EquipHalo;
 
     p.poisonPerSecond = ctx.range(src, "poison", 0.0, 0.0, kMaxPoisonPerMillis) * 1000.0;
     p.poisonDurationMillis = ctx.range(src, "poisonDuration", 0.0, 0.0, kMaxDurationMillis);
@@ -1446,15 +1448,19 @@ PetalConfig parsePetal(Ctx& ctx, const std::string& id, const Json& src,
         else if (kind == "oil") p.spill.kind = SpillKind::Oil;
         else if (kind == "blood") p.spill.kind = SpillKind::Blood;
         else if (kind == "elixir") p.spill.kind = SpillKind::Elixir;
+        else if (kind == "latrine") p.spill.kind = SpillKind::Latrine;
+        else if (kind == "nitrogen") p.spill.kind = SpillKind::Nitrogen;
         else ctx.warn("unknown spill kind '" + kind + "'");
         p.spill.onHit = ctx.boolean(spill, "onHit");
+        p.spill.health = ctx.range(spill,"health",0.0,0.0,kMaxBaseStat);
         p.spill.radius = ctx.range(spill, "radius", 0.0, 0.0, 600.0);
         p.spill.durationMillis = ctx.range(spill, "durationMs", 0.0, 0.0, 10000.0);
         p.spill.chargeMillis = ctx.range(spill, "chargeMs", 1000.0, 50.0, 10000.0);
         p.spill.strength = ctx.range(spill, "strength", 0.0, 0.0, kMaxBaseStat);
         p.spill.lingerMillis = ctx.range(spill, "lingerMs", 0.0, 0.0, 10000.0);
         p.spill.frostFactor = ctx.range(spill, "frostFactor", 1.0, 0.0, 1.0);
-        if (p.spill.radius <= 0.0 || p.spill.durationMillis <= 0.0 || p.spill.strength <= 0.0)
+        if (p.spill.radius <= 0.0 || p.spill.durationMillis <= 0.0 ||
+            (p.spill.strength <= 0.0 && p.spill.kind != SpillKind::Nitrogen))
             p.spill.kind = SpillKind::None;
     }
 
@@ -1464,6 +1470,7 @@ PetalConfig parsePetal(Ctx& ctx, const std::string& id, const Json& src,
     p.passiveMana = ctx.range(src, "passiveMana", 0.0, 0.0, kMaxBaseStat);
     p.requiredMana = ctx.range(src, "requiredMana", 0.0, 0.0, kMaxBaseStat);
     p.lightningDamage = ctx.boolean(src, "lightningDamage");
+    p.armorPiercing = ctx.boolean(src,"armorPiercing");
     p.stackable = ctx.boolean(src, "stackable", true);
     p.biomeDropOnly = ctx.boolean(src, "biomeDropOnly");
 
@@ -2060,14 +2067,14 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
         const auto boost = [](double& value, double factor) {
             if (value > 0.0) value *= factor;
         };
-        boost(stats.damage, 1.25);
-        boost(stats.bodyDamage, 1.25);
-        boost(stats.critDamage, 1.25);
-        boost(stats.poisonPerSecond, 1.25);
-        boost(stats.lightningDamagePerHit, 1.25);
+        boost(stats.damage, kAscendantPetalDamageScale);
+        boost(stats.bodyDamage, kAscendantPetalDamageScale);
+        boost(stats.critDamage, kAscendantPetalDamageScale);
+        boost(stats.poisonPerSecond, kAscendantPetalDamageScale);
+        boost(stats.lightningDamagePerHit, kAscendantPetalDamageScale);
         boost(stats.armorReduction, 1.25);
         boost(stats.armorPerStack, 1.25);
-        boost(stats.health, 1.30);
+        boost(stats.health, kAscendantPetalHealthScale);
         boost(stats.petalArmor, 1.30);
         boost(stats.flowerHealthBonus, 1.30);
         boost(stats.heal, 1.15);
@@ -2234,6 +2241,7 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
     // 300 at apex.
     if (petalIsLooseBody(c)) s.radius = kLoosePetalRadiusPerTier * (rarityIndex(tier) + 1);
     s.size = c.size;
+    if(const double length=referencePetalLengthRadius(c.id,r);length>0){s.radius=length;s.size=length/kPetalRadiusPerSize;}
     s.visualScale = c.visualScale;
     s.damageIntervalMillis = c.damageIntervalMillis;
     // `count` is flat for almost every petal, and the two exceptions are

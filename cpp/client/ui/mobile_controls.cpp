@@ -85,7 +85,7 @@ void circle(Canvas& canvas, Vec2 centre, double radius) {
 
 } // namespace
 
-void MobileControls::layout(int viewWidth, int viewHeight, double loadoutBarHeight) {
+void MobileControls::layout(int viewWidth, int viewHeight, double loadoutBarHeight, bool rightSidebarVisible) {
     placed_ = true;
 
     constexpr double attackHit = kAttackRadius * kButtonHitSlack;
@@ -95,12 +95,20 @@ void MobileControls::layout(int viewWidth, int viewHeight, double loadoutBarHeig
     constexpr double rightWidth = kRightMargin + attackHit + columnGap + retractHit;
     // A short landscape viewport stacks the minimap and player list down
     // the right edge. Tuck the controls just beside that column.
-    const double sidebar = viewWidth >= 1200 && viewHeight < 1000 ? 260.0 : 0.0;
+    const double sidebar = rightSidebarVisible && viewWidth >= 1200 && viewHeight < 1000 ? 260.0 : 0.0;
     // Keep the controls on the right and clear of the movement stick.
     constexpr double needed = kIconColumnRight + 2 * kControlGap +
                               2 * kStickHitRadius + rightWidth;
     scale_ = std::min({1.0, (viewWidth - sidebar) / needed,
                        (viewWidth * 0.5 - sidebar) / (rightWidth + kControlGap)});
+
+    // Fit the upper row's full touch radius as well as the movement stick.
+    // Width alone cannot keep controls on screen in a short viewport.
+    const double requiredHeight = kBottomGap + std::max(
+        kStickRadius + kStickLift + kStickHitRadius,
+        2.0 * (attackHit + swapHit) + kButtonGap);
+    const double availableHeight = std::max(1.0, viewHeight - loadoutBarHeight - kControlGap);
+    scale_ = std::min(scale_, availableHeight / requiredHeight);
 
     const double bottom = viewHeight - loadoutBarHeight - kBottomGap * scale_;
     stickCentre_ = {kStickCentreX * scale_,

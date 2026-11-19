@@ -54,7 +54,7 @@ constexpr double kWheelStep = 100.0;
 constexpr std::uint32_t kBodyBorder = kChangelogSkin.border;
 constexpr std::uint32_t kLinkFill = 0xD8F7FFu;
 
-constexpr int kMaxChanges = 32;
+constexpr int kMaxChanges = 80;
 
 struct ChangelogEntry {
     const char* date;

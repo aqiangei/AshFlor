@@ -141,6 +141,8 @@ public:
     bool empty() const { return squads_.empty(); }
 
 private:
+    void disband(const std::string& squadId);
+
     struct Invite {
         std::string squadId;
         std::int64_t expiresAtMillis = 0;

@@ -48,7 +48,6 @@ constexpr double kNumberRise = 100.0;
 constexpr double kNumberArcPeak = 0.45;
 constexpr double kNumberDrift = 45.0;
 /// Both spawn 20 world units above the body that was hit.
-constexpr double kNumberSpawnRise = 20.0;
 /// Damage to a flower is reported per hit; damage to a mob is throttled into a
 /// 100 ms bucket. Both sizes are the floor a small hit is drawn at -- the
 /// number grows with what it reports, up to kNumberMaxSize.
@@ -871,10 +870,8 @@ void WorldRenderer::ingestEvents(WorldView& view) {
         const bool poison = channel == NumberChannel::Poison;
         Effect e;
         e.kind = Effect::Kind::DamageNumber;
-        // Reported 20 units above the body that produced it, and a poison tick
-        // 14 units to the side of that so it cannot land under the petal hit
-        // that arrived in the same tick.
-        e.position = {at.x + (poison ? kPoisonNumberOffsetX : 0.0), at.y - kNumberSpawnRise};
+        // Start at impact. Offset poison horizontally so a simultaneous direct hit stays legible.
+        e.position = {at.x + (poison ? kPoisonNumberOffsetX : 0.0), at.y};
         // The throw: a sideways speed picked per number, and the apex the arc
         // is scaled to. `drift` is a whole life's worth of travel in both, so
         // the draw only has to weigh it by the shape of the path.
@@ -990,27 +987,20 @@ void WorldRenderer::ingestEvents(WorldView& view) {
                     break;
                 }
                 const std::uint64_t key = numberKey(event.netId, channel);
-                const auto bucket = damageTextAt_.find(key);
-                if (bucket != damageTextAt_.end() &&
-                    nowSeconds_ - bucket->second < kDamageTextThrottleSeconds) {
-                    damagePending_[key] += event.amount;
-                    break;
-                }
-                double total = event.amount;
-                const auto pending = damagePending_.find(key);
-                if (pending != damagePending_.end()) total += pending->second;
+                auto& bucket = damageNumbers_[key];
+                bucket.amount += event.amount;
+                bucket.lastHit = nowSeconds_;
+                bucket.lastImpact = event.position;
+                if (nowSeconds_ - bucket.lastShown < kDamageTextThrottleSeconds) break;
                 // A total that would print as "-0" is held until it adds up to
                 // a point. A termite colony splits every hit across thirty
                 // bodies, so each one is struck for a fraction of a point at a
                 // time, and drawing each fraction at once would show nothing
                 // but zeros.
-                if (total < kMinShownDamage) {
-                    damagePending_[key] = total;
-                    break;
-                }
-                if (pending != damagePending_.end()) damagePending_.erase(pending);
-                damageTextAt_[key] = nowSeconds_;
-                pushNumber(event.position, total, kMobNumberSize, channel);
+                if (bucket.amount < kMinShownDamage) break;
+                pushNumber(event.position, bucket.amount, kMobNumberSize, channel);
+                bucket.amount = 0.0;
+                bucket.lastShown = nowSeconds_;
                 break;
             }
             case net::EventKind::Killed: {
@@ -1021,14 +1011,12 @@ void WorldRenderer::ingestEvents(WorldView& view) {
                 for (const NumberChannel channel :
                      {NumberChannel::Hit, NumberChannel::Poison, NumberChannel::Lightning}) {
                     const std::uint64_t key = numberKey(event.netId, channel);
-                    const auto pending = damagePending_.find(key);
-                    if (pending != damagePending_.end()) {
-                        if (options.damageNumbers && pending->second >= kMinShownDamage) {
-                            pushNumber(event.position, pending->second, kMobNumberSize, channel);
-                        }
-                        damagePending_.erase(pending);
+                    const auto bucket = damageNumbers_.find(key);
+                    if (bucket == damageNumbers_.end()) continue;
+                    if (options.damageNumbers && bucket->second.amount >= kMinShownDamage) {
+                        pushNumber(bucket->second.lastImpact, bucket->second.amount, kMobNumberSize, channel);
                     }
-                    damageTextAt_.erase(key);
+                    damageNumbers_.erase(bucket);
                 }
                 // The snapshot erased the entity before this event was read, so
                 // the death animation replays the last state it was DRAWN in:
@@ -1350,18 +1338,12 @@ void WorldRenderer::update(double dt) {
                                 }),
                  dying_.end());
 
-    // A target that left view mid-throttle would otherwise keep its bucket for
-    // the session. Long past the window nothing more can arrive for it, and
-    // anything still pending is under 100 ms of damage on something that has
-    // stopped being hit.
+    // Tracks hits even before the first number was large enough to draw.
+    // Discard idle buckets when the target has gone out of view or the fight ended.
     constexpr double kBucketIdleSeconds = 5.0;
-    for (auto it = damageTextAt_.begin(); it != damageTextAt_.end();) {
-        if (nowSeconds_ - it->second > kBucketIdleSeconds) {
-            damagePending_.erase(it->first);
-            it = damageTextAt_.erase(it);
-        } else {
-            ++it;
-        }
+    for (auto it = damageNumbers_.begin(); it != damageNumbers_.end();) {
+        it = nowSeconds_ - it->second.lastHit > kBucketIdleSeconds
+            ? damageNumbers_.erase(it) : std::next(it);
     }
 
     // Shadows exist only to give a Killed event something to animate, and a
@@ -1833,8 +1815,6 @@ constexpr int kChunkBakeCellsPerFrame = 1024;
 } // namespace
 
 void WorldRenderer::drawTerrain(Canvas& canvas, const Camera& camera, Realm realm) const {
-    // Everything outside the map is pure black: the browser build clears its
-    // frame to it and simply skips any cell that is not there.
     ui::setFill(canvas, 0x000000u);
     canvas.fillRect(0, 0, static_cast<float>(camera.viewportWidth()),
                     static_cast<float>(camera.viewportHeight()));
@@ -1852,6 +1832,22 @@ void WorldRenderer::drawTerrain(Canvas& canvas, const Camera& camera, Realm real
     const int rows = map->height();
     if (cols <= 0 || rows <= 0) return;
 
+    const Rect view = camera.visibleWorld();
+    const Vec2 extent{cols * kTileSize, rows * kTileSize};
+    if (camera.followsMapEdges({view.w, view.h}) &&
+        (view.left() < 0.0 || view.top() < 0.0 || view.right() > extent.x || view.bottom() > extent.y)) {
+        // A neutral strip marks the space beyond the map. Keep the original
+        // backing under map cells, including transparent tiles.
+        ui::setFill(canvas, 0x262D33u);
+        canvas.fillRect(0, 0, static_cast<float>(camera.viewportWidth()),
+                        static_cast<float>(camera.viewportHeight()));
+        const Vec2 start = camera.worldToScreen({});
+        const Vec2 end = camera.worldToScreen(extent);
+        ui::setFill(canvas, 0x000000u);
+        canvas.fillRect(static_cast<float>(start.x), static_cast<float>(start.y),
+                        static_cast<float>(end.x - start.x), static_cast<float>(end.y - start.y));
+    }
+
     // The cells whose artwork can reach the screen, and NOT ONE MORE. A cell
     // is drawn over exactly its own square grown by kTileOverlap, so that
     // overlap is the whole margin this wants. A kTileSize margin -- the
@@ -1859,12 +1855,14 @@ void WorldRenderer::drawTerrain(Canvas& canvas, const Camera& camera, Realm real
     // cells all the way round: measured on a 1280x720 view of garden.tmj,
     // 60 cells against 32, for artwork that is off screen before it is
     // drawn.
-    const Rect visible = camera.visibleWorld(kTileOverlap);
+    const double mapScale = map->worldScale();
+    const double pitch = kTileSize * mapScale;
+    const Rect visible = camera.visibleWorld(kTileOverlap * mapScale);
     CellSpan span;
-    span.x0 = std::max(0, static_cast<int>(std::floor(visible.left() / kTileSize)));
-    span.y0 = std::max(0, static_cast<int>(std::floor(visible.top() / kTileSize)));
-    span.x1 = std::min(cols - 1, static_cast<int>(std::floor(visible.right() / kTileSize)));
-    span.y1 = std::min(rows - 1, static_cast<int>(std::floor(visible.bottom() / kTileSize)));
+    span.x0 = std::max(0, static_cast<int>(std::floor(visible.left() / pitch)));
+    span.y0 = std::max(0, static_cast<int>(std::floor(visible.top() / pitch)));
+    span.x1 = std::min(cols - 1, static_cast<int>(std::floor(visible.right() / pitch)));
+    span.y1 = std::min(rows - 1, static_cast<int>(std::floor(visible.bottom() / pitch)));
     if (span.x1 < span.x0 || span.y1 < span.y0) return;
 
     const std::vector<const SvgDocument*>& art = artFor(*map);
@@ -1892,10 +1890,11 @@ void WorldRenderer::drawTerrain(Canvas& canvas, const Camera& camera, Realm real
     const double logical = canvas.width() > 0 ? static_cast<double>(canvas.width()) : 1.0;
     const double perUnit = static_cast<double>(canvas.pixelWidth()) / logical;
     const double toPixels = perUnit > 0.0 ? perUnit : 1.0;
-    const double side = tileSidePixels(zoom, toPixels) / toPixels;
+    const double side = tileSidePixels(zoom * mapScale, toPixels) / toPixels;
     paintTerrainCells(canvas, *map, art, span, side, [&](int tx, int ty) {
         const Vec2 corner = camera.worldToScreen(
-            {tx * kTileSize - kTileOverlap, ty * kTileSize - kTileOverlap});
+            {(tx * kTileSize - kTileOverlap) * mapScale,
+             (ty * kTileSize - kTileOverlap) * mapScale});
         return Vec2{std::round(corner.x * toPixels) / toPixels,
                     std::round(corner.y * toPixels) / toPixels};
     });
@@ -1917,9 +1916,9 @@ bool WorldRenderer::drawTerrainChunks(Canvas& canvas, const Camera& camera, cons
     const double zoom = camera.zoom();
     // Device pixels per WORLD unit: what a chunk is baked at, and the one
     // number every chunk in the cache shares.
-    const double scale = zoom * toPixels;
+    const double scale = zoom * toPixels * map.worldScale();
     if (!(scale > 0.0) || !std::isfinite(scale)) return false;
-    const double side = tileSidePixels(zoom, toPixels);
+    const double side = tileSidePixels(zoom * map.worldScale(), toPixels);
     int cells = 1;
     while (cells < kMaxChunkCells && kTileSize * scale * cells * 2.0 <= kChunkPixels) cells *= 2;
 
@@ -2852,8 +2851,15 @@ void WorldRenderer::drawPetalSprite(Canvas& canvas, const RemoteEntity& entity,
     // than fanning outward like spokes. entity.angle is where the INSTANCE
     // faces -- its ring bearing, or a clump grain's bearing out of its clump --
     // and only an inward-facing clump reads it.
+    const bool playerPetal = entity.ownerNetId != 0 && !entity.isRingPetal() && !entity.isLoosePetal();
+    const bool equippedMissile = playerPetal && config && config->id == "mecha_missile";
+    const bool equippedElemental = playerPetal && config && config->id == "void_elemental";
     double rotation = 0;
-    if (entity.isRingPetal()) {
+    if (equippedMissile) {
+        const Vec2 out = entity.ownerOffset;
+        const double bearing = out.lengthSq() > 0.0 ? out.angle() : entity.angle;
+        rotation = bearing - std::atan2(1124.0, 747.0);
+    } else if (entity.isRingPetal()) {
         // gardn's kFollowRot: turned to its own outward bearing, so whatever
         // the artwork puts at the petal's -X end -- a dandelion's stem --
         // points back into the body it grew on. `ownerOffset` is the smoothed
@@ -2909,7 +2915,7 @@ void WorldRenderer::drawPetalSprite(Canvas& canvas, const RemoteEntity& entity,
     const ScopedColorTint flash(canvas, hitTint(entity.netId));
     const bool rollingDice = config && config->id == "dice" && diameter >= 8.0 &&
         entity.ownerNetId != 0 && !entity.isRingPetal() && !entity.isLoosePetal();
-    if (!rollingDice) canvas.rotate(static_cast<float>(rotation));
+    if (!rollingDice && !equippedElemental) canvas.rotate(static_cast<float>(rotation));
     // Both axes: a petal that declares an X offset is drawn off it in the
     // browser build too, and dropping one of the two silently moves it.
     if (config && (config->visualOffsetX != 0 || config->visualOffsetY != 0)) {
@@ -2920,6 +2926,19 @@ void WorldRenderer::drawPetalSprite(Canvas& canvas, const RemoteEntity& entity,
         const int face = entity.petalVariant >= 1 && entity.petalVariant <= 6
             ? entity.petalVariant : 1;
         ui::drawRollingDice(canvas, face, entity.petalAgeSeconds, diameter);
+    } else if (equippedElemental) {
+        Rng layout(entity.netId);
+        const double phase = timeSeconds * 10.0;
+        const double scale = diameter / 160.0;
+        ui::setFill(canvas, 0x333333u);
+        for (int i = 0; i < 10; ++i) {
+            const double x = (layout.unit() * 2.0 - 1.0) * 30.0 +
+                std::cos(i * 1.45 + phase) * std::sin(i * 0.45 + phase * 0.2) * 20.0;
+            const double y = (layout.unit() * 2.0 - 1.0) * 30.0 +
+                std::sin(i * 0.58 + phase * 0.5) * 15.0;
+            canvas.fillCircle(static_cast<float>(x * scale), static_cast<float>(y * scale),
+                              static_cast<float>(13.0 * scale));
+        }
     } else if (config && config->id == "domino" && entity.petalVariant < 49) {
         SpriteCache::drawDomino(canvas, diameter, entity.petalVariant);
     } else if (config && config->id == "dust") {
@@ -2929,6 +2948,14 @@ void WorldRenderer::drawPetalSprite(Canvas& canvas, const RemoteEntity& entity,
         // its artwork failed to compile, which is the useful fallback here.
         sprites_->drawPetal(canvas, entity.typeIndex, entity.rarity, 0, 0, diameter, 0,
                             timeSeconds);
+        if (equippedMissile && sprites_->petalDrawable(entity.typeIndex)) {
+            // The mounted reference artwork has the same hull without the red
+            // projectile lamp. Match its body over the lamp on the base sprite.
+            ui::setFill(canvas, 0x999999u);
+            canvas.fillCircle(static_cast<float>(diameter * 0.120),
+                              static_cast<float>(diameter * 0.203),
+                              static_cast<float>(diameter * 0.053));
+        }
     } else {
         ui::disc(canvas, {0, 0}, diameter * 0.5,
                  config ? static_cast<std::uint32_t>(config->colorRgba >> 8) : 0xFFFFFFu,
@@ -3015,6 +3042,20 @@ void WorldRenderer::drawFlowerBody(Canvas& canvas, const RemoteEntity& entity,
     }
     if (!skin && (entity.equipFlags & EquipCrown)) drawWornCrown(canvas);
     if (entity.equipFlags & EquipPharaohCrown) drawWornPharaohCrown(canvas);
+    drawReferenceHeadwear(canvas,entity.equipFlags,timeSeconds);
+}
+
+void WorldRenderer::drawReferenceHeadwear(Canvas& canvas,std::uint16_t equipFlags,double timeSeconds) const {
+    if(content_ && sprites_) {
+        const auto headwear=[&](std::uint16_t flag,const char* id,double y,double size){
+            if(!(equipFlags&flag))return;
+            const auto item=content_->petalIndex(id);
+            if(item!=kInvalidIndex && sprites_->petalDrawable(item))
+                sprites_->drawPetal(canvas,item,Rarity::Common,0,y,size,0,timeSeconds);
+        };
+        headwear(EquipCatEars,"arctic_ears",-18,66);
+        headwear(EquipHalo,"void_halo",-40,76);
+    }
 }
 
 void WorldRenderer::drawDefaultFlower(Canvas& canvas, const RemoteEntity& entity,
@@ -3085,6 +3126,7 @@ void WorldRenderer::drawFace(Canvas& canvas, std::uint8_t faceFlags, std::uint16
     else if (faceFlags & FacePoisoned) baseColor = 0xCE76DBu;
     else if (faceFlags & FaceDandelioned) baseColor = ui::lighten(baseColor, 0.4);
 
+    drawReferenceHeadwear(canvas,equipFlags,timeSeconds);
     ui::setFill(canvas, (equipFlags & EquipDisc) ? kWornDiscOutline : ui::shade(baseColor, 0.8));
     canvas.beginPath();
     canvas.arc(0, 0, 26.5f, 0, static_cast<float>(kTau));
@@ -3274,13 +3316,13 @@ void WorldRenderer::drawHitbox(Canvas& canvas, const RemoteEntity& entity, const
     const double zoom = camera.zoom();
     const Vec2 screen = camera.worldToScreen(at);
 
-    // A flower and its petals are the two things whose drawn size deliberately
-    // differs from what they collide with, so both are shown in the browser
-    // build's red at 2px. Everything else keeps the generic overlay.
+    // Keep the flower distinct from the red petal circles, which can trail
+    // far behind it at high speed.
     double radius = entity.radius * zoom;
     std::uint32_t color = 0xFF0000u;
     if (entity.kind == net::EntityKind::Player) {
         radius = kPlayerBaseRadius * playerSizeMultiplier(entity) * zoom;
+        color = 0x46D9FFu;
     } else if (entity.kind == net::EntityKind::Petal && content_) {
         // A flower's petal collides at 10 units per size unit whatever its
         // artwork does; a mob's ring seed collides at the radius the server
@@ -3320,7 +3362,8 @@ void WorldRenderer::drawHitbox(Canvas& canvas, const RemoteEntity& entity, const
     }
 
     ui::setStroke(canvas, color);
-    canvas.setLineWidth(static_cast<float>(2.0 * zoom));
+    const double width = entity.kind == net::EntityKind::Player ? 3.0 : 2.0;
+    canvas.setLineWidth(static_cast<float>(width * zoom));
     canvas.strokeCircle(static_cast<float>(screen.x), static_cast<float>(screen.y),
                         static_cast<float>(radius));
 }
@@ -4307,13 +4350,11 @@ void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const
             Color tint = hitTint(entity.netId);
             if (gilded && !meteor && tint.a == 0) tint = Color{78, 64, 32, 90};
             const ScopedColorTint flash(canvas, tint);
-            if (config && config->id == "gas" && entity.rarity == Rarity::Common) {
-                // Gas is a cloud rather than a petal, and there can be hundreds
-                // of it at once.
-                ui::setFill(canvas, 0x00FF00u, 0.5);
-                canvas.fillCircle(static_cast<float>(screen.x), static_cast<float>(screen.y),
-                                  static_cast<float>(diameter * 0.5));
-                break;
+            if(config && config->id=="spikeball") {
+                canvas.save();canvas.translate(screen.x,screen.y);canvas.rotate(entity.angle);
+                ui::setFill(canvas,0x242424u);canvas.beginPath();canvas.moveTo(diameter,0);
+                canvas.lineTo(-diameter*.5,-diameter*.25);canvas.lineTo(-diameter*.5,diameter*.25);
+                canvas.closePath();canvas.fill();canvas.restore();break;
             }
             if (sprites_ && sprites_->petalDrawable(entity.typeIndex)) {
                 // Imported missile art points down-right (747 x 1124 source),
@@ -4476,21 +4517,42 @@ void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const
 #endif
                     canvas.restore();break;
                 }
+                case GroundEffectKind::Blood:
                 case GroundEffectKind::AcidSpill:
                 case GroundEffectKind::LavaSpill:
                 case GroundEffectKind::OilSpill:
                 case GroundEffectKind::BloodSpill:
+                case GroundEffectKind::NitrogenSpill:
+                case GroundEffectKind::LatrineSpill:
                 case GroundEffectKind::ElixirSpill: {
-                    const std::uint32_t colors[] = {0x83cc35, 0xff6b27, 0x4b3f39, 0xc7273d, 0xc9ed62};
-                    const auto index = entity.typeIndex -
-                        static_cast<std::uint16_t>(GroundEffectKind::AcidSpill);
-                    ui::setFill(canvas, colors[index], 0.42);
-                    canvas.fillCircle(static_cast<float>(screen.x), static_cast<float>(screen.y),
-                                      static_cast<float>(radius));
-                    ui::setStroke(canvas, colors[index], 0.7);
-                    canvas.setLineWidth(static_cast<float>(2.0 * zoom));
-                    canvas.strokeCircle(static_cast<float>(screen.x), static_cast<float>(screen.y),
-                                        static_cast<float>(radius));
+                    constexpr std::uint32_t colors[] = {0x83CC35, 0xFF6B27, 0x5F4A3B, 0xC7273D, 0xC9ED62};
+                    const bool blood = entity.typeIndex == static_cast<std::uint16_t>(GroundEffectKind::Blood);
+                    const auto color = blood ? colors[3] : entity.typeIndex==static_cast<std::uint16_t>(GroundEffectKind::NitrogenSpill) ? 0xa7e4f2u : entity.typeIndex==static_cast<std::uint16_t>(GroundEffectKind::LatrineSpill) ? 0x705531u : colors[entity.typeIndex -
+                        static_cast<std::uint16_t>(GroundEffectKind::AcidSpill)];
+                    const double age = entity.effectAgeSeconds;
+                    const double spread = options.simplifyCombatEffects
+                        ? 1.0 : 1.0 - 0.76 * std::pow(1.0 - std::clamp(age / 0.34, 0.0, 1.0), 3.0);
+                    const double liquidRadius = radius * spread;
+                    // Keep the server's hit boundary visible as the liquid spreads inside it.
+                    ui::setFill(canvas, color, 0.14);
+                    canvas.fillCircle(screen.x, screen.y, radius);
+                    ui::setFill(canvas, color, 0.36);
+                    canvas.fillCircle(screen.x, screen.y, liquidRadius);
+                    ui::setStroke(canvas, color, 0.72);
+                    canvas.setLineWidth(static_cast<float>(std::clamp(2.0 * zoom, 1.0, 3.0)));
+                    canvas.strokeCircle(screen.x, screen.y, radius);
+                    if (!options.simplifyCombatEffects && radius >= 8.0) {
+                        const double phase = std::fmod(age * 1.45, 1.0);
+                        ui::setStroke(canvas, color, 0.68 * (1.0 - phase));
+                        canvas.strokeCircle(screen.x, screen.y, liquidRadius * (0.25 + 0.69 * phase));
+                        const double seed = (entity.netId % 17) * 0.37;
+                        ui::setFill(canvas, color, 0.42);
+                        for (int i = 0; i < 4; ++i) {
+                            const Vec2 lobe = screen + Vec2::fromAngle(seed + i * kTau / 4.0,
+                                liquidRadius * (0.58 + 0.12 * std::sin(age * 6.0 + i)));
+                            canvas.fillCircle(lobe.x, lobe.y, liquidRadius * (0.12 + 0.02 * i));
+                        }
+                    }
                     break;
                 }
                 case GroundEffectKind::Cryo:
@@ -4543,9 +4605,6 @@ void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const
                 case GroundEffectKind::Fire:
                     ui::disc(canvas, screen, radius, 0xFFB530u, 0xE6572Au, 3.0 * zoom);
                     ui::disc(canvas, screen, radius * .54, 0xFFE670u, 0xFFB530u, 2.0 * zoom);
-                    break;
-                case GroundEffectKind::Blood:
-                    ui::disc(canvas, screen, radius, 0xB63C3Cu, 0x7B2424u, 3.0 * zoom);
                     break;
                 case GroundEffectKind::Poison:
                 default:
@@ -4856,7 +4915,7 @@ Camera WorldRenderer::shakenCamera(const Camera& camera) const {
     // a loadout zoomed out to half shakes as hard as one that is not.
     Camera shaken = camera;
     const double zoom = camera.zoom() > 1e-6 ? camera.zoom() : 1.0;
-    shaken.snapTo(camera.centre() + shakeOffset_ / zoom);
+    shaken.offsetTarget(shakeOffset_ / zoom);
     return shaken;
 }
 
@@ -4923,7 +4982,7 @@ void WorldRenderer::draw(Canvas& canvas, const EntityMap& entities, const Camera
     // clips to a speck off the screen, not to nothing -- an empty path is no
     // clip.
     const bool lightClipped = lightClip_ != nullptr;
-    if (lightClipped) {
+    const auto clipWorldToLight = [&] {
         canvas.save();
         canvas.beginPath();
         canvas.arc(-1000.0f, -1000.0f, 1.0f, 0.0f, static_cast<float>(kTau));
@@ -4936,7 +4995,8 @@ void WorldRenderer::draw(Canvas& canvas, const EntityMap& entities, const Camera
                        static_cast<float>(kTau));
         }
         canvas.clip();
-    }
+    };
+    if (lightClipped) clipWorldToLight();
 
     const Rect visible = camera.visibleWorld(0);
     // A body is kept until its whole extent is off screen, and the margin grows
@@ -5087,6 +5147,13 @@ void WorldRenderer::draw(Canvas& canvas, const EntityMap& entities, const Camera
     mobLabels_.clear();
     playerPlates_.clear();
     for (const net::EntityKind kind : kOrder) {
+        if (kind == net::EntityKind::Player) {
+            // Entrances remain readable over mobs, with flowers in front.
+            if (lightClipped) canvas.restore();
+            drawTeleporters(canvas, camera, realm_, timeSeconds);
+            chargeOps(ops_.terrain);
+            if (lightClipped) clipWorldToLight();
+        }
         // A drop's glitter opens the drop layer, so it lies UNDER every drop,
         // live or dying, and over the flowers below. Drawn with the effects it
         // covered the tile it came off, and the burst a landing drop throws hid
@@ -5267,12 +5334,14 @@ void WorldRenderer::draw(Canvas& canvas, const EntityMap& entities, const Camera
     }
     chargeOps(ops_.labels);
     if (lightClipped) canvas.restore();
-    // Keep entrances visible when mobs or their effects cross the pad.
-    drawTeleporters(canvas, camera, realm_, timeSeconds);
-    chargeOps(ops_.terrain);
     // Last of all, over every body and every effect: what somebody is saying
     // is the one thing on screen that must never be hidden behind the fight --
     // not by the dark either.
+    for(const auto& entry:entities) if(entry.second.isSelf() &&
+        (entry.second.renderFlags & PlayerRenderBlinded) && !entry.second.dead()) {
+        canvas.save();canvas.setFillStyle(Color{0,0,0});
+        canvas.fillRect(0,0,canvas.width(),canvas.height());canvas.restore();break;
+    }
     drawChatBubbles(canvas, entities, camera, selfDrawn);
     chargeOps(ops_.bubbles);
 }

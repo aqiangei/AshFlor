@@ -37,6 +37,7 @@
     };
 
     let reported = false;
+    let abortStack;
     // writeSync, not console.error: the process exits straight after this,
     // and Node writes to a pipe asynchronously on some platforms.
     const report = (what, error) => {
@@ -63,9 +64,9 @@
     // below never sees. The stack is taken now, while it still runs through
     // the C++ that aborted.
     Module["onAbort"] = (reason) => {
-        const at = new Error(`Aborted(${reason}), and the error was caught on its way out`);
+        abortStack = new Error(`Aborted(${reason})`);
         setTimeout(() => {
-            report("the server aborted", at);
+            report("the server aborted", abortStack);
             process.exit(1);
         }, 0);
     };
@@ -76,7 +77,7 @@
         // The glue's exit(): a deliberate way out, not a crash.
         if (error && error.name === "ExitStatus") process.exit(error.status);
         report(origin === "unhandledRejection" ? "unhandled promise rejection"
-                                               : "uncaught exception", error);
+                                               : "uncaught exception", abortStack || error);
         process.exit(1);
     });
 })();

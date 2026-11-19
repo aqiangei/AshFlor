@@ -46,6 +46,7 @@ struct Session {
     bool autoSquad = false;  ///< Seeking one match on this connection.
     /// Inventory credits since joining the world, shared by both split bodies.
     std::map<std::pair<std::uint16_t, Rarity>, std::uint32_t> runLoot;
+    std::map<std::pair<std::uint16_t, Rarity>, std::uint32_t> runKills;
     /// Where the connection really comes from, worked out once when it opened:
     /// the TCP peer, or the address a trusted proxy in front of the server
     /// named (clientAddress, server/account_limits.h). What every abuse limit
@@ -176,6 +177,7 @@ struct Session {
     /// folding the bag for, on the server's tick clock. See
     /// GameServer::handleProfileCheck.
     std::uint32_t profileRevision = 0;
+    std::uint8_t pendingPresetRotationStep = 0;
     double nextProfileCheckMillis = 0;
     double nextStaleProfileRepairMillis = 0;
     std::uint64_t onlineRosterRevision = 0;

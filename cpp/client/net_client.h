@@ -677,9 +677,16 @@ public:
     /// Saved loadouts, numbered as loadoutPresetName numbers them. Saving
     /// stores the whole loadout on the account; loading re-equips it, and the
     /// server answers both with a Notice.
-    void saveLoadoutPreset(int preset);
+    void saveLoadoutPreset(int preset, int rotationStep = 4);
     void setPresetAutosave(bool enabled);
-    void loadLoadoutPreset(int preset);
+    void loadLoadoutPreset(int preset, int rotationStep = 4);
+    /// A successful preset load may restore its saved speed. Zero means that
+    /// an old preset has no saved speed, or there is no unconsumed response.
+    int takePresetRotationStep() {
+        const int step = pendingPresetRotationStep_;
+        pendingPresetRotationStep_ = 0;
+        return step;
+    }
     /// Clicks the petal in an active loadout slot.
     ///
     /// What the browser build reaches with U + the slot's number. Only the
@@ -865,10 +872,11 @@ public:
     const WorldView& view() const { return view_; }
     bool pyramidMapRevealed = false;
     std::int64_t lockedShopRotation=-1;
+    int shopLockMask = 0;
     std::vector<ShopOffer> lockedShopOffers;
     std::int64_t currentShopRotation = -1;
     std::vector<ShopOffer> currentShopOffers;
-    void toggleShopLock();
+    void toggleShopLock(int tiers = 3);
     std::uint32_t dropBonusStreak=0;
     int dropBonusMultiplier=1;
     std::int64_t dropBonusUntil=0,dropBonusNextClaim=0,dropBonusUpdatedAt=0;
@@ -1140,7 +1148,17 @@ public:
     const std::string& killerName() const { return killerName_; }
     const std::vector<Profile::Stack>& runLoot() const { return runLoot_; }
     const auto& runLootOverview() const { return runLootOverview_; }
-    void requestRunLoot() { runLootOverview_.reset(); sendChat("/run-loot"); }
+    struct RunKill {
+        std::uint16_t mobIndex;
+        Rarity rarity;
+        std::uint32_t count;
+    };
+    const auto& runKillsOverview() const { return runKillsOverview_; }
+    void requestRunLoot() {
+        runLootOverview_.reset();
+        runKillsOverview_.reset();
+        sendChat("/run-loot");
+    }
 
     /// Set once each time a yggdrasil raised this body. Cleared by whoever
     /// reads it, like `reconnected`: the socket knows the player is alive
@@ -1267,6 +1285,7 @@ private:
     bool clearViewOnSnapshot_ = false;
     bool teleported_ = false;
     Profile profile_;
+    int pendingPresetRotationStep_ = 0;
     std::string sessionToken_;
     std::vector<ChatLine> chat_;
     std::uint64_t chatSeq_ = 0;
@@ -1358,6 +1377,7 @@ private:
     static std::optional<std::vector<Profile::Stack>> readRunLoot(ByteReader&);
     std::vector<Profile::Stack> runLoot_;
     std::optional<std::vector<Profile::Stack>> runLootOverview_;
+    std::optional<std::vector<RunKill>> runKillsOverview_;
     /// See joinPending().
     bool joinPending_ = false;
 

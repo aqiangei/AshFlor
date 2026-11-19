@@ -728,7 +728,8 @@ void App::frame(double dt) {
     // placed.
     mobile_.layout(window_.width(), window_.height(),
                    inGameLoadoutBarHeight(menus_.settings().classicLoadoutBar,
-                                          window_.width(), net_.profile().skills.loadoutSlots()));
+                                          window_.width(), net_.profile().skills.loadoutSlots()),
+                   !menus_.settings().hudPanelsCollapsed);
     // This frame's contacts, before any screen reads them. Here rather than in
     // updatePlaying because the frames the controls are NOT up for are the
     // ones that matter: dying, or a panel opening over a deflected stick, has
@@ -775,7 +776,10 @@ void App::frame(double dt) {
     const auto positionCamera = [&] {
         const Vec2 selfDrawn =
             net_.selfPlaced() ? net_.view().selfDrawnPosition() : net_.arrival();
-        camera_.setWorldExtent(net_.terrain().cameraExtent(net_.view().realm()));
+        const Realm realm = net_.view().realm();
+        const MapData* map = worldMaps_.forRealm(realm);
+        const bool wave = map && map->templateId() == "wave";
+        camera_.setWorldExtent(net_.terrain().cameraExtent(realm), wave, map && !wave);
         camera_.snapTo(selfDrawn);
         return selfDrawn;
     };
@@ -934,6 +938,10 @@ void App::frame(double dt) {
     // stops painting it -- the settings switch off, a panel covering it, the
     // title screen's own layout -- has to leave nothing behind to press.
     chatBox_ = {};
+    chatColumn_ = {};
+    chatRegion_ = {};
+    chatNameHits_.clear();
+    menus_.setCraftChatTop(-1.0);
 #ifdef __EMSCRIPTEN__
     canvasPhaseMark_ = canvasOpsEmitted();
 #endif
@@ -973,15 +981,31 @@ void App::frame(double dt) {
         // In the same seam and over the wash: the screenshot's corners are
         // near black, which they could not be with a grey wash on top.
         drawLowHealthVignette(canvas);
+        // Keep the local flower legible at wide touch zoom, even by map edges
+        // where its position no longer coincides with the centre of the screen.
+        if (screen_ == Screen::Playing && net_.selfPlaced() && touchControlsVisible() &&
+            camera_.zoom() * window_.uiScaleMultiplier() <= 0.60) {
+            const Vec2 player = camera_.worldToScreen(selfDrawn);
+            const float x = static_cast<float>(player.x);
+            const float y = static_cast<float>(player.y);
+            canvas.save();
+            setStroke(canvas, kInk);
+            canvas.setLineWidth(6.0f);
+            canvas.strokeCircle(x, y, 27.0f);
+            setStroke(canvas, kPaper);
+            canvas.setLineWidth(2.5f);
+            canvas.strokeCircle(x, y, 27.0f);
+            canvas.restore();
+        }
         markPhaseOps(OpPhase::World);
         drawHud(canvas, timeSeconds_);
         markPhaseOps(OpPhase::Hud);
-        // The reference hides the whole chat box while one of the two
-        // petal-handling panels -- the inventory, the crafting card -- is up,
-        // rather than letting it poke out beside the card.
         const MenuId open = menus_.open();
-        const bool panelHidesChat = open == MenuId::Inventory || open == MenuId::Crafting;
-        if (menus_.settings().showChat && !panelHidesChat) drawChat(canvas, timeSeconds_);
+        if (menus_.settings().showChat && open != MenuId::Inventory) {
+            // Crafting reserves room for the entry field below its card.
+            // Keep the transcript out of the material grid.
+            drawTitleChat(canvas, timeSeconds_);
+        }
         // Panels and the icon strip keep drawing while dead, undimmed, with
         // the card over both -- but UNDER the loadout bar, which the reference paints
         // after the death screen: the card is the first child of its game UI

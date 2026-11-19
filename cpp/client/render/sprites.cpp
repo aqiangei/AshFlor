@@ -662,6 +662,13 @@ bool SpriteCache::build(const ContentRegistry& content, const std::string& dataD
         if (walkingLegs || config.id == "hel_wasp" || config.id == "nazar_beetle") {
             mobs_[i].facingOffset = 3.0 * kPi / 4.0;
         }
+        if (config.id == "nazar_beetle") {
+            // The carapace is centred at (62.071, 62.071) before the SVG's
+            // (-18, -18) translation in its 75-unit square. Anchor that
+            // carapace, not the rectangle that also encloses its mandibles.
+            constexpr double offset = (62.071 - 18.0 - 37.5) / 75.0;
+            mobs_[i].bodyCentreOffset = {offset, offset};
+        }
         mobs_[i].articulatedEyes = config.id == "mecha_flower" || config.id == "gambler";
         if (!mobs_[i].document) continue;
         const std::string petArt = petArtwork(config.image);
@@ -780,8 +787,8 @@ void SpriteCache::draw(Canvas& canvas, const Sprite& sprite, double x, double y,
     // these documents declare width="32" while drawing in a viewBox many times
     // that, and the two are unrelated.
     document->renderFitted(canvas,
-                           static_cast<float>(-diameter * 0.5),
-                           static_cast<float>(-diameter * 0.5),
+                           static_cast<float>(-diameter * (0.5 + sprite.bodyCentreOffset.x)),
+                           static_cast<float>(-diameter * (0.5 + sprite.bodyCentreOffset.y)),
                            static_cast<float>(diameter),
                            static_cast<float>(diameter),
                            static_cast<float>(sprite.distanceAnimated

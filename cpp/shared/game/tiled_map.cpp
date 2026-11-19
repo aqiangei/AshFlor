@@ -988,4 +988,9 @@ std::vector<std::string> TiledMap::strandedWaterTiles() const {
     return out;
 }
 
+double TiledMap::worldScale() const {
+    const double scale = properties_["world_scale"].asDouble(1.0);
+    return std::isfinite(scale) && scale >= 1.0 && scale <= 2.0 ? scale : 1.0;
+}
+
 } // namespace flix

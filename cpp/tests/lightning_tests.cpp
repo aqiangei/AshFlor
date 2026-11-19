@@ -318,6 +318,37 @@ TEST(a_share_too_small_to_print_is_held_until_it_adds_up) {
     CHECK(renderShares(5) > 50);
 }
 
+TEST(fractional_damage_text_expires_after_the_target_stops_taking_hits) {
+    CHECK(testsupport::fontsReady());
+    Canvas canvas = Canvas::createVirtual(kFrameSize, kFrameSize);
+    const Camera camera = frameCamera();
+    WorldView view;
+    view.setRealm(Realm::Overworld);
+    WorldRenderer renderer;
+    const auto hit = [&] {
+        ViewEvent share;
+        share.kind = net::EventKind::Damage;
+        share.netId = 7;
+        share.amount = 0.3;
+        share.position = kStrikeAt;
+        view.events().push_back(share);
+        renderer.ingestEvents(view);
+    };
+    const auto draw = [&] {
+        canvas.clear(Color{0, 0, 0, 255});
+        renderer.draw(canvas, view, camera, kStrikeAt, 0.0);
+        return inkOf(canvas.getImageData(0, 0, kFrameSize, kFrameSize)).pixels;
+    };
+
+    hit();
+    CHECK_EQ(draw(), std::size_t(0));
+    for (int i = 0; i < 120; ++i) renderer.update(0.05);
+    hit();
+    CHECK_EQ(draw(), std::size_t(0));
+    hit();
+    CHECK(draw() > 50);
+}
+
 // ---------------------------------------------------------------------------
 // The server side of a strike
 // ---------------------------------------------------------------------------

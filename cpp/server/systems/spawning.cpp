@@ -36,6 +36,10 @@ void protectNewLeech(World& world, Entity head, double nowMillis) {
 // More of its own ambient slots can stay latent outside the players' views.
 constexpr double kPrestigeJungleDensityScale = 1.25;
 constexpr double kPrestigeEternalChance = 0.05;
+
+bool hasDeepArcticEternalSlot(const MapData& map) {
+    return map.prestigeLevel() == 2 && map.templateId() == "zorr_arctic";
+}
 constexpr double kDeepHelDifficulty = 50.0;
 constexpr double kDeepHelDensityScale = 1.20;
 constexpr double kPrestigeHelDensityScale = 1.20;
@@ -1230,7 +1234,7 @@ void SpawnSystem::run(World& world, const Terrain& terrain, const ContentRegistr
         // difference between this and a spawner that follows the players
         // around.
         stockSpawnZones(world, terrain, content, viewers_, rng, nowMillis);
-        promoteLatent(world, terrain, content, viewers_, viewers_, rng, nowMillis, true);
+        promoteLatent(world, terrain, content, viewers_, viewers_, rng, nowMillis);
         stockGhosts(world, terrain, content, nowMillis);
         wokenFrom_ = viewers_;
     } else {
@@ -1253,7 +1257,7 @@ void SpawnSystem::stockGhosts(World& world, const Terrain& terrain,
                               const ContentRegistry& content, double nowMillis) {
     constexpr int maxGhostsPerMap = 3;
     constexpr double respawnMillis = 90'000.0;
-    if (!worldMaps || viewers_.empty()) return;
+    if (!worldMaps) return;
     const auto ghost = content.mobIndex("ghost");
     if (ghost == kInvalidIndex) return;
 
@@ -1264,22 +1268,22 @@ void SpawnSystem::stockGhosts(World& world, const Terrain& terrain,
                 ++standing[realmIndex(at.realm)];
         });
 
-    for (const Viewer& viewer : viewers_) {
-        const auto index = realmIndex(viewer.realm);
+    for (const auto& map : worldMaps->maps()) {
+        const Realm realm = map.realm();
+        const auto index = realmIndex(realm);
         if (standing[index] >= maxGhostsPerMap || nowMillis < nextGhostSpawnMillis_[index] ||
             riftRealms_[index] || inactiveLayoutRealms_[index]) continue;
-        const auto* map = worldMaps->forRealm(viewer.realm);
-        if (!map || !map->usesReferenceSpawnCurve() ||
-            map->templateId() == "hel" || map->biome() == "jurassic") continue;
+        if (!map.usesReferenceSpawnCurve() ||
+            map.templateId() == "hel" || map.biome() == "jurassic") continue;
 
         // Ghosts use their own random stream. Ordinary stock and boss rolls
         // do not depend on whether a ghost vacancy can be filled.
         Rng rng{static_cast<std::uint64_t>(nowMillis) + index};
         nextGhostSpawnMillis_[index] = nowMillis + 5'000.0;
         Vec2 at;
-        if (!randomBandPoint(terrain, viewer.realm, rng, at)) continue;
+        if (!randomBandPoint(terrain, realm, rng, at)) continue;
         const auto zone = std::find_if(zones_.begin(), zones_.end(), [&](const SpawnZone& band) {
-            return band.realm == viewer.realm && !band.singular && band.forceRarity < 0 &&
+            return band.realm == realm && !band.singular && band.forceRarity < 0 &&
                    zoneContains(band.bounds, band.polygon, at);
         });
         if (zone == zones_.end()) continue;
@@ -1288,10 +1292,10 @@ void SpawnSystem::stockGhosts(World& world, const Terrain& terrain,
         rarity = zone->prestige ? rollPrestigeAmbientRarity(rarity, rng) : rarity;
         rarity = std::min(rarity, zone->prestige ? Rarity::Super : Rarity::Ultra);
         const auto footprint = spawnFootprint(content, ghost, rarity);
-        const auto facing = wakingFacing(viewers_, viewer.realm, at, footprint, kMinSpawnDistance, rng);
-        if (!clearOfEveryLap(viewers_, viewer.realm, at, footprint, facing, kMinSpawnDistance)) continue;
+        const auto facing = wakingFacing(viewers_, realm, at, footprint, kMinSpawnDistance, rng);
+        if (!clearOfEveryLap(viewers_, realm, at, footprint, facing, kMinSpawnDistance)) continue;
 
-        const Entity spawned = spawnMobAt(world, terrain, content, ghost, rarity, at, viewer.realm,
+        const Entity spawned = spawnMobAt(world, terrain, content, ghost, rarity, at, realm,
                                           nowMillis, rng, 0, kInvalidIndex, facing, false);
         if (spawned == NULL_ENTITY) continue;
         world.get<AmbientMob>(spawned).independentGhost = true;
@@ -1383,6 +1387,7 @@ void SpawnSystem::expireEscorts(double dt, CommandBuffer& commands) {
 void SpawnSystem::takeCensus(World& world, const ContentRegistry& content,
                              const std::vector<Viewer>& viewers, double nowMillis,
                              CommandBuffer& commands) {
+    const bool prioritiseVisible = census_.mobs >= mobCap * 9 / 10;
     census_.mobs = 0;
     doomed_.clear();
 
@@ -1474,9 +1479,13 @@ void SpawnSystem::takeCensus(World& world, const ContentRegistry& content,
         // goes soon; anything else is destroyed for good, so it gets longer.
         const bool sleeps = ambient.zone < zones_.size();
         const double graceMillis = sleeps ? kLatentSleepDelayMillis : kMobDespawnDelayMillis;
-        if (nearAnyone) {
+        const bool reclaimOffscreen = prioritiseVisible && !unattended && sleeps &&
+            !world.has<BodySegment>(e) && !world.has<KeepAwake>(e) && !world.has<Undead>(e) &&
+            !seenBy(viewers, transform.realm, transform.position,
+                    std::max(0.0, body.radius) + kViewportBuffer);
+        if (nearAnyone && !reclaimOffscreen) {
             ambient.lastNearPlayerMillis = nowMillis;
-        } else if (nowMillis - ambient.lastNearPlayerMillis >= graceMillis &&
+        } else if ((reclaimOffscreen || nowMillis - ambient.lastNearPlayerMillis >= graceMillis) &&
                    !alwaysAwake(content, type, prestigeRealm(transform.realm))) {
             // Nobody has been near it for the grace period, so it stops being
             // an entity. Whether that is the END of it depends on whether a
@@ -1951,6 +1960,7 @@ void SpawnSystem::rebuildZones(const ContentRegistry& content) {
     prestigeSewersRealm_ = Realm::Arena;
     prestigeHelRealm_ = Realm::Arena;
     prestigeFactoryRealm_ = Realm::Arena;
+    prestigeTwoFactoryRealm_ = Realm::Arena;
     if (worldMaps == nullptr) return;
 
     // Every staged map's bands, each tagged with the realm it belongs to. One
@@ -1971,7 +1981,10 @@ void SpawnSystem::rebuildZones(const ContentRegistry& content) {
         if (ordinaryJungle) ordinaryJungleRealm_ = map.realm();
         if (prestigeSewers) prestigeSewersRealm_ = map.realm();
         if (prestigeHel) prestigeHelRealm_ = map.realm();
-        if (map.prestige() && map.templateId() == "computer") prestigeFactoryRealm_ = map.realm();
+        if (map.templateId() == "computer") {
+            if (map.prestigeLevel() == 1) prestigeFactoryRealm_ = map.realm();
+            if (map.prestigeLevel() == 2) prestigeTwoFactoryRealm_ = map.realm();
+        }
         for (const MapElement& element : map.elements()) {
             if (!element.isSpawnBand() && !element.isMobRegion()) continue;
             SpawnZone zone;
@@ -2246,7 +2259,10 @@ bool SpawnSystem::topBossTaken(World& world, Rarity rarity, Realm realm, bool in
                 biomeKey(at.realm) == key) ++standing;
         });
     }
-    return standing >= (rarity == Rarity::Unique && !prestigeRealm(realm) ? kEternalPopulationTarget : 1);
+    const int cap = rarity == Rarity::Unique
+        ? (prestigeRealm(realm) ? kPrestigeEternalPopulationTarget : kEternalPopulationTarget)
+        : (rarity == Rarity::Ascendant ? kNaturalApexPopulationTarget : kHyperPopulationTarget);
+    return standing >= cap;
 }
 
 void SpawnSystem::noteStandingBosses(World& world, const CommandBuffer& commands) {
@@ -2263,7 +2279,7 @@ void SpawnSystem::noteStandingBosses(World& world, const CommandBuffer& commands
             !(type.rarity == Rarity::Ascendant && ambient.zone != kInvalidIndex)) return;
         if (world.has<HoleTether>(e) || world.has<WaveEnemy>(e)) return;
         const auto* map = worldMaps ? worldMaps->forRealm(transform.realm) : nullptr;
-        if (map && map->prestigeLevel() == 2) return;
+        if (map && map->prestigeLevel() == 2 && !ambient.managedPopulation) return;
         if (!isWorldRealm(transform.realm) || !isWholeAnimal(world, e)) return;
         const Rarity tier = type.rarity == Rarity::Ascendant ? Rarity::Apex : type.rarity;
         topBosses_.push_back(TopBoss{biomeKey(transform.realm), tier, ambient.spawnOrder, e});
@@ -2306,7 +2322,7 @@ void SpawnSystem::cullExtraTopBosses(World& world, CommandBuffer& commands) {
         const TopBoss& first = topBosses_[i - 1];
         const TopBoss& extra = topBosses_[i];
         standing = extra.biome == first.biome && extra.rarity == first.rarity ? standing + 1 : 1;
-        const int cap = extra.rarity == Rarity::Unique ? kEternalPopulationTarget : 1;
+        const int cap = extra.rarity == Rarity::Unique ? kEternalPopulationTarget : kHyperPopulationTarget;
         if (standing > cap && !world.has<KeepAwake>(extra.entity)) {
             culled_.push_back(extra.entity);
         }
@@ -2391,7 +2407,7 @@ void SpawnSystem::stockSupers(World& world, const Terrain& terrain,
             [&](const SuperMapState& state) { return state.realm == zone.realm; });
         if (found == superPopulations_.end()) {
             const double cooldown = map && map->templateId() == "hel" ? 120000.0 : SuperPopulation::respawnMillis;
-            superPopulations_.push_back({zone.realm, SuperPopulation{SuperPopulation::target, cooldown}});
+            superPopulations_.push_back({zone.realm, SuperPopulation{2 * SuperPopulation::target, cooldown}});
         }
     }
     auto antHabitat = [&](std::uint16_t index) {
@@ -2431,7 +2447,7 @@ void SpawnSystem::stockSupers(World& world, const Terrain& terrain,
             // a dozen tiny termite plots must not outweigh the jungle floor.
             int requiredHabitat=-1;
             if(antHell) {
-                constexpr int quotas[3]={4,4,2};int largest=0;
+                constexpr int quotas[3]={8,8,4};int largest=0;
                 for(int n=0;n<3;++n)if(quotas[n]-habitats[n]>largest &&
                     std::any_of(candidates.begin(),candidates.end(),[&](auto i){return antHabitat(i)==n;})) {
                     requiredHabitat=n;largest=quotas[n]-habitats[n];
@@ -2511,8 +2527,8 @@ void SpawnSystem::stockSuperFarms(World& world, const Terrain& terrain,
                 candidates.push_back(static_cast<std::uint16_t>(i));
         }
         if (candidates.empty()) continue;
-        const int farmPopulation = map.templateId() == "hel" ? 36 :
-            map.templateId() == "computer" ? kSuperFarmPopulation + 6 : kSuperFarmPopulation;
+        const int farmPopulation = 2 * (map.templateId() == "hel" ? 36 :
+            map.templateId() == "computer" ? kSuperFarmPopulation + 6 : kSuperFarmPopulation);
         auto state=std::find_if(superFarmPopulations_.begin(),superFarmPopulations_.end(),
             [&](const SuperMapState& entry){return entry.realm==map.realm();});
         if (state==superFarmPopulations_.end()) {
@@ -2587,18 +2603,25 @@ void SpawnSystem::stockEternals(World& world, const Terrain& terrain,
     if(!worldMaps)return;
     for(const auto& map:worldMaps->maps()) {
         const auto& id = map.biome() == "pyramid" ? map.biome() : map.id();
-        if(inactiveLayoutRealms_[realmIndex(map.realm())] || map.prestige() ||
-           !map.usesReferenceSpawnCurve() ||
-           (id!="garden"&&id!="desert"&&id!="computer"&&id!="ocean"&&id!="jungle"&&
-            id!="hel"&&id!="ant_hell"&&id!="sewers"&&id!="pyramid"&&id!="cyberspace"))continue;
+        const bool deepArctic = hasDeepArcticEternalSlot(map);
+        if (inactiveLayoutRealms_[realmIndex(map.realm())]) continue;
+        if (!deepArctic && (map.prestige() || !map.usesReferenceSpawnCurve() ||
+            (id!="garden"&&id!="desert"&&id!="computer"&&id!="ocean"&&id!="jungle"&&
+             id!="hel"&&id!="ant_hell"&&id!="sewers"&&id!="pyramid"&&id!="cyberspace"))) continue;
+        const int target = deepArctic ? 1 : kEternalPopulationTarget;
+        const auto eligibleZone = [&](const SpawnZone& zone) {
+            return zone.realm == map.realm() && zone.prestige == deepArctic &&
+                !zone.singular && zone.forceRarity < 0;
+        };
         auto state=std::find_if(eternalPopulations_.begin(),eternalPopulations_.end(),
                                [&](const EternalMapState& v){return v.realm==map.realm();});
         if(state==eternalPopulations_.end()) {
             eternalPopulations_.push_back({map.realm(),0});state=std::prev(eternalPopulations_.end());
         }
         int living=0;
-        ambient_->each([&](Entity e,MobTag&,Transform& at,Body&,MobType& type,AmbientMob&){
-            if(!world.has<HoleTether>(e) && at.realm==map.realm() && type.rarity==Rarity::Unique &&
+        ambient_->each([&](Entity e,MobTag&,Transform& at,Body&,MobType& type,AmbientMob& mob){
+            if ((!deepArctic || mob.managedPopulation) && !world.has<HoleTether>(e) &&
+                at.realm==map.realm() && type.rarity==Rarity::Unique &&
                !world.has<Dead>(e) && isWholeAnimal(world,e))++living;
         });
         if(state->previousLiving>living){
@@ -2607,23 +2630,26 @@ void SpawnSystem::stockEternals(World& world, const Terrain& terrain,
             if(slot<bossClocks_.size())bossClocks_[slot].uniqueDeathCooldown=true;
         }
         state->previousLiving=living;
-        if(living>=kEternalPopulationTarget)continue;
-        if(bossCooldownLeft(Rarity::Unique,map.realm(),nowMillis)>0)continue;
+        if (living >= target || bossCooldownLeft(Rarity::Unique, map.realm(), nowMillis) > 0.0) continue;
         double highest=-1e9;
-        for(const auto& zone:zones_)if(zone.realm==map.realm()&&!zone.prestige&&!zone.singular&&zone.forceRarity<0)
-            highest=std::max(highest,zone.difficulty);
+        for (const auto& zone : zones_)
+            if (eligibleZone(zone)) highest = std::max(highest, zone.difficulty);
         std::vector<std::uint16_t> candidates;
-        const double floor=std::min(highest,std::max(45.0,highest-20.0));
-        for(std::size_t n=0;n<zones_.size();++n) {
-            const auto& zone=zones_[n];
-            if(zone.realm==map.realm()&&!zone.prestige&&!zone.singular&&zone.forceRarity<0&&zone.difficulty>=floor)
+        const double floor = deepArctic ? highest : std::min(highest, std::max(45.0, highest-20.0));
+        for (std::size_t n=0; n<zones_.size(); ++n) {
+            const auto& zone = zones_[n];
+            if (eligibleZone(zone) && zone.difficulty >= floor)
                 candidates.push_back(static_cast<std::uint16_t>(n));
         }
-        for(int attempt=0;attempt<240&&!candidates.empty()&&living<kEternalPopulationTarget;++attempt) {
+        int refill = 0;
+        for (int attempt=0; attempt<240 && !candidates.empty() &&
+             living < target && refill < 3; ++attempt) {
             const auto n=candidates[rng.below(static_cast<std::uint32_t>(candidates.size()))];
             if(stockZone(world,terrain,content,zones_[n],n,viewers,rng,nowMillis,
                          Slot::TopUp,{},true,Rarity::Unique)) {
-                ++living;state->previousLiving=living;
+                ++refill;
+                ++living;
+                state->previousLiving = living;
             }
         }
     }
@@ -2692,11 +2718,16 @@ void SpawnSystem::stockHypers(World& world, const Terrain& terrain,
             if(zone.realm==map.realm()&&!zone.prestige&&!zone.singular&&zone.forceRarity<0&&zone.difficulty>=floor)
                 candidates.push_back(static_cast<std::uint16_t>(n));
         }
-        for(int attempt=0;attempt<240&&!candidates.empty()&&living<kHyperPopulationTarget;++attempt) {
+        for (int attempt = 0; attempt < 240 && !candidates.empty() && living < kHyperPopulationTarget &&
+             !topBossTaken(world, Rarity::Apex, map.realm()); ++attempt) {
             const auto n=candidates[rng.below(static_cast<std::uint32_t>(candidates.size()))];
             if(stockZone(world,terrain,content,zones_[n],n,viewers,rng,nowMillis,
                          Slot::TopUp,{},true,Rarity::Apex)) {
-                ++living;state->previousLiving=living;
+                ++living;
+                state->previousLiving = living;
+                // Apply the existing shared cooldown after one admitted spawn.
+                chargeBossClock(Rarity::Apex, map.realm(), nowMillis);
+                break;
             }
         }
     }
@@ -2809,10 +2840,7 @@ bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentR
     // queen in the room the last one was killed in, every time, which turns a
     // hunt across the map into a farm at one coordinate.
     const double scatter = slot != Slot::TopUp && !zone.singular ? kRespawnScatter : 0.0;
-    const bool refillNearLoss = slot == Slot::Killed && scatter > 0.0 && zone.forceRarity < 0 &&
-        (zone.realm == ordinaryJungleRealm_ || zone.realm == prestigeJungleRealm_ ||
-         isDeepPrestigeFactory(zone)) &&
-        seenBy(viewers, zone.realm, lostAt, 0.0);
+
     Vec2 at;
     bool placed = false;
     for (int attempt = 0; attempt < kZonePlacementAttempts; ++attempt) {
@@ -2831,9 +2859,6 @@ bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentR
         if (inBorderBand(candidate, extent)) continue;
         if (terrain.blocked(candidate, zone.realm)) continue;
         if (reuseSpecies && !acceptsReplacement(rosterAt(candidate))) continue;
-        if (refillNearLoss && attempt < kZonePlacementAttempts / 2 &&
-            (!seenBy(viewers, zone.realm, candidate, 0.0) ||
-             terrain.segmentBlocked(lostAt, candidate, zone.realm))) continue;
         // The nominal body, because the type is not rolled until a point has
         // been chosen. Whatever this places is measured again against its real
         // size below (an entity) or when it wakes (a record).
@@ -2893,7 +2918,10 @@ bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentR
         !fixedSuper && forcedTier < 0 && !zone.singular;
     if (prestigeTwo) {
         rarity = static_cast<Rarity>(std::min(rarityIndex(Rarity::Unique), rarityIndex(rarity) + 2));
-    } else if (zone.prestige) {
+    }
+    const bool managedArcticEternal = fixedSuper && managedTier == Rarity::Unique &&
+        authoredMap && hasDeepArcticEternalSlot(*authoredMap);
+    if (!prestigeTwo && zone.prestige && !managedArcticEternal) {
         // Authored fixed spawns keep their configured promotion. Natural
         // bands limit the promotion from the top ordinary tier.
         rarity = forcedTier >= 0 ? prestigeRarity(rarity) : rollPrestigeAmbientRarity(rarity, rng);
@@ -2911,7 +2939,8 @@ bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentR
     // A mob whose floor sits above super cannot stand in a twin at all; the
     // slot goes back to the band and is rolled afresh.
     if ((rift && rarityIndex(rarity) > rarityIndex(maximum)) ||
-        (zone.prestige && barredFromPrestige(rarity) && !(prestigeTwo && rarity == Rarity::Unique))) return false;
+        (zone.prestige && barredFromPrestige(rarity) &&
+         !((prestigeTwo || managedArcticEternal) && rarity == Rarity::Unique))) return false;
 
     // Once in a long while the band does not grow what it rolled: a square
     // stands there instead, one spawn in 100,000 and one super in 10,000.
@@ -2969,16 +2998,14 @@ bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentR
         // The ordinary case, and the whole reason the map can be full: a
         // position, a type and a tier. No entity, no components, no wire id.
         //
-        // WHEN it may wake is the one subtlety. A REPLACEMENT for something
-        // just killed waits if it lands where somebody can see it: without the
-        // wait, clearing the mobs around you would refill them in front of you
-        // within half a second. Nothing else waits, wherever it lands. A
+        // A replacement for a kill waits for its ordinary respawn delay whether
+        // or not a player is nearby. Nothing else waits. A
         // top-up is a cold start and a returned slot is a refill, and the map
         // does not wait to be full: the first player onto a server, or an
         // operator after a killall, sees the band full on the next pass, on
         // their own screen too.
         double delay = 0.0;
-        if (slot == Slot::Killed && seenBy(viewers, zone.realm, at, 0.0)) {
+        if (slot == Slot::Killed) {
             const bool jungleDelay = (zone.realm == ordinaryJungleRealm_ || zone.realm == prestigeJungleRealm_) &&
                 !zone.singular && forcedTier < 0;
             const bool sewersRefill = zone.realm == prestigeSewersRealm_ &&
@@ -3175,40 +3202,52 @@ void SpawnSystem::wakeAhead(World& world, const Terrain& terrain, const ContentR
         if (!covered) wakeSeers_.push_back(viewer);
     }
     if (wakeSeers_.empty()) return;
-    promoteLatent(world, terrain, content, wakeSeers_, viewers_, rng, nowMillis, false);
+    promoteLatent(world, terrain, content, wakeSeers_, viewers_, rng, nowMillis);
     wokenFrom_.insert(wokenFrom_.end(), wakeSeers_.begin(), wakeSeers_.end());
 }
 
 bool SpawnSystem::isDeepPrestigeFactory(const SpawnZone& zone) const {
-    return zone.realm == prestigeFactoryRealm_ && zone.difficulty >= kPrestigeFactoryDeepDifficulty &&
+    return (zone.realm == prestigeFactoryRealm_ || zone.realm == prestigeTwoFactoryRealm_) &&
+           zone.difficulty >= kPrestigeFactoryDeepDifficulty &&
            !zone.singular && zone.forceRarity < 0;
 }
 
 void SpawnSystem::promoteLatent(World& world, const Terrain& terrain,
                                 const ContentRegistry& content, const std::vector<Viewer>& seers,
-                                const std::vector<Viewer>& viewers, Rng& rng, double nowMillis,
-                                bool relocateBlocked) {
+                                const std::vector<Viewer>& viewers, Rng& rng, double nowMillis) {
     // Nobody is looking at anything, so nothing has to be awake. This is also
     // what keeps an unattended server from paying for the population it holds:
     // the whole map is stocked and not one of it is simulated.
     if (seers.empty()) return;
 
     const int ambientBudget = mobCap >= 128 ? mobCap - 128 : mobCap;
+    const double wakeMargin = census_.mobs >= mobCap * 4 / 5 ? 0.0 : latentWakeMargin;
     // At saturation, these areas may borrow existing escort headroom for
     // nearby enemies. The shared live-mob ceiling still applies.
+    std::array<Realm, 2> prestigeHelWakeRealms{Realm::Arena, Realm::Arena};
+    if (worldMaps) for (const auto& map : worldMaps->maps()) {
+        if (map.templateId() == "hel" && map.usesReferenceSpawnCurve() &&
+            map.prestigeLevel() >= 1 && map.prestigeLevel() <= 2)
+            prestigeHelWakeRealms[map.prestigeLevel() - 1] = map.realm();
+    }
     constexpr std::array reserveMin{kJungleMinAwake, kJungleMinAwake, kPrestigeSewersMinAwake,
-                                    kPrestigeHelMinAwake, kPrestigeFactoryMinAwake};
+                                    kPrestigeHelMinAwake, kPrestigeHelMinAwake,
+                                    kPrestigeFactoryMinAwake, kPrestigeFactoryMinAwake};
     const std::array reserveRealms{ordinaryJungleRealm_, prestigeJungleRealm_, prestigeSewersRealm_,
-                                  prestigeHelRealm_, prestigeFactoryRealm_};
+                                  prestigeHelWakeRealms[0], prestigeHelWakeRealms[1],
+                                  prestigeFactoryRealm_, prestigeTwoFactoryRealm_};
     std::array<int, reserveMin.size()> awake{};
     std::array<bool, reserveMin.size()> inView{};
     const auto prioritySlot = [&](const SpawnZone& zone) {
         if (zone.realm == ordinaryJungleRealm_) return 0;
         if (zone.realm == prestigeJungleRealm_) return 1;
         if (zone.realm == prestigeSewersRealm_ && zone.difficulty >= kPrestigeSewersBoxDifficulty) return 2;
-        if (zone.prestige && zone.realm == prestigeHelRealm_ && zone.difficulty >= kPrestigeHelUpperBand &&
-            !zone.singular && zone.forceRarity < 0) return 3;
-        if (isDeepPrestigeFactory(zone)) return 4;
+        if (zone.prestige && zone.difficulty >= kPrestigeHelUpperBand &&
+            !zone.singular && zone.forceRarity < 0) {
+            if (zone.realm == prestigeHelWakeRealms[0]) return 3;
+            if (zone.realm == prestigeHelWakeRealms[1]) return 4;
+        }
+        if (isDeepPrestigeFactory(zone)) return zone.realm == prestigeFactoryRealm_ ? 5 : 6;
         return -1;
     };
     const auto inRoom = [&](const Viewer& viewer, Vec2 at) {
@@ -3216,9 +3255,9 @@ void SpawnSystem::promoteLatent(World& world, const Terrain& terrain,
                std::abs(at.y - viewer.viewportCentre.y) <= viewer.half.y &&
                !terrain.segmentBlocked(viewer.position, at, viewer.realm);
     };
-    const auto inFactoryView = [&](Vec2 at) {
+    const auto inFactoryView = [&](Realm realm, Vec2 at) {
         return std::any_of(seers.begin(), seers.end(), [&](const Viewer& viewer) {
-            return viewer.realm == prestigeFactoryRealm_ && inRoom(viewer, at);
+            return viewer.realm == realm && inRoom(viewer, at);
         });
     };
     bool canReserve = false;
@@ -3234,7 +3273,7 @@ void SpawnSystem::promoteLatent(World& world, const Terrain& terrain,
                 const auto& zone = zones_[mob.zone];
                 const int slot = prioritySlot(zone);
                 if (slot >= 0 && inView[slot] && awake[slot] < reserveMin[slot] &&
-                    (isDeepPrestigeFactory(zone) ? inFactoryView(mob.position)
+                    (isDeepPrestigeFactory(zone) ? inFactoryView(zone.realm, mob.position)
                                                  : seenBy(seers, zone.realm, mob.position, latentWakeMargin)))
                     ++awake[slot];
             }
@@ -3261,51 +3300,14 @@ void SpawnSystem::promoteLatent(World& world, const Terrain& terrain,
         // The cheap rejection, and the reason this is affordable at all: one
         // rectangle test per viewer says whether the band's records are worth
         // walking, and on a map with two dozen bands almost none of them are.
-        if (!zoneInView(zone.bounds, zone.realm, seers, latentWakeMargin)) continue;
+        if (!zoneInView(zone.bounds, zone.realm, seers, wakeMargin)) continue;
 
-        // Bio, deep Jungle and Factory rooms can share a band across walls. If a flower has
-        // no nearby mob in its room, keep one ready slot available to move
-        // into reach rather than requiring the flower to draw mobs out.
-        const Viewer* refillViewer = nullptr;
-        const bool deepJungle = !zone.singular && zone.forceRarity < 0 &&
-            zone.difficulty >= kDeepJungleDifficulty &&
-            (zone.realm == ordinaryJungleRealm_ || zone.realm == prestigeJungleRealm_);
-        const auto* map = worldMaps ? worldMaps->forRealm(zone.realm) : nullptr;
-        const bool bioRoom = map && !zone.singular && zone.forceRarity < 0 &&
-            (map->id() == "bio" || map->id() == "bio_micro" || map->id() == "bio_lab");
-        const auto inRefillRoom = [&](const Viewer& viewer, Vec2 at) {
-            if (!inRoom(viewer, at)) return false;
-            return !bioRoom ||
-                (std::abs(at.x - viewer.viewportCentre.x) <= viewer.half.x - kViewportBuffer &&
-                 std::abs(at.y - viewer.viewportCentre.y) <= viewer.half.y - kViewportBuffer);
-        };
-        if (relocateBlocked && (bioRoom || deepJungle || isDeepPrestigeFactory(zone))) {
-            const auto offset = (static_cast<std::size_t>(nowMillis / kPopulationIntervalMillis) + index)
-                % seers.size();
-            for (std::size_t i = 0; i < seers.size(); ++i) {
-                const auto& viewer = seers[(offset + i) % seers.size()];
-                if (viewer.realm != zone.realm || !zoneContains(zone.bounds, zone.polygon, viewer.position))
-                    continue;
-                if (std::none_of(censusMobs_.begin(), censusMobs_.end(), [&](const CensusMob& mob) {
-                        return mob.zone == index && inRefillRoom(viewer, mob.position);
-                    })) refillViewer = &viewer;
-                break;
-            }
-        }
-        std::size_t refillIndex = zone.latent.size();
-        double refillDistance = std::numeric_limits<double>::infinity();
-        bool wakingInRoom = false;
+        // Wake the pre-stocked positions. If a player occupies one, keep
+        // the resting record there until the body can safely wake.
         for (std::size_t i = 0; i < zone.latent.size(); ++i) {
             const LatentMob& record = zone.latent[i];
             if (nowMillis < record.readyMillis) continue;
-            if (refillViewer && (!bioRoom || rarityIndex(record.rarity) < rarityIndex(Rarity::Super))) {
-                const double gap = distanceSq(refillViewer->position, record.position);
-                if (gap < refillDistance) {
-                    refillDistance = gap;
-                    refillIndex = i;
-                }
-            }
-            if (!seenBy(seers, zone.realm, record.position, latentWakeMargin)) continue;
+            if (!seenBy(seers, zone.realm, record.position, wakeMargin)) continue;
             // Nobody's lap, at the moment the body actually appears.
             //
             // The record's own placement test was made against where the
@@ -3321,49 +3323,20 @@ void SpawnSystem::promoteLatent(World& world, const Terrain& terrain,
                 spawnFootprint(content, record.mobIndex, record.rarity);
             const std::optional<double> facing = wakingFacing(
                 viewers, zone.realm, record.position, footprint, kMinSpawnDistance, rng);
-            const bool blocked = !clearOfEveryLap(viewers, zone.realm, record.position, footprint,
-                                                  facing, kMinSpawnDistance);
-            if (blocked && (!relocateBlocked || zone.singular || zone.forceRarity >= 0 ||
-                            !seenBy(seers, zone.realm, record.position, 0.0))) continue;
+            if (!clearOfEveryLap(viewers, zone.realm, record.position, footprint,
+                                 facing, kMinSpawnDistance)) continue;
             double nearestSq = 0.0;
             nearestViewer(seers, zone.realm, record.position, &nearestSq);
-            if (refillViewer && inRefillRoom(*refillViewer, record.position)) wakingInRoom = true;
             wakeList_.push_back(WakeCandidate{static_cast<std::uint16_t>(index),
-                                              static_cast<std::uint32_t>(i), nearestSq, facing, blocked});
-        }
-        if (refillViewer && !wakingInRoom && refillIndex < zone.latent.size()) {
-            // Replace the ordinary wake for this record if it was visible
-            // through a wall. A record must never be woken twice.
-            auto previous = std::find_if(wakeList_.rbegin(), wakeList_.rend(), [&](const WakeCandidate& candidate) {
-                return candidate.zone == index && candidate.index == refillIndex;
-            });
-            const WakeCandidate refill{static_cast<std::uint16_t>(index),
-                static_cast<std::uint32_t>(refillIndex), refillDistance, std::nullopt, true, refillViewer};
-            if (previous == wakeList_.rend()) wakeList_.push_back(refill);
-            else *previous = refill;
+                                              static_cast<std::uint32_t>(i), nearestSq, facing});
         }
     }
     if (wakeList_.empty()) return;
     std::sort(wakeList_.begin(), wakeList_.end(),
               [](const WakeCandidate& a, const WakeCandidate& b) {
-                  if (a.blockedByPlayer != b.blockedByPlayer) return !a.blockedByPlayer;
                   return a.distanceSq < b.distanceSq;
               });
 
-    // Re-site a bounded number of ready records per population pass. Usable
-    // points wake first. Rotate the blocked suffix so a crowded dead end
-    // cannot use the entire search allowance on every pass.
-    constexpr int kMaxRelocationSearches = 16;
-    constexpr int kRelocationAttempts = 12;
-    const auto blocked = std::partition_point(wakeList_.begin(), wakeList_.end(),
-        [](const WakeCandidate& candidate) { return !candidate.blockedByPlayer; });
-    const auto blockedCount = static_cast<std::size_t>(wakeList_.end() - blocked);
-    if (blockedCount > kMaxRelocationSearches) {
-        const auto offset = (relocationCursor_ % blockedCount);
-        std::rotate(blocked, blocked + offset, wakeList_.end());
-        relocationCursor_ = (offset + kMaxRelocationSearches) % blockedCount;
-    }
-    int relocationSearches = 0;
     std::size_t attempted = 0;
     for (const WakeCandidate candidate : wakeList_) {
         if (census_.mobs >= wakeBudget) break;
@@ -3376,42 +3349,10 @@ void SpawnSystem::promoteLatent(World& world, const Terrain& terrain,
         // Leave the record in the same slot if the complete animal won't fit.
         const int bodyCount = 1 + content.mob(record.mobIndex).segmentCount;
         if (bodyCount > mobCap - census_.mobs) continue;
-        Vec2 at = record.position;
-        std::optional<double> facing = candidate.facing;
-        if (candidate.blockedByPlayer) {
-            if (relocationSearches == kMaxRelocationSearches) break;
-            ++relocationSearches;
-            const auto* map = worldMaps ? worldMaps->forRealm(zone.realm) : nullptr;
-            const double inset = candidate.refillViewer && map &&
-                (map->id() == "bio" || map->id() == "bio_micro" || map->id() == "bio_lab")
-                ? kViewportBuffer : 0.0;
-            const Viewer* viewer = candidate.refillViewer ? candidate.refillViewer
-                : nearestViewer(seers, zone.realm, at);
-            const Vec2 origin = candidate.refillViewer ? viewer->position : at;
-            const SpawnFootprint footprint = spawnFootprint(content, record.mobIndex, record.rarity);
-            const Vec2 extent = terrain.realmExtent(zone.realm);
-            const double searchRadius = std::max(kRespawnScatter,
-                kMinSpawnDistance + footprint.radius + viewer->radius + 350.0);
-            bool found = false;
-            for (int attempt = 0; attempt < kRelocationAttempts; ++attempt) {
-                const Vec2 point = samplePointNear(origin, searchRadius, extent, rng);
-                if (!zoneContains(zone.bounds, zone.polygon, point) || inBorderBand(point, extent) ||
-                    terrain.blocked(point, zone.realm) || !seenBy(seers, zone.realm, point, 0.0) ||
-                    (candidate.refillViewer && (std::abs(point.x - viewer->position.x) > viewer->half.x - inset ||
-                                               std::abs(point.y - viewer->position.y) > viewer->half.y - inset)) ||
-                    crowdedAt(zone.realm, point, kPreliminarySpawnRadius, kMinMobSpawnSpacing, candidate.zone) ||
-                    terrain.segmentBlocked(viewer->position, point, zone.realm)) continue;
-                const auto bearing = wakingFacing(viewers, zone.realm, point, footprint, kMinSpawnDistance, rng);
-                if (!clearOfEveryLap(viewers, zone.realm, point, footprint, bearing, kMinSpawnDistance)) continue;
-                at = point;
-                facing = bearing;
-                found = true;
-                break;
-            }
-            if (!found) continue;
-        }
+        const Vec2 at = record.position;
+        const auto facing = candidate.facing;
         // A mob across the factory wall cannot fill the reserve for this room.
-        if (census_.mobs >= ambientBudget && isDeepPrestigeFactory(zone) && !inFactoryView(at))
+        if (census_.mobs >= ambientBudget && isDeepPrestigeFactory(zone) && !inFactoryView(zone.realm, at))
             continue;
         wakeList_[attempted++] = candidate;
         const Entity spawned =

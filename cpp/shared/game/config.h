@@ -33,15 +33,16 @@
 #include "shared/game/drop_rates.h"
 
 namespace flix {
-inline constexpr int baseLootTrialsForRarity(Rarity rarity) {
-    return rarity == Rarity::Super ? 20 : kLootFeelCopies *
+inline constexpr int baseLootTrialsForRarity(Rarity rarity, bool ordinaryMap = false) {
+    constexpr int kOrdinaryMapLootTrials = 50;
+    return rarity == Rarity::Super ? 20 : (ordinaryMap ? kOrdinaryMapLootTrials : kLootFeelCopies) *
         (rarityIndex(rarity) >= rarityIndex(Rarity::Super) ? kLootFeelSuperMultiplier : 1);
 }
 
 /// Daily bonus tier: 1 inactive, 2 ordinary day, 3 fourth consecutive day.
 /// Extra independent rolls belong only to the claimant with that bonus.
-inline constexpr int bonusLootTrialsForRarity(Rarity rarity, int bonus) {
-    const int base = baseLootTrialsForRarity(rarity);
+inline constexpr int bonusLootTrialsForRarity(Rarity rarity, int bonus, bool ordinaryMap = false) {
+    const int base = baseLootTrialsForRarity(rarity, ordinaryMap);
     if (bonus <= 1) return base;
     const bool fourthDay = bonus >= 3;
     if (rarityIndex(rarity) >= rarityIndex(Rarity::Apex)) return base * (fourthDay ? 18 : 14) / 10;
@@ -448,7 +449,7 @@ struct AmbushSpec {
 };
 
 /// A lingering damage field (uranium).
-enum class SpillKind { None, Acid, Lava, Oil, Blood, Elixir };
+enum class SpillKind { None, Acid, Lava, Oil, Blood, Elixir, Latrine, Nitrogen };
 
 struct SpillSpec {
     SpillKind kind = SpillKind::None;
@@ -459,6 +460,7 @@ struct SpillSpec {
     double strength = 0.0;
     double lingerMillis = 0.0;
     double frostFactor = 1.0;
+    double health = 0;
 };
 
 struct RadiationSpec {
@@ -1090,6 +1092,7 @@ struct PetalConfig {
     /// lightning damage (DamageKind::Lightning), with no strike attached: the
     /// one victim touched, nothing chained. Blueberries.
     bool lightningDamage = false;
+    bool armorPiercing = false;
     bool stackable = true;
 
     /// Held at a fixed angle instead of orbiting. `has` distinguishes the
@@ -1354,14 +1357,91 @@ inline double uraniumRadiationDps(const PetalStats& stats, Rarity rarity) {
     return stats.damage * (isHyperPetal(rarity) ? 1.50 : 1.20);
 }
 
+inline constexpr double kRadiationDamageScale = 1.25;
+inline constexpr double kFluidRadiusScale = 1.20;
+inline constexpr double kRadiationRadiusScale = 1.20;
+inline constexpr double kFluidDamageScale = 1.25;
+
+inline double fluidDamageScale(SpillKind kind) {
+    return kind == SpillKind::Acid || kind == SpillKind::Lava || kind == SpillKind::Oil || kind == SpillKind::Latrine
+        ? kFluidDamageScale : 1.0;
+}
+
 inline double baseRadiationRadius(const PetalConfig& config, Rarity rarity) {
-    const double highTierStep = config.id == "arctic_plutonium" ? 200.0 :
-                                config.id == "arctic_corium" ? 150.0 : 0.0;
-    return config.radiation.radius + highTierStep * std::max(0, ladderIndex(rarity) - 7);
+    const double highTierStep = config.id == "pyrite" ? 140.0 :
+                                config.id == "arctic_plutonium" ? 200.0 :
+                                (config.id == "arctic_corium" || config.id=="void_corium") ? 150.0 :
+                                config.id == "void_lithium" ? 250.0 : 0.0;
+    return kRadiationRadiusScale * (config.radiation.radius + (config.id=="void_stardust"?12.5*ladderIndex(rarity):0.0) + highTierStep * std::max(0, ladderIndex(rarity) - 7));
+}
+
+// Original boostUpwards / passiveBoost curves, expressed in native movement
+// units. These are directional additions, never multipliers of walking speed.
+inline double balloonDriftSpeed(Rarity rarity) {
+    const int t=ladderIndex(rarity);
+    return (4.0+4.0*t+14.0*std::max(0,t-7))*kPlayerMaxSpeed/100.0;
+}
+inline double nitroDriftSpeed(Rarity rarity) {
+    const int t=ladderIndex(rarity);
+    // Keep Common's former 10% native speed budget, now directional.
+    return (10.0+3.0*t+9.0*std::max(0,t-7))*kPlayerMaxSpeed/100.0;
+}
+inline double nitroUseMillis(Rarity rarity) {
+    return std::max(0.5,5.5-.5*ladderIndex(rarity))*1000.0;
+}
+
+// Imported active effects follow the confirmed H offense curve too. Keep
+// health, healing, control, range and self-harm on their existing curves.
+inline double referenceOffenseScale(const PetalConfig& config,Rarity rarity) {
+    const bool imported=config.biomeDropOnly || config.id.rfind("void_",0)==0 ||
+        config.id.rfind("arctic_",0)==0 || config.id.rfind("bio_",0)==0 || config.id.rfind("jurassic_",0)==0;
+    if(imported && isHyperPetal(rarity))
+        return petalStrengthScale(Rarity::Unique) * 2.0 *
+               (rarity == Rarity::Ascendant ? kAscendantPetalDamageScale : 1.0);
+    return petalDamageScale(rarity);
+}
+
+inline bool isReferenceJet(std::string_view id) {
+    return id=="gas" || id=="void_fire" || id=="arctic_nitro" ||
+        id=="wind" || id=="void_attractor" || id=="arctic_frost" ||
+        id=="arctic_lightsaber" || id=="arctic_visaber" ||
+        id=="void_cyanide" || id=="oxygen";
+}
+inline double referencePetalHalfWidth(std::string_view id,Rarity rarity) {
+    if(id=="void_gamma_ray")return 2.5*(1+.2*ladderIndex(rarity));
+    if(isReferenceJet(id)) {
+        const bool blade=id=="arctic_lightsaber" || id=="arctic_visaber";
+        return 5.0*(blade?1.0:1.0+.2*ladderIndex(rarity));
+    }
+    if(id=="void_scythe" || id=="void_blood_scythe" || id=="void_trident")return 10.0;
+    return 0.0;
+}
+inline double referencePetalLengthRadius(std::string_view id,Rarity rarity) {
+    if(id=="void_gamma_ray")return 40.0;
+    if(isReferenceJet(id)) {
+        const double base=(id=="arctic_lightsaber" || id=="arctic_visaber")?40.0:20.0;
+        return base+20.0*ladderIndex(rarity);
+    }
+    if(id=="void_scythe" || id=="void_trident")return 100.0;
+    if(id=="void_blood_scythe")return 85.0;
+    return 0.0;
+}
+
+// The original /orbit presets match Gielis' (m,n1,n2,n3) superformula.
+// Quantum's authored tuples are retained verbatim. The parameter interpretation
+// is reconstructed from those presets; the original server is not public.
+inline double quantumOrbitRadiusScale(Rarity rarity,double angle) {
+    constexpr double shapes[][4]={{10,-3,1,1},{8,-2,1,1},{6,-1.5,1,1},{5,-1.25,1,1},
+        {4,-1.5,.5,.5},{3,-1.25,.5,.5},{10,-.75,.4,2},{16,-1,.1,2},
+        {32,-.1,5,1},{64,-.1,5,1},{128,-.075,5,1}};
+    const auto& p=shapes[std::clamp(ladderIndex(rarity),0,10)];
+    const double phase=p[0]*angle/4.0;
+    const double sum=std::pow(std::abs(std::cos(phase)),p[2])+std::pow(std::abs(std::sin(phase)),p[3]);
+    return std::pow(sum,-1.0/p[1]);
 }
 
 inline double bloodPoolRadius(Rarity rarity) {
-    return (32.0 + 7.0 * ladderIndex(rarity)) * 1.15;
+    return (32.0 + 7.0 * ladderIndex(rarity)) * 1.15 * kFluidRadiusScale;
 }
 
 /// Whether this petal DOES something when its slot is clicked on the bar.
@@ -1447,7 +1527,7 @@ inline bool petalShredsShots(const PetalConfig& config) { return config.id == "p
 
 /// A carrot is a missile whose shot bounces off walls instead of flying over
 /// them.
-inline bool petalShotBounces(const PetalConfig& config) { return config.id == "carrot"; }
+inline bool petalShotBounces(const PetalConfig& config) { return config.id == "carrot" || config.id == "marble" || config.id == "magic_marble"; }
 
 /// A tomato's hit grows the longer it has been out: florr's tooltip states it
 /// as a range, 5 ~ 70 at common (14x), and the class carries a one-second
@@ -1524,6 +1604,12 @@ inline bool petalIsEgg(const PetalConfig& config) {
     return id == "egg" || (id.size() >= 4 && id.compare(id.size() - 4, 4, "_egg") == 0);
 }
 
+// Compact liquid pools gain reach with quality. Wide fields such as Pyrite
+// already cover this distance, so their base radius is preserved.
+inline double spillBaseRadius(const SpillSpec& spill, Rarity rarity) {
+    return kFluidRadiusScale * std::min(spill.radius + 5.0 * ladderIndex(rarity), std::max(spill.radius, 100.0));
+}
+
 // Soap boosts the radius of the wearer's liquid fields. The bonus is additive
 // across active slots and limited independently of per-target effect strength.
 inline constexpr double kSoapMaxSpillRadiusScale = 2.0;
@@ -1569,7 +1655,7 @@ inline Rarity configuredSummonRarity(const PetalConfig& config, Rarity rarity) {
 /// The shell itself is a one-hit body with no contact damage; the summons are
 /// the egg's worth, so every egg's hatchlings get the bigger pool below.
 inline double eggSummonHealthScale(const PetalConfig& config) {
-    if (config.id == "void_zatan_egg") return 2.5 * 0.70;
+    if (config.id == "void_zatan_egg") return 1.10;
     return petalIsEgg(config) ? 2.5 : 1.0;
 }
 /// And both halves of the summons' combat worth, pool and bite, climb together:
@@ -1611,10 +1697,10 @@ inline double hyperSummonPromotionScale(const PetalConfig& config, Rarity rarity
 /// (buildPetalStats). Its summons take the same step over Permanent Hyper's,
 /// which the Hyper rung of petalStatScale would otherwise flatten away.
 inline double ascendantSummonHealthScale(Rarity petalRarity) {
-    return petalRarity == Rarity::Ascendant ? 1.30 : 1.0;
+    return petalRarity == Rarity::Ascendant ? kAscendantPetalHealthScale : 1.0;
 }
 inline double ascendantSummonDamageScale(Rarity petalRarity) {
-    return petalRarity == Rarity::Ascendant ? 1.25 : 1.0;
+    return petalRarity == Rarity::Ascendant ? kAscendantPetalDamageScale : 1.0;
 }
 
 /// The sacrifice: florr's "On death, summons a mob to fight again". Worn on
@@ -1989,12 +2075,11 @@ inline constexpr double magicEyeDamagePerMana(Rarity rarity) {
 ///
 using TriangleCounts = std::array<std::uint8_t, kRarityCount>;
 
-inline double triangleBonusDamage(Rarity rarity, const TriangleCounts& counts) {
-    const int tier = petalTier(rarity);
-    const int matches = std::max(0, counts[tier] - 1);
-    constexpr std::array<int, kRarityCount> bonus{
-        4, 12, 36, 108, 324, 972, 2916, 8748, 32805, 98415, 236196, 708588};
-    return static_cast<double>(matches) * bonus[tier];
+inline constexpr double kTriangleCopyDamageBonus = 0.8;
+
+inline double triangleBonusDamage(double baseDamage, Rarity rarity, const TriangleCounts& counts) {
+    const int extraCopies = std::max(0, counts[petalTier(rarity)] - 1);
+    return baseDamage * kTriangleCopyDamageBonus * extraCopies;
 }
 
 /// A template over the accessor for the reason resolveEquippedPetal is one:

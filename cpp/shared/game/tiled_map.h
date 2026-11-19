@@ -436,6 +436,7 @@ public:
     /// and `defaultMobGroup` are what the game reads out of it; anything else
     /// an author puts there travels through untouched.
     const Json& properties() const { return properties_; }
+    double worldScale() const;
 
     const std::vector<TiledTileType>& palette() const { return palette_; }
 

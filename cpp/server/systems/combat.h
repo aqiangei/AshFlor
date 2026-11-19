@@ -161,13 +161,14 @@ enum class DamageKind : std::uint8_t {
     /// soaks it, and above all nothing reflects it -- two salted duellists
     /// would otherwise bounce one blow between them until it rounded to zero.
     Reflect = 5,
+    Piercing = 7,   ///< direct damage that bypasses armour, but not dodge/shields
     Sponge = 6,     ///< repayment of an already accepted hit
 };
 
 /// Whether this kind is a landed hit rather than a drip. Everything in
 /// applyDamage that used to ask `kind == Direct` asks this.
 inline constexpr bool isDirectHit(DamageKind kind) {
-    return kind == DamageKind::Direct || kind == DamageKind::Lightning;
+    return kind == DamageKind::Direct || kind == DamageKind::Lightning || kind == DamageKind::Piercing;
 }
 
 /// Whether the victim's Armor comes off this kind. Every landed hit, and the
@@ -201,6 +202,7 @@ struct ShotLanding {
     /// The point on the shot's path closest to the mob it hit.
     Vec2 at;
     Entity victim = NULL_ENTITY;
+    double effectStrength = 1.0;
 };
 
 struct ContactBodyPlacement {
@@ -217,7 +219,8 @@ public:
                        double rate, double duration, double now, bool fraction = false);
     std::function<std::uint32_t()> allocateNetId;
     static void createSpill(World& world, Entity owner, Vec2 at, Rarity rarity,
-                            const SpillSpec& spill, double scale, std::uint32_t netId);
+                            const SpillSpec& spill, double scale, std::uint32_t netId,
+                            double durabilityScale = 1.0);
     ~CombatSystem();
     CombatSystem(const CombatSystem&) = delete;
     CombatSystem& operator=(const CombatSystem&) = delete;
@@ -336,7 +339,7 @@ public:
     /// A flower is different on purpose: it carries exactly one bite, replaced
     /// outright by the next one even when that shortens it.
     void applyPoison(World& world, Entity victim, Entity source, double perSecond,
-                     double durationMillis, double nowMillis);
+                     double durationMillis, double nowMillis, bool stackByEmitter = false);
 
     /// A slow never weakens while it is live: the deeper factor wins and the
     /// expiry never comes closer, so a common petal grazing a mob cannot wipe
@@ -348,7 +351,7 @@ public:
     /// petal or pincer has ever taken a flower's speed away. A MOB's web is the
     /// exception, and reaches a flower through slowFlower() below instead.
     void applySlow(World& world, Entity victim, double factor, double durationMillis,
-                   Rarity sourceRarity, double nowMillis);
+                   Rarity sourceRarity, double nowMillis, bool frost = false);
 
     /// The one slow a FLOWER takes: a mob's web (GroundEffect::slowsFlowers).
     /// Same deepest-wins, never-shortened rule as applySlow(), written to
@@ -437,6 +440,7 @@ public:
     /// same player never hurt each other, which is what stops a flower's own
     /// petals and pets from killing it the moment PvP is enabled.
     static bool canDamage(const World& world, Entity source, Entity victim);
+    static bool gamblerIgnores(const World& world, Entity mob, Entity target);
 
     /// canDamage() plus the victim's own state: alive, not already Dead, and
     /// past its respawn invulnerability. Shared with the contact path so that
@@ -493,6 +497,7 @@ private:
         double poisonDurationMillis = 0;
         double slowFactor = 1.0;
         double slowDurationMillis = 0;
+        bool inflictsFrost = false;
         /// How long a hit from this body stops the victim healing. Dandelion,
         /// and nothing else.
         double noHealDurationMillis = 0;
@@ -684,6 +689,7 @@ private:
         double radius = 0, angle = 0, squareHalf = 0;
         bool wild = false;
         bool movesOnImpact = false;
+        double capsuleHalfWidth = 0.0;
     };
     struct ShotPlan {
         std::size_t begin = 0, end = 0;
@@ -1041,10 +1047,12 @@ private:
     Rng rubyRng_;
     bool resolvingRuby_=false;
     DamageResult applyDamageWithRuby(World& world, Entity victim, Entity source, double amount,
-                                     double nowMillis, DamageKind kind, Entity checkedTarget);
+                                     double nowMillis, DamageKind kind, Entity checkedTarget,
+                                     std::optional<Vec2> impactPoint = std::nullopt);
     DamageResult applyDamageOnce(World& world, Entity victim, Entity source, double amount,
                                  double nowMillis, DamageKind kind,
-                                 Entity checkedTarget = NULL_ENTITY);
+                                 Entity checkedTarget = NULL_ENTITY,
+                                 std::optional<Vec2> impactPoint = std::nullopt);
 
     struct PracticeBucket {
         std::int64_t second = -1;

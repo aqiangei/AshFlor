@@ -830,6 +830,7 @@ struct GameServerPeer {
     static EventQueue& snapshotEvents(GameServer& server) { return server.events_; }
     static void markClock(GameServer& server, double now) { server.clockMillis_ = now; }
     static CombatSystem& practiceCombat(GameServer& server) { return *server.combat_; }
+    static void bankKills(GameServer& server) { server.bankKills(); }
     static double practiceClock(const GameServer& server) { return server.clockMillis_; }
     static void advanceJurassicCycle(GameServer& server) {
         server.serviceJurassicRotation(server.jurassicCycle_ + 1);

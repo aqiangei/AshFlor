@@ -804,6 +804,9 @@ private:
     double minimapDensity_ = 0.0;
     bool minimapExpanded_ = false;
     bool minimapControlUsed_ = false;
+    std::vector<std::int64_t> hudPanelTouches_;
+    bool hudPanelMouseHeld_ = false;
+    bool hudPanelControlUsed_ = false;
 
     /// The maze minimap's bake, keyed on the day it was built for and the
     /// density it was rasterised at, for the same reasons as the world one.

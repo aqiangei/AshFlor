@@ -591,7 +591,7 @@ private:
     /// Stops a body where it stands: no input, no velocity, no knockback.
     /// Only the ACTIVE half is written by handleInput, so without this the
     /// parked one replays the last heading it was given and walks away.
-    void parkBody(Entity);
+    void parkBody(Entity, bool stopMotion = true);
     /// Which active slot holds a splitter, or -1. Reloading or not: a slot
     /// serving its cooldown is still equipped, and the split outlives it.
     int splitterSlotOf(Entity body) const;
@@ -1543,6 +1543,7 @@ private:
     void collectLeavingLoot(Session&);
     void tick(double wallMillis, double worldMillis);
     void replicate(double nowMillis, double wallMillis);
+    void sendBossDamage();
     void reapDead();
     void serviceNearbyRevives(double nowMillis);
 
@@ -1946,6 +1947,7 @@ private:
     /// Counts snapshots actually sent, which is what the far-band update
     /// cadence is staggered against (Replicator::farSnapshotStride).
     std::uint32_t snapshotIndex_ = 0;
+    double bossDamageDueMillis_ = 0;
 
     /// The clock every deadline this class owns is measured against: the
     /// `nowMillis` the last tick was given.

@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 
 namespace flix {
 namespace {
@@ -38,6 +39,18 @@ constexpr double kPetTargetTierStride = 1e6;
 /// the whole table would cost far more than the handful of stale doubles it
 /// reclaims -- ten seconds of them is a few dozen entries.
 constexpr std::uint64_t kLedgerSweepTicks = 300;
+
+double holeTargetLimit(const World& world, Entity shooter) {
+    const auto* type = world.tryGet<MobType>(shooter);
+    if (type && type->configIndex < content().mobCount()) {
+        const auto& mob = content().mob(type->configIndex);
+        if (mob.gravityForce != 0.0 &&
+            (mob.id == "void_black_hole" || mob.id == "void_white_hole")) {
+            return mob.projectile.distance;
+        }
+    }
+    return std::numeric_limits<double>::infinity();
+}
 
 /// Whether a flower is wearing something that makes it MORE conspicuous -- a
 /// bulb's glow -- rather than less (poo) or neither. Only such a flower is
@@ -645,7 +658,8 @@ Entity MobAiSystem::acquireTarget(const World& world, const Terrain& terrain, co
     const auto& limits = realmAggro_[realmIndex(realm)];
     const double deepBonus = deepBulbApplies(world, self, realm, from)
         ? std::min(150.0, 0.15 * range) : 0.0;
-    const double reach = std::min(range * limits.scale + limits.bonus + deepBonus, kMobTargetRetainRadius);
+    const double targetLimit = std::min(kMobTargetRetainRadius, holeTargetLimit(world, self));
+    const double reach = std::min(range * limits.scale + limits.bonus + deepBonus, targetLimit);
     grid.query(realm, from, reach, scratch.entities, scratch.query);
     auto& candidates = scratch.candidates;
     candidates.clear();
@@ -656,7 +670,8 @@ Entity MobAiSystem::acquireTarget(const World& world, const Terrain& terrain, co
             const auto* visuals = world.tryGet<PlayerVisuals>(candidate);
             if (!visuals || !visuals->canSeeGhost(world.tryGet<MobType>(self)->rarity)) continue;
         }
-        if (!canNoticeBurrowed(world,self,candidate)) continue;
+        if (!canNoticeBurrowed(world,self,candidate) ||
+            CombatSystem::gamblerIgnores(world, self, candidate)) continue;
         if (!isStanding(world, candidate)) continue;
         const Transform* transform = world.tryGet<Transform>(candidate);
         if (transform == nullptr) continue;
@@ -672,7 +687,7 @@ Entity MobAiSystem::acquireTarget(const World& world, const Terrain& terrain, co
         const double bonus = mods != nullptr ? mods->aggroRadiusBonus : 0.0;
         const double scale = mods != nullptr ? mods->aggroRangeScale : 1.0;
         const double gap = distance(from, transform->position);
-        if (gap > kMobTargetRetainRadius) continue;
+        if (gap > targetLimit) continue;
         const double score = gap - (range * scale + bonus + (mods && mods->litAggroBulb ? deepBonus : 0.0));
         if (score > 0.0) continue;
         candidates.push_back(Candidate{candidate, transform->position, score});
@@ -693,7 +708,7 @@ Entity MobAiSystem::acquireTarget(const World& world, const Terrain& terrain, co
     return NULL_ENTITY;
 }
 
-Entity MobAiSystem::acquirePetTarget(const Terrain& terrain, Entity self, Vec2 from, Realm realm,
+Entity MobAiSystem::acquirePetTarget(const World& world, const Terrain& terrain, Entity self, Vec2 from, Realm realm,
                                      double range, TargetScratch& scratch) const {
     const auto& pets = petsByRealm_[realmIndex(realm)];
     if (pets.empty()) return NULL_ENTITY;
@@ -701,7 +716,8 @@ Entity MobAiSystem::acquirePetTarget(const Terrain& terrain, Entity self, Vec2 f
     // Not counted as a target scan: the stat exists to report what the
     // broadphase cost, and this is a walk over a list a player's summons fit
     // in twice over.
-    const double reachSq = range * range;
+    const double boundedRange = std::min(range, holeTargetLimit(world, self));
+    const double reachSq = boundedRange * boundedRange;
     auto& candidates = scratch.candidates;
     candidates.clear();
     for (const Candidate& pet : pets) {
@@ -710,7 +726,7 @@ Entity MobAiSystem::acquirePetTarget(const Terrain& terrain, Entity self, Vec2 f
         // something a FLOWER carries to make itself conspicuous, and a summon
         // carries none of it.
         const double gapSq = distanceSq(from, pet.position);
-        if (!(gapSq < reachSq)) continue;
+        if (!(gapSq < reachSq) || CombatSystem::gamblerIgnores(world, self, pet.entity)) continue;
         candidates.push_back(Candidate{pet.entity, pet.position, gapSq});
     }
 
@@ -741,7 +757,8 @@ Entity MobAiSystem::nearestAttacker(World& world, Entity self, Vec2 from, Realm 
         if (share.damage <= 0.0) continue;
         // Connection-keyed: a respawned flower still counts as the hitter.
         const Entity body = liveContributorBody(world, share);
-        if (body == NULL_ENTITY || !isStanding(world, body)) continue;
+        if (body == NULL_ENTITY || !isStanding(world, body) ||
+            CombatSystem::gamblerIgnores(world, self, body)) continue;
         const Transform* transform = world.tryGet<Transform>(body);
         if (transform == nullptr) continue;
         if (transform->realm != realm) continue;
@@ -761,12 +778,14 @@ Entity MobAiSystem::nearestAttacker(World& world, Entity self, Vec2 from, Realm 
 bool MobAiSystem::holdTarget(const World& world, const Terrain& terrain, Entity self, Vec2 from, Realm realm,
                              MobAi& ai, double range, double nowMillis) const {
     const Entity target = ai.target;
-    if (!isStanding(world, target)) return false;
+    if (!isStanding(world, target) || CombatSystem::gamblerIgnores(world, self, target)) return false;
     const Transform* transform = world.tryGet<Transform>(target);
     if (transform == nullptr) return false;
     // Another map is gone for good, as it is over there.
     if (transform->realm != realm) return false;
     const double gapSq = distanceSq(from, transform->position);
+    const double limit = holeTargetLimit(world, self);
+    if (gapSq > limit * limit) return false;
     const MapData* map = worldMaps ? worldMaps->forRealm(realm) : nullptr;
     const bool pyramid = map && map->biome() == "pyramid";
     if (pyramid && terrain.segmentBlocked(from, transform->position, realm)) return false;
@@ -1611,7 +1630,7 @@ bool MobAiSystem::steerAggressive(World& world, const Terrain& terrain, const Sp
         if (ai.target == NULL_ENTITY) {
             ai.target = plan && plan->petScanned
                 ? plan->acquiredPet
-                : acquirePetTarget(terrain, self, transform.position, transform.realm, range,
+                : acquirePetTarget(world, terrain, self, transform.position, transform.realm, range,
                                    targetScratch_);
         }
     }
@@ -2119,7 +2138,9 @@ MobAiSystem::PetPrey MobAiSystem::acquirePetPrey(const World& world, const Terra
     const double searchReach = hasOwner
         ? std::max({range, kPetOwnerTargetRadius, std::hypot(kPetViewHalfWidth, kPetViewHalfHeight)}) * targetScale + rangeBonus
         : range;
-    const double reachSq = searchReach * searchReach;
+    // Stationary holes cannot close a gap beyond their ray reach.
+    const double boundedReach = std::min(searchReach, holeTargetLimit(world, self));
+    const double reachSq = boundedReach * boundedReach;
     const auto withinLeash = [&](Vec2 position) {
         return !ownerAt || distanceSq(position, ownerAt->position) <= ownerReachSq;
     };
@@ -2150,8 +2171,8 @@ MobAiSystem::PetPrey MobAiSystem::acquirePetPrey(const World& world, const Terra
     // whether a rarer one has come into reach.
     // Intersect the pet's reach with the owner's circle before reading candidates.
     const double queryReach = ownerAt
-        ? std::min(searchReach, distance(from, ownerAt->position) + ownerReach)
-        : searchReach;
+        ? std::min(boundedReach, distance(from, ownerAt->position) + ownerReach)
+        : boundedReach;
     grid.query(realm, from, queryReach, scratch.entities, scratch.query);
     auto& candidates = scratch.candidates;
     candidates.clear();
@@ -2999,7 +3020,7 @@ void MobAiSystem::prepareTargets(const World& world, const Terrain& terrain, con
                 plan.scanned = true;
                 if (ai->kind == AiKind::Hostile && plan.acquired == NULL_ENTITY &&
                     (ai->target == NULL_ENTITY || (plan.checked != NULL_ENTITY && !plan.retained))) {
-                    plan.acquiredPet = acquirePetTarget(terrain, self, at.position, at.realm, range,
+                    plan.acquiredPet = acquirePetTarget(world, terrain, self, at.position, at.realm, range,
                                                         scratch);
                     plan.petScanned = true;
                 }

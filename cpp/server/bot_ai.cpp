@@ -1059,7 +1059,7 @@ void GameServer::botBuildWalkGrid(Realm realm, BotPathScratch& scratch) const {
     scratch.steps.assign(scratch.stamp.size(), 0);
     for (int ty = 0; ty < rows; ++ty) {
         for (int tx = 0; tx < cols; ++tx) {
-            const bool blocked = terrain_->blocked(Terrain::tileCenter(tx, ty), realm);
+            const bool blocked = terrain_->blocked(Terrain::tileCenter(tx, ty, terrain_->mapScale(realm)), realm);
             scratch.open[at(tx, ty)] = blocked ? 0 : 1;
         }
     }
@@ -1081,8 +1081,8 @@ void GameServer::botBuildWalkGrid(Realm realm, BotPathScratch& scratch) const {
                     (!scratch.open[at(nx, ty)] || !scratch.open[at(tx, ny)])) {
                     continue;
                 }
-                const Vec2 from = Terrain::tileCenter(tx, ty);
-                if (botRayHitsWall(realm, from, Terrain::tileCenter(nx, ny))) continue;
+                const Vec2 from = Terrain::tileCenter(tx, ty, terrain_->mapScale(realm));
+                if (botRayHitsWall(realm, from, Terrain::tileCenter(nx, ny, terrain_->mapScale(realm)))) continue;
                 scratch.steps[at(tx, ty)] |= static_cast<std::uint8_t>(1u << kForward[f]);
                 scratch.steps[at(nx, ny)] |= static_cast<std::uint8_t>(1u << kBack[f]);
             }
@@ -1151,10 +1151,10 @@ bool GameServer::botFindPath(Realm realm, Vec2 start, Vec2 goal, std::vector<Vec
                scratch.open[static_cast<std::size_t>(ty) * cols + tx] != 0;
     };
 
-    int sx = Terrain::toTileCoord(start.x);
-    int sy = Terrain::toTileCoord(start.y);
-    int gx = Terrain::toTileCoord(goal.x);
-    int gy = Terrain::toTileCoord(goal.y);
+    int sx = Terrain::toTileCoord(start.x, terrain_->mapScale(realm));
+    int sy = Terrain::toTileCoord(start.y, terrain_->mapScale(realm));
+    int gx = Terrain::toTileCoord(goal.x, terrain_->mapScale(realm));
+    int gy = Terrain::toTileCoord(goal.y, terrain_->mapScale(realm));
     if (sx < 0 || sy < 0 || sx >= cols || sy >= rows) return false;
 
     // A bot is often in the open part of a tile whose centre is not -- along
@@ -1162,7 +1162,7 @@ bool GameServer::botFindPath(Realm realm, Vec2 start, Vec2 goal, std::vector<Vec
     // nearest such centre in plain sight, and that centre becomes the path's
     // first waypoint.
     bool startMoved = false;
-    if (!open(sx, sy) || botRayHitsWall(realm, start, Terrain::tileCenter(sx, sy))) {
+    if (!open(sx, sy) || botRayHitsWall(realm, start, Terrain::tileCenter(sx, sy, terrain_->mapScale(realm)))) {
         int bestX = 0;
         int bestY = 0;
         double bestSq = -1.0;
@@ -1171,7 +1171,7 @@ bool GameServer::botFindPath(Realm realm, Vec2 start, Vec2 goal, std::vector<Vec
                 for (int dx = -r; dx <= r; ++dx) {
                     if (std::abs(dx) != r && std::abs(dy) != r) continue;
                     if (!open(sx + dx, sy + dy)) continue;
-                    const Vec2 centre = Terrain::tileCenter(sx + dx, sy + dy);
+                    const Vec2 centre = Terrain::tileCenter(sx + dx, sy + dy, terrain_->mapScale(realm));
                     const double sq = distanceSq(start, centre);
                     if (bestSq >= 0.0 && sq >= bestSq) continue;
                     if (botRayHitsWall(realm, start, centre)) continue;
@@ -1214,7 +1214,7 @@ bool GameServer::botFindPath(Realm realm, Vec2 start, Vec2 goal, std::vector<Vec
     if (sx == gx && sy == gy) {
         // Already there, unless getting onto the grid was itself the move.
         if (!startMoved) return false;
-        out.push_back(Terrain::tileCenter(sx, sy));
+        out.push_back(Terrain::tileCenter(sx, sy, terrain_->mapScale(realm)));
         return true;
     }
     // A wrap would make every stale entry suddenly "match", so the table is
@@ -1303,14 +1303,14 @@ bool GameServer::botFindPath(Realm realm, Vec2 start, Vec2 goal, std::vector<Vec
             while (index != startIndex) {
                 const int px = static_cast<int>(index % static_cast<std::size_t>(cols));
                 const int py = static_cast<int>(index / static_cast<std::size_t>(cols));
-                scratch.path.push_back(Terrain::tileCenter(px, py));
+                scratch.path.push_back(Terrain::tileCenter(px, py, terrain_->mapScale(realm)));
                 if (scratch.stamp[index] != stamp) break;
                 const std::int32_t previous = scratch.cameFrom[index];
                 if (previous < 0) break;
                 index = static_cast<std::size_t>(previous);
             }
             // Exclusive of the bot's own tile, but not of one it was moved to.
-            if (startMoved) scratch.path.push_back(Terrain::tileCenter(sx, sy));
+            if (startMoved) scratch.path.push_back(Terrain::tileCenter(sx, sy, terrain_->mapScale(realm)));
             out.assign(scratch.path.rbegin(), scratch.path.rend());
             return !out.empty();
         }
@@ -1361,8 +1361,8 @@ bool GameServer::botFollowPath(Bot& bot, double nowMillis, Vec2 goal, double spe
         return true;
     }
 
-    const int goalTx = Terrain::toTileCoord(goal.x);
-    const int goalTy = Terrain::toTileCoord(goal.y);
+    const int goalTx = Terrain::toTileCoord(goal.x, terrain_->mapScale(bot.realm));
+    const int goalTy = Terrain::toTileCoord(goal.y, terrain_->mapScale(bot.realm));
 
     // A path walked to its end -- not the EMPTY one a failed search caches
     // below. Counted as walked out, that one went stale on the very next tick,

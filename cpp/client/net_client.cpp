@@ -98,6 +98,8 @@ const char* serverMessageName(std::uint8_t id) {
         case net::ServerMessage::Notice:              return "notice";
         case net::ServerMessage::Died:                return "died";
         case net::ServerMessage::RunLoot:             return "runLoot";
+        case net::ServerMessage::RunKills:            return "runKills";
+        case net::ServerMessage::BossDamage:          return "bossDamage";
         case net::ServerMessage::Revived:             return "revived";
         case net::ServerMessage::CraftResult:         return "craftResult";
         case net::ServerMessage::PracticeBoard:       return "practiceBoard";
@@ -170,6 +172,9 @@ void NetClient::disconnect() {
     clearViewOnSnapshot_ = false;
     view_.clear();
     chatBubbles_.clear();
+    // Squads belong to the connection; a relog starts on a new roster.
+    squad_ = {};
+    squadInvite_ = {};
     dead_ = false;
     revived = false;
     // An explicit disconnect is a decision, not an accident: nothing redials
@@ -314,6 +319,7 @@ void NetClient::forgetAccount() {
     // on the lobby's first frame before the server's fresh copy arrived.
     sessionToken_.clear();
     profile_ = Profile{};
+    pendingPresetRotationStep_ = 0;
     chat_.clear();
     chatBackfilled_ = false;
     whisperPartner_.clear();
@@ -348,7 +354,7 @@ void NetClient::forgetAccount() {
     craftOutcome_ = CraftOutcome{};
     craftAttemptCount_ = 0;
     pyramidMapRevealed = false;
-    lockedShopRotation=-1;lockedShopOffers.clear();currentShopRotation=-1;currentShopOffers.clear();dropBonusStreak=0;dropBonusMultiplier=1;dropBonusUntil=dropBonusNextClaim=dropBonusUpdatedAt=0;dropBonusPaused=false;dropBonusCountdownRate=net::kTicksPerSecond;
+    shopLockMask=0;lockedShopRotation=-1;lockedShopOffers.clear();currentShopRotation=-1;currentShopOffers.clear();dropBonusStreak=0;dropBonusMultiplier=1;dropBonusUntil=dropBonusNextClaim=dropBonusUpdatedAt=0;dropBonusPaused=false;dropBonusCountdownRate=net::kTicksPerSecond;
     waveRoomStatus = {};
     oracleOutcome_ = OracleOutcome{};
     oracleReadyAtMillis_ = 0;
@@ -471,19 +477,21 @@ void NetClient::setPresetAutosave(bool enabled) {
     send(w);
 }
 
-void NetClient::saveLoadoutPreset(int preset) {
+void NetClient::saveLoadoutPreset(int preset, int rotationStep) {
     if (preset < 0 || preset >= kLoadoutPresetCount) return;
     ByteWriter w;
     beginMessage(w, net::ClientMessage::SaveLoadoutPreset);
     w.u8(static_cast<std::uint8_t>(preset));
+    w.u8(static_cast<std::uint8_t>(std::clamp(rotationStep, 1, 4)));
     send(w);
 }
 
-void NetClient::loadLoadoutPreset(int preset) {
+void NetClient::loadLoadoutPreset(int preset, int rotationStep) {
     if (preset < 0 || preset >= kLoadoutPresetCount) return;
     ByteWriter w;
     beginMessage(w, net::ClientMessage::LoadLoadoutPreset);
     w.u8(static_cast<std::uint8_t>(preset));
+    w.u8(static_cast<std::uint8_t>(std::clamp(rotationStep, 1, 4)));
     send(w);
 }
 
@@ -495,7 +503,7 @@ void NetClient::usePetal(int slot) {
     send(w);
 }
 
-void NetClient::toggleShopLock(){ByteWriter w;beginMessage(w,net::ClientMessage::DailyDropBonus);w.u8(2);send(w);}
+void NetClient::toggleShopLock(int tiers){ByteWriter w;beginMessage(w,net::ClientMessage::DailyDropBonus);w.u8(tiers == 1 ? 5 : (tiers == 2 ? 6 : 2));send(w);}
 void NetClient::requestDungeonEntry(){ByteWriter w;beginMessage(w,net::ClientMessage::EnterDungeon);send(w);}
 void NetClient::requestDailyDropBonus(bool claim) {
     ByteWriter w;beginMessage(w,net::ClientMessage::DailyDropBonus);w.boolean(claim);send(w);
@@ -1310,8 +1318,9 @@ void NetClient::onMessage(net::Connection& connection, ByteReader& reader) {
                 return result;
             };
             auto offers=readOffers(); const auto current=reader.i64(); auto currentOffers=readOffers();
+            const auto lockMask=reader.u8();
             if(reader.ok()) {lockedShopOffers=std::move(offers);lockedShopRotation=locked;dropBonusStreak=streak;dropBonusMultiplier=multiplier;
-                currentShopRotation=current; currentShopOffers=std::move(currentOffers);
+                shopLockMask=lockMask; currentShopRotation=current; currentShopOffers=std::move(currentOffers);
                 dropBonusUpdatedAt=wallClockMillis();dropBonusPaused=paused;
                 dropBonusCountdownRate=std::clamp<int>(rate,1,net::kTicksPerSecond);
                 dropBonusUntil=dropBonusUpdatedAt+remaining;dropBonusNextClaim=dropBonusUpdatedAt+next;}
@@ -1342,7 +1351,30 @@ void NetClient::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ServerMessage::Chat:         handleChat(reader); break;
         case net::ServerMessage::Notice:       handleNotice(reader); break;
         case net::ServerMessage::Died:         handleDied(reader); break;
+        case net::ServerMessage::BossDamage:
+            if (!clearViewOnSnapshot_) view_.applyBossDamage(reader);
+            break;
         case net::ServerMessage::RunLoot:      runLootOverview_ = readRunLoot(reader); break;
+        case net::ServerMessage::RunKills: {
+            const auto count = reader.u32();
+            if (!reader.ok() || reader.remaining() % 7 != 0 ||
+                count != reader.remaining() / 7) break;
+            auto& kills = runKillsOverview_.emplace();
+            kills.reserve(count);
+            for (std::uint32_t i = 0; i < count; ++i) {
+                const auto mob = reader.u16();
+                const auto tier = reader.u8();
+                const auto quantity = reader.u32();
+                if (mob < content().mobCount() && tier < kRarityCount && quantity > 0)
+                    kills.push_back({mob, static_cast<Rarity>(tier), quantity});
+            }
+            std::sort(kills.begin(), kills.end(), [](const RunKill& a, const RunKill& b) {
+                if (a.rarity != b.rarity) return rarityIndex(a.rarity) > rarityIndex(b.rarity);
+                if (a.count != b.count) return a.count > b.count;
+                return a.mobIndex < b.mobIndex;
+            });
+            break;
+        }
         case net::ServerMessage::Revived:      handleRevived(reader); break;
         case net::ServerMessage::CraftResult:  handleCraftResult(reader); break;
         case net::ServerMessage::PracticeBoard: handlePracticeBoard(reader); break;
@@ -1426,6 +1458,8 @@ void NetClient::onDisconnect(net::Connection&, const std::string& reason) {
     clearViewOnSnapshot_ = false;
     view_.clear();
     chatBubbles_.clear();
+    squad_ = {};
+    squadInvite_ = {};
     // Every connection id the dashboard holds belongs to the socket that just
     // went, and so does any control: the server lets go of it when the socket
     // closes, and a reconnection is a new session nobody pushes a release to.
@@ -1625,10 +1659,14 @@ void NetClient::handleProfile(ByteReader& reader) {
         }
     }
 
+    const auto presetRotationStep = reader.u8();
+
     // Replace wholesale only once the whole message decoded. A partially
     // applied inventory is how duplication bugs start.
     if (!reader.ok()) return;
     profile_ = std::move(next);
+    if (presetRotationStep >= 1 && presetRotationStep <= 4)
+        pendingPresetRotationStep_ = presetRotationStep;
     oracleReadyAtMillis_ = renderClockMillis() + static_cast<double>(profile_.oracleCooldownMillis);
     traderReadyAtMillis_ = renderClockMillis() + static_cast<double>(profile_.traderCooldownMillis);
 }
@@ -2150,6 +2188,7 @@ void NetClient::handleJoinAccepted(ByteReader& reader) {
     dead_ = false;
     runLoot_.clear();
     runLootOverview_.reset();
+    runKillsOverview_.reset();
     revived = false;
     clearViewOnSnapshot_ = false;
     view_.clear();
@@ -2397,6 +2436,11 @@ std::optional<std::vector<Profile::Stack>> NetClient::readRunLoot(ByteReader& re
         if (petal < content().petalCount() && tier < kRarityCount && quantity > 0)
             collected.push_back({petal, static_cast<Rarity>(tier), quantity});
     }
+    std::sort(collected.begin(), collected.end(), [](const auto& a, const auto& b) {
+        if (a.rarity != b.rarity) return rarityIndex(a.rarity) > rarityIndex(b.rarity);
+        if (a.count != b.count) return a.count > b.count;
+        return a.petalIndex < b.petalIndex;
+    });
     return collected;
 }
 
@@ -2409,6 +2453,7 @@ void NetClient::handleDied(ByteReader& reader) {
     killerName_ = std::move(killer);
     runLoot_ = std::move(*loot);
     runLootOverview_.reset();
+    runKillsOverview_.reset();
     dead_ = true;
 }
 

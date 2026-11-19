@@ -313,7 +313,7 @@ TEST(todo1106_bulk_craft_keeps_results_private) {
     CHECK(h.stepUntil({&crafter,&reader},[&]{return sawText(crafter,"global-after-craft");}));
 }
 
-TEST(todo1106_super_craft_has_no_announcement) {
+TEST(feedback3718_super_craft_records_results_privately) {
     Harness h("quiet-super",[](const std::string& path){
         seedUser(path,"smith","password7");
         seedUser(path,"observer","password7");
@@ -329,8 +329,10 @@ TEST(todo1106_super_craft_has_no_announcement) {
     CHECK(client.craftOutcome().crafted>0);
     client.requestNotifications(50,0);
     CHECK(h.stepUntil({&client,&observer},[&]{return !client.notificationsPending();}));
-    CHECK(!sawText(client,"超级 玫瑰 已被"));
-    CHECK(!sawText(client,"has been crafted by"));
+    CHECK(sawText(client,"合成"));
+    CHECK(sawText(client,"合成 ×"));
+    CHECK(sawText(client,"消耗 ×"));
+    CHECK(!sawText(observer,"合成 ×"));
     CHECK(!sawText(observer,"超级 玫瑰 已被"));
     CHECK(!sawText(observer,"color: yellow;\">@smith"));
     CHECK(client.notifications().empty());
@@ -518,7 +520,7 @@ TEST(todo1106_spaceship_hatches_actual_hyper_with_two_pet_cap_and_modest_stats) 
         petals.run(w,c,1000,0,commands);commands.flush();
         ShotLanding landing;landing.owner=p;landing.slot=0;landing.petalIndex=c.petalIndex("spaceship");
         landing.rarity=rarity;landing.at={5100,5000};
-        for(int n=0;n<5;++n)petals.landShots(w,c,{landing},nullptr);
+        for(int n=0;n<5;++n)petals.landShots(w,c,{landing},nullptr,1000.0);
         int count=0;Query<Pet,MobType,Body,ContactDamage> pets{w};
         pets.each([&](Entity,Pet& pet,MobType& type,Body& body,ContactDamage& damage){
             if(pet.owner!=p)return;++count;CHECK(type.rarity==rarity);
@@ -969,4 +971,28 @@ TEST(prestige_loadout_with_missing_talents_does_not_inherit_the_previous_tree) {
     client.loadLoadoutPreset(0);
     CHECK(h.stepUntil({&client}, [&] { return client.profile().skills.level(SkillId::Damage) == 0; }));
     CHECK_EQ(world.get<PlayerSkillTree>(flower).skills.level(SkillId::Damage), 0);
+}
+TEST(feedback3718_bulk_super_craft_records_results_privately) {
+    Harness h("quiet-super-bulk",[](const std::string& path){
+        seedUser(path,"smith","password7");
+        seedUser(path,"observer","password7");
+        seedStack(path,"smith","petal_rose",Rarity::Ultra,20000);
+    },dataDir(),0);
+    CHECK(h.ready);if(!h.ready)return;
+    NetClient client, observer;
+    CHECK(connectClient(h,client));CHECK(connectClient(h,observer));
+    client.requestLogin("smith","password7");observer.requestLogin("observer","password7");
+    CHECK(h.stepUntil({&client,&observer},[&]{return client.haveSession()&&observer.haveSession();}));
+    client.requestBulkCraft(Rarity::Super);
+    CHECK(h.stepUntil({&client,&observer},[&]{return client.profile().stackCount(content().petalIndex("rose"),Rarity::Super)>0;},400));
+    CHECK(client.profile().stackCount(content().petalIndex("rose"),Rarity::Super)>0);
+    client.requestNotifications(50,0);
+    CHECK(h.stepUntil({&client,&observer},[&]{return !client.notificationsPending();}));
+    CHECK(sawText(client,"合成"));
+    CHECK(sawText(client,"合成 ×"));
+    CHECK(sawText(client,"消耗 ×"));
+    CHECK(!sawText(observer,"合成 ×"));
+    CHECK(!sawText(observer,"超级 玫瑰 已被"));
+    CHECK(!sawText(observer,"color: yellow;\">@smith"));
+    CHECK(client.notifications().empty());
 }

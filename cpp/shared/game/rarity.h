@@ -242,14 +242,21 @@ inline double strengthBoost(Rarity r) {
          : r == Rarity::Universal ? kUniversalStrengthBoost : 1.0;
 }
 
-/// Petal HEALTH and DAMAGE per tier -- petalStatScale, with universal at
-/// sqrt(2) times apex and Admin another 25 times that.
+inline constexpr double kAscendantPetalDamageScale = 2.0;
+inline constexpr double kAscendantPetalHealthScale = 2.0;
+
+/// Baseline strength for shared formulas, including mob missile damage and
+/// defensive effects. Playable petal damage and health use their own bonuses.
 inline double petalStrengthScale(Rarity r) {
-    // Apex is Permanent Hyper's petal with +25% damage (buildPetalStats), and
-    // what is scaled straight off here -- burns, blasts, lightning, spills --
-    // is damage.
     if (r == Rarity::Ascendant) return petalStrengthScale(Rarity::PermanentHyper) * 1.25;
     return petalStatScale(r) * strengthBoost(r);
+}
+
+/// Offensive effects that calculate their own damage instead of using PetalStats.
+inline double petalDamageScale(Rarity r) {
+    return r == Rarity::Ascendant
+        ? petalStrengthScale(Rarity::PermanentHyper) * kAscendantPetalDamageScale
+        : petalStrengthScale(r);
 }
 
 /// Flat multiplier on every heal a flower receives -- burst petals, passive

@@ -88,6 +88,7 @@ void WorldView::clear() {
     entities_.clear();
     events_.clear();
     practiceMeters_.clear();
+    bossDamage_.clear();
     removedPetals_.clear();
     self_ = SelfState{};
     realm_ = Realm::Overworld;
@@ -214,6 +215,27 @@ net::PracticeMeter WorldView::practiceMeter(std::uint32_t netId) const {
         if (meter.netId == netId) return meter;
     }
     return {};
+}
+
+bool WorldView::applyBossDamage(ByteReader& reader) {
+    const auto count = reader.u8();
+    if (count > net::kBossDamageTargets) return false;
+    decltype(bossDamage_) update;
+    for (std::uint8_t i = 0; i < count; ++i) {
+        const auto id = reader.u32();
+        const auto rows = reader.u8();
+        if (id == 0 || rows == 0 || rows > net::kBossDamageRows || update.count(id)) return false;
+        auto& rank = update[id];
+        for (std::uint8_t j = 0; j < rows; ++j) {
+            auto name = reader.str();
+            const double damage = reader.f64();
+            if (!reader.ok() || !std::isfinite(damage) || damage <= 0) return false;
+            rank.push_back({std::move(name), damage});
+        }
+    }
+    if (!reader.ok() || reader.remaining() != 0) return false;
+    bossDamage_.swap(update);
+    return true;
 }
 
 bool WorldView::applySnapshot(ByteReader& reader, double receivedMillis, bool keepTransientEffects) {
@@ -796,6 +818,7 @@ void WorldView::interpolate(double nowMillis, double dtSeconds) {
         RemoteEntity& e = entry.second;
         if (e.kind == net::EntityKind::Petal) continue;   // second pass, below
         const bool isFlower = e.kind == net::EntityKind::Player;
+        if (e.kind == net::EntityKind::Effect) e.effectAgeSeconds += dtSeconds;
 
         if (e.needsSnap) {
             e.position = e.targetPosition;

@@ -235,6 +235,7 @@ const char* controlTitle(ControlAction action) {
     if (action == ControlAction::ToggleAltDisplay)
         return trEnZh("Toggle detail display (backup)", "详细显示备用键");
     switch (action) {
+        case ControlAction::ThisRun: return trEnZh("This Run", "本局收集");
         case ControlAction::MoveUp: return tr(Msg::MoveUp);
         case ControlAction::MoveDown: return tr(Msg::MoveDown);
         case ControlAction::MoveLeft: return tr(Msg::MoveLeft);
