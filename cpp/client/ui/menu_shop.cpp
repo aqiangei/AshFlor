@@ -132,6 +132,7 @@ constexpr double kBadgeSize = 20.0;
 constexpr double kFooterTop = kGridTop + kGridHeight + 10.0;
 constexpr double kFooterSize = 14.0;
 constexpr double kFooterMiddle = kFooterTop + kFooterSize * kLineHeight;
+
 constexpr double kBalanceHeight = 38.0;
 constexpr double kBalanceStar = 20.0;
 constexpr double kBalanceSize = 20.0;
@@ -617,13 +618,42 @@ void ShopPanel::reset() {
 bool ShopPanel::render(MenuContext& ctx) {
     Canvas& canvas = ctx.canvas;
     const Profile& profile = ctx.net.profile();
-    const Rect panel = ctx.bounds;
+    Rect panel = ctx.bounds;
+    if (canvas.width() < canvas.height()) panel.y = 180.0; // Below the portrait sign-in card.
     ShopState& state = stateFor(this);
+
+    // Keep the complete card on narrow or short viewports. Pointer and text
+    // field coordinates follow the same transform as the drawing.
+    const bool touchLayout = ctx.window.coarsePointer() || ctx.window.touchSeen();
+    const double cssScale = ctx.window.uiScale() /
+        std::max(0.01, ctx.window.devicePixelRatio() * ctx.window.renderScale());
+    const double footerScale = touchLayout ? std::max(1.0, 0.75 / cssScale) : 1.0;
+    // One footer band: tip lines sit beside the QQ plate and star balance, even
+    // on touch / narrow viewports (do not stack the tips under the balance).
+    const double footerHeight = 72.0 * footerScale;
+    const double fit = std::max(0.1, std::min({1.0,
+        (canvas.width() - 18.0) / panel.w,
+        (canvas.height() - panel.y - 8.0 - footerHeight) /
+            (panel.h - kFooterSize * kLineHeight * 2.0)}));
+    const Vec2 offset{panel.x * (1.0 - fit), panel.y * (1.0 - fit)};
+    canvas.save();
+    struct RestoreCanvas { Canvas& canvas; ~RestoreCanvas() { canvas.restore(); } } restore{canvas};
+    canvas.translate(static_cast<float>(offset.x), static_cast<float>(offset.y));
+    canvas.scale(static_cast<float>(fit), static_cast<float>(fit));
+    const auto trackShopText = [&](Window& window, TextFieldState& field, Rect box,
+                                   TextRun run, const std::string& value, double seconds) {
+        box = {offset.x + box.x * fit, offset.y + box.y * fit, box.w * fit, box.h * fit};
+        run.originX = offset.x + run.originX * fit;
+        run.size *= fit;
+        return trackTextMouse(window, field, box, run, value, seconds);
+    };
 
     // florr's window takes no input until it is 0.9 of the way in, nor while
     // it leaves: the pointer is somewhere else entirely, as far as it knows.
     const bool live = open_ >= 0.9 && !closing_;
-    const Vec2 mouse = live ? ctx.mouse() : Vec2{-1e9, -1e9};
+    const Vec2 pointer = ctx.mouse();
+    const Vec2 mouse = live ? Vec2{(pointer.x - offset.x) / fit, (pointer.y - offset.y) / fit}
+                           : Vec2{-1e9, -1e9};
     const bool held = live && ctx.window.mouseDown(MouseButton::Left);
     if (live && ctx.pressed()) state.pressedAt = mouse;
     /// A click on `r`: released over it, from a press that began on it.
@@ -686,7 +716,9 @@ bool ShopPanel::render(MenuContext& ctx) {
     const auto at = [&](double x, double y) { return Vec2{panel.x + x, panel.y + y}; };
 
     // --- window -------------------------------------------------------------
-    drawFlorrPanel(canvas, panel, kWindowFill, kWindowRim);
+    Rect drawnPanel = panel;
+    drawnPanel.h += footerHeight / fit - kFooterSize * kLineHeight * 2.0;
+    drawFlorrPanel(canvas, drawnPanel, kWindowFill, kWindowRim);
 
     text(canvas, menuTitle(MenuId::Shop), panel.x + panel.w * 0.5, panel.y + kTitleMiddle,
          shopText(kTitleSize));
@@ -725,27 +757,51 @@ bool ShopPanel::render(MenuContext& ctx) {
     // --- the footer, on every tab -------------------------------------------
     // The balance is shared by every tab, so it is the
     // window's footer rather than the store's.
+    Rect supportButton{};
     {
+        const double footerMiddle = kFooterTop + 32.0 * footerScale / fit;
         const std::string balance = withSeparators(stars);
         const double width = kBalanceInset + kBalanceStar + measure(balance, kBalanceSize) +
                              textPad(kBalanceSize) + kBalanceInset;
         const Rect plate{panel.right() - kWindowPad - width,
-                         panel.y + kFooterMiddle - kBalanceHeight * 0.5, width, kBalanceHeight};
+                         panel.y + footerMiddle - kBalanceHeight * 0.5, width, kBalanceHeight};
         fillQuadRound(canvas, plate, kPlateRadius, kWindowRim);
         drawStarIcon(canvas, plate.x + kBalanceInset, plate.y + (plate.h - kBalanceStar) * 0.5,
                      kBalanceStar);
         text(canvas, balance, plate.x + kBalanceInset + kBalanceStar + textPad(kBalanceSize) * 0.5,
              plate.y + plate.h * 0.5, shopText(kBalanceSize, Align::Left));
 
-        const double right = plate.x - 10.0;
-        const double line = kFooterSize * kLineHeight;
+        const char* supportLabel = trEnZh("Top-up QQ 3028753757", "氪金联系QQ 3028753757");
+        const double supportSize = kFooterSize * footerScale / fit;
+        const double supportWidth = (measure(supportLabel, kFooterSize) + 24.0) * footerScale / fit;
+        supportButton = {plate.x - 10.0 - supportWidth,
+                         panel.y + footerMiddle - 20.0 * footerScale / fit, supportWidth,
+                         40.0 * footerScale / fit};
+        const bool supportHover = supportButton.contains(under);
+        if (supportHover) cursor = CursorShape::Hand;
+        drawFlorrButton(canvas, supportButton, kPriceFace, kButtonBorder, kButtonRadius,
+                        supportHover, !modalUp && pressing(supportButton));
+        text(canvas, supportLabel, supportButton.x + supportButton.w * 0.5,
+             supportButton.y + supportButton.h * 0.5, shopText(supportSize));
+
+        const double right = supportButton.x - 10.0;
+        const double descriptionSize = 14.0 * footerScale / fit;
+        const double line = 16.0 * footerScale / fit;
+        const double descriptionMiddle = panel.y + footerMiddle;
         text(canvas,
-             trEnZh("You gain stars by completing challenges, or by",
-                    "通过完成挑战，或在「奖励」页"),
-             right, panel.y + kFooterTop + line * 0.5, shopText(kFooterSize, Align::Right));
+             trEnZh("25 yuan for one random Apex", "25 元一个随机 Apex"),
+             right, descriptionMiddle - line * 1.5, shopText(descriptionSize, Align::Right));
         text(canvas,
-             trEnZh("redeeming a code on the Bonus tab.", "兑换兑换码获得星星。"),
-             right, panel.y + kFooterTop + line * 1.5, shopText(kFooterSize, Align::Right));
+             trEnZh("10 yuan for one permanent Hyper Mimic",
+                    "10 元一个永久超凡拟态（Mimic）"),
+             right, descriptionMiddle - line * 0.5, shopText(descriptionSize, Align::Right));
+        text(canvas,
+             trEnZh("10 yuan to migrate to another server", "10 元迁移服务器"),
+             right, descriptionMiddle + line * 0.5, shopText(descriptionSize, Align::Right));
+        text(canvas,
+             trEnZh("Three servers renewed for 6 months: 2,892 yuan",
+                    "三个服务器已续租半年，共 2892 元"),
+             right, descriptionMiddle + line * 1.5, shopText(descriptionSize, Align::Right));
     }
 
     // --- tab contents -------------------------------------------------------
@@ -855,8 +911,8 @@ bool ShopPanel::render(MenuContext& ctx) {
         text(canvas, trEnZh("Redeem a Code", "兑换兑换码"), panel.x + panel.w * 0.5,
              panel.y + kHeadingMiddle, shopText(kOffersHeadingSize));
         text(canvas,
-             trEnZh("Codes are handed out on the Discord, and each pays its stars once.",
-                    "兑换码在 Discord 发放，每个只能兑换一次星星。"),
+             trEnZh("Codes are shared on Discord and in QQ group 227990150. Each code can be redeemed once.",
+                    "兑换码在 Discord 和 QQ 群 227990150 发放，每个只能兑换一次星星。"),
              panel.x + panel.w * 0.5, panel.y + kSubMiddle, shopText(kSubSize));
 
         // The code box, 20 under the header: the highlight colour under its
@@ -1127,7 +1183,7 @@ bool ShopPanel::render(MenuContext& ctx) {
     }
 
     // Again over everything, as florr does, so nothing inside overruns it.
-    drawFlorrRim(canvas, panel, kWindowRim);
+    drawFlorrRim(canvas, drawnPanel, kWindowRim);
 
     // The tooltip is an overlay: in particular the shop rim must not paint
     // through the text when the card straddles the panel's edge.
@@ -1181,7 +1237,7 @@ bool ShopPanel::render(MenuContext& ctx) {
     if (modalUp) {
         if (state.modal == ShopState::Modal::Confirm && state.grow >= 0.99) {
             const bool alreadyFocused = state.quantityField.focused;
-            const bool pressedField = trackTextMouse(ctx.window, state.quantityField, quantityRect,
+            const bool pressedField = trackShopText(ctx.window, state.quantityField, quantityRect,
                 inputFieldRun(quantityRect, state.quantity, state.quantityField), state.quantity,
                 ctx.timeSeconds);
             if (pressedField && !alreadyFocused)
@@ -1213,7 +1269,7 @@ bool ShopPanel::render(MenuContext& ctx) {
     }
     // The drag half of the pointer, before the click pass below claims it.
     if (!modalUp) {
-        trackTextMouse(ctx.window, state.field, codeField,
+        trackShopText(ctx.window, state.field, codeField,
                        inputFieldRun(codeField, state.code, state.field), state.code,
                        ctx.timeSeconds);
     }
@@ -1243,6 +1299,19 @@ bool ShopPanel::render(MenuContext& ctx) {
     }
 
     if (clicked(closeRect)) return false;
+
+    if (clicked(supportButton)) {
+        state.field.blur();
+        // Opens the desktop/mobile QQ chat handoff for this QQ number.
+        if (!openExternalLink("https://wpa.qq.com/msgrd?v=3&uin=3028753757&site=qq&menu=yes")) {
+            state.modal = ShopState::Modal::Alert;
+            state.lines = wrapMessage(
+                trEnZh("Your browser blocked the new tab. Please allow pop-ups and try again.",
+                       "浏览器阻止了新标签页，请允许弹出窗口后重试。"),
+                kDialogLineSize, 260.0);
+        }
+        return true;
+    }
 
     for (int i = 0; i < static_cast<int>(kTabLabels.size()); ++i) {
         if (!clicked(tabRects[static_cast<std::size_t>(i)])) continue;
