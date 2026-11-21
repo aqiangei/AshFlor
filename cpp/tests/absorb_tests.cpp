@@ -37,8 +37,8 @@ void seedAbsorbing(const std::string& path, const std::string& username, Rarity 
 /// Sends one Absorb and hands its answer back with `pending` cleared, as the
 /// panel reads it.
 bool absorb(Harness& h, NetClient& client, const std::vector<NetClient::AbsorbStack>& stacks,
-            AbsorbOutcome& out) {
-    client.requestAbsorb(stacks);
+            AbsorbOutcome& out, const std::string& password = "password7") {
+    client.requestAbsorb(stacks, password);
     if (!h.stepUntil({&client}, [&] { return client.absorbOutcome().pending; }, 200)) return false;
     out = client.absorbOutcome();
     client.absorbOutcome().pending = false;
@@ -158,6 +158,7 @@ TEST(legacy_recycle_request_cannot_turn_petals_into_stars) {
     recycle.u16(rose);
     recycle.u8(static_cast<std::uint8_t>(Rarity::Super));
     recycle.u32(10);
+    recycle.str("");
     send(recycle);
     CHECK_EQ(record.itemCount(Rarity::Super, "petal_rose"), 10);
     CHECK_EQ(record.stars, stars);

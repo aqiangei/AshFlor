@@ -4310,7 +4310,7 @@ TEST(a_summoning_shot_brings_one_summon_per_landing_up_to_its_cap) {
         const Entity pet = placed[i];
         const auto critter = fixture().registry.mobIndex("critter");
         CHECK_EQ(rig.world.get<MobType>(pet).configIndex, critter);
-        CHECK_NEAR(rig.world.get<Health>(pet).max, fixture().registry.mob(critter).health * 5.0, 1e-9);
+        CHECK_NEAR(rig.world.get<Health>(pet).max, fixture().registry.mob(critter).health * kSummonedMobHealthScale, 1e-9);
         CHECK_EQ(rig.world.get<Pet>(pet).owner, rig.player);
         CHECK_EQ(static_cast<int>(rig.world.get<Pet>(pet).slot), 2);
         // Where the shot landed, give or take the spread a squad lands with.
@@ -4398,7 +4398,7 @@ TEST(a_pet_climbs_the_petal_ladder_not_the_mob_one) {
         Query<Pet> pets{rig.world};
         for (const Entity pet : pets.collect()) {
             const Health& health = rig.world.get<Health>(pet);
-            CHECK_NEAR(health.max, config.health * ladder * 5.0, 1e-9);
+            CHECK_NEAR(health.max, config.health * ladder * kSummonedMobHealthScale, 1e-9);
             CHECK_NEAR(health.current, health.max, 1e-9);
             CHECK_NEAR(rig.world.get<ContactDamage>(pet).amount, config.damage * ladder, 1e-9);
         }
@@ -4429,7 +4429,7 @@ TEST(a_universal_egg_hatches_the_apex_squad_with_sqrt2_its_strength) {
             CHECK(rig.world.get<MobType>(pet).rarity == rarity);
             const double health = rig.world.get<Health>(pet).max;
             const double damage = rig.world.get<ContactDamage>(pet).amount;
-            CHECK_NEAR(health, config.health * strength * 5.0, config.health * strength * 5e-12);
+            CHECK_NEAR(health, config.health * strength * kSummonedMobHealthScale, config.health * strength * 5e-12);
             CHECK_NEAR(damage, config.damage * strength, config.damage * strength * 1e-12);
         }
     }
@@ -4439,11 +4439,12 @@ TEST(the_pet_health_talent_multiplies_pets_and_nothing_else) {
     if (!contentLoaded()) return;
     const MobConfig& critter = fixture().registry.mob(fixture().registry.mobIndex("critter"));
     const Rarity tier = Rarity::Legendary;
-    const double talent = 2.0114;
 
     Rig rig;
     rig.world.add<PlayerSkillTree>(rig.player);
-    rig.world.get<PlayerSkillTree>(rig.player).skills.set(SkillId::Summoner, rarityIndex(tier));
+    SkillSet& skills = rig.world.get<PlayerSkillTree>(rig.player).skills;
+    skills.set(SkillId::Summoner, rarityIndex(tier));
+    const double talent = skills.healthScale(SkillId::Summoner);
     rig.equip(0, "summoner");
     rig.equip(1, "basic");
     rig.settleEquips();
@@ -4452,7 +4453,7 @@ TEST(the_pet_health_talent_multiplies_pets_and_nothing_else) {
     Query<Pet> pets{rig.world};
     for (const Entity pet : pets.collect()) {
         // The pool grows on the Petal Health talent's own table...
-        CHECK_NEAR(rig.world.get<Health>(pet).max, critter.health * talent * 5.0, 1e-9);
+        CHECK_NEAR(rig.world.get<Health>(pet).max, critter.health * talent * kSummonedMobHealthScale, 1e-9);
         // ...and it is health alone: what the pet hits for is untouched.
         CHECK_NEAR(rig.world.get<ContactDamage>(pet).amount, critter.damage, 1e-9);
     }
@@ -4483,8 +4484,9 @@ TEST(both_health_talents_grant_what_their_tooltip_quotes) {
     CHECK_EQ(basic.size(), std::size_t(1));
     if (!basic.empty()) CHECK_NEAR(rig.world.get<Health>(basic.front()).max, 40.0, 1e-9);
     Query<Pet> pets{rig.world};
+    const double summonTalent = skills.healthScale(SkillId::Summoner);
     for (const Entity pet : pets.collect()) {
-        CHECK_NEAR(rig.world.get<Health>(pet).max, critter.health * 4.0456 * 5.0, 1e-9);
+        CHECK_NEAR(rig.world.get<Health>(pet).max, critter.health * summonTalent * kSummonedMobHealthScale, 1e-9);
     }
 }
 
@@ -4513,7 +4515,7 @@ TEST(the_petal_health_talent_leaves_pets_alone) {
     CHECK(rig.tickUntil([&] { return rig.petCount() == 2; }));
     Query<Pet> pets{rig.world};
     for (const Entity pet : pets.collect()) {
-        CHECK_NEAR(rig.world.get<Health>(pet).max, critter.health * 5.0, 1e-9);
+        CHECK_NEAR(rig.world.get<Health>(pet).max, critter.health * kSummonedMobHealthScale, 1e-9);
     }
 }
 
@@ -6014,38 +6016,24 @@ double offBearing(double angle, Vec2 from, Vec2 to) {
 
 } // namespace
 
-TEST(a_compass_points_at_the_best_mob_in_its_realm_until_a_magnet_turns_it) {
+TEST(a_compass_faces_opposite_the_pointer_and_steers_the_ring) {
     if (!contentLoaded()) return;
     Rig rig;
     rig.freezeRing();
     rig.equip(0, "compass");
     rig.settleEquips();
-    // A common mob close by to the south, an epic one far to the east, and a
-    // mythic in another realm: the epic is the best the compass can reach.
-    wildMob(rig, {1000.0, 1300.0}, Rarity::Common);
-    const Entity epic = wildMob(rig, {4000.0, 1000.0}, Rarity::Epic);
-    const Entity elsewhere = wildMob(rig, {1000.0, -2000.0}, Rarity::Mythic);
-    rig.world.get<Transform>(elsewhere).realm = Realm::Arena;
+    auto& input = rig.world.get<PlayerInput>(rig.player);
+    input.current.aimAngle = 0.4;
+    input.current.aimDistance = 200.0;
     rig.tick(3);
 
     const auto compass = rig.petals(0);
     CHECK_EQ(compass.size(), std::size_t(1));
     if (compass.empty()) return;
-    const Vec2 at = rig.world.get<Transform>(compass[0]).position;
-    const double facing = rig.world.get<PetalInstance>(compass[0]).facingAngle;
-    // Within florr's 0.1 rad wobble, and the tick of travel since it aimed.
-    CHECK(offBearing(facing, at, rig.world.get<Transform>(epic).position) < 0.12);
-
-    // A magnet on the same ring drags the needle round to itself.
-    rig.equip(1, "magnet");
-    rig.settleEquips();
-    rig.tick();
-    const auto magnets = rig.petals(1);
-    CHECK_EQ(magnets.size(), std::size_t(1));
-    if (magnets.empty()) return;
-    const Vec2 needle = rig.world.get<Transform>(compass[0]).position;
-    CHECK(offBearing(rig.world.get<PetalInstance>(compass[0]).facingAngle, needle,
-                     rig.world.get<Transform>(magnets[0]).position) < 0.25);
+    const double facing = wrapAngle(rig.world.get<PetalInstance>(compass[0]).facingAngle);
+    const double expected = wrapAngle(0.4 + kPi);
+    CHECK(std::abs(angleDelta(facing, expected)) < 0.15);
+    CHECK(std::abs(angleDelta(wrapAngle(rig.ring().spin), expected)) < 0.15);
 }
 
 TEST(a_relic_raises_max_health_by_a_tenth_a_tier_and_marks_the_flower_a_sharer) {
@@ -6786,7 +6774,7 @@ TEST(wiki_mechanism_mecha_missile_fires_straight_with_or_without_antennae){
         });CHECK_EQ(seen,1);
     }
 }
-TEST(wiki_mechanism_egg_hatches_with_bandage_and_while_undead_with_double_summon_health){
+TEST(wiki_mechanism_egg_hatches_with_bandage_and_while_undead){
     CHECK(contentLoaded());
     for(const bool undead:{false,true}){Rig rig;rig.equip(0,"bandage",Rarity::Mythic);rig.settleEquips();
         if(undead){const auto attacker=addMob(rig,rig.position(rig.player)+Vec2{60,0});CombatSystem combat;
@@ -6799,7 +6787,7 @@ TEST(wiki_mechanism_egg_hatches_with_bandage_and_while_undead_with_double_summon
                     CHECK(combat.applyDamage(rig.world,shell,enemy,1e9,rig.now).refused);}
             }
             count=0;Query<Pet,Health,ContactDamage> pets{rig.world};pets.each([&](Entity,Pet& tag,Health& hp,ContactDamage& hit){
-            if(tag.owner!=rig.player||tag.slot!=1)return;++count;CHECK_NEAR(hp.max,250,1e-8);CHECK_NEAR(hit.amount,2.0,1e-8);
+            if(tag.owner!=rig.player||tag.slot!=1)return;++count;CHECK_NEAR(hp.max,125,1e-8);CHECK_NEAR(hit.amount,2.0,1e-8);
         });return count==4;},150));
     }
 }
@@ -7186,13 +7174,14 @@ TEST(pharaoh_crown_summons_in_a_crowd_without_stacking_or_extending_duration) {
     const auto first = Query<Pet>{rig.world}.collect().front();
     const auto& type = rig.world.get<MobType>(first);
     CHECK_EQ(rig.world.get<Pet>(first).slot, 1u);
-    CHECK(type.rarity == Rarity::Unique);
+    // Apex crown is preferred over Eternal and now summons Hyper-tier beetles.
+    CHECK(type.rarity == Rarity::Apex);
     const auto& mummy = registry.mob(type.configIndex);
-    const double superScale = petalStatScale(Rarity::Super);
+    const double apexScale = petalStatScale(Rarity::Apex);
     CHECK_NEAR(rig.world.get<Health>(first).max,
-               15.0 * mummy.health * mummy.petHealthScale * superScale, 1e-6);
+               7.5 * mummy.health * mummy.petHealthScale * apexScale, 1e-6);
     CHECK_NEAR(rig.world.get<ContactDamage>(first).amount,
-               3.0 * mummy.damage * mummy.petDamageScale * superScale, 1e-6);
+               3.0 * mummy.damage * mummy.petDamageScale * apexScale, 1e-6);
     rig.tick(19);
     CHECK_EQ(rig.petCount(), 1u);
     rig.tick();
@@ -7208,6 +7197,15 @@ TEST(pharaoh_crown_permanent_hyper_uses_the_hyper_summon_tier) {
     CHECK(rig.tickUntil([&] { return rig.petCount() == 1; }, 140));
     for (Entity pet : Query<Pet>{rig.world}.collect()) {
         CHECK(rig.world.get<MobType>(pet).rarity == Rarity::Unique);
+    }
+}
+
+TEST(pharaoh_crown_apex_summons_hyper_tier_beetles) {
+    Rig rig(testsupport::shippedContent());
+    rig.equip(0, "pharaoh_s_crown", Rarity::Apex);
+    CHECK(rig.tickUntil([&] { return rig.petCount() == 1; }, 140));
+    for (Entity pet : Query<Pet>{rig.world}.collect()) {
+        CHECK(rig.world.get<MobType>(pet).rarity == Rarity::Apex);
     }
 }
 
@@ -7257,7 +7255,7 @@ TEST(ant_and_beetle_egg_summons_gain_health_and_damage_at_every_rarity){
         int count=0;Query<Pet,Health,ContactDamage> pets{rig.world};
         pets.each([&](Entity entity,Pet& tag,Health& hp,ContactDamage& hit){
             if(tag.owner!=rig.player)return;++count;
-            CHECK_NEAR(hp.max,config.health*scale*25.0*ascendantSummonHealthScale(rarity),std::max(1e-7,hp.max*1e-10));
+            CHECK_NEAR(hp.max,config.health*scale*eggSummonCombatScale(source)*eggSummonHealthScale(source)*kSummonedMobHealthScale*ascendantSummonHealthScale(rarity),std::max(1e-7,hp.max*1e-10));
             CHECK_NEAR(hit.amount,config.damage*scale*2.0*ascendantSummonDamageScale(rarity),std::max(1e-7,hit.amount*1e-10));
             CHECK_NEAR(rig.world.get<MobAi>(entity).aggroRange,std::max(kEnemyChaseRange,fixture().registry.mobStats(fixture().registry.mobIndex("critter"),petRarity).aggroRange) + petalTier(petRarity) * kPetAggroRangePerRarity,1e-9);
         });CHECK(count>0);
@@ -7276,13 +7274,17 @@ TEST(ant_and_beetle_eggs_duplicate_actual_summons_in_the_leftmost_slot){
     }
 }
 
-TEST(every_egg_id_takes_the_same_summon_buff){
+TEST(egg_specific_health_scales_remain_separate_from_the_shared_summon_scale){
     // This build writes only the two hand-made eggs into petals.json; every
     // other `<mob>_egg` is a name the rule has to recognise all the same.
     PetalConfig generated;
     generated.id = "matriarch_egg";
     CHECK_NEAR(eggSummonCombatScale(generated),2.0,1e-9);
     CHECK_NEAR(eggSummonHealthScale(generated),2.5,1e-9);
+    PetalConfig zatan;
+    zatan.id = "void_zatan_egg";
+    CHECK_NEAR(eggSummonHealthScale(zatan),1.10,1e-9);
+    CHECK_NEAR(kSummonedMobHealthScale,2.5,1e-9);
     PetalConfig ordinary;
     ordinary.id = "basic";
     CHECK_NEAR(eggSummonCombatScale(ordinary),1.0,1e-9);
@@ -7459,21 +7461,19 @@ TEST(hyper_technique_rescue_has_extra_reach_but_cannot_cross_realms) {
     }
 }
 
-TEST(hyper_technique_compass_finds_nearby_high_tiers_in_defense) {
+TEST(hyper_technique_compass_still_faces_opposite_pointer) {
     if (!contentLoaded()) return;
     Rig rig;
     rig.equip(0, "compass", Rarity::Apex);
-    const auto low = wildMob(rig, {1050, 1000}, Rarity::Rare);
-    const auto close = wildMob(rig, {1300, 1000}, Rarity::Super);
-    const auto far = wildMob(rig, {4000, 1000}, Rarity::Apex);
     rig.settleEquips();
-    const auto compass = rig.petals(0).front();
-    rig.tick(12);
-    CHECK_EQ(rig.world.get<PetalInstance>(compass).compassTarget, far);
+    auto& input = rig.world.get<PlayerInput>(rig.player);
+    input.current.aimAngle = -1.1;
+    input.current.aimDistance = 120.0;
     rig.setFlags(net::InputDefend);
-    rig.tick(12);
-    CHECK_EQ(rig.world.get<PetalInstance>(compass).compassTarget, close);
-    CHECK(rig.world.get<PetalInstance>(compass).compassTarget != low);
+    rig.tick(2);
+    const auto compass = rig.petals(0).front();
+    const double facing = wrapAngle(rig.world.get<PetalInstance>(compass).facingAngle);
+    CHECK(std::abs(angleDelta(facing, wrapAngle(-1.1 + kPi))) < 0.15);
 }
 
 TEST(bone_keeps_armor_and_hyper_guard_blocks_more_wild_recoil) {

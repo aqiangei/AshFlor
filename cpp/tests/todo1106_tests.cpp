@@ -40,7 +40,7 @@ void wear(World& w, Entity p, int slot, const char* id, Rarity rarity) {
 }
 }
 
-TEST(todo1106_magic_eye_spends_half_mana_and_deals_lightning_with_inverted_defend) {
+TEST(todo1106_magic_eye_spends_quarter_mana_and_deals_lightning_with_inverted_defend) {
     const auto& c = shippedContent();
     World w;
     PetalSystem petals;
@@ -82,9 +82,9 @@ TEST(todo1106_magic_eye_spends_half_mana_and_deals_lightning_with_inverted_defen
     const auto first = target(5075, Team::Hostiles);
     const auto second = target(5305, Team::Hostiles);
     tick(7000.0);
-    CHECK_NEAR(w.get<ManaPool>(p).current, before * 0.5, 1e-6);
+    CHECK_NEAR(w.get<ManaPool>(p).current, before * 0.75, 1e-6);
     CHECK_NEAR(w.get<Health>(ally).current, 100000.0, 1e-6);
-    const double remaining = 100000.0 - before * 0.5 * 25.0;
+    const double remaining = 100000.0 - before * 0.25 * 30.0;
     for (const auto mob : {first, second}) {
         CHECK_NEAR(w.get<Health>(mob).current, remaining, 1e-6);
     }
@@ -100,7 +100,7 @@ TEST(todo1106_magic_eye_spends_half_mana_and_deals_lightning_with_inverted_defen
     CHECK_EQ(strikes, 1);
 
     tick(7050.0);
-    CHECK_NEAR(w.get<ManaPool>(p).current, before * 0.5, 1e-6);
+    CHECK_NEAR(w.get<ManaPool>(p).current, before * 0.75, 1e-6);
     CHECK_NEAR(w.get<Health>(first).current, remaining, 1e-6);
 }
 
@@ -269,13 +269,16 @@ TEST(todo1106_hyper_damage_and_mana_talent_are_distinct_from_utility_growth) {
     for (const auto* id : {"rock", "dust", "dice", "sawblade", "clover"}) {
         const auto index = c.petalIndex(id); CHECK(index != kNoPetal);
         const auto e = c.petalStats(index, Rarity::Unique), h = c.petalStats(index, Rarity::Apex);
-        CHECK(h.damage >= e.damage * 2.0);
-        CHECK(h.health <= e.health * 1.5 + 1e-6);
+        CHECK(h.damage >= e.damage * 3.0 - 1e-6);
+        CHECK(h.health <= e.health * 2.1 + 1e-6);
     }
     SkillSet skills;
     CHECK_EQ(skills.effectScale(SkillId::ManaRegen), 1.0);
     skills.set(SkillId::ManaRegen, 8);
     CHECK_EQ(skills.effectScale(SkillId::ManaRegen), 2.0);
+    CHECK_EQ(skills.effectScale(SkillId::ManaCap), 1.0);
+    skills.set(SkillId::ManaCap, 8);
+    CHECK_EQ(skills.effectScale(SkillId::ManaCap), 2.6);
     CHECK(c.mobStats(c.mobIndex("leech"), Rarity::Common).chaseSpeed >
           c.mobStats(c.mobIndex("soldier_ant"), Rarity::Common).chaseSpeed);
 }

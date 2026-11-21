@@ -1879,7 +1879,7 @@ void SpawnSystem::runNests(World& world, const Terrain& terrain, const ContentRe
 // ---------------------------------------------------------------------------
 
 void SpawnSystem::setRiftSpawning(double rarityProgress, const std::string& pyramid) {
-    riftDifficulty_ = 80 * clamp(rarityProgress, 0.0, 1.0);
+    riftDifficulty_ = 55 * clamp(rarityProgress, 0.0, 1.0);
     if (!worldMaps) return;
     for (const MapData& map : worldMaps->maps()) {
         if (map.id().rfind("rift_", 0) != 0) continue;
@@ -2911,7 +2911,7 @@ bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentR
                                    : (worldMaps && worldMaps->forRealm(zone.realm) && worldMaps->forRealm(zone.realm)->usesReferenceSpawnCurve()
                                       ? rollReferenceSpawnRarity(rollDifficulty,luck,rng)
                                       : rollSpawnRarity(rollDifficulty, luck, rng));
-    const Rarity maximum = rift ? Rarity::Mythic : Rarity::Super;
+    const Rarity maximum = rift ? Rarity::Legendary : Rarity::Super;
     if (rarityIndex(rarity) > rarityIndex(maximum)) rarity = maximum;
     if (fixedSuper) rarity = managedTier;
     const bool prestigeTwo = authoredMap && authoredMap->prestigeLevel() == 2 &&
@@ -3295,19 +3295,28 @@ void SpawnSystem::promoteLatent(World& world, const Terrain& terrain,
         SpawnZone& zone = zones_[index];
         if (zone.latent.empty()) continue;
         const int slot = prioritySlot(zone);
-        if (census_.mobs >= ambientBudget &&
-            (slot < 0 || !inView[slot] || awake[slot] >= reserveMin[slot])) continue;
+        // Over budget the reserve only tops up priority maps to a floor. An
+        // AFK farmer still needs whatever is sitting in their OWN viewport:
+        // without that, moving was the only way to get a local wakeAhead pass
+        // whose seer list did not already count other players' awake mobs
+        // against the shared jungle floor (board #3866).
+        const bool reserveExhausted = census_.mobs >= ambientBudget &&
+            (slot < 0 || !inView[slot] || awake[slot] >= reserveMin[slot]);
+        if (reserveExhausted && !zoneInView(zone.bounds, zone.realm, seers, 0.0)) continue;
         // The cheap rejection, and the reason this is affordable at all: one
         // rectangle test per viewer says whether the band's records are worth
         // walking, and on a map with two dozen bands almost none of them are.
-        if (!zoneInView(zone.bounds, zone.realm, seers, wakeMargin)) continue;
+        if (!zoneInView(zone.bounds, zone.realm, seers, reserveExhausted ? 0.0 : wakeMargin)) continue;
 
         // Wake the pre-stocked positions. If a player occupies one, keep
         // the resting record there until the body can safely wake.
         for (std::size_t i = 0; i < zone.latent.size(); ++i) {
             const LatentMob& record = zone.latent[i];
             if (nowMillis < record.readyMillis) continue;
-            if (!seenBy(seers, zone.realm, record.position, wakeMargin)) continue;
+            // Strict viewport when the shared reserve is spent; otherwise the
+            // ordinary wake margin (which collapses to zero near mobCap anyway).
+            if (!seenBy(seers, zone.realm, record.position,
+                        reserveExhausted ? 0.0 : wakeMargin)) continue;
             // Nobody's lap, at the moment the body actually appears.
             //
             // The record's own placement test was made against where the
@@ -3344,7 +3353,12 @@ void SpawnSystem::promoteLatent(World& world, const Terrain& terrain,
         const LatentMob& record = zone.latent[candidate.index];
         const int slot = prioritySlot(zone);
         if (census_.mobs >= ambientBudget) {
-            if (slot < 0 || !inView[slot] || awake[slot] >= reserveMin[slot]) continue;
+            const bool reserved = slot >= 0 && inView[slot] && awake[slot] < reserveMin[slot];
+            // Still wake a record that is inside a seer's room even after the
+            // shared priority floor is full -- that is the AFK jungle case.
+            if (!reserved && !std::any_of(seers.begin(), seers.end(), [&](const Viewer& viewer) {
+                    return viewer.realm == zone.realm && inRoom(viewer, record.position);
+                })) continue;
         }
         // Leave the record in the same slot if the complete animal won't fit.
         const int bodyCount = 1 + content.mob(record.mobIndex).segmentCount;

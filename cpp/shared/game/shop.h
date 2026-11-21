@@ -50,8 +50,8 @@ inline double shopPrice(std::uint16_t index, Rarity rarity) {
     const auto* row = std::lower_bound(std::begin(kShopSuperPrices), end, id,
         [](const ShopSuperPrice& entry, std::string_view key) { return entry.id < key; });
     const double super = row != end && row->id == id ? row->stars : legacyShopPrice(index, Rarity::Super);
-    // Direct Eternal purchase costs more than the Titan's repeat 15-Super exchange.
-    return rarity == Rarity::Unique ? 18.0 * super : super;
+    // Direct Eternal purchase matches the Titan's 15-Super exchange cost.
+    return rarity == Rarity::Unique ? 15.0 * super : super;
 }
 
 inline double shopOfferPrice(std::uint16_t index, Rarity rarity, int discount) {
@@ -147,6 +147,33 @@ struct ShopOffer {
     int remaining = -1; // -1 = unlimited; server sends the account's remainder
 };
 
+/// Server-only mixing salt for hourly stock. Defaults to 0 so unit tests stay
+/// deterministic; production must call setShopRotationSalt(db.serverSecret())
+/// once at boot so the open-source hour alone cannot reproduce the catalogue.
+inline std::uint64_t& shopRotationSaltSlot() {
+    static std::uint64_t salt = 0;
+    return salt;
+}
+inline void setShopRotationSalt(std::uint64_t salt) { shopRotationSaltSlot() = salt; }
+inline void setShopRotationSalt(const std::string& secret) {
+    // FNV-1a 64 over the secret bytes — not cryptographic, just mixes entropy
+    // into the public rotation index so stock is not hour-predictable.
+    std::uint64_t h = 14695981039346656037ull;
+    for (unsigned char c : secret) {
+        h ^= c;
+        h *= 1099511628211ull;
+    }
+    setShopRotationSalt(h ? h : 0xA5F101011CAFEF00ull); // never leave zero if secret nonempty
+}
+inline std::uint64_t shopOfferSeed(std::int64_t rotation) {
+    // SplitMix64-ish fold so nearby hours diverge even with the same salt.
+    std::uint64_t x = static_cast<std::uint64_t>(rotation) + shopRotationSaltSlot();
+    x += 0x9e3779b97f4a7c15ull;
+    x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ull;
+    x = (x ^ (x >> 27)) * 0x94d049bb133111ebull;
+    return x ^ (x >> 31);
+}
+
 /// The hourly selection, shared by all servers.
 inline std::vector<ShopOffer> shopOffers(std::int64_t rotation) {
     std::vector<std::uint16_t> pool;
@@ -154,7 +181,7 @@ inline std::vector<ShopOffer> shopOffers(std::int64_t rotation) {
         if (shopSellsPetal(index)) pool.push_back(index);
     }
 
-    Rng rng(static_cast<std::uint64_t>(rotation));
+    Rng rng(shopOfferSeed(rotation));
     std::vector<ShopOffer> offers;
     const auto count = std::min<std::size_t>(kShopTierOfferCount, pool.size());
     for (std::size_t slot = 0; slot < count; ++slot) {

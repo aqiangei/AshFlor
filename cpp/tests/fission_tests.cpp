@@ -146,3 +146,50 @@ TEST(fission_triples_the_petal_to_its_right) {
     CHECK_EQ(weak.bodies, 4 * plain.bodies);
     CHECK_NEAR(weak.bodies * weak.strength, plain.bodies * plain.strength, 1e-9);
 }
+
+TEST(fission_respects_mimic_and_duplicator) {
+    const ContentRegistry& registry = shippedContent();
+    const auto fission = petal("fission");
+    const auto mimic = petal("mimic");
+    const auto rose = petal("rose");
+    CHECK(fission != static_cast<std::uint16_t>(kInvalidIndex));
+    CHECK(mimic != static_cast<std::uint16_t>(kInvalidIndex));
+    CHECK(rose != static_cast<std::uint16_t>(kInvalidIndex));
+
+    auto run = [&](std::uint16_t a, std::uint16_t b, std::uint16_t c, int expectSlot, int expectBodies) {
+        World world;
+        PetalSystem petals;
+        CommandBuffer commands{world};
+        const Entity player = world.create();
+        world.add<PlayerTag>(player);
+        world.add<Transform>(player, Transform{{900.0, 900.0}, 0.0});
+        world.add<Motion>(player);
+        world.add<Body>(player, Body{kPlayerBaseRadius, 1.0});
+        world.add<Health>(player, Health{100.0, 100.0});
+        world.add<Faction>(player, Faction{Team::Players, true});
+        world.add<PlayerInput>(player);
+        world.add<PlayerModifiers>(player);
+        world.add<PetalRing>(player);
+        auto& skills = world.add<PlayerSkillTree>(player).skills;
+        skills.set(SkillId::Loadout, 3);      // Duplicator gate: Loadout florrLevel >= 4
+        skills.set(SkillId::Duplicator, 3);   // Unique singles need tier 3
+        auto& slots = world.add<Loadout>(player).slots;
+        slots[0] = {a, Rarity::Unique};
+        slots[1] = {b, Rarity::Unique};
+        if (c != kEmpty) slots[2] = {c, Rarity::Unique};
+        for (double now = 0.0; now <= 4000.0; now += 250.0) {
+            petals.run(world, registry, now, net::kTickSeconds, commands);
+            commands.flush();
+        }
+        int bodies = 0;
+        for (const Entity petal : world.get<Loadout>(player).spawned) {
+            if (world.get<PetalInstance>(petal).slot == expectSlot) ++bodies;
+        }
+        CHECK_EQ(bodies, expectBodies);
+    };
+
+    // Fission left of rose + duplicator on rose slot -> 2 * 3 = 6.
+    run(fission, rose, kEmpty, 1, 6);
+    // Mimic between fission and rose copies fission; rose still triples with duplicator.
+    run(fission, mimic, rose, 2, 6);
+}

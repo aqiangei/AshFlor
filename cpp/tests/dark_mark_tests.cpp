@@ -66,6 +66,7 @@ TEST(dark_mark_normal_transports_revives_returns_and_preserves_progress) {
     CHECK(Peer::applyMark(f.server, f.target, f.owner, Rarity::Unique));
     CHECK(isStanding(w, f.target));
     CHECK(f.server.worldMaps().forRealm(w.get<Transform>(f.target).realm)->biome() == "hel");
+    CHECK_NEAR(w.get<TeleporterState>(f.target).markHoldUntilMillis, 0, 0);
     CHECK_EQ(w.get<PlayerProgress>(f.target).stars, stars);
     CHECK_NEAR(w.get<Health>(f.target).current, w.get<Health>(f.target).max, 0);
     f.returnCommand();
@@ -77,14 +78,21 @@ TEST(dark_mark_normal_transports_revives_returns_and_preserves_progress) {
     CHECK(Peer::canMark(f.server, f.target, f.owner, Rarity::Apex));
 }
 
-TEST(dark_mark_hyper_portals_are_available_immediately) {
+TEST(dark_mark_hyper_transports_without_imprisonment) {
+    // H Mark only teleports — no 30s lockout on /mark-return or door teleports.
     MarkFixture f; if (!f.ready) return;
     auto& w = f.server.world(); const Transform before = w.get<Transform>(f.target);
     f.kill(); CHECK(Peer::applyMark(f.server, f.target, f.owner, Rarity::Apex));
+    CHECK_NEAR(w.get<TeleporterState>(f.target).markHoldUntilMillis, 0, 0);
+    CHECK(w.get<Transform>(f.target).realm != before.realm);
+    f.returnCommand();
+    CHECK(w.get<Transform>(f.target).realm == before.realm);
+    Peer::markClock(f.server, 1300000); f.kill();
+    CHECK(Peer::applyMark(f.server, f.target, f.owner, Rarity::Apex));
     const Realm hel = w.get<Transform>(f.target).realm;
-    CHECK(hel != before.realm);
     Peer::markTeleport(f.server, f.target, before.realm, before.position);
     CHECK(w.get<Transform>(f.target).realm == before.realm);
+    CHECK(hel != before.realm);
 }
 
 TEST(void_mark_can_target_a_corpse_near_the_flower_and_return_immediately) {
@@ -96,7 +104,7 @@ TEST(void_mark_can_target_a_corpse_near_the_flower_and_return_immediately) {
     const auto index = content().petalIndex("void_mark");
     auto& slot = w.get<Loadout>(f.owner).slots[0];
     slot.configIndex = index;
-    slot.rarity = Rarity::Apex;
+    slot.rarity = Rarity::Unique;
     petals.run(w, content(), 1000000, 0, commands);
     petals.run(w, content(), 1021000, 0, commands);
     Entity mark = NULL_ENTITY;
@@ -113,7 +121,7 @@ TEST(void_mark_can_target_a_corpse_near_the_flower_and_return_immediately) {
     Peer::markClock(f.server, 1021000);
     petals.run(w, content(), 1021000, 0, commands);
     CHECK_EQ(w.get<PetalInstance>(mark).markTarget, f.target);
-    const double ready = 1021000 + darkMarkDelayMillis(Rarity::Apex);
+    const double ready = 1021000 + darkMarkDelayMillis(Rarity::Unique);
     Peer::markClock(f.server, ready);
     petals.run(w, content(), ready, 0, commands);
     CHECK(isStanding(w, f.target));

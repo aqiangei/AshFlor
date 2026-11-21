@@ -725,8 +725,9 @@ public:
         std::uint32_t count = 0;
     };
     /// Destroys every one of `stacks` for XP, in one request (shared/game/
-    /// absorb.h prices it). The answer lands in absorbOutcome().
-    void requestAbsorb(const std::vector<AbsorbStack>& stacks);
+    /// absorb.h prices it). Accounts with a chosen password must pass it;
+    /// others send an empty string. The answer lands in absorbOutcome().
+    void requestAbsorb(const std::vector<AbsorbStack>& stacks, const std::string& password = {});
     /// Forges kTitanForgeCost apex of this petal into one universal at the
     /// titan the body is standing at.
     void requestTitanForge(std::uint16_t petalIndex, bool hyper=false, bool eternalFragment=true, bool batch=false);

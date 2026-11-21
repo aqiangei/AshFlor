@@ -638,6 +638,9 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     if (config.authorityCommit) {
         if (!database_.loadAuthoritative(config.authoritySnapshot, config.authorityCommit, errorOut)) return false;
     } else if (!database_.load(config.databasePath, errorOut)) return false;
+    // Mix the persisted server secret into hourly shop stock so an open-source
+    // client that only knows the UTC hour cannot reproduce the catalogue.
+    setShopRotationSalt(database_.serverSecret());
     if(!config_.authorityHyper)foldLookAlikeSkins();
 
     // Kept in a file beside the database, never anywhere a client can reach:
@@ -917,14 +920,9 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
 
     // A revived flower has to be un-announced to its own client, and only the
     // connection layer can do that.
-    petals_->onTimedSummonManaShortage = [this](Entity player) {
-        Session* session = sessionForEntity(player);
-        if (!session || wallClockMillis_ < session->nextSummonManaWarningMillis) return;
-        if (auto* connection = listener_.find(session->connection)) {
-            session->nextSummonManaWarningMillis = wallClockMillis_ + 12000;
-            sendSystem(*connection, "Not enough mana to summon.");
-        }
-    };
+    // Mana-short timed summons fail quietly: no chat spam when the stick
+    // cannot pay for a cast. The petal system still skips the summon.
+    petals_->onTimedSummonManaShortage = nullptr;
     petals_->onPlayerRevived = [this](Entity revived, Entity reviver) {
         onPlayerRevived(revived, reviver);
     };
@@ -1980,6 +1978,12 @@ void GameServer::tick(double wallMillis, double nowMillis) {
     // rather than leaving them simulating for nobody.
     maintainBots(nowMillis);
     markTickPhase("bot population");
+#ifdef __EMSCRIPTEN__
+    EM_ASM({
+        if (typeof process !== "undefined") process.flixPublicStatus = ({players: $0, updatedAt: Date.now()});
+    }, static_cast<int>(playerCount()));
+#endif
+
 
     // Nobody in the world means nothing to simulate. The reference returns out
     // of its tick here and the whole world freezes: mobs stop wandering, nests
@@ -2081,9 +2085,16 @@ void GameServer::applyVoidGravity(double dt) {
             if (!isStanding(world_, e)) return;
             const auto* tree = world_.tryGet<PlayerSkillTree>(e);
             const int activeSlots = tree ? tree->skills.loadoutSlots() : kLoadoutActiveSlots;
-            const bool hasResistance = resist != kNoPetal && std::any_of(loadout.slots.begin(),
-                loadout.slots.begin() + activeSlots,
-                [resist](const LoadoutSlot& slot) { return slot.configIndex == resist && !slot.broken; });
+            double gravityScale = 1.0;
+            if (resist != kNoPetal) {
+                for (int i = 0; i < activeSlots; ++i) {
+                    const LoadoutSlot& slot = loadout.slots[static_cast<std::size_t>(i)];
+                    if (slot.configIndex != resist || slot.broken) continue;
+                    // Unique: 33% pull; Apex+: 15% pull (stronger singularity).
+                    gravityScale = std::min(gravityScale,
+                        isHyperPetal(slot.rarity) ? 0.15 : 0.33);
+                }
+            }
             Vec2 acceleration;
             for (const auto& field : fields) {
                 if (at.realm != field.realm) continue;
@@ -2094,7 +2105,7 @@ void GameServer::applyVoidGravity(double dt) {
                     terrain_->segmentBlocked(at.position, field.position, at.realm)) continue;
                 acceleration += toward / gap * (field.force * (1.0 - gap / field.radius));
             }
-            motion.velocity += acceleration * (dt * (hasResistance ? 0.33 : 1.0));
+            motion.velocity += acceleration * (dt * gravityScale);
         });
 }
 
@@ -2453,6 +2464,7 @@ void GameServer::reapDead() {
         // over the body. That means this loop meets the same corpse on every
         // later tick, so everything below has to happen exactly once.
         if (isPlayer) {
+            if (auto* pads = world_.tryGet<TeleporterState>(e)) pads->markHoldUntilMillis = 0;
             if (session == nullptr && bot == nullptr) {
                 // Nobody is watching through this body and nothing owns it. It
                 // leaves no corpse and no death notice, and its ring goes with
@@ -5315,7 +5327,9 @@ void GameServer::handleAbsorb(Session& session, net::Connection& connection,
     std::vector<Stack> stacks;
     stacks.reserve(static_cast<std::size_t>(std::min(stackCount, kMaxAbsorbStacks)));
     bool malformed = mode != 0 || stackCount <= 0 || stackCount > kMaxAbsorbStacks;
-    for (int i = 0; i < stackCount && !malformed; ++i) {
+    // Always consume the declared stacks (capped) so a trailing password string
+    // stays aligned even when mode/count already marked the request malformed.
+    for (int i = 0; i < stackCount && i < kMaxAbsorbStacks; ++i) {
         Stack stack;
         stack.petalIndex = reader.u16();
         // Read raw rather than through clampRarity: a byte past the ladder is
@@ -5323,9 +5337,10 @@ void GameServer::handleAbsorb(Session& session, net::Connection& connection,
         const std::uint8_t rarity = reader.u8();
         stack.count = reader.u32();
         if (!reader.ok()) break;
+        if (malformed) continue;
         if (rarity >= kRarityCount) {
             malformed = true;
-            break;
+            continue;
         }
         stack.rarity = static_cast<Rarity>(rarity);
         // One stack per petal and tier: a request naming one twice is asking
@@ -5336,6 +5351,7 @@ void GameServer::handleAbsorb(Session& session, net::Connection& connection,
         if (same != stacks.end()) same->count += stack.count;
         else stacks.push_back(stack);
     }
+    const std::string password = reader.ok() ? reader.str() : std::string();
     if (!reader.ok() || !session.authenticated()) return;
 
     const auto reply = [&](bool ok, double xp, std::int64_t absorbed, const std::string& reason) {
@@ -5350,6 +5366,13 @@ void GameServer::handleAbsorb(Session& session, net::Connection& connection,
     if (malformed) {
         reply(false, 0, 0, mode != 0 ? "花瓣回收换星已关闭。" : "Nothing to absorb.");
         return;
+    }
+    if (const Account* account = std::as_const(database_).findUserById(session.userId);
+        account && account->passwordChosen) {
+        if (password.empty() || !database_.verifyPassword(session.username, password)) {
+            reply(false, 0, 0, "密码错误或未填写。");
+            return;
+        }
     }
 
     // All or nothing: every stack is checked before any is taken, so a
@@ -8978,6 +9001,17 @@ void GameServer::serviceNearbyRevives(double nowMillis) {
     for (auto& entry : sessions_) {
         Session& corpse = entry.second;
         const Entity victim = corpse.entity;
+        if (auto* pads = world_.tryGet<TeleporterState>(victim)) {
+            if (pads->markHoldUntilMillis > 0 && nowMillis >= pads->markHoldUntilMillis) {
+                pads->markHoldUntilMillis = 0;
+                if (isStanding(world_, victim)) {
+                    if (auto* connection = listener_.find(corpse.connection)) {
+                        sendNotice(*connection, net::NoticeSeverity::Info,
+                            "Mark 滞留已解除，可用 /mark-return 返回原处或正常传送。");
+                    }
+                }
+            }
+        }
         const auto* at = world_.tryGet<Transform>(victim);
         const auto* hp = world_.tryGet<Health>(victim);
         if (!corpse.playing() || !world_.has<Dead>(victim) || !at || !hp) {
@@ -9191,19 +9225,27 @@ bool GameServer::transportMarkedPlayer(Entity target, Entity marker, Rarity rari
     onPlayerRevived(target, NULL_ENTITY);
     moveEntityToRealm(target, realm, spawn);
     auto& pads = world_.ensure<TeleporterState>(target);
+    pads.markHoldUntilMillis = 0;  // transport only; no H lockout
     pads.markOrigin = {origin.position, origin.realm};
     pads.markReturnAvailable = true;
     victim->hasDeathSite = false;
     if (auto* connection = listener_.find(victim->connection)) {
-        if (toVoid) sendSystem(*connection, "虚空印记：已传送至虚空，可立即用 /mark-return 返回原处。");
-        else if (frozen) sendSystem(*connection, "冰封印记：已被传送到极地。可使用 /mark-return 返回。");
-        else sendNotice(*connection, net::NoticeSeverity::Info,
-            "Mark：已传送至地狱，可立即用 /mark-return 返回原处。5 分钟内免疫其他印记。");
+        if (toVoid) {
+            sendSystem(*connection,
+                "虚空印记：已传送至虚空，可用 /mark-return 返回原处。5分钟内免疫其他印记。");
+        } else if (frozen) {
+            sendSystem(*connection,
+                "冰封印记：已被传送到极地，可用 /mark-return 返回。5分钟内免疫其他印记。");
+        } else {
+            sendNotice(*connection, net::NoticeSeverity::Info,
+                "Mark：已传送至地狱，可用 /mark-return 返回原处。5 分钟内免疫其他印记。");
+        }
     }
     return true;
 }
 
 void GameServer::onPlayerRevived(Entity revived, Entity reviver) {
+    if (auto* pads = world_.tryGet<TeleporterState>(revived)) pads->markHoldUntilMillis = 0;
     Session* session = sessionForEntity(revived);
     if (session == nullptr) return;
 

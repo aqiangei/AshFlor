@@ -126,4 +126,11 @@ inline constexpr bool insideArena(Vec2 p) {
 inline constexpr double kArenaMaxHealth = 100.0;
 inline constexpr double kArenaInventoryKeepRatio = 0.25;
 
+/// Rift reuses the flat PVP pool so player fights stay fair, but ambient
+/// mobs still climb the ordinary damage ladder. Without a PvE brake a
+/// single Rare spider (15 * 9) already exceeds 100 HP. Scale only mob
+/// contact into a RiftPlayer; flower-vs-flower is unchanged.
+inline constexpr double kRiftMobContactDamageScale = 0.08;
+
+
 } // namespace flix

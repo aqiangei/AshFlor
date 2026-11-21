@@ -1102,6 +1102,11 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
             out("当前没有可用的Mark返程；死亡后可正常复活或返回菜单。");
             return true;
         }
+        if (clockMillis_ < pads->markHoldUntilMillis) {
+            out("Mark 暂不可返回，还剩 " + std::to_string(static_cast<int>(std::ceil(
+                (pads->markHoldUntilMillis - clockMillis_) / 1000.0))) + " 秒。");
+            return true;
+        }
         const RealmPoint origin = pads->markOrigin;
         const auto* body = world_.tryGet<Body>(session.entity);
         const Vec2 position = playerRespawnPosition(*terrain_, origin.realm, origin.position, body ? body->radius : 25.0);
@@ -1159,7 +1164,7 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
         // parses this subset, so the listing arrives looking the way it looks
         // in the browser rather than as a wall of tags.
         std::string help = "Available commands:\n";
-        help += "/mark-return - 印记传送后立即返回原处<br/>";
+        help += "/mark-return - Mark传送后返回原处<br/>";
         help += "/hyper-abandon [编号] - 主动放弃1份超凡，不返还材料（需要确认）<br/>";
         help += "/wave start / join 房号 / leave - 四人无限波次挑战，参与并通关每波可获星星<br/>";
         help += "/dps / /dps reset - \u67e5\u770b\u6216\u6e05\u7a7a\u4e2a\u4eba\u6728\u6869\u4f24\u5bb3\u7edf\u8ba1<br/>";

@@ -220,3 +220,87 @@ TEST(ghost_announcements_start_at_hyper) {
     }
     ui::setLanguage(language);
 }
+
+TEST(rift_entrant_keeps_account_level) {
+    // Regression: enterRift used to call startArenaRun(PlayerRecord{}), which
+    // zeroed XP and spawned a level-1 flower (110 HP) under Mythic ambient
+    // spiders. Keep the account's level; the common starter kit is unchanged.
+    constexpr int kSeedLevel = 40;
+    Harness h("rift-level", [](const std::string& path) {
+        seedUser(path, "veteran", "password7");
+        Database db;
+        std::string error;
+        db.load(path, error);
+        const Account* account = db.findUser("veteran");
+        if (!account) return;
+        PlayerRecord& record = db.progress(account->id);
+        double xp = 0.0;
+        for (int l = 1; l < kSeedLevel; ++l) xp += xpForNextLevel(l);
+        record.totalXp = xp;
+        db.markDirty();
+        db.save();
+    }, dataDir(), 0);
+    CHECK(h.ready);
+    if (!h.ready) return;
+    NetClient client;
+    CHECK(connectClient(h, client));
+    client.requestLogin("veteran", "password7");
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::LoggedIn; }));
+    client.joinGame(1280, 720, "", "Veteran", false);
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; }));
+    CHECK_EQ(client.view().self().level, kSeedLevel);
+
+    const auto& maps = h.server.worldMaps();
+    bool found = false;
+    const Realm main = maps.realmOfId("rift_main", found);
+    CHECK(found);
+    if (!found) return;
+    const auto* map = maps.forRealm(Realm::Overworld);
+    const MapElement* pad = nullptr;
+    for (const auto& entry : map->elements()) {
+        if (entry.padId == "rift") pad = &entry;
+    }
+    CHECK(pad != nullptr);
+    if (!pad) return;
+
+    Entity body = NULL_ENTITY;
+    Query<PlayerTag, Transform>{h.server.world()}.each([&](Entity e, PlayerTag&, Transform&) {
+        body = e;
+    });
+    CHECK(body != NULL_ENTITY);
+    if (body == NULL_ENTITY) return;
+    h.server.world().get<Transform>(body).position = pad->centre();
+    h.server.world().get<Health>(body).invulnerableUntilMillis =
+        std::numeric_limits<double>::infinity();
+
+    h.clock += 4.0 * 60 * 60 * 1000;
+    CHECK(h.stepUntil({&client}, [&] { return client.riftOpen(); }));
+    bool entered = false;
+    for (int attempt = 0; attempt < 100 && !entered; ++attempt) {
+        if (auto* at = h.server.world().tryGet<Transform>(body)) at->position = pad->centre();
+        h.step(1, {&client});
+        entered = client.view().realm() == main;
+    }
+    CHECK(entered);
+    if (!entered) return;
+
+    CHECK_EQ(client.view().self().level, kSeedLevel);
+    Entity riftBody = NULL_ENTITY;
+    Query<PlayerTag, Transform>{h.server.world()}.each([&](Entity e, PlayerTag&, Transform& at) {
+        if (at.realm == main) riftBody = e;
+    });
+    CHECK(riftBody != NULL_ENTITY);
+    if (riftBody != NULL_ENTITY) {
+        CHECK_EQ(h.server.world().get<PlayerProgress>(riftBody).level, kSeedLevel);
+        // Flat PVP pool still applies in rift; the balance fix is level retention
+        // (body/petal damage) plus the mob-contact PvE brake.
+        CHECK_NEAR(h.server.world().get<Health>(riftBody).max, kArenaMaxHealth, 1e-9);
+        CHECK(h.server.world().has<RiftPlayer>(riftBody));
+    }
+    for (int slot = 0; slot < 5; ++slot) {
+        const auto expected = content().petalIndex(slot == 4 ? "rose" : "basic");
+        CHECK_EQ(client.profile().loadout[slot].petalIndex, expected);
+        CHECK(client.profile().loadout[slot].rarity == Rarity::Common);
+    }
+}
+

@@ -374,8 +374,8 @@ constexpr double kLoadoutEchoGrace = 1.0;
 /// from a tap drifts across; far short of any drag meant to unequip.
 constexpr double kLoadoutClickSlop = 16.0;
 /// Hold a preset tile this long to save the current loadout there (ashflor /
-/// florr mobile: tap = load, long-press = save). Shift+K/L+number still saves
-/// on desktop the same way.
+/// florr mobile: tap = load, long-press = save). Desktop keyboard save via
+/// Shift+K/L+number was removed: it collided with mid-bubble loadout swaps.
 constexpr double kPresetSaveHoldSeconds = 0.42;
 
 struct LoadoutLayout {
@@ -1113,11 +1113,14 @@ bool MenuSystem::handleKeys(Window& window, NetClient& net) {
         for (int i = 0; i < kLoadoutBarPrimary; ++i) {
             if (!window.keyPressed(kLoadoutKeys[i])) continue;
             // With K or L held the number names a saved loadout, not a slot:
-            // K+1 loads K1, and Shift+K+1 saves the loadout there instead.
+            // K+1 loads K1. Shift+K/L+number used to save, but that chord also
+            // fires while a bubble is swapping loadouts and overwrites the
+            // preset you meant to load -- save is long-press on the tile, or
+            // preset autosave, instead (#3928 / #3873).
             for (int bank = 0; bank < kLoadoutPresetBanks; ++bank) {
                 if (!window.keyDown(kPresetBankKeys[bank])) continue;
                 pendingPreset_ = bank * kLoadoutPresetsPerBank + i;
-                pendingPresetSave_ = window.shiftHeld();
+                pendingPresetSave_ = false;
                 pendingPresetConfirm_ = false;
                 presetTapArmed_[static_cast<std::size_t>(bank)] = false;
                 return true;

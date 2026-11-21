@@ -74,8 +74,8 @@ TEST(magic_eye_eternal_uses_seven_mana_orbs_against_a_super_bee) {
     r.petals.run(r.w, r.c, 10000.0, .05, r.commands, nullptr, &r.events);
     r.commands.flush();
     r.hit(10000.0);
-    CHECK_NEAR(r.w.get<ManaPool>(r.player).current, maxMana * 0.5, 1e-6);
-    CHECK_NEAR(health - r.w.get<Health>(bee).current, 4346496.0, 1e-3);
+    CHECK_NEAR(r.w.get<ManaPool>(r.player).current, maxMana * 0.75, 1e-6);
+    CHECK_NEAR(health - r.w.get<Health>(bee).current, 2587200.0, 1e-3);
 }
 
 TEST(practice_dps_tracks_actual_sources_on_one_dummy_and_expires) {

@@ -4757,3 +4757,24 @@ TEST(dense_shot_cells_leave_owned_clouds_unchanged) {
     std::printf("dense-shot-cells count=%zu fourTicksMs=%.3f fingerprint=%llu\n", shots.size(), millis,
                 static_cast<unsigned long long>(fingerprint));
 }
+
+
+TEST(heal_cancels_poison_dps_before_restoring_health) {
+    World world;
+    const Entity flower = world.create();
+    world.add<PlayerTag>(flower);
+    world.add<PlayerModifiers>(flower);
+    auto& health = world.add<Health>(flower, Health{});
+    health.max = 100.0;
+    health.current = 50.0;
+    auto& aff = world.add<Afflictions>(flower);
+    aff.poisonPerSecond = 100.0;
+    aff.poisonUntilMillis = 1e9;
+    const double beforeHp = health.current;
+    CombatSystem::landHeal(world, flower, health, 10.0);
+    // landHeal multiplies flower heals by kPlayerHealMultiplier first, then
+    // the grown amount cancels DoT before restoring HP.
+    const double cancelled = 10.0 * kPlayerHealMultiplier;
+    CHECK_NEAR(aff.poisonPerSecond, 100.0 - cancelled, 1e-9);
+    CHECK_NEAR(health.current, beforeHp, 1e-9);
+}

@@ -1396,7 +1396,7 @@ inline double referenceOffenseScale(const PetalConfig& config,Rarity rarity) {
     const bool imported=config.biomeDropOnly || config.id.rfind("void_",0)==0 ||
         config.id.rfind("arctic_",0)==0 || config.id.rfind("bio_",0)==0 || config.id.rfind("jurassic_",0)==0;
     if(imported && isHyperPetal(rarity))
-        return petalStrengthScale(Rarity::Unique) * 2.0 *
+        return petalStrengthScale(Rarity::Unique) * 3.0 *
                (rarity == Rarity::Ascendant ? kAscendantPetalDamageScale : 1.0);
     return petalDamageScale(rarity);
 }
@@ -1597,7 +1597,9 @@ inline bool petalIsCompass(const PetalConfig& config) { return config.id == "com
 /// letting them fight on their own (MobAiSystem::steerPet).
 inline bool petalControlsPets(const PetalConfig& config) { return config.id == "cursor" || config.id == "coordinate"; }
 // Shared by summoned bodies and the loadout stat preview.
-inline constexpr double kSummonedMobHealthScale = 5.0;
+// Was 5.0 pre-1119; halved to 2.5 on 11-19. Partial restore toward player
+// feedback (#3920 / summon HP) without returning to the old ceiling.
+inline constexpr double kSummonedMobHealthScale = 2.5;
 
 inline bool petalIsEgg(const PetalConfig& config) {
     const auto& id = config.id;
@@ -2058,8 +2060,10 @@ inline PetalStats equippedPetalStats(const ContentRegistry& registry, const Equi
 /// Lightning dealt per mana spent by a worn Magic Eye. The mana pool already
 /// scales with rarity, so Hyper's conversion rises by a third over Eternal.
 inline constexpr double magicEyeDamagePerMana(Rarity rarity) {
+    // Raised with the eye's quarter-pool spend so a cast still bites while
+    // leaving mana for missile / stinger / palm leaf reloads.
     constexpr std::array<double, kLadderRarityCount> conversion{
-        3.3, 4.9, 7.4, 11.1, 16.7, 25.0, 38.0, 56.0, 84.0, 112.0};
+        4.0, 6.0, 9.0, 13.5, 20.0, 30.0, 45.0, 68.0, 100.0, 135.0};
     return conversion[static_cast<std::size_t>(ladderIndex(rarity))];
 }
 

@@ -2214,3 +2214,5 @@ TEST(reference_long_all_imported_petals_run_with_combat_and_repeated_input) {
     }
     CHECK_EQ(checked, 219);
 }
+
+

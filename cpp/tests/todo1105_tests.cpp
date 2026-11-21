@@ -27,6 +27,8 @@ TEST(todo1106_new_talents_preserve_indices_costs_and_refund) {
     CHECK_EQ(static_cast<int>(SkillId::MovementSpeed), 19);
     CHECK_EQ(skillFromKey("prestige"), SkillId::Prestige);
     CHECK_EQ(skillFromKey("petDamage"), SkillId::PetDamage);
+    CHECK_EQ(skillFromKey("manaCap"), SkillId::ManaCap);
+    CHECK_EQ(static_cast<int>(SkillId::ManaCap), 24);
     SkillSet skills;
     CHECK(!skills.prestigeUnlocked());
     CHECK_NEAR(skills.effectScale(SkillId::PetDamage), 1.0, 1e-12);
@@ -34,11 +36,11 @@ TEST(todo1106_new_talents_preserve_indices_costs_and_refund) {
     skills.set(SkillId::Prestige, 0);
     skills.set(SkillId::PetDamage, 9);
     CHECK(skills.prestigeUnlocked());
-    CHECK_EQ(skills.spent(), 381);
+    CHECK_EQ(skills.spent(), 331);
     CHECK_NEAR(skills.effectScale(SkillId::PetDamage), 2.5, 1e-12);
     CHECK_NEAR(skills.healthScale(SkillId::Summoner), 1.0, 1e-12);
     skillRefundTo(skills, SkillId::PetDamage, -1);
-    CHECK_EQ(skills.spent(), 225);
+    CHECK_EQ(skills.spent(), 175);
     CHECK_NEAR(skills.effectScale(SkillId::PetDamage), 1.0, 1e-12);
     skills.clear();
     CHECK(!skills.prestigeUnlocked());
@@ -264,7 +266,7 @@ TEST(todo1105_hyper_clover_recovers_faster_and_grants_more_luck) {
     const auto eternal = content.petalStats(index, Rarity::Unique);
     const auto hyper = content.petalStats(index, Rarity::Apex);
     // Direct damage follows the current Hyper damage rule, separately from luck.
-    CHECK_NEAR(hyper.damage, eternal.damage * 2.0, 1e-7);
+    CHECK_NEAR(hyper.damage, eternal.damage * 3.0, 1e-7);
     CHECK(hyper.reloadMillis < eternal.reloadMillis);
     CHECK(hyper.modifiers.luck > eternal.modifiers.luck);
 }

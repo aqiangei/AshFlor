@@ -586,7 +586,7 @@ void NetClient::requestAssemble(Rarity rarity, std::uint8_t recipe, std::uint16_
     send(w);
 }
 
-void NetClient::requestAbsorb(const std::vector<AbsorbStack>& stacks) {
+void NetClient::requestAbsorb(const std::vector<AbsorbStack>& stacks, const std::string& password) {
     if (stacks.empty()) return;
     const std::size_t count = std::min<std::size_t>(stacks.size(), kMaxAbsorbStacks);
     ByteWriter w;
@@ -598,6 +598,7 @@ void NetClient::requestAbsorb(const std::vector<AbsorbStack>& stacks) {
         w.u8(static_cast<std::uint8_t>(stacks[i].rarity));
         w.u32(stacks[i].count);
     }
+    w.str(password);
     send(w);
 }
 
