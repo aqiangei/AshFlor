@@ -49,6 +49,11 @@
             text-shadow:0 2px #54217d;box-shadow:0 4px #54217d;touch-action:manipulation;
             transition:background-color .15s,transform .15s,box-shadow .15s;}
         #council-link {flex:1.15;min-width:0;}
+        #serverNotice [data-live-status] {flex-direction:column;align-items:flex-start;gap:2px;}
+        .server-live-status {display:block;margin-top:4px;font-size:13px;color:#d5eee3;}
+        .server-live-status[data-quality="good"] {color:#baffad;}
+        .server-live-status[data-quality="fair"] {color:#ffe5a1;}
+        .server-live-status[data-quality="slow"] {color:#ffd1b5;}
         #open-server-guide {flex:1;min-width:0;font:inherit;cursor:pointer;
             border-color:#245e3b;background:#388355;text-shadow:0 2px #245e3b;box-shadow:0 4px #245e3b;}
         #lobby-feedback {position:fixed;z-index:6;display:flex;align-items:center;gap:10px;
@@ -181,6 +186,13 @@
             text-underline-offset:3px;
         }
         #serverNotice .server-official-site p {margin:0;color:#45232b;}
+        #serverNotice .server-topup-tips {
+            display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;
+            margin:8px 0;padding:0;list-style:none;
+        }
+        #serverNotice .server-topup-tips li {
+            margin:0;color:#122c48;font-size:13px;line-height:1.4;
+        }
         #closeServerNotice {flex:none;display:grid;place-items:center;width:44px;height:44px;
             border:3px solid #8d4a47;border-radius:4px;background:#ae5b58;color:#fff;
             font:bold 25px/1 Ubuntu,sans-serif;cursor:pointer;touch-action:manipulation;}
@@ -273,14 +285,20 @@
       </div>
       <div class="server-notice-body">
         <div class="server-official-site">
-          <strong>AshFlor 官方入口</strong>
-          <a href="https://ashflor.com/">https://ashflor.com/</a>
+          <strong>氪金联系QQ</strong>
+          <a href="https://wpa.qq.com/msgrd?v=3&amp;uin=3028753757&amp;site=qq&amp;menu=yes" target="_blank" rel="noopener noreferrer">3028753757</a>
         </div>
+        <ul class="server-topup-tips" data-server-topup-tips>
+          <li>25 元一个随机 Apex</li>
+          <li>10 元一个永久超凡拟态（Mimic）</li>
+          <li>10 元迁移服务器</li>
+          <li>三个服务器已续租半年，共 2892 元</li>
+        </ul>
         <a href="/workshop.html">地图工坊</a>
         <p>各服务器直连地址</p>
-        <a data-server href="http://154.219.105.158:8088/">一服 · 154.219.105.158:8088</a>
-        <a data-server href="http://202.189.23.253:67/">二服 · 202.189.23.253:67</a>
-        <a data-server href="http://154.219.105.164:10000/">三服 · 154.219.105.164:10000</a>
+        <a data-server data-live-status href="http://202.189.8.109:67/">一服 · 202.189.8.109:67</a>
+        <a data-server data-live-status href="http://202.189.23.253:67/">二服 · 202.189.23.253:67</a>
+        <a data-server data-live-status href="http://103.91.210.16:67/">三服 · 103.91.210.16:67</a>
         <a data-server href="http://1.14.76.55/">四服 · 1.14.76.55</a>
         <a data-server href="http://154.219.105.164:3000/">五服 · 154.219.105.164:3000</a>
         <p>旧账号可直接登录原服。游客请用原浏览器打开旧入口，自动迁移后进入新站。也可以在「账户」里先设置用户名和密码。</p>
@@ -370,6 +388,61 @@
   quality.href = qualityUrl.href;
   const serverNotice = document.getElementById('serverNotice');
   const noticeKey = 'florr-server-guide-official-site-dismissed';
+  const liveServers = Array.from(serverNotice.querySelectorAll('[data-live-status]'), link => {
+    const status = document.createElement('small');
+    status.className = 'server-live-status';
+    status.textContent = '正在检测…';
+    link.append(status);
+    return {link, status};
+  });
+  let liveTimer = 0;
+  let liveGeneration = 0;
+  const liveRequests = new Set();
+  const stopServerStatus = () => {
+    clearTimeout(liveTimer);
+    ++liveGeneration;
+    for (const controller of liveRequests) controller.abort();
+    liveRequests.clear();
+  };
+  const refreshServerStatus = async () => {
+    if (!serverNotice.open || document.hidden) return;
+    const generation = liveGeneration;
+    await Promise.all(liveServers.map(async ({link, status}) => {
+      const controller = new AbortController();
+      liveRequests.add(controller);
+      const timeout = setTimeout(() => controller.abort(), 3500);
+      const began = performance.now();
+      try {
+        const endpoint = new URL('/api/server-status', link.href);
+        const response = await fetch(endpoint, {cache: 'no-store', signal: controller.signal,
+          credentials: 'omit'});
+        if (!response.ok) throw new Error('status unavailable');
+        const data = await response.json();
+        if (!Number.isSafeInteger(data.players) || data.players < 0 ||
+            !Number.isFinite(data.updatedAt) || Date.now() - data.updatedAt > 15000)
+          throw new Error('invalid status');
+        const latency = Math.round(performance.now() - began);
+        if (generation !== liveGeneration || !serverNotice.open) return;
+        status.textContent = data.players + ' 人在线 · ' + latency + ' ms';
+        status.dataset.quality = latency < 150 ? 'good' : latency < 350 ? 'fair' : 'slow';
+      } catch (_) {
+        if (generation === liveGeneration && serverNotice.open) {
+          status.textContent = '人数未知 · 暂时无法连接';
+          status.dataset.quality = 'unknown';
+        }
+      } finally {
+        clearTimeout(timeout);
+        liveRequests.delete(controller);
+      }
+    }));
+    if (generation === liveGeneration && serverNotice.open && !document.hidden)
+      liveTimer = setTimeout(refreshServerStatus, 5000);
+  };
+  document.addEventListener('visibilitychange', () => {
+    stopServerStatus();
+    if (!document.hidden && serverNotice.open) refreshServerStatus();
+  });
+
   let noticeDismissed = false;
   try { noticeDismissed = sessionStorage.getItem(noticeKey) === '1'; } catch (_) {}
   const noticeCountdown = document.getElementById('server-notice-countdown');
@@ -385,6 +458,8 @@
     noticePointerOutside = false;
     noticeDeadline = performance.now() + 20000;
     serverNotice.showModal();
+    stopServerStatus();
+    refreshServerStatus();
     updateNoticeCountdown();
     noticeTimer = setInterval(updateNoticeCountdown, 1000);
   };
@@ -404,6 +479,7 @@
   document.getElementById('open-server-guide').onclick = openNotice;
   document.getElementById('loading-server-guide').onclick = openNotice;
   serverNotice.addEventListener('close', () => {
+    stopServerStatus();
     if (serverNotice.open) return;
     clearInterval(noticeTimer);
     noticeTimer = 0;
