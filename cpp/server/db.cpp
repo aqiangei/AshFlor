@@ -5,11 +5,14 @@
 #include "server/timed_hammers.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cerrno>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <dirent.h>
+#include <string_view>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <utility>
@@ -563,33 +566,55 @@ enum class SnapshotOutcome { Failed, Saved, Uncertain };
 #ifdef __EMSCRIPTEN__
 // Runs on the persistence pthread. NODEFS and libc output can proxy to the
 // main thread, which may be waiting for this write during a graceful stop.
-EM_JS(int, flix_write_snapshot, (const char* file, const char* text, std::size_t size), {
+EM_JS(bool, flix_open_snapshot, (const char* file), {
     const fs = require("node:fs");
     const path = UTF8ToString(file);
-    let temp, fd, dir, renamed = false;
+    const temp = path + ".save-" + require("node:crypto").randomUUID();
+    let dir;
     try {
         dir = fs.openSync(require("node:path").dirname(path), "r");
-        temp = path + ".save-" + require("node:crypto").randomUUID();
-        fd = fs.openSync(temp, "wx", 0o600);
-        // writeFileSync finishes before the worker releases the immutable
-        // WASM string, so Node can read its bytes directly.
-        const bytes = Buffer.from(HEAPU8.buffer, text >>> 0, size);
-        fs.writeFileSync(fd, bytes);
-        if (fs.fstatSync(fd).size !== size) throw new Error("short write");
+        const fd = fs.openSync(temp, "wx", 0o600);
+        Module.flixSnapshotFile = {path, temp, fd, dir};
+        return true;
+    } catch (error) {
+        if (dir !== undefined) try { fs.closeSync(dir); } catch (_) {}
+        try { fs.writeSync(2, "[persist-worker] " + error.code + "\n"); } catch (_) {}
+        return false;
+    }
+});
+EM_JS(bool, flix_append_snapshot, (const char* text, std::size_t size), {
+    const fs = require("node:fs");
+    try {
+        // Read the current SharedArrayBuffer in case another thread grew memory.
+        const bytes = Buffer.from(wasmMemory.buffer, text >>> 0, size);
+        fs.writeFileSync(Module.flixSnapshotFile.fd, bytes);
+        return true;
+    } catch (error) {
+        try { fs.writeSync(2, "[persist-worker] " + error.code + "\n"); } catch (_) {}
+        return false;
+    }
+});
+EM_JS(int, flix_close_snapshot, (std::size_t bytes, bool publish), {
+    const fs = require("node:fs");
+    const {path, temp, fd, dir} = Module.flixSnapshotFile;
+    Module.flixSnapshotFile = undefined;
+    let closed = false, renamed = false;
+    try {
+        if (!publish || fs.fstatSync(fd).size !== bytes) return 0;
         fs.fsyncSync(fd);
         fs.closeSync(fd);
-        fd = undefined;
+        closed = true;
         fs.renameSync(temp, path);
         renamed = true;
         fs.fsyncSync(dir);
         return 1;
     } catch (error) {
-        try { fs.writeSync(2, "[persist-worker] " + error.message + "\n"); } catch (_) {}
+        try { fs.writeSync(2, "[persist-worker] " + error.code + "\n"); } catch (_) {}
         return renamed ? 2 : 0;
     } finally {
-        if (fd !== undefined) try { fs.closeSync(fd); } catch (_) {}
-        if (dir !== undefined) try { fs.closeSync(dir); } catch (_) {}
-        if (temp && !renamed) try { fs.unlinkSync(temp); } catch (_) {}
+        if (!closed) try { fs.closeSync(fd); } catch (_) {}
+        if (!renamed) try { fs.unlinkSync(temp); } catch (_) {}
+        try { fs.closeSync(dir); } catch (_) {}
     }
 });
 EM_JS(int, flix_finish_staged_snapshot, (const char* staged, const char* file, bool publish), {
@@ -613,38 +638,113 @@ EM_JS(int, flix_finish_staged_snapshot, (const char* staged, const char* file, b
 });
 #endif
 
-SnapshotOutcome writeSnapshot(const std::string& path, const std::string& text) {
-#ifdef __EMSCRIPTEN__
-    return static_cast<SnapshotOutcome>(flix_write_snapshot(path.c_str(), text.data(), text.size()));
-#else
-    const auto slash = path.find_last_of('/');
-    const auto directory = slash == std::string::npos ? "." : path.substr(0, slash + 1);
-    const int dir = ::open(directory.c_str(), O_RDONLY | O_DIRECTORY);
-    if (dir < 0) return SnapshotOutcome::Failed;
-    std::string temp = path + ".save-XXXXXX";
-    const int fd = ::mkstemp(temp.data());
-    if (fd < 0) {
-        ::close(dir);
-        return SnapshotOutcome::Failed;
-    }
-    std::size_t offset = 0;
-    while (offset < text.size()) {
-        const auto written = ::write(fd, text.data() + offset, text.size() - offset);
-        if (written < 0 && errno == EINTR) continue;
-        if (written <= 0) break;
-        offset += static_cast<std::size_t>(written);
-    }
-    const bool flushed = offset == text.size() && ::fsync(fd) == 0;
-    const bool closed = ::close(fd) == 0;
-    SnapshotOutcome outcome = SnapshotOutcome::Failed;
-    if (flushed && closed && ::rename(temp.c_str(), path.c_str()) == 0)
-        outcome = ::fsync(dir) == 0 ? SnapshotOutcome::Saved : SnapshotOutcome::Uncertain;
-    else
-        ::unlink(temp.c_str());
-    ::close(dir);
-    return outcome;
+// A bounded buffer amortizes calls to the host filesystem. The row cache
+// owns the JSON strings, so even a large row can be written in slices.
+class SnapshotFile {
+public:
+    SnapshotFile(const std::string& path, bool hash)
+        : hash_(hash)
+#ifndef __EMSCRIPTEN__
+        , path_(path)
 #endif
-}
+    {
+#ifdef __EMSCRIPTEN__
+        open_ = flix_open_snapshot(path.c_str());
+#else
+        const auto slash = path.find_last_of('/');
+        const auto directory = slash == std::string::npos ? "." : path.substr(0, slash);
+        temp_ = path + ".save-XXXXXX";
+        dir_ = ::open(directory.empty() ? "/" : directory.c_str(), O_RDONLY | O_DIRECTORY);
+        if (dir_ >= 0) {
+            fd_ = ::mkstemp(temp_.data());
+            open_ = fd_ >= 0;
+            if (!open_) ::close(dir_);
+        }
+#endif
+        healthy_ = open_;
+    }
+
+    ~SnapshotFile() {
+        if (open_) close(false);
+    }
+    SnapshotFile(const SnapshotFile&) = delete;
+    SnapshotFile& operator=(const SnapshotFile&) = delete;
+
+    void append(std::string_view text) {
+        while (healthy_ && !text.empty()) {
+            const auto size = std::min(text.size(), buffer_.size() - buffered_);
+            std::memcpy(buffer_.data() + buffered_, text.data(), size);
+            buffered_ += size;
+            text.remove_prefix(size);
+            if (buffered_ == buffer_.size()) flush();
+        }
+    }
+
+    SnapshotOutcome finish() {
+        if (!open_) return SnapshotOutcome::Failed;
+        if (healthy_ && buffered_ != 0) flush();
+        return close(healthy_);
+    }
+
+    std::size_t bytes() const { return bytes_; }
+
+    std::string finishHash() {
+        if (!hash_) return {};
+        std::uint8_t digest[32];
+        sha_.finish(digest);
+        return crypto::toHex(digest, sizeof digest);
+    }
+
+private:
+    void flush() {
+#ifdef __EMSCRIPTEN__
+        healthy_ = flix_append_snapshot(buffer_.data(), buffered_);
+#else
+        std::size_t offset = 0;
+        while (offset < buffered_) {
+            const auto written = ::write(fd_, buffer_.data() + offset, buffered_ - offset);
+            if (written < 0 && errno == EINTR) continue;
+            if (written <= 0) break;
+            offset += static_cast<std::size_t>(written);
+        }
+        healthy_ = offset == buffered_;
+#endif
+        if (healthy_) {
+            if (hash_) sha_.update(buffer_.data(), buffered_);
+            bytes_ += buffered_;
+        }
+        buffered_ = 0;
+    }
+
+    SnapshotOutcome close(bool publish) {
+        open_ = false;
+#ifdef __EMSCRIPTEN__
+        return static_cast<SnapshotOutcome>(flix_close_snapshot(bytes_, publish));
+#else
+        struct stat info{};
+        const bool flushed = publish && ::fstat(fd_, &info) == 0 &&
+            static_cast<std::uint64_t>(info.st_size) == bytes_ && ::fsync(fd_) == 0;
+        const bool closed = ::close(fd_) == 0;
+        SnapshotOutcome outcome = SnapshotOutcome::Failed;
+        if (flushed && closed && ::rename(temp_.c_str(), path_.c_str()) == 0)
+            outcome = ::fsync(dir_) == 0 ? SnapshotOutcome::Saved : SnapshotOutcome::Uncertain;
+        else
+            ::unlink(temp_.c_str());
+        ::close(dir_);
+        return outcome;
+#endif
+    }
+
+    bool hash_, open_ = false, healthy_ = false;
+    std::array<char, 64 * 1024> buffer_;
+    std::size_t buffered_ = 0, bytes_ = 0;
+    crypto::Sha256 sha_;
+#ifndef __EMSCRIPTEN__
+    const std::string& path_;
+    std::string temp_;
+    int dir_ = -1, fd_ = -1;
+#endif
+};
 
 SnapshotOutcome finishStagedSnapshot(const std::string& stage, const std::string& path, bool publish) {
 #ifdef __EMSCRIPTEN__
@@ -713,17 +813,18 @@ struct Database::SnapshotWriter {
             changes.rows.clear();
             if (changes.order) order = std::move(*changes.order);
         }
-        void appendTo(std::string& output) const {
-            char separator = '{';
+        template<class Emit>
+        void emitJson(const Emit& emit) const {
+            emit("{");
+            bool first = true;
             for (const auto& key : order) {
-                output += separator;
-                separator = ',';
-                output += jsonEscape(key);
-                output += ':';
-                output += text.at(key);
+                if (!first) emit(",");
+                first = false;
+                emit(jsonEscape(key));
+                emit(":");
+                emit(text.at(key));
             }
-            if (order.empty()) output += '{';
-            output += '}';
+            emit("}");
         }
     };
 
@@ -816,36 +917,41 @@ private:
                 job.topOrder.push_back("hyperForges");
         }
         const auto encodedAt = trace ? Clock::now() : Clock::time_point{};
-        std::string output;
-        output.reserve(lastBytes);
-        const auto add = [&](const std::string& key, const auto& append) {
-            output += output.empty() ? '{' : ',';
-            output += jsonEscape(key);
-            output += ':';
-            append();
+        const auto emitSnapshot = [&](const auto& emit) {
+            emit("{");
+            bool first = true;
+            bool wroteUsers = false, wrotePlayers = false, wroteSessions = false;
+            const auto addKey = [&](const std::string& key) {
+                if (!first) emit(",");
+                first = false;
+                emit(jsonEscape(key));
+                emit(":");
+            };
+            const auto table = [&](const std::string& key, const Rows& rows) {
+                addKey(key);
+                rows.emitJson(emit);
+            };
+            for (const auto& key : job.topOrder) {
+                if (key == "players") { table(key, players); wrotePlayers = true; }
+                else if (key == "users") { table(key, users); wroteUsers = true; }
+                else if (key == "sessions") { table(key, sessions); wroteSessions = true; }
+                else {
+                    addKey(key);
+                    emit(globals.text.at(key));
+                }
+            }
+            if (!wrotePlayers) table("players", players);
+            if (!wroteUsers) table("users", users);
+            if (!wroteSessions && !sessions.order.empty()) table("sessions", sessions);
+            emit("}");
         };
-        const auto table = [&](const std::string& key, const Rows& rows) {
-            add(key, [&] { rows.appendTo(output); });
-        };
-        bool wroteUsers = false, wrotePlayers = false, wroteSessions = false;
-        for (const auto& key : job.topOrder) {
-            if (key == "players") { table(key, players); wrotePlayers = true; }
-            else if (key == "users") { table(key, users); wroteUsers = true; }
-            else if (key == "sessions") { table(key, sessions); wroteSessions = true; }
-            else add(key, [&] { output += globals.text.at(key); });
-        }
-        if (!wrotePlayers) table("players", players);
-        if (!wroteUsers) table("users", users);
-        if (!wroteSessions && !sessions.order.empty()) table("sessions", sessions);
-        output += '}';
-        lastBytes = output.size();
-        const auto assembledAt = trace ? Clock::now() : Clock::time_point{};
-        auto outcome = SnapshotOutcome::Failed;
+        const std::string stage = staged ? path + ".forge-stage" : std::string{};
+        SnapshotFile file(staged ? stage : path, job.finalSave);
+        emitSnapshot([&](std::string_view part) { file.append(part); });
+        auto outcome = file.finish();
         if (staged) {
-            const std::string stage = path + ".forge-stage";
-            // The regular checkpoint stays authoritative until the main
-            // thread confirms that neither participant changed.
-            const bool prepared = writeSnapshot(stage, output) == SnapshotOutcome::Saved;
+            // Keep the regular checkpoint until the main thread approves.
+            const bool prepared = outcome == SnapshotOutcome::Saved;
             bool publish = false;
             if (prepared) {
                 std::unique_lock lock(mutex);
@@ -859,29 +965,25 @@ private:
                 if (previousForges) globals.text.at("hyperForges") = std::move(*previousForges);
                 else globals.text.erase("hyperForges");
             }
-        } else {
-            outcome = writeSnapshot(path, output);
         }
         const auto writtenAt = trace ? Clock::now() : Clock::time_point{};
         const std::string sha = outcome == SnapshotOutcome::Saved && job.finalSave
-            ? crypto::sha256Hex(output) : "";
+            ? file.finishHash() : "";
         const auto completedAt = Clock::now();
         const auto ms = [](Clock::duration span) {
             return std::chrono::duration<double, std::milli>(span).count();
         };
-        Result done{outcome, job.generation, lastBytes, users.order.size(), players.order.size(),
+        Result done{outcome, job.generation, file.bytes(), users.order.size(), players.order.size(),
                     ms(completedAt - started), sha, {}};
         if (trace) {
             done.queueMs = ms(started - job.submittedAt);
             done.encodeRowsMs = ms(encodedAt - started);
-            done.assembleMs = ms(assembledAt - encodedAt);
-            done.writeMs = ms(writtenAt - assembledAt);
+            done.writeMs = ms(writtenAt - encodedAt);
         }
         return done;
     }
 
     std::string path;
-    std::size_t lastBytes = 0;
     Rows users, players, sessions, globals;
     std::mutex mutex;
     std::condition_variable ready, finished;

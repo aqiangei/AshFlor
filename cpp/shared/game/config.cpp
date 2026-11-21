@@ -2388,15 +2388,16 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
         if (row.magnetism) s.modifiers.magnetism = *row.magnetism;
     }
     if (c.id == "jelly") s.knockback *= 0.9;
-    // Hyper utility/defence stays bounded; direct offensive stats get a real
-    // twofold upgrade over Eternal (1106 balance feedback).
+    // Apex vs Eternal: offense triples (ladder step); durability/utility doubles.
+    // Full 3x on every field would overshoot Apex-mob contact and Ascendant headroom;
+    // 3x damage / 2x health matches "feels like a tier" without making petals immortal.
     if (c.id == "domino") s.damage *= 9.0; // mean of two independent 0..6 ends
     // Apply after authored overrides so special damage/healing rows cannot
     // bypass it. Counts, reloads, proc conditions and probabilities stay put.
     if (graded == Rarity::Apex) {
         const auto eternal = buildPetalStats(c, Rarity::Unique);
-        const auto cap = [](double& value, double base) {
-            if (base > 0.0 && value > base * 1.5) value = base * 1.5;
+        const auto cap = [](double& value, double base, double limit) {
+            if (base > 0.0 && value > base * limit) value = base * limit;
         };
         for (const auto field : {
             &PetalStats::damage, &PetalStats::health, &PetalStats::bodyDamage,
@@ -2406,21 +2407,29 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
             &PetalStats::totemHealPerSecond, &PetalStats::lightningDamagePerHit,
             &PetalStats::flowerHealthBonus, &PetalStats::maxMana, &PetalStats::mana,
             &PetalStats::passiveManaPerSecond, &PetalStats::shield, &PetalStats::knockback}) {
-            cap(s.*field, eternal.*field);
+            cap(s.*field, eternal.*field, 2.0);
         }
         // Keep the resource budget and its costs on the same curve, so a
         // previously affordable magic petal does not become impossible to cast.
-        cap(s.requiredMana, eternal.requiredMana);
-        cap(s.petManaCost, eternal.petManaCost);
-        cap(s.modifiers.poisonArmor, eternal.modifiers.poisonArmor);
+        cap(s.requiredMana, eternal.requiredMana, 2.0);
+        cap(s.petManaCost, eternal.petManaCost, 2.0);
+        cap(s.modifiers.poisonArmor, eternal.modifiers.poisonArmor, 2.0);
         for (const auto field : {&PetalModifiers::maxHealth, &PetalModifiers::damage}) {
             if (eternal.modifiers.*field > 1.0)
                 s.modifiers.*field = std::min(s.modifiers.*field,
-                    1.0 + (eternal.modifiers.*field - 1.0) * 1.5);
+                    1.0 + (eternal.modifiers.*field - 1.0) * 2.0);
         }
         for (const auto field : {&PetalStats::damage, &PetalStats::bodyDamage,
                 &PetalStats::critDamage, &PetalStats::poisonPerSecond,
                 &PetalStats::lightningDamagePerHit}) {
+            if (s.*field > 0.0 && eternal.*field > 0.0)
+                s.*field = std::clamp(s.*field, eternal.*field * 3.0, eternal.*field * 3.15);
+        }
+        for (const auto field : {&PetalStats::health, &PetalStats::heal,
+                &PetalStats::passiveHealPerSecond, &PetalStats::conditionalHealPerSecond,
+                &PetalStats::totemHealPerSecond, &PetalStats::shield,
+                &PetalStats::flowerHealthBonus, &PetalStats::petalArmor,
+                &PetalStats::armorReduction, &PetalStats::armorPerStack}) {
             if (s.*field > 0.0 && eternal.*field > 0.0)
                 s.*field = std::clamp(s.*field, eternal.*field * 2.0, eternal.*field * 2.1);
         }

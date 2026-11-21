@@ -12,14 +12,24 @@
 // and naming the C++ functions it runs through, which the release link keeps
 // with --profiling-funcs.
 (() => {
-    // Pthread workers evaluate this glue too; only the Node main thread owns
-    // process-level startup and crash reporting.
-    if (!require("worker_threads").isMainThread) return;
-    const fs = require("fs");
+    const {isMainThread, threadId} = require("node:worker_threads");
+    const fs = require("node:fs");
 
-    // V8 keeps ten frames. A crash spends most of those on abort() and the
-    // glue that called into the module, and cuts off the C++ that caused it.
+    // Set the stack limit in each worker as well. Emscripten forwards an
+    // abort to the main thread after unwinding the original native stack.
     Error.stackTraceLimit = 64;
+    if (!isMainThread) {
+        Module["onAbort"] = reason => {
+            const heapBytes = typeof wasmMemory === "undefined" ? 0 : wasmMemory.buffer.byteLength;
+            const diagnostic = new Error(`Aborted(${reason})`);
+            try {
+                fs.writeSync(2, `[crash-worker] thread=${threadId} wasmHeapBytes=${heapBytes}\n` +
+                    diagnostic.stack + "\n");
+            } catch (_) {
+            }
+        };
+        return;
+    }
 
     // A start line not preceded by "shut down cleanly", "stopped for restart"
     // or a [crash] report means the last process was killed from outside --

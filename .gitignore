@@ -36,6 +36,7 @@ Thumbs.db
 mob_draw_commands.json
 
 cpp/build/
+cpp/build-native/
 cpp/build-web/
 cpp/build-web-skia/
 cpp/build-rel/

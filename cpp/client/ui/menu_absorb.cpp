@@ -40,12 +40,14 @@
 #include <cstdio>
 #include "client/ui/absorb_batch.h"
 
+#include "client/ui/draw.h"
 #include "client/ui/item_tile.h"
 #include "client/ui/menu_style.h"
 #include "client/ui/menu_theme.h"
 #include "client/ui/menu_widgets.h"
 #include "client/ui/menus.h"
 #include "client/ui/text.h"
+#include "client/ui/text_input.h"
 #include "shared/game/absorb.h"
 #include "shared/game/config.h"
 #include "shared/game/constants.h"
@@ -214,6 +216,9 @@ void AbsorbPanel::reset() {
     heldPetal_ = kNoPetal;
     refusal_.clear();
     switchPressed_ = false;
+    confirming_ = false;
+    password_.clear();
+    passwordField_.blur();
     // `waiting_` stays: a request still out will be answered, and the button
     // stays down until it is.
 }
@@ -237,6 +242,9 @@ void AbsorbPanel::stage(const Profile& profile, std::uint16_t petalIndex, Rarity
     const std::uint32_t add = std::min(count, owned - have);
     if (it != staged_.end()) it->count += add;
     else staged_.push_back({petalIndex, rarity, add});
+    confirming_ = false;
+    password_.clear();
+    passwordField_.blur();
 }
 
 void AbsorbPanel::stepBar(const std::string& account, double totalXp, double dtMs, Vec2 barLeft) {
@@ -422,6 +430,27 @@ bool AbsorbPanel::render(MenuContext& ctx) {
     }
 
     // --- the button --------------------------------------------------------------
+    const bool needPassword = profile.hasPassword;
+    if (!confirming_ || staged_.empty()) {
+        confirming_ = false;
+        if (!password_.empty()) {
+            password_.clear();
+            passwordField_.blur();
+        }
+    }
+    const Rect passwordBox{centreX + kButtonX - 40.0, panel.y + kButtonY - 36.0,
+                           kButtonWidth + 80.0, 28.0};
+    if (confirming_ && needPassword && !waiting_) {
+        if (passwordField_.focused) {
+            ui::TextEditOptions typing;
+            typing.maxBytes = 72;
+            typing.copyable = false;
+            editText(ctx.window, password_, passwordField_, ctx.timeSeconds, typing);
+        }
+        inputField(canvas, passwordBox, password_,
+                   trEnZh("Account password", "账户密码"),
+                   passwordField_.focused, ctx.timeSeconds, &passwordField_, true);
+    }
     const Rect button{centreX + kButtonX, panel.y + kButtonY, kButtonWidth, kButtonHeight};
     const double rim = kButtonBorder * 0.5;
     const Rect buttonHit{button.x - rim, button.y - rim, button.w + kButtonBorder,
@@ -430,7 +459,9 @@ bool AbsorbPanel::render(MenuContext& ctx) {
     const bool overButton = usable && buttonHit.contains(mouse);
     drawFlorrButton(canvas, button, usable ? kButtonFace : kButtonIdleFace, kButtonBorder,
                     kButtonRadius, overButton, overButton && mouseDown);
-    outlinedText(canvas, trEnZh("Absorb", "吸收"), button.x + button.w * 0.5, button.y + button.h * 0.5,
+    outlinedText(canvas,
+                 confirming_ ? trEnZh("Confirm destroy", "确认销毁") : trEnZh("Absorb", "吸收"),
+                 button.x + button.w * 0.5, button.y + button.h * 0.5,
                  panelLabel(kButtonLabelSize, Align::Centre, Baseline::Middle), 1.0);
 
     const Rect batch{button.right() + 12.0, button.y, 145.0, button.h};
@@ -531,9 +562,15 @@ bool AbsorbPanel::render(MenuContext& ctx) {
     const bool refused = !refusal_.empty() && nowMs < refusalUntil_;
     TextStyle second = panelLabel(kLineSize, Align::Centre, Baseline::Middle);
     if (refused) second.fill = kSlotCardRefusalInk;
-    outlinedText(canvas,
-                 refused ? refusal_ : trEnZh("WARNING: Selected petals will be permanently destroyed", "注意：所选花瓣会永久销毁，请保留需要使用的装备"),
-                 centreX, panel.y + kLine2Y, second, 1.0);
+    const char* warn = confirming_
+        ? (needPassword
+               ? trEnZh("Confirm again. Enter account password, then Confirm destroy.",
+                        "再次确认：输入账户密码后点「确认销毁」。")
+               : trEnZh("Confirm again to permanently destroy the staged petals.",
+                        "再次确认将永久销毁已放入的花瓣。"))
+        : trEnZh("WARNING: Selected petals will be permanently destroyed",
+                 "注意：所选花瓣会永久销毁，请保留需要使用的装备");
+    outlinedText(canvas, refused ? refusal_ : warn, centreX, panel.y + kLine2Y, second, 1.0);
 
     // --- the grid ----------------------------------------------------------------
     SlotCardLayout list = card;
@@ -580,9 +617,16 @@ bool AbsorbPanel::render(MenuContext& ctx) {
     }
     // Nothing moves in or out of the slot while an absorb is out.
     if (waiting_) return true;
+    if (confirming_ && needPassword && passwordBox.contains(mouse)) {
+        passwordField_.focusAtEnd(password_, ctx.timeSeconds);
+        return true;
+    }
     if (overBatch) {
         refusal_.clear();
         heldPetal_ = kNoPetal;
+        confirming_ = false;
+        password_.clear();
+        passwordField_.blur();
         if (bulkSelected_) {
             staged_.clear();
             bulkSelected_ = false;
@@ -610,17 +654,36 @@ bool AbsorbPanel::render(MenuContext& ctx) {
                 if (at != counts.end() && at->second >= s.count) continue;
                 staged_.clear();
                 bulkSelected_ = false;
+                confirming_ = false;
+                password_.clear();
+                passwordField_.blur();
                 refusal_ = trEnZh("Inventory changed. Select the batch again.", "库存或装备已变动，请重新批选。");
                 refusalUntil_ = nowMs + kRefusalMs;
                 return true;
             }
         }
+        if (!confirming_) {
+            confirming_ = true;
+            password_.clear();
+            passwordField_.blur();
+            refusal_.clear();
+            return true;
+        }
+        if (needPassword && password_.empty()) {
+            refusal_ = trEnZh("Enter your account password to absorb.", "请输入账户密码后再吸收。");
+            refusalUntil_ = nowMs + kRefusalMs;
+            passwordField_.focusAtEnd(password_, ctx.timeSeconds);
+            return true;
+        }
         std::vector<NetClient::AbsorbStack> stacks;
         stacks.reserve(staged_.size());
         for (const Staged& s : staged_) stacks.push_back({s.petalIndex, s.rarity, s.count});
-        ctx.net.requestAbsorb(stacks);
+        ctx.net.requestAbsorb(stacks, needPassword ? password_ : std::string());
         waiting_ = true;
         waitStarted_ = nowMs;
+        confirming_ = false;
+        password_.clear();
+        passwordField_.blur();
         refusal_.clear();
         return true;
     }
@@ -632,6 +695,9 @@ bool AbsorbPanel::render(MenuContext& ctx) {
                                          return absorbStackKey(s.petalIndex, s.rarity) == *overTile;
                                      }),
                       staged_.end());
+        confirming_ = false;
+        password_.clear();
+        passwordField_.blur();
         return true;
     }
     if (hovered) {

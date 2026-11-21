@@ -91,18 +91,18 @@ inline Bounty::Share refreshedShare(World& world, Bounty::Share share) {
 inline int lootSlotsForRarity(Rarity rarity) {
     if (rarity == Rarity::Ultra) return 15;
     if (rarity == Rarity::Super) return 20;
-    if (rarity == Rarity::Unique || rarity == Rarity::Apex || rarity == Rarity::Ascendant) return 25;
+    if (rarity == Rarity::Unique || rarity == Rarity::Apex || rarity == Rarity::Ascendant) return 35;
     return 4;
 }
 
 /// The least damage a contender must have dealt to a mob of `mobMaxHealth` to
-/// be paid for it: 1% of the mob's health, measured against the ledger, which
+/// be paid for it: 0.5% of the mob's health, measured against the ledger, which
 /// holds the damage SWUNG rather than what fitted in the health left.
 ///
-/// Divided rather than multiplied by 0.01, so a round health lands on an exact
-/// floor and a contender who did exactly 1% is not refused by a rounding ulp.
+/// Divided rather than multiplied by 0.005, so a round health lands on an exact
+/// floor and a contender who did exactly 0.5% is not refused by a rounding ulp.
 inline double lootDamageFloor(double mobMaxHealth) {
-    return mobMaxHealth > 0.0 ? mobMaxHealth / 100.0 : 0.0;
+    return mobMaxHealth > 0.0 ? mobMaxHealth / 200.0 : 0.0;
 }
 
 /// Hyper participation keeps its existing positive-damage loot rule. XP and
@@ -229,7 +229,7 @@ inline void selectLootRecipients(const std::vector<Bounty::Share>& contributors,
         // end of everyone who earned a share. The floor reads the SAME score
         // the ranking does: a squad qualifies on its average over the whole
         // membership, and once it qualifies it is paid as a squad -- a member
-        // who did less than 1% alone is carried by the ones who did more.
+        // who did less than 0.5% alone is carried by the ones who did more.
         if (contender.score < minScore) break;
 
         members.clear();

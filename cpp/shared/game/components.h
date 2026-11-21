@@ -701,6 +701,8 @@ struct PlayerModifiers {
     std::array<bool, kRarityCount> opalTiers{};
     std::array<double, kRarityCount> stemCellHealChance{};
     double chloroplastShieldScale = 1.0;
+    /// Golden Cactus: strongest equipped copy adds this fraction to other petals' max health.
+    double petalHealthBonus = 0.0;
     double hemoglobinHealBonus = 0.0;
     /// Flat addition to the level's body damage, granted by a worn cutter.
     /// Published here rather than recomputed at each impact so that the
@@ -799,6 +801,7 @@ struct PlayerLocation {
 /// back through the one it arrived on.
 struct TeleporterState {
     // Server-only; never persisted or renewed by another mark. Death clears it.
+    double markHoldUntilMillis = 0;
     bool markReturnAvailable = false;
     RealmPoint markOrigin;
     /// Index into MapData's element list, or -1 when standing on no pad.

@@ -330,6 +330,7 @@ private:
         double elementalShieldPerSecond = 0.0;
         double summonRangeBonus = 0.0;
         double summonRangeManaDrain = 0.0;
+        bool compassSteer = false;
     };
 
     void bindTo(World& world);
@@ -700,6 +701,7 @@ private:
     /// the action pass, for the reason PendingBreak documents.
     std::vector<Entity> pendingSpawns_;
     std::vector<PendingBreak> pendingBreaks_;
+    const ContentRegistry* activeRegistry_ = nullptr;
     /// runPetBroods' snapshot of the queens it serves, and the slot each is filed under.
     std::vector<std::pair<Entity, std::uint8_t>> broodScratch_;
     std::vector<Entity> mobScratch_;

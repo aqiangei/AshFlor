@@ -25,7 +25,7 @@ constexpr Entry kTable[] = {
     {"English", "English"},
     {"Controls", "控制"},
     {"Hold K or L + 1-0: load a saved loadout", "按住 K 或 L + 1-0：读取已保存配装"},
-    {"Shift + K or L + 1-0: save your loadout there", "配装更改自动保存；Shift组合键仅用于复制"},
+    {"Long-press a preset tile to save; K/L + 1-0 only loads", "长按配装格保存；K/L + 1-0 只读取"},
     {"Save Controls", "保存按键"},
     {"Reset to Default", "恢复默认"},
     {"Number Keys Use Items (off = swap loadout)", "数字键使用物品（关闭=切换配装）"},

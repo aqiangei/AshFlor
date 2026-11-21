@@ -234,12 +234,12 @@ TEST(shop_stock_prices_preserve_mimic_and_anchor_new_items_by_rarity) {
     CHECK_EQ(shopPrice(nuke, Rarity::Super), shopPrice(mimic, Rarity::Super));
     CHECK_EQ(shopPrice(egg, Rarity::Super), shopPrice(mimic, Rarity::Super));
     CHECK_EQ(shopOfferPrice(nuke, Rarity::Super, 30), 31'500);
-    CHECK_EQ(shopPrice(nuke, Rarity::Unique), 810'000);
+    CHECK_EQ(shopPrice(nuke, Rarity::Unique), 675'000);
     for (const auto petal : content().petalDisplayOrder()) {
         if (!shopSellsPetal(petal)) continue;
         const auto super = shopPrice(petal, Rarity::Super);
-        CHECK_EQ(shopPrice(petal, Rarity::Unique), 18 * super);
-        CHECK_EQ(shopOfferPrice(petal, Rarity::Unique, 30), 18 * super);
+        CHECK_EQ(shopPrice(petal, Rarity::Unique), 15 * super);
+        CHECK_EQ(shopOfferPrice(petal, Rarity::Unique, 30), 15 * super);
         if (content().petal(petal).id.rfind("arctic_", 0) != 0 &&
             content().petal(petal).id != "magic_golden_leaf")
             CHECK_EQ(super, legacyShopPrice(petal, Rarity::Super));
@@ -626,4 +626,27 @@ TEST(tier_shop_locks_fill_a_retired_slot_without_duplicate_cards) {
         CHECK_EQ(offers[i].petalIndex, fresh[i].petalIndex);
         CHECK_EQ(offers[i].price, fresh[i].price);
     }
+}
+
+
+TEST(shop_rotation_salt_changes_stock_without_changing_hour) {
+    Harness h("shop-salt");
+    CHECK(h.ready);
+    setShopRotationSalt(0);
+    const auto plain = shopOffers(42);
+    setShopRotationSalt(0xC0FFEEu);
+    const auto salted = shopOffers(42);
+    setShopRotationSalt(0); // restore for later tests in this binary
+    CHECK(!plain.empty());
+    CHECK_EQ(plain.size(), salted.size());
+    bool differed = false;
+    for (std::size_t i = 0; i < plain.size(); ++i) {
+        if (plain[i].petalIndex != salted[i].petalIndex ||
+            plain[i].rarity != salted[i].rarity ||
+            plain[i].discountPercent != salted[i].discountPercent) {
+            differed = true;
+            break;
+        }
+    }
+    CHECK(differed);
 }

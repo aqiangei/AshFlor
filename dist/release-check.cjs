@@ -1,0 +1,64 @@
+'use strict';
+// Read-only checks against one live endpoint; no player account is created.
+const assert=require('node:assert/strict');
+async function check(base,protocol,hash,{councilRealm}={}){
+  const url=new URL(base);assert(['http:','https:'].includes(url.protocol));
+  assert(Number.isInteger(protocol)&&protocol>0&&protocol<=65535);
+  assert(Number.isInteger(hash)&&hash>=0&&hash<=0xffffffff);
+  let ticket="";
+  const get=async(route,options)=>{
+    const headers=new Headers(options?.headers);
+    if(ticket&&route.startsWith('/bundle'))headers.set('X-Download-Ticket',ticket);
+    const response=await fetch(new URL(route,url),{...options,headers,signal:AbortSignal.timeout(15000)});
+    assert(response.ok,route+' HTTP '+response.status);return response;
+  };
+  const health=await (await get('/api/health')).json();assert.equal(health.ok,true);
+  try {
+  if(url.port!=='8788' && url.port!=='28788'){
+    const response=await fetch(new URL('/download-queue/join',url),{method:'POST',signal:AbortSignal.timeout(10000)});
+    if(response.headers.get('content-type')?.includes('application/json')){
+      assert(response.ok,'Download queue unavailable');let row=await response.json();ticket=row.ticket;
+      assert(ticket,'Queue returned no ticket');
+      for(let i=0;row.state!=='ready'&&i<60;i++){await new Promise(r=>setTimeout(r,1000));row=await(await get('/download-queue/status?ticket='+ticket)).json();}
+      assert.equal(row.state,'ready','Download queue admission timeout');
+    }
+  }
+  for(const route of ['/','/council.html','/bundle.js','/bundle.wasm','/bundle.js.bin','/bundle.wasm.bin']){
+    const response=await get(route);assert(Number(response.headers.get('content-length')||1)>0);await response.body.cancel();
+  }
+  const council=await (await get('/api/council',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'view'})})).json();
+  assert(!council.error&&Array.isArray(council.players)&&Array.isArray(council.polls),'Council unavailable');
+  if(councilRealm!==undefined){
+    assert([1,2,3].includes(councilRealm),'Invalid expected council realm');
+    assert.equal(council.realm,councilRealm,'Unexpected unified council realm');
+    assert.equal(council.totalUnits,3000000,'Unexpected unified council weight total');
+    const shares = council.realmShares;
+    assert(Array.isArray(shares) && shares.length === 3, 'Invalid global council shares');
+    assert(shares.every(row => row && Number.isSafeInteger(row.units) && row.units >= 0 &&
+                                Number.isSafeInteger(row.players) && row.players >= 0), 'Invalid council realm totals');
+    assert.deepEqual(shares.map(row => row.realm).sort(), [1,2,3], 'Expected one council share per realm');
+    assert.equal(shares.reduce((n,row) => n + row.units, 0), council.totalUnits, 'Council realm weights do not add up');
+    assert.equal(shares.reduce((n,row) => n + row.players, 0), council.playerCount, 'Council realm player counts do not add up');
+  }else if(council.players.length){
+    assert.equal(council.players.reduce((sum,row)=>sum+row.units,0),1000000,'Council total must be exactly 100%');
+  }
+  const wsURL=new URL('/ws',url);wsURL.protocol=url.protocol==='https:'?'wss:':'ws:';
+  await new Promise((resolve,reject)=>{
+    const ws=new WebSocket(wsURL,'binary');ws.binaryType='arraybuffer';let buffer=Buffer.alloc(0),done=false;
+    const finish=error=>{if(done)return;done=true;clearTimeout(timer);ws.close();error?reject(error):resolve();};
+    const timer=setTimeout(()=>finish(Error('Handshake timeout')),15000);
+    ws.addEventListener('open',()=>{const frame=Buffer.alloc(11);frame.writeUInt32LE(7,0);frame[4]=1;frame.writeUInt16LE(protocol,5);frame.writeUInt32LE(hash,7);ws.send(frame);});
+    ws.addEventListener('message',event=>{try{
+      buffer=Buffer.concat([buffer,Buffer.from(event.data)]);assert(buffer.length<=65536,'Unexpected handshake size');
+      while(buffer.length>=4){const n=buffer.readUInt32LE(0);assert(n<=65536);if(buffer.length<4+n)return;const b=buffer.subarray(4,4+n);buffer=buffer.subarray(4+n);
+        if(b[0]===1){assert(b.length>=4&&b[3]===1,'Protocol/content hash rejected');finish();return;}}
+    }catch(error){finish(error);}});
+    ws.addEventListener('error',()=>finish(Error('Handshake connection failed')));
+    ws.addEventListener('close',()=>{if(!done)finish(Error('Handshake closed'));});
+  });
+  return {ok:true,protocol,contentHash:hash,councilPlayers:council.players.length,health};
+  }finally{if(ticket)await fetch(new URL('/download-queue/release?ticket='+ticket,url),{method:'POST',signal:AbortSignal.timeout(5000)}).catch(()=>{});}
+
+}
+if(require.main===module)check(process.argv[2],Number(process.argv[3]),Number(process.argv[4]),process.argv[5] ? {councilRealm:Number(process.argv[5])} : undefined).then(x=>console.log(JSON.stringify(x))).catch(e=>{console.error(e.message);process.exitCode=1;});
+module.exports={check};

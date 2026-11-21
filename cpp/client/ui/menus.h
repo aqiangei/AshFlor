@@ -1049,6 +1049,11 @@ private:
     std::string refusal_;
     double refusalUntil_ = 0;
     bool switchPressed_ = false;
+
+    /// First click arms a confirm; the second (optionally with password) sends.
+    bool confirming_ = false;
+    std::string password_;
+    ui::TextFieldState passwordField_;
 };
 
 /// The oracle: what the craft card becomes while the flower stands at an

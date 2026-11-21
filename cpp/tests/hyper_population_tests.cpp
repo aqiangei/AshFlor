@@ -12,7 +12,7 @@ int population(World&w,Realm realm,Rarity rarity){int n=0;Query<MobTag,MobType,T
 // A natural Hyper may come out Ascendant and still fills the biome's Hyper slot.
 int hyperSlot(World&w,Realm realm){int n=0;Query<MobTag,MobType,Transform,AmbientMob> q{w};q.without<Dead>();q.each([&](Entity e,MobTag&,MobType& t,Transform& at,AmbientMob& ambient){const auto* b=w.tryGet<BodySegment>(e);const bool hyper=t.rarity==Rarity::Apex||(t.rarity==Rarity::Ascendant&&ambient.zone!=kInvalidIndex);if(!w.has<HoleTether>(e)&&!w.has<SuperFarmMob>(e)&&at.realm==realm&&hyper&&(!b||b->chainHead==e))++n;});return n;}
 }
-TEST(hyper_mobs_keep_xp_speed_and_hyper_pollen_uses_one_point_five_eternal){
+TEST(hyper_mobs_keep_xp_speed_and_hyper_pollen_uses_two_x_eternal){
     for(std::uint16_t i=0;i<data().mobCount();++i){const auto e=data().mobStats(i,Rarity::Unique),h=data().mobStats(i,Rarity::Apex);
         CHECK_NEAR(h.health,e.health*18,std::max(1e-5,h.health*1e-12));CHECK_NEAR(h.damage,e.damage*12,1e-5);
         CHECK_NEAR(e.health,data().mob(i).health*14244000.0,std::max(1e-5,e.health*1e-12));
@@ -21,8 +21,8 @@ TEST(hyper_mobs_keep_xp_speed_and_hyper_pollen_uses_one_point_five_eternal){
         CHECK_NEAR(h.speed,e.speed,1e-9);CHECK_NEAR(h.chaseSpeed,e.chaseSpeed,1e-9);CHECK_NEAR(h.armor,e.armor*4,1e-9);}
     const auto pollen=data().petalStats(data().petalIndex("pollen"),Rarity::Apex);
     const auto eternalPollen=data().petalStats(data().petalIndex("pollen"),Rarity::Unique);
-    CHECK_NEAR(pollen.damage,eternalPollen.damage*1.5,1e-9);
-    CHECK_NEAR(pollen.health,eternalPollen.health*1.5,1e-9);
+    CHECK_NEAR(pollen.damage,eternalPollen.damage*3.0,1e-9);
+    CHECK_NEAR(pollen.health,eternalPollen.health*2.0,1e-9);
     CHECK_EQ(pollen.count,3);CHECK_NEAR(pollen.reloadMillis,2000,1e-9);
 }
 TEST(hyper_petal_combat_caps_preserve_the_authored_hammer_exception){

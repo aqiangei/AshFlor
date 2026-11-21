@@ -377,19 +377,19 @@ TEST(a_squads_passengers_are_cut_first_when_the_cap_falls_inside_it) {
     CHECK(paid(paidOut, body(4)));
 }
 
-TEST(a_contender_under_one_percent_of_the_mobs_health_is_paid_nothing) {
-    // A 1000-health mob: the floor is 10 damage.
+TEST(a_contender_under_half_percent_of_the_mobs_health_is_paid_nothing) {
+    // A 1000-health mob: the floor is 5 damage (0.5%).
     const double floor = lootDamageFloor(1000.0);
-    CHECK(floor == 10.0);
+    CHECK(floor == 5.0);
 
     // A stray hit on a mob somebody else killed earns nothing, even with
     // three of the common tier's four slots still empty.
-    const std::vector<Bounty::Share> tally = {{body(1), 0, 900}, {body(2), 0, 10}, {body(3), 0, 9.5}};
+    const std::vector<Bounty::Share> tally = {{body(1), 0, 900}, {body(2), 0, 5}, {body(3), 0, 4.5}};
     std::vector<Entity> paidOut;
     selectLootRecipients(tally, lootSlotsForRarity(Rarity::Common), nullptr, paidOut, floor);
     CHECK(paidOut.size() == 2);
     CHECK(paid(paidOut, body(1)));
-    CHECK(paid(paidOut, body(2)));   // exactly 1% is enough
+    CHECK(paid(paidOut, body(2)));   // exactly 0.5% is enough
     CHECK(!paid(paidOut, body(3)));
 
     // No floor, no refusal: the rule without one is the rule it always was.
@@ -415,16 +415,16 @@ TEST(a_squad_clears_the_floor_on_its_average_over_the_whole_membership) {
     CHECK(paid(paidOut, body(2)));
     CHECK(paid(paidOut, body(3)));
 
-    // 27 over three is 9: under it, so NOBODY in the squad is paid -- not
-    // even body(1), whose 24 would have cleared the floor on its own. The
+    // 12 over three is 4: under it, so NOBODY in the squad is paid -- not
+    // even body(1), whose 10 would have cleared the floor on its own. The
     // average is the squad's score, and the passengers dilute it here too.
-    const std::vector<Bounty::Share> diluted = {{body(9), 0, 900}, {body(1), 0, 24}, {body(2), 0, 3}};
+    const std::vector<Bounty::Share> diluted = {{body(9), 0, 900}, {body(1), 0, 10}, {body(2), 0, 2}};
     selectLootRecipients(diluted, lootSlotsForRarity(Rarity::Common), &squads, paidOut, floor);
     CHECK(paidOut.size() == 1);
     CHECK(paid(paidOut, body(9)));
     CHECK(!paid(paidOut, body(1)));
 
-    // Out of the squad, the same 24 clears the floor by itself.
+    // Out of the squad, the same 10 clears the floor by itself.
     selectLootRecipients(diluted, lootSlotsForRarity(Rarity::Common), nullptr, paidOut, floor);
     CHECK(paid(paidOut, body(1)));
     CHECK(!paid(paidOut, body(2)));

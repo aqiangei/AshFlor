@@ -1123,6 +1123,21 @@ TEST(blueberries_are_peas_of_the_same_size_that_run_on_mana_and_lightning) {
     CHECK_NEAR(r.petalStats(berries, Rarity::Rare).requiredMana, 1.2 * ladder, 1e-9);
 }
 
+TEST(arctic_blueberries_take_a_damage_and_slow_nerf) {
+    const ContentRegistry& r = shipped().registry;
+    const std::uint16_t id = r.petalIndex("arctic_blueberries");
+    const PetalConfig& c = r.petal(id);
+    CHECK_NEAR(c.damage, 29.3661, 1e-9);
+    CHECK_NEAR(c.slowFactor, 0.75, 1e-9);
+    CHECK_NEAR(c.slowDurationMillis, 200.0, 1e-9);
+    CHECK(c.armorPiercing);
+    const PetalStats common = r.petalStats(id, Rarity::Common);
+    CHECK_NEAR(common.damage, 29.3661, 1e-9);
+    CHECK_NEAR(common.slowFactor, 0.75, 1e-9);
+    CHECK(common.count == 4);
+}
+
+
 TEST(poison_without_a_duration_remains_inert_like_typescript) {
     const ContentRegistry& r = shipped().registry;
     const PetalConfig& gas = r.petal(r.petalIndex("gas"));

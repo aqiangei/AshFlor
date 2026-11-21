@@ -27,7 +27,7 @@ using ConnectionId = std::uint32_t;
 // Version 128: snapshot update records are smaller. The mask is a varint with
 // the common fields in its low seven bits, a short move is two bytes, and the
 // state byte carries only the bits a client draws from.
-inline constexpr std::uint16_t kProtocolVersion = 140; // Adds the read-only boss damage HUD.
+inline constexpr std::uint16_t kProtocolVersion = 141; // Absorb confirm sends trailing password.
 inline constexpr std::size_t kBossDamageRows = 3;
 inline constexpr std::size_t kBossDamageTargets = 6;
 struct BossDamageRow {
@@ -211,7 +211,8 @@ enum class ClientMessage : std::uint8_t {
                         ///< OracleCraft's oracle is found; the tier only says
                         ///< WHICH one when two stand close. Never a roll, and
                         ///< all or nothing. (Version 55.)
-    Absorb,             ///< u8 reserved (must be 0 for XP), u16 stackCount, { u16 itemType, u8 rarity, u32 count }*
+    Absorb,             ///< u8 reserved (must be 0 for XP), u16 stackCount, { u16 itemType, u8 rarity, u32 count }*,
+                        ///< str password (empty when the account has no chosen password)
                         ///< -- the craft window's Absorb side: every staged
                         ///< stack in ONE request, destroyed for XP
                         ///< (shared/game/absorb.h). All or nothing: one stack

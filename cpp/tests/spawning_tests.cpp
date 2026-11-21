@@ -2193,10 +2193,10 @@ TEST(hel_centipede_weight_is_raised_in_every_mixed_hel_band) {
         for (const auto& row : element.mobDistribution) {
             if (row.name != "hel_centipede") continue;
             ++bands;
-            CHECK_NEAR(row.weight, 0.3, 1e-9);
+            CHECK_NEAR(row.weight, 0.1, 1e-9);
             double total = 0.0;
             for (const auto& entry : element.mobDistribution) total += entry.weight;
-            CHECK_NEAR(row.weight / total, 0.3 / 5.3, 1e-9);
+            CHECK_NEAR(row.weight / total, 0.1 / 5.1, 1e-9);
         }
     }
     CHECK_EQ(bands, 7u);

@@ -20,6 +20,7 @@
 #include "server/systems/spawning.h"
 #include "server/workers.h"
 #include "shared/game/npc.h"
+#include "shared/game/realm.h"
 
 namespace flix {
 
@@ -2064,9 +2065,14 @@ double knockbackTakenScale(const World& world, Entity e) {
 /// worn discs, 1 for everything else.
 double collisionDamageTakenScale(const World& world, Entity e) {
     const PlayerModifiers* modifiers = world.tryGet<PlayerModifiers>(e);
-    return modifiers != nullptr && modifiers->collisionDamageTakenScale >= 0.0
+    double scale = modifiers != nullptr && modifiers->collisionDamageTakenScale >= 0.0
                ? modifiers->collisionDamageTakenScale
                : 1.0;
+    // Rift keeps the flat PVP pool; ambient mob contact still uses the ordinary
+    // rarity ladder, so a Rare spider already exceeds 100 HP. Brake only mob
+    // contact into a RiftPlayer — flower-vs-flower is unchanged.
+    if (world.has<RiftPlayer>(e)) scale *= kRiftMobContactDamageScale;
+    return scale;
 }
 
 } // namespace
@@ -2424,6 +2430,37 @@ void CombatSystem::landHeal(World& world, Entity entity, Health& health, double 
     // max -- and what an amulet keeps of it -- is the grown heal's overflow.
     if (modifiers != nullptr) {
         amount *= 1.0 + modifiers->healBonus;
+    }
+    // Heal and continuous damage cancel: each heal point first strips the same
+    // amount of poison/burn DPS before any HP is restored. If DoT still exceeds
+    // the heal, the leftover rate is just slowed; leftover heal then lands.
+    if (Afflictions* afflictions = world.tryGet<Afflictions>(entity)) {
+        auto cutRate = [&](double& rate) {
+            if (!(amount > 0.0) || !(rate > 0.0)) return;
+            const double cut = std::min(rate, amount);
+            rate -= cut;
+            amount -= cut;
+        };
+        if (!afflictions->poisonStacks.empty()) {
+            for (PoisonStack& stack : afflictions->poisonStacks) cutRate(stack.perSecond);
+            summarisePoison(*afflictions, 0.0);
+        } else {
+            cutRate(afflictions->poisonPerSecond);
+        }
+        if (!afflictions->burns.empty()) {
+            for (BurnStack& stack : afflictions->burns) cutRate(stack.perSecond);
+            double burnTotal = 0.0;
+            for (const BurnStack& stack : afflictions->burns) {
+                if (stack.perSecond > 0.0) burnTotal += stack.perSecond;
+            }
+            afflictions->burnPerSecond = burnTotal;
+        } else {
+            cutRate(afflictions->burnPerSecond);
+        }
+        if (!(amount > 0.0) && !(petalAmount > 0.0 && modifiers != nullptr &&
+                                 modifiers->hemoglobinHealBonus > 0.0)) {
+            return;
+        }
     }
     const double hemoglobin = modifiers != nullptr
         ? petalAmount * modifiers->hemoglobinHealBonus * kPlayerHealMultiplier : 0.0;
@@ -2984,7 +3021,16 @@ void CombatSystem::createSpill(World& world, Entity owner, Vec2 at, Rarity rarit
     const auto* modifiers = world.tryGet<PlayerModifiers>(owner);
     const double radius = spillBaseRadius(spill, rarity) *
         (modifiers ? modifiers->spillRadiusScale : 1.0);
-    GroundEffect field{kind, owner, radius, spill.strength * scale * fluidDamageScale(spill.kind), spill.frostFactor, rarity};
+    double poolScale = scale;
+    double durationScale = 1.0;
+    if (kind == GroundEffectKind::AcidSpill && isHyperPetal(rarity)) {
+        if (const auto* tech = hyperTechniqueInfo("acid_bomb", rarity, false);
+            tech && tech->technique == HyperTechnique::AcidPoolBoost) {
+            poolScale *= tech->amount;
+            durationScale *= tech->amount;
+        }
+    }
+    GroundEffect field{kind, owner, radius, spill.strength * poolScale * fluidDamageScale(spill.kind), spill.frostFactor, rarity};
     field.poisonDurationMillis = spill.lingerMillis;
     world.add<GroundEffect>(e, field);
     if(spill.health>0) {
@@ -2992,7 +3038,7 @@ void CombatSystem::createSpill(World& world, Entity owner, Vec2 at, Rarity rarit
         world.add<Health>(e,Health{durability,durability});world.add<Body>(e,Body{radius,1.0});
         const auto* side=world.tryGet<Faction>(owner);world.add<Faction>(e,side?*side:Faction{Team::Players,false});
     }
-    world.add<Lifetime>(e, Lifetime{spill.durationMillis / 1000.0});
+    world.add<Lifetime>(e, Lifetime{spill.durationMillis / 1000.0 * durationScale});
     Replicated rep;
     rep.kind = net::EntityKind::Effect;
     rep.typeIndex = static_cast<std::uint16_t>(kind);
@@ -3504,6 +3550,11 @@ void CombatSystem::gatherPetals(World& world, const ContentRegistry& content, do
         source.armorDamageFraction = config.armorDamageFraction;
         if (config.id != "magic_fire")
             source.burnPerSecond = config.burnPerSecond * referenceOffenseScale(config,petal.rarity)*petal.combinationStrength;
+            if (config.id == "torch") {
+                if (const auto* tech = hyperTechniqueInfo("torch", petal.rarity, petal.mimicked);
+                    tech && tech->technique == HyperTechnique::TorchWildfire)
+                    source.burnPerSecond *= tech->amount;
+            }
         source.burnMillis = config.burnMillis;
         if (config.spill.onHit && config.spill.kind != SpillKind::None) source.impactSpill = &config.spill;
         source.critDamage = stats.critDamage * petal.combinationStrength;

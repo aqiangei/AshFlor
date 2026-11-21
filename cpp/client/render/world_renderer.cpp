@@ -3647,6 +3647,11 @@ bool WorldRenderer::poseMob(const MobDraw& mob, const MobConfig* config, double 
         // These sprites face northwest at rest. The simulated facing is east at zero.
         pose.rotation += 3.0 * kPi / 4.0;
     }
+    // These chain heads point west in the artwork; zero radians points east.
+    if (config && !config->hideRotation &&
+        (config->id == "jungle_centipede" || config->id == "hel_centipede")) {
+        pose.rotation += kPi;
+    }
     pose.mirrored = config && config->reversed;
     // The server points `reversed` art backwards by adding pi to the facing.
     // The browser build MIRRORS it instead, which is a different transform for

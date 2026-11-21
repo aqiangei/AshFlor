@@ -739,7 +739,12 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     }
     if (config.id == "dark_mark" || config.id == "void_mark" ||
         config.id == "void_void_mark" || config.id == "arctic_frozen_mark") {
-        lines.push_back({chinese ? "传送后可立即使用 /mark-return 返回原处。" : "Use /mark-return immediately after transport to go back.",12.0});
+        if (ladderRarity(rarity) == Rarity::Apex) {
+            special("地狱滞留：", "Hel hold: ", kHyperMarkHoldMillis / 1000.0, "s");
+            lines.push_back({chinese ? "H印记传送后滞留30秒：期间不能用传送门或 /mark-return；死亡或返回菜单可解除。" : "H marks hold for 30s: no pads or /mark-return until it ends; death or menu clears it.",12.0});
+        } else {
+            lines.push_back({chinese ? "传送后可立即使用 /mark-return 返回原处。" : "Use /mark-return immediately after transport to go back.",12.0});
+        }
     }
     if (config.id == "magic_bubble") {
         lines.push_back({chinese ? "按住防御并移动时向该方向冲刺，攻击与防御可以同时按住。" : "Hold defend and move to dash in that direction. You can hold attack at the same time.",12.0});
@@ -793,8 +798,8 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     }
     if (config.id == "magic_bone") {
         TooltipLine stacking{chinese
-            ? "魔法骨头自身对野怪的接触伤害按未破损的同阶或更高阶魔法骨头计数，超凡与 Apex 算同一档。第 1 片无加成，从第 2 片起每片追加 24% ÷ 序号，合计最高 35%。"
-            : "Each Magic Bone's contact damage to wild mobs counts unbroken Magic Bones of its tier or higher. Hyper and Apex share a tier. Copy n adds 24% / n from the second onward, capped at 35% total.", 12.0};
+            ? "每多装备一个未破损的魔法骨头，所有已装备的魔法骨头对野怪伤害加算 +50%（无递减、无上限）。"
+            : "Each additional unbroken Magic Bone adds +50% wild-mob damage to every equipped Magic Bone (additive, no diminishing returns).", 12.0};
         stacking.maxWidth = 290.0;
         lines.push_back(std::move(stacking));
     }

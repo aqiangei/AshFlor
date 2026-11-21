@@ -91,7 +91,7 @@ void GameServer::enterRift(Session& session, Vec2 position) {
     session.inRift = true;
     session.riftReturnRealm = origin.realm;
     session.riftReturnPosition = origin.position;
-    session.arena = startArenaRun(PlayerRecord{});
+    session.arena = startArenaRun(database_.progress(session.userId));
     session.arena->loadout[4] = StoredItem{};
     session.arena->loadout[4]->type = "petal";
     session.arena->loadout[4]->petalType = "rose";

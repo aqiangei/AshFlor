@@ -77,7 +77,7 @@ TEST(zorr_completion_ring_recipe_growth_and_localization) {
  CHECK_EQ(recipe.inputs.front().count,1);CHECK_EQ(recipe.outputs.size(),std::size_t{2});
  const auto& eternal=r.c.petalStats(magnet,Rarity::Unique);const auto& hyper=r.c.petalStats(magnet,Rarity::Apex);
  CHECK(hyper.modifiers.magnetism<=eternal.modifiers.magnetism*1.5);
- CHECK(hyper.health<=eternal.health*1.5+1e-6);CHECK(hyper.damage<=eternal.damage*2.1+1e-6);
+ CHECK(hyper.health<=eternal.health*2.1+1e-6);CHECK(hyper.damage<=eternal.damage*3.15+1e-6);
  for(int i=0;i<kRarityCount;++i){auto tier=static_cast<Rarity>(i);const auto& s=r.c.petalStats(ring,tier);CHECK(s.reloadMillis>=3000.0);CHECK(std::isfinite(s.damage));}
  ui::setLanguage(ui::Language::Zh);CHECK_EQ(std::string(ui::petalNameTr("ring","Ring")),std::string("燃烧戒指"));
  ui::setLanguage(ui::Language::En);CHECK_EQ(std::string(ui::petalNameTr("ring","Ring")),std::string("Ring"));
@@ -90,8 +90,8 @@ TEST(zorr_completion_all_content_is_finite_and_imported_hyper_caps_hold) {
    config.id.rfind("arctic_",0)==0 || config.id.rfind("bio_",0)==0 || config.id.rfind("jurassic_",0)==0;
   if(added) {
    ++imported;const auto& e=c.petalStats(i,Rarity::Unique);const auto& h=c.petalStats(i,Rarity::Apex);
-   if(e.damage>0)CHECK(h.damage<=e.damage*2.1+1e-5);
-   if(e.health>0)CHECK(h.health<=e.health*1.5+1e-5);
+   if(e.damage>0)CHECK(h.damage<=e.damage*3.15+1e-5);
+   if(e.health>0)CHECK(h.health<=e.health*2.1+1e-5);
   }
   for(int n=0;n<kRarityCount;++n) {
    const auto& s=c.petalStats(i,static_cast<Rarity>(n));
@@ -152,6 +152,25 @@ TEST(zorr_completion_golden_cactus_buffs_real_pools_without_stacking_or_refillin
  r.tickPetals(7100);e=find();CHECK_EQ(r.w.get<Health>(e).max,10.0);CHECK(r.w.get<Health>(e).current<=5.0);
  const double before=r.w.get<Health>(e).current;r.equip(1,"golden_cactus",Rarity::Super);r.tickPetals(7150);e=find();
  CHECK_EQ(r.w.get<Health>(e).max,13.0);CHECK(r.w.get<Health>(e).current<=before*1.34+1e-6);
+}
+
+TEST(zorr_completion_dead_leaf_slows_reload_and_buffs_petal_health) {
+ RingWorld plain;plain.equip(0,"basic");plain.tickPetals(0);plain.tickPetals(7000);
+ RingWorld leaf;leaf.equip(0,"basic");leaf.equip(1,"dead_leaf",Rarity::Unique);leaf.tickPetals(0);leaf.tickPetals(7000);
+ auto find=[&](RingWorld& r){for(Entity e:r.w.get<Loadout>(r.player).spawned){if(r.w.get<PetalInstance>(e).slot==0)return e;}return NULL_ENTITY;};
+ Entity a=find(plain), b=find(leaf);
+ CHECK(a!=NULL_ENTITY && b!=NULL_ENTITY);
+ // Durability buff: leaf side basic pool max > plain
+ CHECK(leaf.w.get<Health>(b).max > plain.w.get<Health>(a).max);
+ // Break and compare reload: leaf reload ready later by ~5%
+ leaf.w.get<Health>(b).current=0;leaf.w.add<Dead>(b);
+ plain.w.get<Health>(a).current=0;plain.w.add<Dead>(a);
+ leaf.tickPetals(7050);plain.tickPetals(7050);
+ const double leafReady=leaf.w.get<Loadout>(leaf.player).slots[0].reloadReadyAtMillis;
+ const double plainReady=plain.w.get<Loadout>(plain.player).slots[0].reloadReadyAtMillis;
+ const double leafWait=leafReady-7050, plainWait=plainReady-7050;
+ CHECK(plainWait>0 && leafWait>0);
+ CHECK_NEAR(leafWait/plainWait, 1.05, 0.02);
 }
 TEST(zorr_completion_honey_addons_affect_real_bait_and_do_not_stack) {
  RingWorld r;r.equip(0,"hel_honey");r.equip(1,"hel_honey");r.equip(2,"irey");r.tickPetals(0);r.tickPetals(7000);r.tickPetals(7050);

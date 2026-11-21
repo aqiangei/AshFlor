@@ -784,6 +784,9 @@ void MovementSystem::stepTeleporters(World& world, double nowMillis, double dt) 
         // pulled by one: the suction is the pad's first act, and a bot half
         // dragged onto a pad it can never take would stand there forever.
         if (takesTeleporters && !takesTeleporters(e)) continue;
+        if (const auto* pads = world.tryGet<TeleporterState>(e)) {
+            if (nowMillis < pads->markHoldUntilMillis && isStanding(world, e)) continue;
+        }
         Transform* transform = world.tryGet<Transform>(e);
         if (!transform) continue;
         // Every world map has its own pads. The arena and the maze have none:

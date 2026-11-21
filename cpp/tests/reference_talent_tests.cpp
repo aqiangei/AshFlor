@@ -230,13 +230,13 @@ TEST(reference_absorption_talent_preview_matches_server_and_protects_hyper) {
     const double before = client.profile().totalXp;
     const double preview = absorbXpTotal(50 * absorbUnits(Rarity::Rare), client.profile().skills);
     CHECK_EQ(preview, 6400.0);
-    client.requestAbsorb({{rose, Rarity::Rare, 50}});
+    client.requestAbsorb({{rose, Rarity::Rare, 50}}, "password7");
     CHECK(h.stepUntil({&client}, [&] { return client.absorbOutcome().pending; }, 200));
     CHECK(client.absorbOutcome().success);
     CHECK_EQ(client.absorbOutcome().reward, preview);
     CHECK(awaitProfile(h, client, [&](const Profile& p) { return p.totalXp == before + preview; }));
     client.absorbOutcome().pending = false;
-    client.requestAbsorb({{rose, Rarity::Apex, 1}});
+    client.requestAbsorb({{rose, Rarity::Apex, 1}}, "password7");
     CHECK(h.stepUntil({&client}, [&] { return client.absorbOutcome().pending; }, 200));
     CHECK(!client.absorbOutcome().success);
     CHECK_EQ(client.profile().stackCount(rose, Rarity::Apex), 1u);
@@ -244,7 +244,7 @@ TEST(reference_absorption_talent_preview_matches_server_and_protects_hyper) {
 
     client.absorbOutcome().pending = false;
     const double permanentXp = absorbXpTotal(2 * 16400000.0 + 840000000.0, client.profile().skills);
-    client.requestAbsorb({{rose, Rarity::PermanentHyper, 2}, {rose, Rarity::Ascendant, 1}});
+    client.requestAbsorb({{rose, Rarity::PermanentHyper, 2}, {rose, Rarity::Ascendant, 1}}, "password7");
     CHECK(h.stepUntil({&client}, [&] { return client.absorbOutcome().pending; }, 200));
     CHECK(client.absorbOutcome().success);
     CHECK_EQ(client.absorbOutcome().reward, permanentXp);
