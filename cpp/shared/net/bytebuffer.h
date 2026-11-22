@@ -144,7 +144,7 @@ public:
 
     std::string str() {
         const std::uint16_t n = u16();
-        if (!want(n)) return {};
+        if (!want(n) || n == 0) return {};
         std::string out(reinterpret_cast<const char*>(data_ + pos_), n);
         pos_ += n;
         return out;
@@ -169,7 +169,7 @@ public:
 
 private:
     bool want(std::size_t n) {
-        if (failed_ || pos_ + n > size_) { failed_ = true; return false; }
+        if (failed_ || n > size_ - pos_) { failed_ = true; return false; }
         return true;
     }
 

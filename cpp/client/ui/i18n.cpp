@@ -29,7 +29,7 @@ constexpr Entry kTable[] = {
     {"Save Controls", "保存按键"},
     {"Reset to Default", "恢复默认"},
     {"Number Keys Use Items (off = swap loadout)", "数字键使用物品（关闭=切换配装）"},
-    {"Use Mouse Controls (K toggles in-game)", "鼠标控制（游戏中按 K 切换）"},
+    {"Use Mouse Controls (T toggles in-game)", "鼠标控制（游戏中按 T 切换）"},
     {"Request Mobile (touch joystick & attack/retract buttons)", "移动端操控（摇杆与攻击/收回按钮）"},
     {"Movement helper (aim line toward cursor)", "移动辅助（指向光标的指示线）"},
     {"Invert attack (hold = idle)", "反转攻击（按住=常态）"},

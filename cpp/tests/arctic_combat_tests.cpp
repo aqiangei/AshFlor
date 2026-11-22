@@ -4,6 +4,7 @@
 #include "client/ui/chat_i18n.h"
 #include "client/ui/content_i18n.h"
 #include "client/ui/i18n.h"
+#include "client/ui/menu_widgets.h"
 #include "server/systems/combat.h"
 #include "server/systems/petals.h"
 #include "server/systems/loot.h"
@@ -73,6 +74,14 @@ struct ArcticBlast {
         return e;
     }
 
+    Entity dummy(Vec2 at) {
+        const Entity entity = mob(at);
+        world.remove<MobTag>(entity);
+        world.add<NpcTag>(entity);
+        world.add<Npc>(entity).configIndex = registry.mobIndex("target_dummy");
+        return entity;
+    }
+
     void combatTick(double now) {
         grid.clear();
         Query<Transform,Body>{world}.each([&](Entity e,Transform& t,Body& b){
@@ -94,6 +103,148 @@ struct ArcticBlast {
         return position;
     }
 };
+}
+
+TEST(damage_over_time_contact_copies_stack_and_count_on_the_dummy) {
+    std::string error;
+    if (!loadContent(testsupport::dataDir(), error)) { CHECK(false); return; }
+    for (const char* name : {"stinger", "magic_stinger", "void_dvd", "void_elemental"}) {
+        const std::string_view id(name);
+        const bool poison = id != "void_dvd";
+        const bool burn = id == "void_dvd" || id == "void_elemental";
+        ArcticBlast rig(name, Rarity::Common, id == "magic_stinger" ? "mana_orb" : nullptr);
+        rig.equip(2, name);
+        if (auto* mana = rig.world.tryGet<ManaPool>(rig.player)) mana->current = mana->max;
+        rig.tickPetals(15000);
+        if (auto* mana = rig.world.tryGet<ManaPool>(rig.player)) mana->current = mana->max;
+        rig.tickPetals(25000);
+        const auto first = rig.liveIn(0);
+        const auto second = rig.liveIn(2);
+        CHECK(!first.empty() && !second.empty());
+        if (first.empty() || second.empty()) continue;
+
+        const Vec2 at{5300, 5300};
+        const Entity dummy = rig.dummy(at);
+        const bool elemental = id == "void_elemental";
+        const auto packSize = elemental ? 3u : 1u;
+        if (first.size() < packSize || second.size() < packSize) { CHECK(false); continue; }
+        for (std::size_t i = 0; i < packSize; ++i) {
+            rig.world.get<Transform>(first[i]).position = at;
+            rig.world.get<Transform>(second[i]).position = at;
+        }
+        rig.combatTick(25050);
+        const auto* status = rig.world.tryGet<Afflictions>(dummy);
+        CHECK(status);
+        if (!status) continue;
+        CHECK_EQ(status->poisonStacks.size(), poison ? 2u * packSize : 0u);
+        CHECK_EQ(status->burns.size(), burn ? 2u * packSize : 0u);
+
+        const auto configIndex = rig.registry.petalIndex(name);
+        const auto& stats = rig.registry.petalStats(configIndex, Rarity::Common);
+        const auto& config = rig.registry.petal(configIndex);
+        rig.world.get<Transform>(dummy).position = {5600, 5600};
+        rig.combatTick(25100);
+        const auto damage = rig.combat.practiceDamage(rig.player, 25100, dummy);
+        const auto amount = [&](CombatSystem::PracticeSource source) {
+            const auto row = std::find_if(damage.begin(), damage.end(),
+                [source](const auto& hit) { return hit.source == source; });
+            return row == damage.end() ? 0.0 : row->amount;
+        };
+        // The periodic amounts are counted even though the wood never loses HP.
+        CHECK_NEAR(amount(CombatSystem::PracticeSource::Poison),
+                   2 * stats.poisonPerSecond * net::kTickSeconds, 1e-8);
+        CHECK_NEAR(amount(CombatSystem::PracticeSource::Burn),
+                   2 * config.burnPerSecond * net::kTickSeconds, 1e-8);
+        CHECK_EQ(rig.world.get<Health>(dummy).current, 1000.0);
+
+        for (int now = 25150; now <= 28100; now += 50) rig.combatTick(now);
+        CHECK(rig.world.get<Afflictions>(dummy).burns.empty());
+        CHECK(rig.world.get<Afflictions>(dummy).poisonStacks.empty());
+    }
+}
+
+TEST(damage_over_time_hel_missile_impacts_stack_on_the_dummy) {
+    std::string error;
+    if (!loadContent(testsupport::dataDir(), error)) { CHECK(false); return; }
+    ArcticBlast rig("basic");
+    const Vec2 at{5400, 5000};
+    const Entity dummy = rig.dummy(at);
+    const auto config = rig.registry.petalIndex("hel_missile");
+    for (const double now : {4050.0, 4100.0}) {
+        const Entity shot = rig.world.create();
+        Projectile projectile;
+        projectile.owner = rig.player;
+        projectile.petalConfigIndex = config;
+        projectile.damage = 30;
+        projectile.remainingDistance = 500;
+        projectile.lastPosition = at - Vec2{15, 0};
+        rig.world.add<ProjectileTag>(shot);
+        rig.world.add<Projectile>(shot, projectile);
+        rig.world.add<Transform>(shot, Transform{at, 0.0});
+        rig.world.add<Motion>(shot, Motion{{330, 0}});
+        rig.world.add<Body>(shot, Body{4, 1});
+        rig.world.add<Health>(shot, Health{1, 1});
+        rig.world.add<Faction>(shot, Faction{Team::Players, false});
+        rig.combatTick(now);
+        if (rig.world.isAlive(shot)) rig.world.destroy(shot);
+    }
+    const auto* status = rig.world.tryGet<Afflictions>(dummy);
+    CHECK(status);
+    if (status) CHECK_EQ(status->burns.size(), 2u);
+    rig.combatTick(4150);
+    double burn = 0.0;
+    for (const auto& row : rig.combat.practiceDamage(rig.player, 4150, dummy)) {
+        if (row.source == CombatSystem::PracticeSource::Burn) burn += row.amount;
+    }
+    CHECK_NEAR(burn, 3.0 * 6.0 * net::kTickSeconds, 1e-8);
+    CHECK_EQ(rig.world.get<Health>(dummy).current, 1000.0);
+}
+
+TEST(damage_over_time_magic_fire_pays_for_each_stack_on_one_target) {
+    std::string error;
+    if (!loadContent(testsupport::dataDir(), error)) { CHECK(false); return; }
+    for (const bool practice : {false, true}) {
+        ArcticBlast rig("magic_fire", Rarity::Common, "mana_orb");
+        rig.equip(2, "magic_fire");
+        for (int now = 4050; now < 9000; now += 50) rig.tickPetals(now);
+        CHECK_EQ(rig.liveIn(0).size(), 1u);
+        CHECK_EQ(rig.liveIn(2).size(), 1u);
+        const Vec2 at{5000, 5000};
+        const Entity target = practice ? rig.dummy(at) : rig.mob(at);
+        rig.world.get<Body>(target).radius = 240;
+        rig.world.get<PlayerInput>(rig.player).current.flags = net::InputAttack;
+        double paid = 0.0;
+        for (int now = 9000; now < 9300; now += 50) {
+            auto& before = rig.world.get<ManaPool>(rig.player);
+            before.current = before.max;
+            rig.tickPetals(now);
+            const auto& after = rig.world.get<ManaPool>(rig.player);
+            paid += after.max - after.current;
+        }
+        const auto* status = rig.world.tryGet<Afflictions>(target);
+        CHECK(status);
+        if (!status) continue;
+        CHECK_EQ(status->burns.size(), 2u);
+        for (const auto& stack : status->burns) {
+            CHECK_EQ(stack.owner, rig.player);
+            CHECK_NEAR(stack.perSecond, 9.0, 1e-8);
+        }
+        CHECK_NEAR(paid, 1.2, 1e-8);
+        const double before = rig.world.get<Health>(target).current;
+        rig.combatTick(9300);
+        if (practice) {
+            const auto rows = rig.combat.practiceDamage(rig.player, 9300, target);
+            CHECK_EQ(rows.size(), 1u);
+            if (!rows.empty()) {
+                CHECK(rows.front().source == CombatSystem::PracticeSource::Burn);
+                CHECK_NEAR(rows.front().amount, 18.0 * net::kTickSeconds, 1e-8);
+            }
+            CHECK_NEAR(rig.world.get<Health>(target).current, before, 1e-8);
+        } else {
+            CHECK_NEAR(before - rig.world.get<Health>(target).current,
+                       18.0 * net::kTickSeconds, 1e-8);
+        }
+    }
 }
 
 TEST(arctic_cryo_bomb_freezes_nearby_mobs_and_leaves_distant_mobs_alone) {
@@ -126,14 +277,14 @@ TEST(arctic_nuke_fires_main_burst_and_three_delayed_sub_bursts) {
     CHECK_NEAR(rig.world.get<Health>(far).current,1000,1e-6);
     CHECK_NEAR(rig.world.get<Health>(firstSub).current,1000,1e-6);
     rig.combatTick(4050+net::kTickMillis);
-    CHECK_NEAR(rig.world.get<Health>(firstSub).current,985,1e-6);
+    CHECK_NEAR(rig.world.get<Health>(firstSub).current,975,1e-6);
     CHECK_NEAR(rig.world.get<Health>(secondSub).current,1000,1e-6);
     rig.combatTick(4050+2*net::kTickMillis);
-    CHECK_NEAR(rig.world.get<Health>(secondSub).current,985,1e-6);
+    CHECK_NEAR(rig.world.get<Health>(secondSub).current,975,1e-6);
     CHECK_NEAR(rig.world.get<Health>(thirdSub).current,1000,1e-6);
     rig.combatTick(4050+3*net::kTickMillis);
-    CHECK_NEAR(rig.world.get<Health>(thirdSub).current,985,1e-6);
-    CHECK_NEAR(rig.world.get<Health>(overlap).current,820,1e-6);
+    CHECK_NEAR(rig.world.get<Health>(thirdSub).current,975,1e-6);
+    CHECK_NEAR(rig.world.get<Health>(overlap).current,790,1e-6);
     CHECK_NEAR(rig.world.get<Health>(far).current,1000,1e-6);
 }
 
@@ -146,7 +297,9 @@ TEST(arctic_nuke_higher_tiers_keep_one_damage_budget_per_detonation) {
         const double health = 1e8;
         rig.world.get<Health>(target) = Health{health, health};
 
-        const double expected = 180.0 * (isHyperPetal(rarity)?2.0*petalStrengthScale(Rarity::Unique)*(rarity==Rarity::Ascendant?1.25:1.0):petalStrengthScale(rarity));
+        const double expected = 210.0 * (isHyperPetal(rarity)
+            ? 3.0 * petalStrengthScale(Rarity::Unique) * (rarity == Rarity::Ascendant ? 2.0 : 1.0)
+            : petalStrengthScale(rarity));
         const int count = 3 + ladderIndex(rarity) / 2;
         for (int step = 0; step <= count; ++step) rig.combatTick(4050 + step * net::kTickMillis);
         CHECK_NEAR(health - rig.world.get<Health>(target).current, expected, 1e-6);
@@ -369,6 +522,46 @@ TEST(arctic_eggs_match_original_species_count_tier_and_hatch_delay) {
     }
 }
 
+TEST(arctic_permanent_hyper_egg_incubation_respects_reload_talent) {
+    std::string error;
+    if (!loadContent(testsupport::dataDir(), error)) { CHECK(false); return; }
+    for (const char* egg : {"arctic_tick_egg", "arctic_spider_yoba_egg"}) {
+        ArcticBlast rig("basic");
+        auto& skills = rig.world.add<PlayerSkillTree>(rig.player).skills;
+        skills.set(SkillId::Reload, 6);
+        const double scale = skills.reloadScale();
+        rig.equip(0, egg, Rarity::PermanentHyper);
+        constexpr double equippedAt = 4100.0;
+        constexpr double shellReadyAt = equippedAt + 1000.0;
+        rig.tickPetals(equippedAt);
+        rig.tickPetals(shellReadyAt);
+        const auto index = rig.registry.petalIndex(egg);
+        const double incubation =
+            rig.registry.petalStats(index, Rarity::PermanentHyper).reloadMillis;
+        CHECK_NEAR(incubation, 40000.0, 1e-6);
+        const auto priorLanguage = ui::language();
+        ui::setLanguage(ui::Language::En);
+        const auto lines = ui::petalTooltipLines(index, Rarity::PermanentHyper, skills, scale);
+        ui::setLanguage(priorLanguage);
+        CHECK(std::any_of(lines.begin(), lines.end(),
+            [](const auto& line) { return line.text == "Hatch delay: 13.4s"; }));
+        const auto livingPets = [&] { return Query<Pet>{rig.world}.without<Dead>().collect(); };
+        const double firstHatch = shellReadyAt + incubation * scale;
+        rig.tickPetals(firstHatch - 1.0);
+        CHECK(livingPets().empty());
+        rig.tickPetals(firstHatch);
+        const auto pets = livingPets();
+        CHECK_EQ(pets.size(), std::size_t(1));
+        if (pets.empty()) continue;
+        rig.world.add<Dead>(pets.front());
+        const double nextHatch = firstHatch + incubation * scale;
+        rig.tickPetals(nextHatch - 1.0);
+        CHECK(livingPets().empty());
+        rig.tickPetals(nextHatch);
+        CHECK_EQ(livingPets().size(), std::size_t(1));
+    }
+}
+
 TEST(zorr_soap_expands_liquid_fields_without_scaling_damage) {
     ArcticBlast rig("basic");
     const auto sample = [&](double now, double expectedRadius) {
@@ -420,6 +613,50 @@ TEST(zorr_soap_expands_liquid_fields_without_scaling_damage) {
     sample(4650, 117.0);
     skills.set(SkillId::FluidReach, -1);
     sample(4700, 90.0);
+}
+
+TEST(arctic_spider_cave_egg_apex_hatches_ten_hyper_spiders) {
+    std::string error;
+    if (!loadContent(testsupport::dataDir(), error)) { CHECK(false); return; }
+    constexpr const char* id = "arctic_spider_cave_egg";
+    for (const auto eggRarity : {Rarity::Apex, Rarity::Ascendant}) {
+        ArcticBlast rig(id, eggRarity);
+        const auto eggIndex = rig.registry.petalIndex(id);
+        const auto& egg = rig.registry.petal(eggIndex);
+        const bool apexEgg = eggRarity == Rarity::Ascendant;
+        const auto expectedTier = apexEgg ? Rarity::Apex : Rarity::Unique;
+        const double hatchAt = 4000.0 + rig.registry.petalStats(eggIndex, eggRarity).reloadMillis;
+        const auto& spider = rig.registry.mob(egg.petMobIndex);
+        const double baselineScale = petalStatScale(Rarity::Unique) * hyperSummonScale(egg, eggRarity)
+                                   * eggSummonCombatScale(egg);
+
+        rig.tickPetals(hatchAt - 1);
+        CHECK(Query<Pet>(rig.world).collect().empty());
+        rig.tickPetals(hatchAt);
+        const auto pets = Query<Pet>(rig.world).collect();
+        CHECK_EQ(pets.size(), std::size_t(10));
+        for (const Entity pet : pets) {
+            const auto& mob = rig.world.get<MobType>(pet);
+            CHECK_EQ(mob.configIndex, egg.petMobIndex);
+            CHECK_EQ(mob.rarity, expectedTier);
+            CHECK_EQ(rig.world.get<Replicated>(pet).rarity, expectedTier);
+            CHECK_NEAR(rig.world.get<Health>(pet).max,
+                       spider.health * spider.petHealthScale * baselineScale * kSummonedMobHealthScale
+                           * eggSummonHealthScale(egg) * ascendantSummonHealthScale(eggRarity), 1e-6);
+            CHECK_NEAR(rig.world.get<ContactDamage>(pet).amount,
+                       spider.damage * spider.petDamageScale * baselineScale
+                           * ascendantSummonDamageScale(eggRarity), 1e-6);
+        }
+
+        const auto priorLanguage = ui::language();
+        ui::setLanguage(ui::Language::En);
+        const auto lines = ui::petalTooltipLines(eggIndex, eggRarity, SkillSet{}, 1.0);
+        ui::setLanguage(priorLanguage);
+        const char* expectedLabel = apexEgg ? "Summon rarity: Hyper" : "Summon rarity: Eternal";
+        CHECK(std::any_of(lines.begin(), lines.end(), [&](const auto& line) {
+            return line.text == expectedLabel;
+        }));
+    }
 }
 
 TEST(arctic_nuke_egg_apex_hatches_hyper_and_detonates_once_when_defeated) {
@@ -1120,16 +1357,26 @@ TEST(reference_elemental_equipment_restores_resources_and_removes_bonuses_on_une
 }
 
 TEST(reference_elemental_contact_applies_both_poison_and_burn) {
-    ArcticBlast rig("void_elemental");
-    auto petals=rig.liveIn(0);
-    CHECK(!petals.empty());
-    if(petals.empty()) return;
-    Entity victim=rig.mob(rig.world.get<Transform>(petals.front()).position);
-    rig.combatTick(4050);
-    const auto* effects=rig.world.tryGet<Afflictions>(victim);
-    CHECK(effects && !effects->poisonStacks.empty());
-    CHECK(effects && !effects->burns.empty());
-    if(effects) { CHECK_NEAR(effects->poisonPerSecond,10.0,1e-6); CHECK_NEAR(effects->burns.front().perSecond,7.0,1e-6); }
+    for (const std::size_t hits : {1u, 3u}) {
+        ArcticBlast rig("void_elemental");
+        const auto petals = rig.liveIn(0);
+        CHECK_EQ(petals.size(), 3u);
+        if (petals.size() != 3u) return;
+        const Vec2 at{5300, 5300};
+        const Entity victim = rig.mob(at);
+        for (std::size_t i = 0; i < hits; ++i) rig.world.get<Transform>(petals[i]).position = at;
+        rig.combatTick(4050);
+        const auto* effects = rig.world.tryGet<Afflictions>(victim);
+        CHECK(effects);
+        if (!effects) return;
+        CHECK_EQ(effects->poisonStacks.size(), hits);
+        CHECK_EQ(effects->burns.size(), hits);
+        CHECK_NEAR(effects->poisonPerSecond, 10.0 * hits / 3.0, 1e-6);
+        double burnRate = 0.0;
+        for (const auto& burn : effects->burns) burnRate += burn.perSecond;
+        CHECK_NEAR(burnRate, 7.0 * hits / 3.0, 1e-6);
+        CHECK_NEAR(1000.0 - rig.world.get<Health>(victim).current, 47.0 * hits / 3.0, 1e-6);
+    }
 }
 
 TEST(reference_scar_charges_before_teleporting_in_the_same_realm) {
@@ -1365,15 +1612,113 @@ TEST(reference_vampire_fang_heals_landed_body_damage_and_respects_no_heal) {
  r.combat.applyDamage(r.world,r.player,enemy,10,6000);
  CHECK_NEAR(r.world.get<Health>(r.player).current,35.4,1e-6);
 }
-TEST(reference_toilet_paper_requires_high_to_low_health_and_expires) {
- ArcticBlast r("toilet_paper");auto enemy=r.mob({5500,5000});
- auto live=r.liveIn(0);CHECK(!live.empty());if(live.empty())return;
- CHECK(r.world.get<Afflictions>(r.player).toiletArmed);
- r.combat.applyDamage(r.world,r.player,enemy,r.world.get<Health>(r.player).max*.95,5000);
- CHECK_NEAR(r.world.get<Afflictions>(r.player).toiletBoostUntilMillis,15000,1e-6);
- CHECK_NEAR(r.combat.applyDamage(r.world,enemy,live.front(),10,5050).applied,100,1e-6);
- CHECK_NEAR(r.combat.applyDamage(r.world,enemy,live.front(),10,15001).applied,10,1e-6);
+TEST(toilet_paper_requires_an_active_loadout_slot_with_sponge) {
+    std::string error;
+    if (!loadContent(testsupport::dataDir(), error)) { CHECK(false); return; }
+    for (const bool storedSponge : {false, true}) {
+        ArcticBlast rig("toilet_paper");
+        if (storedSponge) rig.equip(kLoadoutActiveSlots, "sponge");
+        rig.tickPetals(4500);
+        const auto paper = rig.liveIn(0);
+        CHECK_EQ(paper.size(), 1u);
+        if (paper.empty()) return;
+        const auto enemy = rig.mob({5500, 5000});
+        const double maxHealth = rig.world.get<Health>(rig.player).max;
+        rig.combat.applyDamage(rig.world, rig.player, enemy, maxHealth * .95, 5000);
+        const auto& status = rig.world.get<Afflictions>(rig.player);
+        CHECK(!status.toiletArmed);
+        CHECK(!status.toiletBoostActive);
+        CHECK_EQ(status.toiletBoostUntilMillis, 0.0);
+        CHECK_NEAR(rig.combat.applyDamage(rig.world, enemy, paper.front(), 6.0, 5050).applied, 6.0, 1e-6);
+    }
 }
+
+TEST(toilet_paper_boosts_after_sponge_repayment_and_expires) {
+    std::string error;
+    if (!loadContent(testsupport::dataDir(), error)) { CHECK(false); return; }
+    ArcticBlast rig("toilet_paper", Rarity::Common, "sponge");
+    const auto paper = rig.liveIn(0);
+    CHECK_EQ(paper.size(), 1u);
+    if (paper.empty()) return;
+    const auto enemy = rig.mob({5500, 5000});
+    const double maxHealth = rig.world.get<Health>(rig.player).max;
+    CHECK(rig.world.get<Afflictions>(rig.player).toiletArmed);
+    rig.combat.applyDamage(rig.world, rig.player, enemy, maxHealth * .95, 5000);
+    CHECK(rig.world.has<SpongeDamageState>(rig.player));
+    CHECK_NEAR(rig.world.get<Health>(rig.player).current, maxHealth, 1e-6);
+    for (int time = 5050; time <= 7000; time += 50) rig.combatTick(time);
+    const auto& status = rig.world.get<Afflictions>(rig.player);
+    const double deadline = status.toiletBoostUntilMillis;
+    CHECK(status.toiletBoostActive);
+    CHECK_NEAR(rig.world.get<Health>(rig.player).current, maxHealth * .05, 1e-6);
+    CHECK_NEAR(rig.combat.applyDamage(rig.world, enemy, paper.front(), 6.0, deadline - 1).applied, 18.0, 1e-6);
+    CHECK_NEAR(rig.combat.applyDamage(rig.world, enemy, paper.front(), 6.0, deadline).applied, 6.0, 1e-6);
+}
+
+TEST(toilet_paper_cancels_on_sponge_removal_and_keeps_the_original_cooldown) {
+    std::string error;
+    if (!loadContent(testsupport::dataDir(), error)) { CHECK(false); return; }
+    ArcticBlast rig("toilet_paper", Rarity::Common, "sponge");
+    const auto paper = rig.liveIn(0);
+    CHECK_EQ(paper.size(), 1u);
+    if (paper.empty()) return;
+    const auto enemy = rig.mob({5500, 5000});
+    const double maxHealth = rig.world.get<Health>(rig.player).max;
+    rig.combat.applyDamage(rig.world, rig.player, enemy, maxHealth * .95, 5000, DamageKind::Sponge);
+    CHECK_NEAR(rig.combat.applyDamage(rig.world, enemy, paper.front(), 6.0, 5050).applied, 18.0, 1e-6);
+
+    rig.world.get<Loadout>(rig.player).slots[1] = {};
+    // An already spawned paper must stop getting the boost before the next fold.
+    CHECK_NEAR(rig.combat.applyDamage(rig.world, enemy, paper.front(), 6.0, 5100).applied, 6.0, 1e-6);
+    rig.tickPetals(5150);
+    CHECK(!rig.world.get<Afflictions>(rig.player).toiletBoostActive);
+    CHECK_EQ(rig.world.get<Afflictions>(rig.player).toiletBoostUntilMillis, 14000.0);
+
+    rig.equip(1, "sponge");
+    rig.world.get<Health>(rig.player).current = maxHealth;
+    rig.tickPetals(5200);
+    rig.combat.applyDamage(rig.world, rig.player, enemy, maxHealth * .95, 5300, DamageKind::Sponge);
+    CHECK(!rig.world.get<Afflictions>(rig.player).toiletBoostActive);
+    CHECK_NEAR(rig.combat.applyDamage(rig.world, enemy, paper.front(), 6.0, 5350).applied, 6.0, 1e-6);
+
+    rig.world.get<Health>(rig.player).current = maxHealth;
+    rig.tickPetals(14000);
+    rig.combat.applyDamage(rig.world, rig.player, enemy, maxHealth * .95, 14100, DamageKind::Sponge);
+    CHECK(rig.world.get<Afflictions>(rig.player).toiletBoostActive);
+    CHECK_NEAR(rig.combat.applyDamage(rig.world, enemy, paper.front(), 6.0, 14150).applied, 18.0, 1e-6);
+}
+
+TEST(toilet_paper_with_sponge_still_excludes_second_chance_and_bandage) {
+    std::string error;
+    if (!loadContent(testsupport::dataDir(), error)) { CHECK(false); return; }
+    for (const bool secondChance : {false, true}) {
+        ArcticBlast rig("toilet_paper", Rarity::PermanentHyper, "sponge");
+        if (secondChance) {
+            rig.world.ensure<PlayerSkillTree>(rig.player).skills.set(SkillId::SecondChance, 0);
+        } else {
+            rig.equip(2, "bandage", Rarity::Ultra);
+        }
+        rig.tickPetals(4500);
+        rig.tickPetals(7500);
+        const auto paper = rig.liveIn(0);
+        CHECK_EQ(paper.size(), 1u);
+        if (paper.empty()) return;
+        const auto enemy = rig.mob({5500, 5000});
+        auto& health = rig.world.get<Health>(rig.player);
+        health.max = health.current = 100.0;
+        rig.combat.applyDamage(rig.world, rig.player, enemy, 95.0, 8000, DamageKind::Sponge);
+        CHECK(rig.world.get<Afflictions>(rig.player).toiletBoostActive);
+        CHECK_EQ(rig.world.get<Afflictions>(rig.player).toiletBoostUntilMillis, 17000.0);
+        rig.combat.applyDamage(rig.world, rig.player, enemy, 200.0, 8050, DamageKind::Sponge);
+        CHECK_EQ(rig.world.get<Health>(rig.player).current, 1.0);
+        CHECK_EQ(rig.world.has<SecondChance>(rig.player), secondChance);
+        CHECK_EQ(rig.world.has<Undead>(rig.player), !secondChance);
+        CHECK(!rig.world.get<Afflictions>(rig.player).toiletBoostActive);
+        CHECK_EQ(rig.world.get<Afflictions>(rig.player).toiletBoostUntilMillis, 17000.0);
+        CHECK_NEAR(rig.combat.applyDamage(rig.world, enemy, paper.front(), 6.0, 8100).applied, 6.0, 1e-6);
+    }
+}
+
 TEST(reference_fractal_strikes_seven_unique_targets_without_duplicate_damage) {
  ArcticBlast r("fractal");auto live=r.liveIn(0);CHECK(!live.empty());if(live.empty())return;
  auto at=r.world.get<Transform>(live.front()).position;std::vector<Entity> targets;
@@ -1429,12 +1774,49 @@ TEST(reference_silk_detaches_from_ring_tracks_one_target_and_frees_reload) {
  r.world.add<Dead>(target);r.tickPetals(6050);CHECK(!r.world.isAlive(silk));
 }
 TEST(reference_marble_launches_bounces_and_uses_real_armour_for_penetration) {
- ArcticBlast r("marble");r.world.get<PlayerInput>(r.player).current.flags=net::InputAttack;r.tickPetals(4500);
- std::vector<Entity> shots;Query<Projectile>{r.world}.without<Dead>().collect(shots);CHECK_EQ(shots.size(),1);if(shots.empty())return;
+ ArcticBlast r("marble");
+ r.world.get<PlayerInput>(r.player).current.flags=net::InputAttack;
+ r.tickPetals(4349);
+ std::vector<Entity> shots;
+ Query<Projectile>{r.world}.without<Dead>().collect(shots);
+ CHECK(shots.empty());
+ r.tickPetals(4350);
+ Query<Projectile>{r.world}.without<Dead>().collect(shots);CHECK_EQ(shots.size(),1);if(shots.empty())return;
  Entity shot=shots.front();CHECK(r.world.get<Projectile>(shot).bouncesOffWalls);CHECK_NEAR(r.world.get<Lifetime>(shot).remainingSeconds,15,1e-6);
- Entity target=r.mob(r.world.get<Transform>(shot).position);r.world.add<ContactDamage>(target,ContactDamage{10,0});r.combatTick(4500);
+ Entity target=r.mob(r.world.get<Transform>(shot).position);r.world.add<ContactDamage>(target,ContactDamage{10,0});r.combatTick(4350);
  CHECK(!r.world.has<Dead>(shot));CHECK_NEAR(r.world.get<Health>(shot).current,35,1e-6);CHECK_NEAR(r.world.get<Health>(target).current,900,1e-6);
 }
+TEST(marble_hits_along_its_last_clipped_step_and_then_expires) {
+    std::string error;
+    if (!loadContent(testsupport::dataDir(), error)) { CHECK(false); return; }
+    ArcticBlast rig("marble");
+    rig.world.get<PlayerInput>(rig.player).current.flags = net::InputAttack;
+    rig.tickPetals(4500);
+    std::vector<Entity> shots;
+    Query<Projectile>{rig.world}.without<Dead>().collect(shots);
+    CHECK_EQ(shots.size(), 1u);
+    if (shots.empty()) return;
+
+    const Entity shot = shots.front();
+    const Vec2 from{6500, 5000};
+    rig.world.get<Transform>(shot).position = from;
+    rig.world.get<Motion>(shot).velocity = {1600, 0};
+    rig.world.get<Projectile>(shot).remainingDistance = 70.0;
+    const Entity inRange = rig.mob(from + Vec2{35, 0});
+    rig.world.add<ContactDamage>(inRange, ContactDamage{10, 0});
+    const Entity outOfRange = rig.mob(from + Vec2{110, 0});
+
+    Terrain terrain;
+    MovementSystem movement;
+    movement.runWorldPhase(rig.world, terrain, 4550.0, net::kTickSeconds);
+    rig.combatTick(4550.0);
+    CHECK_NEAR(rig.world.get<Health>(inRange).current, 900.0, 1e-6);
+    CHECK_NEAR(rig.world.get<Health>(outOfRange).current, 1000.0, 1e-6);
+    CHECK(rig.world.has<Dead>(shot));
+    rig.combatTick(4600.0);
+    CHECK_NEAR(rig.world.get<Health>(inRange).current, 900.0, 1e-6);
+}
+
 TEST(reference_magic_marble_breaks_into_three_glass_shots_once) {
  ArcticBlast r("magic_marble",Rarity::Common,"mana_orb");r.world.get<PlayerInput>(r.player).current.flags=net::InputAttack;r.tickPetals(4300);
  std::vector<Entity> shots;Query<Projectile>{r.world}.without<Dead>().collect(shots);CHECK_EQ(shots.size(),1);if(shots.empty())return;
@@ -1612,12 +1994,12 @@ TEST(reference_stardust_carries_scaled_radiation_after_leaving_the_ring) {
  r.world.get<Transform>(shot).position={7300,5000};r.world.get<Transform>(r.player).realm=Realm::Arena;r.tickPetals(5500);
  Query<GroundEffect,Transform>{r.world}.each([&](Entity,GroundEffect&,Transform& at){CHECK(distance(at.position,Vec2{7300,5000})>1);});
 }
-TEST(reference_fission_nuke_copies_share_the_original_180_break_budget) {
+TEST(reference_fission_nuke_copies_share_one_break_budget) {
  ArcticBlast r("arctic_fission");r.equip(1,"arctic_nuke");r.tickPetals(5000);r.tickPetals(10000);
  auto copies=r.liveIn(1);CHECK_EQ(copies.size(),3);if(copies.size()!=3)return;
  for(Entity e:copies)r.world.add<Dead>(e);r.tickPetals(10050);
  double total=0;Query<GroundEffect>{r.world}.each([&](Entity,GroundEffect& f){total+=f.damagePerHit;});
- CHECK_NEAR(total,180,1e-6);
+ CHECK_NEAR(total,210,1e-6);
  r.tickPetals(10100);double again=0;Query<GroundEffect>{r.world}.each([&](Entity,GroundEffect& f){again+=f.damagePerHit;});CHECK_NEAR(again,total,1e-6);
 }
 
@@ -1637,7 +2019,7 @@ TEST(reference_oxygen_extends_real_stacked_and_radiation_burns_without_changing_
  const auto& after=r.world.get<Afflictions>(target);CHECK_EQ(after.burns.size(),1);CHECK_NEAR(after.burns.front().untilMillis,5200,1e-6);
  CHECK_NEAR(after.burns.front().perSecond,7,1e-6);CHECK_NEAR(after.burnUntilMillis,5200,1e-6);CHECK_NEAR(r.world.get<Burn>(target).untilMillis,5200,1e-6);
 }
-TEST(reference_hyper_nuke_and_radiation_effects_obey_twofold_offense_growth) {
+TEST(reference_hyper_nuke_and_radiation_effects_obey_threefold_offense_growth) {
  for(const char* id:{"arctic_nuke","void_corium","arctic_plutonium"}) {
   double values[2]={};
   for(int h=0;h<2;++h) {
@@ -1645,7 +2027,7 @@ TEST(reference_hyper_nuke_and_radiation_effects_obey_twofold_offense_growth) {
    if(std::string(id)=="arctic_nuke")r.armBomb();else{r.tickPetals(100000);r.tickPetals(101000);}
    Query<GroundEffect>{r.world}.each([&](Entity,GroundEffect& f){values[h]+=f.damagePerHit+f.damagePerSecond+f.burnDamage;});
   }
-  CHECK(values[0]>0);CHECK_NEAR(values[1],values[0]*2,std::max(1e-5,values[0]*1e-9));
+  CHECK(values[0]>0);CHECK_NEAR(values[1],values[0]*3,std::max(1e-5,values[0]*1e-9));
  }
 }
 

@@ -628,10 +628,12 @@ TEST(a_camera_petals_view_is_streamed_edge_to_edge_and_only_a_screen_past_it) {
     f.world.get<PlayerLocation>(f.viewer).viewport = drawn;
     const Vec2 centre = f.world.get<Transform>(f.viewer).position;
     const Entity corner = f.addMob(centre + drawn * 0.5 - Vec2{50.0, 50.0});
-    const Entity beyond = f.addMob(centre + Vec2{drawn.x * 0.5 + kViewportWidth * 1.5 + 100.0, 0.0});
+    const Entity approaching = f.addMob(centre + Vec2{drawn.x * 0.5 + kViewportWidth * 0.6, 0.0});
+    const Entity beyond = f.addMob(centre + Vec2{drawn.x * 0.5 + kViewportWidth * 0.7 + 100.0, 0.0});
     WorldView client;
     f.tick(client, 1, 1000);
     CHECK(client.entities().count(netIdOf(f.world, corner)) == 1);
+    CHECK(client.entities().count(netIdOf(f.world, approaching)) == 1);
     CHECK(client.entities().count(netIdOf(f.world, beyond)) == 0);
 
     // Current every snapshot, not one in farSnapshotStride: it is on screen.
@@ -1220,7 +1222,8 @@ TEST(a_flower_eases_toward_the_server_and_never_past_it) {
 
     view.interpolate(1000, 1.0 / 60.0);
     const double afterOne = view.entities().at(1).position.x;
-    CHECK_NEAR(afterOne, 100.0 * easeFraction(tau, 1.0 / 60.0), 1e-9);
+    const double step = 2.0 / (60.0 * tau);
+    CHECK_NEAR(afterOne, 100.0 * (1.0 - (1.0 + step) * std::exp(-step)), 1e-9);
 
     // Asymptotic, so it approaches without ever overshooting -- an overshoot
     // is what makes a corrected position visibly spring.
@@ -1417,6 +1420,48 @@ TEST(the_viewers_flower_eases_and_the_camera_gets_one_answer) {
     // And the self ENTITY reads the same, so the petal ring anchored to it
     // cannot drift off the body by a fraction of a pixel.
     CHECK_NEAR(client.entities().at(client.self().netId).position.x, drawn.x, 1e-12);
+}
+
+TEST(fast_flower_motion_stays_smooth_across_snapshots) {
+    constexpr double travelPerSnapshot = 320.0;
+    constexpr int framesPerSnapshot = 6;
+    constexpr double frameSeconds = net::kSnapshotMillis / (1000.0 * framesPerSnapshot);
+    constexpr double frameTravel = travelPerSnapshot / framesPerSnapshot;
+    Fixture f;
+    WorldView client;
+    const Entity other = f.addPlayer("alice", {1000, 1040});
+    const auto otherId = netIdOf(f.world, other);
+    f.tick(client, 1, 1000, 1000);
+    client.interpolate(1000, frameSeconds);
+
+    for (std::uint32_t tick = 2; tick <= 40; ++tick) {
+        f.world.get<Transform>(f.viewer).position.x += travelPerSnapshot;
+        f.world.get<Transform>(other).position.x += travelPerSnapshot;
+        const double time = 1000 + (tick - 1) * net::kSnapshotMillis;
+        f.tick(client, tick, time, time);
+        for (int frame = 0; frame < framesPerSnapshot; ++frame) {
+            const double before = client.selfDrawnPosition().x;
+            client.interpolate(time + frame * frameSeconds * 1000.0, frameSeconds);
+            const double drawn = client.selfDrawnPosition().x;
+            CHECK(drawn >= before);
+            CHECK(drawn < client.self().position.x);
+            CHECK_NEAR(client.entities().at(otherId).position.x, drawn, 0.2);
+            if (tick > 20) {
+                // Once up to speed, each frame advances within 6% of the mean.
+                // This catches both tick-rate speed pulses and false teleport cuts.
+                CHECK_NEAR(drawn - before, frameTravel, frameTravel * 0.06);
+            }
+        }
+    }
+
+    // A real position jump still cuts immediately, even during fast travel.
+    f.world.get<Transform>(f.viewer).position.x += 900;
+    f.world.get<Transform>(other).position.x += 900;
+    f.tick(client, 41, 3000, 3000);
+    client.interpolate(3000, frameSeconds);
+    CHECK_NEAR(client.selfDrawnPosition().x, client.self().position.x, 1e-9);
+    const auto& remote = client.entities().at(otherId);
+    CHECK_NEAR(remote.position.x, remote.targetPosition.x, 1e-9);
 }
 
 TEST(snapAll_cuts_every_entity_onto_the_server_position) {
@@ -2027,6 +2072,50 @@ bool petFlagged(const WorldView& client, World& world, Entity e) {
 
 } // namespace
 
+TEST(foreign_equipped_petal_privacy_replaces_visible_types_and_keeps_laser_cues) {
+    std::string error;
+    if (!loadContent(testsupport::dataDir(), error)) { CHECK(false); return; }
+    Fixture f;
+    WorldView client;
+    const Entity alice = f.addPlayer("alice", {1100, 1000});
+    auto& owner = f.world.get<PlayerAccount>(alice);
+    owner.connection = 2;
+    const auto laser = content().petalIndex("laser");
+    const auto leaf = content().petalIndex("leaf");
+    CHECK(laser != kNoPetal);
+    CHECK(leaf != kNoPetal);
+
+    const Entity ringLaser = addOwnedPetal(f, alice, {1120, 1000});
+    const Entity ringLeaf = addOwnedPetal(f, alice, {1130, 1000});
+    const Entity myPetal = addOwnedPetal(f, f.viewer, {1020, 1000});
+    f.world.get<Replicated>(ringLaser).typeIndex = laser;
+    f.world.get<Replicated>(ringLeaf).typeIndex = leaf;
+    f.world.get<Replicated>(myPetal).typeIndex = leaf;
+    f.world.get<PlayerAccount>(f.viewer).hidePetalTypes = true;
+    const auto seen = [&](Entity entity) -> const RemoteEntity& {
+        return client.entities().at(netIdOf(f.world, entity));
+    };
+
+    f.tick(client, 1, 1000.0);
+    CHECK_EQ(seen(ringLaser).typeIndex, laser);
+    CHECK_EQ(seen(ringLeaf).typeIndex, leaf);
+
+    owner.hidePetalTypes = true;
+    f.tick(client, 2, 1050.0);
+    CHECK_EQ(seen(ringLaser).typeIndex, kNoPetal);
+    CHECK_EQ(seen(ringLeaf).typeIndex, kNoPetal);
+    CHECK_EQ(seen(ringLaser).petalVariant, net::PrivatePetalBeam);
+    CHECK_EQ(seen(ringLeaf).petalVariant, 0u);
+    CHECK_EQ(seen(ringLaser).ownerNetId, netIdOf(f.world, alice));
+    CHECK_NEAR(seen(ringLaser).radius, 10.0, 1e-3);
+    CHECK_EQ(seen(myPetal).typeIndex, leaf);
+
+    owner.hidePetalTypes = false;
+    f.tick(client, 3, 1100.0);
+    CHECK_EQ(seen(ringLaser).typeIndex, laser);
+    CHECK_EQ(seen(ringLeaf).typeIndex, leaf);
+}
+
 TEST(another_players_petals_pets_and_shots_are_marked_as_theirs) {
     Fixture f;
     WorldView client;
@@ -2118,6 +2207,54 @@ TEST(todo1106_hide_other_petals_covers_ground_fields_and_lightning_but_not_wild_
     CHECK(!renderer.hiddenByOptions(client.entities().at(netIdOf(f.world,mine))));
     CHECK(!renderer.hiddenByOptions(client.entities().at(netIdOf(f.world,hostile))));
     CHECK(foreign(client,f.world,theirs));CHECK(!foreign(client,f.world,hostile));
+}
+
+TEST(champion_crown_loan_visibility_follows_borrower_and_current_lender) {
+    for (int perspective = 0; perspective < 4; ++perspective) {
+        Fixture f;
+        WorldView client;
+        const Entity lender = f.viewer;
+        const Entity borrower = f.addPlayer("borrower", {1080, 1000});
+        const Entity bystander = f.addPlayer("bystander", {950, 1000});
+        const Entity half = f.addPlayer("half", {980, 1000});
+        f.world.get<PlayerAccount>(borrower).connection = 2;
+        f.world.get<PlayerAccount>(bystander).connection = 3;
+        const Entity viewers[] = {lender, borrower, bystander, half};
+        f.viewer = viewers[perspective];
+
+        const Entity loan = addOwnedPetal(f, borrower, {1090, 1000});
+        auto& instance = f.world.get<PetalInstance>(loan);
+        instance.slot = kLentPetalSlot;
+        instance.creditTo = lender;
+        const Entity ordinary = addOwnedPetal(f, borrower, {1100, 1000});
+        const auto loanId = netIdOf(f.world, loan);
+        const auto ordinaryId = netIdOf(f.world, ordinary);
+        WorldRenderer renderer;
+        renderer.options.hideOtherPetals = true;
+
+        f.tick(client, 1, 1000);
+        CHECK(client.entities().count(loanId) == 1);
+        if (client.entities().count(loanId) == 0) continue;
+        CHECK_EQ(renderer.hiddenByOptions(client.entities().at(loanId)), perspective == 2);
+
+        f.visibility = net::InputHideForeignPetals;
+        f.tick(client, 2, 1050);
+        CHECK_EQ(client.entities().count(loanId) == 1, perspective != 2);
+        CHECK_EQ(client.entities().count(ordinaryId) == 1, perspective == 1);
+
+        f.visibility = 0;
+        f.tick(client, 3, 1100);
+        f.world.get<PetalInstance>(loan).creditTo = bystander;
+        f.tick(client, 4, 1150);
+        CHECK(client.entities().count(loanId) == 1);
+        if (client.entities().count(loanId) == 0) continue;
+        CHECK_EQ(renderer.hiddenByOptions(client.entities().at(loanId)),
+                 perspective == 0 || perspective == 3);
+
+        f.visibility = net::InputHideForeignPetals;
+        f.tick(client, 5, 1200);
+        CHECK_EQ(client.entities().count(loanId) == 1, perspective == 1 || perspective == 2);
+    }
 }
 
 TEST(visibility_settings_omit_foreign_equipment_and_restore_it_as_new_state) {

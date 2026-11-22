@@ -199,6 +199,22 @@ void convertLegacyMobKills(Json& mobKills) {
 
 // -- record <-> JSON ---------------------------------------------------------
 
+// An inserting lookup used to leave null entries for unstarted forges.
+// Missing and null both read as zero. Preserve every stored non-null value,
+// including keys for petals an older or newer build may recognize.
+void compactTitanForgeCounts(Json& row) {
+    const Json& counts = std::as_const(row)["titanForgeCounts"];
+    if (!counts.isObject() || std::none_of(counts.members().begin(), counts.members().end(),
+                                          [](const auto& entry) { return entry.second.isNull(); })) return;
+    Json compact = Json::object();
+    for (const auto& key : counts.keys()) {
+        const auto& count = counts[key];
+        if (!count.isNull()) compact[key] = count;
+    }
+    if (compact.size() == 0) row.erase("titanForgeCounts");
+    else row["titanForgeCounts"] = std::move(compact);
+}
+
 PlayerRecord playerFromJson(const Json& value) {
     PlayerRecord record;
     if (!value.isObject()) return record;
@@ -284,6 +300,7 @@ PlayerRecord playerFromJson(const Json& value) {
                           "equippedSkinId", "inventory", "mobKills", "loadout",
                           "loadoutInInventory", "loadoutPresets", "skills", "tp", "talentPointBonus", "mazeTotalXP", "mazeSkills", "mazeTp"},
                   record.extra);
+    compactTitanForgeCounts(record.extra);
     return record;
 }
 
@@ -296,11 +313,21 @@ Json playerToJson(const PlayerRecord& record) {
     // or garbled in the file then costs a re-equip, not the petals.
     PlayerRecord stored;
     stored.inventory = record.inventory;
+    bool includesLoadout = true;
     for (const std::optional<StoredItem>& slot : record.loadout) {
-        if (slot && !slot->petalType.empty()) stored.addItem(slot->rarity, "petal_" + slot->petalType, 1);
+        if (!slot || slot->petalType.empty()) continue;
+        const std::string key = "petal_" + slot->petalType;
+        if (stored.itemCount(slot->rarity, key) == kMaxStackCount) {
+            // The reader also accepts a separate bag and loadout. Keep
+            // them separate when folding the slots into the bag would cap a stack.
+            includesLoadout = false;
+            break;
+        }
+        stored.addItem(slot->rarity, key, 1);
     }
-    out["inventory"] = std::move(stored.inventory);
-    out["loadoutInInventory"] = true;
+    if (includesLoadout) out["inventory"] = std::move(stored.inventory);
+    else out["inventory"] = record.inventory;
+    out["loadoutInInventory"] = includesLoadout;
     const auto writeSlots = [](const std::vector<std::optional<StoredItem>>& slots) {
         Json out = Json::array();
         for (const std::optional<StoredItem>& slot : slots) {
@@ -1061,7 +1088,9 @@ bool Database::load(const std::string& path, std::string& errorOut) {
                 return false;
             }
             std::string parseError;
-            if (!Json::parse(text, root, parseError)) {
+            // Discard old empty forge entries per row, before the whole tree
+            // is resident. The old ledger had millions of these on busy realms.
+            if (!Json::parseWithRowTransform(text, root, parseError, "players", compactTitanForgeCounts)) {
                 loadFailed_ = true;
                 errorOut = path + ": " + parseError;
                 return false;
@@ -1087,7 +1116,7 @@ bool Database::load(const std::string& path, std::string& errorOut) {
     // Every row is uncached straight off the parse. Paying for that here, at
     // boot, is what keeps the FIRST save -- thirty seconds in, with the
     // players who reconnected after a restart already on -- off the tick.
-    lastSaveBytes_ = serialise().size();
+    lastSaveBytes_ = serialiseTo(nullptr);
     return true;
 }
 
@@ -1114,7 +1143,7 @@ bool Database::loadAuthoritative(const std::string& snapshot, CommitSink sink,
                    (right ? right->createdAtMillis : 0);
         });
     }
-    lastSaveBytes_ = serialise().size();
+    lastSaveBytes_ = serialiseTo(nullptr);
     players_.acceptLoadedState();users_.acceptLoadedState();sessions_.acceptLoadedState();
     committedTop_.clear();for(const auto& entry:otherTopText_)committedTop_[entry.first]=entry.second;
     touchedTop_.clear();
@@ -1308,24 +1337,36 @@ std::string Database::serialise() const {
     // the tick; here an untouched row is one append of text it already had.
     std::string out;
     out.reserve(lastSaveBytes_ + lastSaveBytes_ / 16);
+    serialiseTo(&out);
+    return out;
+}
+
+std::size_t Database::serialiseTo(std::string* out) const {
+    // Warming the row caches and counting their bytes at startup does not
+    // require collecting them in another contiguous copy of the save.
+    std::size_t bytes = 0;
+    const auto emit = [&](std::string_view part) {
+        bytes += part.size();
+        if (out) out->append(part);
+    };
     bool firstKey = true;
     const auto key = [&](const std::string& name) {
-        out += firstKey ? '{' : ',';
+        emit(firstKey ? "{" : ",");
         firstKey = false;
-        out += jsonEscape(name);
-        out += ':';
+        emit(jsonEscape(name));
+        emit(":");
     };
     const auto table = [&](const auto& rows, const auto& toJson) {
-        if (rows.size() == 0) { out += "{}"; return; }
+        if (rows.size() == 0) { emit("{}"); return; }
         char separator = '{';
         for (const std::string& rowKey : rows.keys()) {
-            out += separator;
+            emit(std::string_view(&separator, 1));
             separator = ',';
-            out += jsonEscape(rowKey);
-            out += ':';
-            out += rows.text(rowKey, toJson);
+            emit(jsonEscape(rowKey));
+            emit(":");
+            emit(rows.text(rowKey, toJson));
         }
-        out += '}';
+        emit("}");
     };
     const auto players = [&] { key("players"); table(players_, playerToJson); };
     const auto users = [&] { key("users"); table(users_, accountToJson); };
@@ -1342,14 +1383,14 @@ std::string Database::serialise() const {
                 it = otherTopText_.emplace(name, storedTable(name).dump(0)).first;
             }
             key(name);
-            out += it->second;
+            emit(it->second);
         }
     }
     if (!wrotePlayers) players();
     if (!wroteUsers) users();
     if (!wroteSessions && sessions_.size() > 0) sessions();
-    out += '}';
-    return out;
+    emit("}");
+    return bytes;
 }
 
 Json Database::collectDelta() {
@@ -1366,7 +1407,7 @@ Json Database::collectDelta() {
 
 bool Database::setDeltaSink(DeltaSink sink) {
     if(!authoritative()||dirty_||commitPending()||commitUncertain_||!sink)return false;
-    serialise();players_.acceptLoadedState();users_.acceptLoadedState();sessions_.acceptLoadedState();
+    serialiseTo(nullptr);players_.acceptLoadedState();users_.acceptLoadedState();sessions_.acceptLoadedState();
     committedTop_.clear();for(const auto& entry:otherTopText_)committedTop_[entry.first]=entry.second;
     touchedTop_.clear();deltaSink_=std::move(sink);return true;
 }

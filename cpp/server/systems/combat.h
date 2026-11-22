@@ -163,6 +163,7 @@ enum class DamageKind : std::uint8_t {
     Reflect = 5,
     Piercing = 7,   ///< direct damage that bypasses armour, but not dodge/shields
     Sponge = 6,     ///< repayment of an already accepted hit
+    Burn = 8,       ///< a fire tick, itemized in the dummy meter
 };
 
 /// Whether this kind is a landed hit rather than a drip. Everything in
@@ -440,6 +441,7 @@ public:
     /// same player never hurt each other, which is what stops a flower's own
     /// petals and pets from killing it the moment PvP is enabled.
     static bool canDamage(const World& world, Entity source, Entity victim);
+    static bool isPracticeDummy(const World& world, const ContentRegistry& registry, Entity entity);
     static bool gamblerIgnores(const World& world, Entity mob, Entity target);
 
     /// canDamage() plus the victim's own state: alive, not already Dead, and
@@ -498,6 +500,7 @@ private:
         double slowFactor = 1.0;
         double slowDurationMillis = 0;
         bool inflictsFrost = false;
+        bool poisonStacksByEmitter = false;
         /// How long a hit from this body stops the victim healing. Dandelion,
         /// and nothing else.
         double noHealDurationMillis = 0;
@@ -764,6 +767,10 @@ private:
     void gatherPetals(World& world, const ContentRegistry& content, double nowMillis);
     void resolveMelee(World& world, const SpatialGrid& grid, const ContentRegistry& registry,
                       double nowMillis, const SpatialGrid& hostileTargets, bool bodyGridOnly, ContactTiming* timing);
+    /// Laser petal beams: lightning DPS along a narrow outward ray. Separate
+    /// from emitter contact (resolveMelee). Ignores enemy projectiles.
+    void tickLaserBeams(World& world, const SpatialGrid& grid, const ContentRegistry& content,
+                        double nowMillis);
     void prepareMeleeCandidates(const World& world, const SpatialGrid& grid,
                                 const SpatialGrid& hostileTargets, bool bodyGridOnly, ContactTiming* timing);
     bool eligibleMeleeCandidate(const MeleeSource& source, Entity victim) const;

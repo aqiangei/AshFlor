@@ -54,6 +54,28 @@ TEST(binding_a_plain_row_leaves_every_menu_key_alone) {
     CHECK(settings.controlKey(ControlAction::Inventory) == Key::Z);
 }
 
+TEST(legacy_mouse_control_k_binding_moves_to_t) {
+    const std::string path = tempPath("legacy_mouse_control.txt");
+    {
+        std::ofstream file(path);
+        file << "ctl." << static_cast<int>(ControlAction::ToggleMouseControls) << ' '
+             << static_cast<int>(Key::K) << std::endl;
+        file << "ctl." << static_cast<int>(ControlAction::ToggleHitboxes) << ' '
+             << static_cast<int>(Key::K) << std::endl;
+    }
+
+    ClientSettings settings;
+    CHECK(settings.load(path));
+    CHECK(settings.controlKey(ControlAction::ToggleMouseControls) == Key::T);
+    CHECK(settings.controlKey(ControlAction::ToggleHitboxes) == Key::K);
+    settings.bindControl(ControlAction::ToggleMouseControls, Key::Y);
+    CHECK(settings.controlKey(ControlAction::ToggleMouseControls) == Key::Y);
+    settings.bindControl(ControlAction::ToggleMouseControls, Key::K);
+    CHECK(settings.controlKey(ControlAction::ToggleMouseControls) == Key::T);
+
+    std::remove(path.c_str());
+}
+
 TEST(a_rebound_control_survives_the_settings_file) {
     const std::string path = tempPath("controls.txt");
     std::remove(path.c_str());

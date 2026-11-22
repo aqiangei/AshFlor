@@ -812,9 +812,18 @@ bool GalleryPanel::render(MenuContext& ctx) {
     if (editSlotSearch(ctx, searchRect, dropSearch_, dropSearchField_)) scroll_.offset = 0.0;
     const std::string query = trimmed(lowerCase(dropSearch_));
     const bool searching = !query.empty();
-    const int orbTier = galleryOrbTier(profile);
-    if ((searching || garbageCatalog_) && indexedOrbTier_ != orbTier) buildDropIndex(orbTier);
-
+    const int equippedOrbTier = galleryOrbTier(profile);
+    const auto matchesPetal = [&](std::uint16_t i) {
+        const auto& petal = content().petal(i);
+        return !searching || lowerCase(petal.id).find(query) != std::string::npos ||
+               lowerCase(petal.name).find(query) != std::string::npos ||
+               std::string_view(petalNameZh(petal.id)).find(query) != std::string::npos;
+    };
+    std::vector<std::uint16_t> matches;
+    if (searching || garbageCatalog_) {
+        for (std::uint16_t i = 0; i < content().petalCount(); ++i)
+            if (matchesPetal(i)) matches.push_back(i);
+    }
     const WorldMaps* maps = ctx.renderer.worldMaps();
     const double controlWidth = std::min(184.0, std::max(0.0, (panel.w - 2.0 * kPad - 2.0 * kControlsGap) / 3.0));
     const Rect orderButton{panel.x + kPad, panel.y + kControlsTop, controlWidth, kControlsHeight};
@@ -822,9 +831,19 @@ bool GalleryPanel::render(MenuContext& ctx) {
     const Rect bagButton{npcButton.right() + kControlsGap, orderButton.y, controlWidth, kControlsHeight};
     if (ctx.pressed() && bagButton.contains(mouse)) {
         garbageCatalog_ = !garbageCatalog_;
-        if (garbageCatalog_ && indexedOrbTier_ != orbTier) buildDropIndex(orbTier);
         scroll_.offset = 0.0;
     }
+    // A search for a converted petal also serves as a source lookup for
+    // players who do not yet have an orb of the required rarity.
+    const int eternalTier = rarityIndex(Rarity::Unique);
+    const bool previewEternalOrb = searching && !garbageCatalog_ && !matches.empty() &&
+        (equippedOrbTier == kRarityCount || equippedOrbTier < eternalTier) &&
+        std::all_of(matches.begin(), matches.end(), [](std::uint16_t petal) {
+            return content().isMagicForm(petal);
+        });
+    const int orbTier = previewEternalOrb ? eternalTier : equippedOrbTier;
+    if ((searching || garbageCatalog_) && indexedOrbTier_ != orbTier) buildDropIndex(orbTier);
+
     const bool canChangeOrder = maps && !searching && !garbageCatalog_;
     if (canChangeOrder && ctx.pressed() && orderButton.contains(mouse)) {
         groupByBiome_ = !groupByBiome_;
@@ -836,7 +855,9 @@ bool GalleryPanel::render(MenuContext& ctx) {
     }
     const bool byBiome = maps && (searching || groupByBiome_);
     if (byBiome && !garbageCatalog_ && biomeRows_.empty()) buildBiomeRows(*maps);
-    drawSlotButton(canvas, orderButton, searching ? trEnZh("By biome", "按群系")
+    drawSlotButton(canvas, orderButton,
+                   previewEternalOrb ? trEnZh("Eternal Preview", "永恒宝珠预览")
+                   : searching ? trEnZh("By biome", "按群系")
                                       : groupByBiome_ ? trEnZh("Default order", "恢复原顺序")
                                                       : trEnZh("Group by biome", "按群系排列"),
                    canChangeOrder ? (groupByBiome_ ? kGallerySkin.accent : kGallerySkin.fill)
@@ -851,17 +872,6 @@ bool GalleryPanel::render(MenuContext& ctx) {
                                                        : trEnZh("Garbage drops", "垃圾袋掉落"),
                    garbageCatalog_ ? kGallerySkin.accent : kGallerySkin.fill, bagButton.contains(mouse));
 
-    const auto matchesPetal = [&](std::uint16_t i) {
-        const auto& petal = content().petal(i);
-        return !searching || lowerCase(petal.id).find(query) != std::string::npos ||
-               lowerCase(petal.name).find(query) != std::string::npos ||
-               std::string_view(petalNameZh(petal.id)).find(query) != std::string::npos;
-    };
-    std::vector<std::uint16_t> matches;
-    if (searching || garbageCatalog_) {
-        for (std::uint16_t i = 0; i < content().petalCount(); ++i)
-            if (matchesPetal(i)) matches.push_back(i);
-    }
     std::vector<std::uint16_t> mobTiers(content().mobCount(), 0);
     if (searching && !garbageCatalog_) {
         for (std::size_t mob = 0; mob < mobTiers.size(); ++mob)
@@ -1154,7 +1164,7 @@ bool GalleryPanel::render(MenuContext& ctx) {
         stat(std::string(trEnZh("Speed: ", "移速：")) +
                  fixedDecimals(mobRows().speed[cell.mobIndex], 2), 0.0);
         stat(std::string(trEnZh("Mass: ", "质量：")) + fixedDecimals(stats.mass, 2), 0.0);
-        stat("XP: " + abbreviateNumber(stats.xp), 0.0);
+        stat("XP: " + abbreviateNumber(stats.xp * mobKillXpMultiplier(cell.rarity)), 0.0);
 
         std::array<bool, kDropColumns> usedTiers{};
         if(config.id=="garbage") {
@@ -1172,7 +1182,11 @@ bool GalleryPanel::render(MenuContext& ctx) {
                          std::to_string(standardTrials) + trEnZh(" elsewhere", "（其他地图）"), 0.0);
             }
         }
-        const std::vector<DropRow> rows = config.id=="garbage" ? std::vector<DropRow>{} : computeMobDrops(cell.mobIndex, cell.rarity, usedTiers, galleryOrbTier(ctx.net.profile()));
+        const std::vector<DropRow> rows = config.id=="garbage" ? std::vector<DropRow>{} : computeMobDrops(cell.mobIndex, cell.rarity, usedTiers, orbTier);
+        if (previewEternalOrb) {
+            stat(trEnZh("Drop preview with an Eternal Mana Orb equipped.",
+                        "以下为装备永恒法力宝珠时的掉落预览。"), 6.0);
+        }
         std::vector<int> columns;
         for (int i = 0; i < kDropColumns; ++i) {
             if (usedTiers[static_cast<std::size_t>(i)]) columns.push_back(i);
@@ -1226,7 +1240,11 @@ bool GalleryPanel::render(MenuContext& ctx) {
             for (std::size_t i = 0; i < columns.size(); ++i) {
                 const Rarity rarity = dropColumnRarity(columns[i]);
                 header.fill = rarityColor(rarity);
-                text(canvas, rarityTr(rarity),
+                const std::string label = rarityTr(rarity);
+                const double labelWidth = measure(label, 10.0);
+                header.size = labelWidth > kDropCellW - 4.0
+                    ? 10.0 * (kDropCellW - 4.0) / labelWidth : 10.0;
+                text(canvas, label,
                      tableX + static_cast<double>(i) * kDropCellW + kDropCellW * 0.5,
                      cy + kColHeaderH * 0.5, header);
             }

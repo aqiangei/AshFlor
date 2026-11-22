@@ -202,30 +202,6 @@ constexpr std::uint32_t kCorpseName = 0xFFB060u;
 /// Whether a flower is drawn wrapped in the bandage: for as long as it wears
 /// one (user, 2026-10-22: "always show the bandage drawing when it is
 /// equipped"), and while it is Undead.
-void drawWornPharaohCrown(Canvas& canvas) {
-        // A nemes headdress wraps the forehead and sides, leaving the face clear.
-        canvas.save();
-        ui::setFill(canvas, 0xE9B936u); ui::setStroke(canvas, 0x977320u);
-        canvas.setLineWidth(1.4f);
-        for (float side : {-1.0f, 1.0f}) {
-            canvas.beginPath();
-            canvas.moveTo(side * 18, -20); canvas.lineTo(side * 29, -5);
-            canvas.lineTo(side * 31, 28); canvas.lineTo(side * 21, 24);
-            canvas.lineTo(side * 19, -8); canvas.closePath(); canvas.fill(); canvas.stroke();
-            ui::setStroke(canvas, 0x24649Au); canvas.setLineWidth(3.0f);
-            for (float y = -3; y < 25; y += 6) {
-                canvas.beginPath(); canvas.moveTo(side * 22, y);
-                canvas.lineTo(side * 28, y + 1); canvas.stroke();
-            }
-            ui::setStroke(canvas, 0x977320u); canvas.setLineWidth(1.4f);
-        }
-        canvas.beginPath(); canvas.roundRect(-21, -24, 42, 8, 3); canvas.fill(); canvas.stroke();
-        ui::setFill(canvas, 0x24649Au); canvas.beginPath();
-        canvas.roundRect(-3, -28, 6, 14, 2); canvas.fill();
-        canvas.restore();
-
-}
-
 bool wrappedInBandage(std::uint8_t faceFlags, std::uint16_t equipFlags) {
     return (faceFlags & FaceUndead) != 0 || (equipFlags & EquipBandage) != 0;
 }
@@ -547,6 +523,11 @@ constexpr double kPetalGlowAlpha = 76.0 / 255.0;
 /// #222222 track kMobBarThickness wide, the red at 0.6 of that, the green at
 /// 0.7 and the shield's white at 0.5, each starting at the line's left end.
 constexpr double kLowDetailMobLabelZoom = 0.6;
+constexpr double kSmallMobMarkerZoom = 0.08;
+constexpr double kSmallMobMarkerMaxPixels = 4.0;
+constexpr double kSmallMobMarkerNearDistance = 1200.0;
+constexpr double kVeryDistantMobMarkerDistance = 2400.0;
+constexpr double kVeryDistantMobMarkerMaxPixels = 6.0;
 constexpr double kMobBarBaseLength = 80.0;
 constexpr double kMobBarLengthPerTier = 10.0;
 constexpr double kMobBarThickness = 10.0;
@@ -1167,6 +1148,30 @@ void WorldRenderer::ingestEvents(WorldView& view) {
     view.events().clear();
     view.removedPetals().clear();
 
+    // A volley can leave a sum pending inside the throttle window. Show it
+    // when the window opens even if nothing else hits that body.
+    constexpr double kBucketIdleSeconds = 5.0;
+    for (auto it = damageNumbers_.begin(); it != damageNumbers_.end();) {
+        auto& bucket = it->second;
+        if (nowSeconds_ - bucket.lastHit > kBucketIdleSeconds) {
+            it = damageNumbers_.erase(it);
+            continue;
+        }
+        if (bucket.amount >= kMinShownDamage &&
+            nowSeconds_ - bucket.lastShown >= kDamageTextThrottleSeconds) {
+            const auto netId = static_cast<std::uint32_t>(it->first);
+            if (!options.damageNumbers || isHidden(netId)) {
+                bucket.amount = 0.0;
+            } else if (effects_.size() < maxEffects) {
+                const auto channel = static_cast<NumberChannel>(it->first >> 32);
+                pushNumber(bucket.lastImpact, bucket.amount, kMobNumberSize, channel);
+                bucket.amount = 0.0;
+                bucket.lastShown = nowSeconds_;
+            }
+        }
+        ++it;
+    }
+
     // --- drops -----------------------------------------------------------
     //
     // A drop's arrival and departure are both absences rather than events: it
@@ -1337,14 +1342,6 @@ void WorldRenderer::update(double dt) {
                                     return m.ageSeconds >= kDeathAnimationSeconds;
                                 }),
                  dying_.end());
-
-    // Tracks hits even before the first number was large enough to draw.
-    // Discard idle buckets when the target has gone out of view or the fight ended.
-    constexpr double kBucketIdleSeconds = 5.0;
-    for (auto it = damageNumbers_.begin(); it != damageNumbers_.end();) {
-        it = nowSeconds_ - it->second.lastHit > kBucketIdleSeconds
-            ? damageNumbers_.erase(it) : std::next(it);
-    }
 
     // Shadows exist only to give a Killed event something to animate, and a
     // mob that walked out of view will never produce one. Clearing wholesale
@@ -2814,7 +2811,12 @@ void WorldRenderer::drawPetalGlow(Canvas& canvas, double radius, std::uint32_t r
 
 void WorldRenderer::drawPetalSprite(Canvas& canvas, const RemoteEntity& entity,
                                     const Camera& camera, Vec2 at, double timeSeconds) const {
-    const PetalConfig* config = content_ ? &content_->petal(entity.typeIndex) : nullptr;
+    const bool privateType = entity.typeIndex == kNoPetal &&
+                             (entity.spawnFlags & net::SpawnForeign);
+    if (privateType && (entity.petalVariant & net::PrivatePetalInvisible)) return;
+    const PetalConfig* config = !privateType && content_ ? &content_->petal(entity.typeIndex) : nullptr;
+    const bool laser = privateType ? (entity.petalVariant & net::PrivatePetalBeam) != 0
+                                   : config && petalIsLaser(*config);
     // Three entries in petals.json are pure modifiers with no artwork at all.
     if (config && config->hidden) return;
     // Wearables modify the flower itself; their inventory icon is not a body.
@@ -2837,9 +2839,10 @@ void WorldRenderer::drawPetalSprite(Canvas& canvas, const RemoteEntity& entity,
     // `noPhysics` petals carry no body and would be sized from a default.
     // A loose petal is sized the same way, for the same reason: its body grows
     // with its tier (30 a step, to 300 at apex) and `size` does not.
-    double diameter = entity.isRingPetal() || entity.isLoosePetal()
-                          ? 2.0 * entity.radius * petalArtScale(config) * zoom
-                          : kPetalArtSize * artSize * zoom;
+    double diameter = privateType ? 2.0 * entity.radius * zoom
+        : entity.isRingPetal() || entity.isLoosePetal()
+            ? 2.0 * entity.radius * petalArtScale(config) * zoom
+            : kPetalArtSize * artSize * zoom;
     if (config && entity.ownerNetId != 0 && !entity.isRingPetal() &&
         hasBerryLoadAnimation(config->id)) {
         diameter *= 0.48 + 0.52 * berryLoadSpring(entity.petalAgeSeconds);
@@ -2875,6 +2878,9 @@ void WorldRenderer::drawPetalSprite(Canvas& canvas, const RemoteEntity& entity,
         // The artwork points along +X. Turn clumped grains toward each other.
         rotation = entity.angle;
         if (content_->petalStats(entity.typeIndex, entity.rarity).count > 1) rotation += kPi;
+    } else if (laser) {
+        // Self-rotation matches the orbit so the beam points outward.
+        rotation = entity.angle;
     } else if (config && config->hasFixedDirection) {
         rotation = config->fixedDirection;
     } else if (config && config->clumpFacesInward &&
@@ -2922,7 +2928,9 @@ void WorldRenderer::drawPetalSprite(Canvas& canvas, const RemoteEntity& entity,
         canvas.translate(static_cast<float>(config->visualOffsetX * zoom),
                          static_cast<float>(config->visualOffsetY * zoom));
     }
-    if (rollingDice) {
+    if (privateType) {
+        ui::disc(canvas, {0, 0}, diameter * 0.5, 0xCBD3D8u, ui::kInk, zoom);
+    } else if (rollingDice) {
         const int face = entity.petalVariant >= 1 && entity.petalVariant <= 6
             ? entity.petalVariant : 1;
         ui::drawRollingDice(canvas, face, entity.petalAgeSeconds, diameter);
@@ -2960,6 +2968,20 @@ void WorldRenderer::drawPetalSprite(Canvas& canvas, const RemoteEntity& entity,
         ui::disc(canvas, {0, 0}, diameter * 0.5,
                  config ? static_cast<std::uint32_t>(config->colorRgba >> 8) : 0xFFFFFFu,
                  ui::kInk, zoom);
+    }
+    // Laser beam: red ray along +X after the outward rotation above. Length
+    // matches the server's damage ray (kLaserBeamLength).
+    if (laser) {
+        const float beam = static_cast<float>(kLaserBeamLength * zoom);
+        const float half = static_cast<float>(std::max(1.5, kLaserBeamHalfWidth * zoom));
+        canvas.save();
+        ui::setFill(canvas, 0xFF3B3Bu, 0.22);
+        canvas.fillRect(0, -half * 2.2f, beam, half * 4.4f);
+        ui::setFill(canvas, 0xFF1E1Eu, 0.85);
+        canvas.fillRect(0, -half, beam, half * 2.0f);
+        ui::setFill(canvas, 0xFF8A8Au, 0.95);
+        canvas.fillRect(0, -half * 0.35f, beam, half * 0.7f);
+        canvas.restore();
     }
     canvas.restore();
 }
@@ -3041,7 +3063,7 @@ void WorldRenderer::drawFlowerBody(Canvas& canvas, const RemoteEntity& entity,
         drawUndeadWrap(canvas, timeSeconds);
     }
     if (!skin && (entity.equipFlags & EquipCrown)) drawWornCrown(canvas);
-    if (entity.equipFlags & EquipPharaohCrown) drawWornPharaohCrown(canvas);
+    if (entity.equipFlags & EquipPharaohCrown) drawWornPharaohCrown(canvas, entity.equipFlags);
     drawReferenceHeadwear(canvas,entity.equipFlags,timeSeconds);
 }
 
@@ -3056,6 +3078,51 @@ void WorldRenderer::drawReferenceHeadwear(Canvas& canvas,std::uint16_t equipFlag
         headwear(EquipCatEars,"arctic_ears",-18,66);
         headwear(EquipHalo,"void_halo",-40,76);
     }
+}
+
+void WorldRenderer::drawWornPharaohCrown(Canvas& canvas, std::uint16_t equipFlags) const {
+    if (!content_ || !sprites_) return;
+    const auto crown = content_->petalIndex("pharaoh_s_crown");
+    if (crown == kInvalidIndex || !sprites_->petalDrawable(crown)) return;
+
+    sprites_->drawPetal(canvas, crown, Rarity::Common, 0, -13, 66, 0, 0);
+    if (!(equipFlags & EquipApexPharaohCrown)) return;
+
+    canvas.save();
+
+    // Follow the fabric edge so the trim sits within the original silhouette.
+    canvas.beginPath();
+    canvas.moveTo(-22, -22);
+    canvas.quadraticCurveTo(-17, -36, 0, -37);
+    canvas.quadraticCurveTo(17, -36, 22, -22);
+    for (const float side : {-1.0f, 1.0f}) {
+        canvas.moveTo(side * 25, -2);
+        canvas.lineTo(side * 24.5f, 9);
+        canvas.lineTo(side * 16, 9.5f);
+    }
+    canvas.setLineCap("round");
+    canvas.setLineJoin("round");
+    ui::setStroke(canvas, 0xE8C469u);
+    canvas.setLineWidth(1.15f);
+    canvas.stroke();
+
+    canvas.beginPath();
+    canvas.moveTo(0, -33.8f);
+    canvas.lineTo(3.4f, -30);
+    canvas.lineTo(0, -25.6f);
+    canvas.lineTo(-3.4f, -30);
+    canvas.closePath();
+    ui::setFill(canvas, 0x154653u);
+    canvas.fill();
+
+    canvas.beginPath();
+    canvas.moveTo(0, -33);
+    canvas.lineTo(2.2f, -30.2f);
+    canvas.lineTo(-1.6f, -30.5f);
+    canvas.closePath();
+    ui::setFill(canvas, 0x70B8B4u);
+    canvas.fill();
+    canvas.restore();
 }
 
 void WorldRenderer::drawDefaultFlower(Canvas& canvas, const RemoteEntity& entity,
@@ -3230,7 +3297,7 @@ void WorldRenderer::drawFace(Canvas& canvas, std::uint8_t faceFlags, std::uint16
     // florr wraps the bandage on after the third eye and before the crown.
     if (wrappedInBandage(faceFlags, equipFlags)) drawUndeadWrap(canvas, timeSeconds);
     if (equipFlags & EquipCrown) drawWornCrown(canvas);
-    if (equipFlags & EquipPharaohCrown) drawWornPharaohCrown(canvas);
+    if (equipFlags & EquipPharaohCrown) drawWornPharaohCrown(canvas, equipFlags);
 }
 
 void WorldRenderer::drawPumpkin(Canvas& canvas, const RemoteEntity& entity) const {
@@ -4246,7 +4313,7 @@ void WorldRenderer::drawTeleporters(Canvas& canvas, const Camera& camera, Realm 
 }
 
 void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const Camera& camera,
-                               Vec2 at, double timeSeconds) const {
+                               Vec2 at, double timeSeconds, double distantMobMarkerLimit) const {
     const double zoom = camera.zoom();
     const Vec2 screen = camera.worldToScreen(at);
     const double radius = entity.radius * zoom;
@@ -4286,12 +4353,31 @@ void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const
             mob.chasing = (entity.state & net::StateChasing) != 0;
             mob.pet = (entity.spawnFlags & net::SpawnIsPet) != 0;
             mob.unloaded = (entity.state & net::StateUnloaded) != 0;
-            drawMobBody(canvas, camera, mob, timeSeconds);
+            const MobConfig* type = content_ ? &content_->mob(mob.typeIndex) : nullptr;
+            const double artScale = type && type->visualScale > 0.0 ? type->visualScale : 1.0;
+            const double diameter = radius * 2.0 * artScale;
+            // On a pulled-back camera, use one rarity-coloured square for bodies
+            // whose entire art footprint is only a few pixels. Keep any body
+            // with extra artwork or an active combat cue on the normal path.
+            if (distantMobMarkerLimit > 0.0 && diameter > 0.5 && diameter <= distantMobMarkerLimit &&
+                mob.rarity <= Rarity::Mythic && !mob.pet && !mob.chasing && !options.hitboxes &&
+                type && !type->neverAmbient && !type->intangible && !type->hole &&
+                !type->emissive && !type->petalRing.present && !type->stingerShooter &&
+                type->segmentCount == 0 && !type->sharedChainBody() &&
+                type->visualOffsetX == 0.0 && type->visualOffsetY == 0.0 &&
+                hitTint(mob.netId).a == 0) {
+                const double size = std::max(diameter, static_cast<double>(canvas.width()) / canvas.pixelWidth());
+                ui::setFill(canvas, rarityColor(mob.rarity));
+                canvas.fillRect(static_cast<float>(screen.x - size * 0.5),
+                                static_cast<float>(screen.y - size * 0.5),
+                                static_cast<float>(size), static_cast<float>(size));
+            } else {
+                drawMobBody(canvas, camera, mob, timeSeconds);
+            }
 
             // A Killed event arrives after the snapshot has already erased the
             // entity, so remember what the mob looked like while it is here.
             mobShadows_[entity.netId] = mob;
-            const MobConfig* type = content_ ? &content_->mob(mob.typeIndex) : nullptr;
             const bool iceDragonSummon = mob.pet && type && type->id == "arctic_ice_dragon";
             if (zoom < kLowDetailMobLabelZoom && mob.rarity <= Rarity::Mythic && !iceDragonSummon) break;
 
@@ -5073,6 +5159,9 @@ void WorldRenderer::draw(Canvas& canvas, const EntityMap& entities, const Camera
         if (entity.isRingPetal()) return net::EntityKind::Mob;
         return entity.kind;
     };
+    const double distantMobMarkerLimit =
+        camera.zoom() <= kSmallMobMarkerZoom && canvas.pixelWidth() > 0
+            ? kSmallMobMarkerMaxPixels * canvas.width() / canvas.pixelWidth() : 0.0;
     const auto drawLive = [&](const RemoteEntity& entity) {
         // Every entity draws at its own interpolated position, petals
         // included: WorldView has already anchored each ring to the
@@ -5112,7 +5201,18 @@ void WorldRenderer::draw(Canvas& canvas, const EntityMap& entities, const Camera
                 }
             }
         }
-        drawEntity(canvas, entity, camera, at, timeSeconds);
+        double markerLimit = 0.0;
+        if (distantMobMarkerLimit > 0.0 && entity.kind == net::EntityKind::Mob) {
+            const double distance = distanceSq(at, selfDrawn);
+            if (distance > kSmallMobMarkerNearDistance * kSmallMobMarkerNearDistance) {
+                markerLimit = distantMobMarkerLimit;
+                if (distance > kVeryDistantMobMarkerDistance * kVeryDistantMobMarkerDistance &&
+                    content_ && !content_->mob(entity.typeIndex).chainBody) {
+                    markerLimit *= kVeryDistantMobMarkerMaxPixels / kSmallMobMarkerMaxPixels;
+                }
+            }
+        }
+        drawEntity(canvas, entity, camera, at, timeSeconds, markerLimit);
         if (options.hitboxes) drawHitbox(canvas, entity, camera, at);
     };
     // The mobs the server has already destroyed finish their animation in

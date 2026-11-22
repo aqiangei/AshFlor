@@ -808,6 +808,56 @@ TEST(a_split_flower_pays_for_what_it_buys) {
     CHECK_EQ(alice.view().self().stars, left);
 }
 
+TEST(splitter_spare_uses_live_rotation_and_viewport_without_taking_control) {
+    Harness h("splitter-rotation-viewport", {}, testsupport::dataDir(), 0);
+    CHECK(h.ready); if (!h.ready) return;
+    NetClient client;
+    CHECK(loginNew(h, client, "alice", "hunter2!"));
+    client.joinGame(1280, 720, {}, "alice");
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; }));
+    auto& world = h.server.world();
+
+    net::InputFrame frame;
+    frame.sequence = 100;
+    frame.rotationStep = 2;
+    frame.viewportWidth = 1800;
+    frame.viewportHeight = 1000;
+    client.sendInput(frame);
+    CHECK(h.stepUntil({&client}, [&] {
+        const auto body = soleBody(world, "alice");
+        return body != NULL_ENTITY && world.get<PlayerInput>(body).current.rotationStep == 2;
+    }));
+    CHECK(equipSplitter(h, client, "alice", content().petalIndex(kSplitterPetalId)));
+    CHECK(h.stepUntil({&client}, [&] { return bodiesNamed(world, "alice").size() == 2; }));
+    const auto halves = bodiesNamed(world, "alice");
+    if (halves.size() != 2) return;
+    for (auto body : halves) {
+        CHECK_EQ(world.get<PlayerInput>(body).current.rotationStep, 2);
+        CHECK_EQ(world.get<PlayerLocation>(body).viewport.x, 1800.0);
+        CHECK_EQ(world.get<PlayerLocation>(body).viewport.y, 1000.0);
+        world.get<Health>(body).invulnerableUntilMillis = 1e12;
+    }
+
+    frame.sequence++;
+    frame.rotationStep = 1;
+    frame.viewportWidth = 2400;
+    frame.viewportHeight = 1400;
+    client.sendInput(frame);
+    h.step(5, {&client});
+    for (auto body : halves) {
+        CHECK_EQ(world.get<PlayerInput>(body).current.rotationStep, 1);
+        CHECK_EQ(world.get<PlayerLocation>(body).viewport.x, 2400.0);
+        CHECK_EQ(world.get<PlayerLocation>(body).viewport.y, 1400.0);
+    }
+    const auto first = world.get<PetalRing>(halves[0]).spin;
+    const auto second = world.get<PetalRing>(halves[1]).spin;
+    h.step(4, {&client});
+    const auto firstChange = angleDelta(first, world.get<PetalRing>(halves[0]).spin);
+    const auto secondChange = angleDelta(second, world.get<PetalRing>(halves[1]).spin);
+    CHECK(std::abs(firstChange) > 1e-6);
+    CHECK_NEAR(firstChange, secondChange, 1e-6);
+}
+
 TEST(splitter_spare_fires_blueberries_with_the_active_flower) {
  Harness h("splitter-blueberry",{},testsupport::dataDir(),0);CHECK(h.ready);if(!h.ready)return;
  NetClient alice;CHECK(loginNew(h,alice,"alice","hunter2!"));alice.joinGame(1280,720,{},"alice");
@@ -947,6 +997,102 @@ TEST(death_summary_uses_credited_splitter_loot_and_ignores_visual_cues) {
     CHECK_EQ(alice.runLoot().front().petalIndex, rock);
     CHECK_EQ(alice.runLoot().front().rarity, Rarity::Rare);
     CHECK_EQ(alice.runLoot().front().count, 1u);
+}
+
+TEST(stars_from_distinct_simultaneous_split_kills_all_reach_the_account) {
+    Harness h("split-star-bounties",[](const std::string& path){
+        Database db;
+        std::string error;
+        db.load(path,error);
+        db.setPasswordCost(4);
+        const auto user=db.createUser("splitstars","password7");
+        if (!user.ok()) return;
+        auto& record=db.progress(user.account->id);
+        record.loadout.resize(kLoadoutSlots);
+        record.loadout[0]=StoredItem{};
+        record.loadout[0]->petalType=kSplitterPetalId;
+        record.loadout[0]->rarity=Rarity::Unique;
+        db.markDirty();
+        db.save();
+    }, flix::testsupport::dataDir(), 0);
+    CHECK(h.ready);
+    NetClient client;
+    if (!h.ready || !connectClient(h,client)) {CHECK(false);return;}
+    client.requestLogin("splitstars","password7");
+    if (!h.stepUntil({&client},[&]{return client.status()==NetClient::Status::LoggedIn;})) {CHECK(false);return;}
+    client.joinGame(1280,720,{},"splitstars");
+    auto& world=h.server.world();
+    const auto bodies=[&]{return Query<PlayerTag,PlayerAccount,PlayerProgress>{world}.collect();};
+    if (!h.stepUntil({&client},[&]{return bodies().size()==2;})) {CHECK(false);return;}
+    const auto halves=bodies();
+    const double before=client.profile().stars;
+    const auto species=content().mobIndex("ladybug");
+    const auto make=[&](Entity player,Rarity tier,Vec2 pos,double hp=1.0){
+        auto& at=world.get<Transform>(player);
+        at.position=pos;
+        world.get<ContactDamage>(player).amount=10000;
+        const auto enemy=world.create();
+        world.add<MobTag>(enemy);
+        world.add<Bounty>(enemy);
+        world.add<MobType>(enemy,MobType{species,tier});
+        world.add<Transform>(enemy,Transform{pos,0,at.realm});
+        world.add<Body>(enemy,Body{5,1});
+        world.add<Health>(enemy,Health{hp,hp});
+        world.add<Faction>(enemy,Faction{Team::Hostiles,false});
+        return enemy;
+    };
+    const auto realm=world.get<Transform>(halves[0]).realm;
+    const auto clearFrom=[&](double startX){
+        for (double x=startX;x<startX+3500;x+=100) {
+            for (double y=1500;y<6000;y+=100) {
+                bool clear=true;
+                for (const double dx : {-40.0,0.0,40.0})
+                    for (const double dy : {-40.0,0.0,40.0})
+                        clear &= !h.server.terrain().blocked({x+dx,y+dy},realm);
+                if (clear) return Vec2{x,y};
+            }
+        }
+        return Vec2{};
+    };
+    const auto pos1=clearFrom(1500);
+    const auto pos2=clearFrom(5200);
+    if (pos1.x==0 || pos2.x==0) {CHECK(false);return;}
+    const auto e1=make(halves[0],Rarity::Mythic,pos1);
+    const auto e2=make(halves[1],Rarity::Ultra,pos2);
+    h.step(1,{&client});
+    CHECK(!world.isAlive(e1) || world.has<Dead>(e1));
+    CHECK(!world.isAlive(e2) || world.has<Dead>(e2));
+    h.step(20,{&client});
+    const auto& db=h.server.database();
+    const auto* account=db.findUser("splitstars");
+    const auto* stored=account?db.findProgress(account->id):nullptr;
+    if (!stored) {CHECK(false);return;}
+    const auto& kills=stored->mobKills["ladybug"];
+    CHECK_EQ(kills["mythic"].asInt(),1);
+    CHECK_EQ(kills["ultra"].asInt(),1);
+    CHECK_NEAR(stored->stars,before+6,1e-9);
+    CHECK_NEAR(client.profile().stars,before+6,1e-9);
+    for (auto half:halves) CHECK_NEAR(world.get<PlayerProgress>(half).stars,before+6,1e-9);
+
+    // Both halves contribute and the ledger combines their damage under one
+    // connection. The server's finishing hit should still pay only once.
+    const auto shared=make(halves[0],Rarity::Mythic,pos1,3);
+    CombatSystem prehit;
+    prehit.applyDamage(world,shared,halves[0],1,100000);
+    prehit.applyDamage(world,shared,halves[1],1,100000);
+    const auto& contributed=world.get<Bounty>(shared).contributors;
+    CHECK_EQ(contributed.size(),std::size_t(1));
+    if (!contributed.empty()) CHECK_NEAR(contributed.front().damage,2.0,1e-9);
+    CHECK(!world.has<Dead>(shared));
+    CHECK(h.stepUntil({&client},[&]{return !world.isAlive(shared) || world.has<Dead>(shared);},30));
+    h.step(20,{&client});
+    const auto* finished=db.findProgress(account->id);
+    if (!finished) {CHECK(false);return;}
+    CHECK_EQ(finished->mobKills["ladybug"]["mythic"].asInt(),2);
+    CHECK_EQ(finished->mobKills["ladybug"]["ultra"].asInt(),1);
+    CHECK_NEAR(finished->stars,before+7,1e-9);
+    CHECK_NEAR(client.profile().stars,before+7,1e-9);
+    for (auto half:halves) CHECK_NEAR(world.get<PlayerProgress>(half).stars,before+7,1e-9);
 }
 
 TEST(splitter_parked_kills_keep_loot_entitlement_for_the_active_body) {

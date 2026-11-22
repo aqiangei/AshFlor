@@ -288,7 +288,7 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
                                 static_cast<float>(panel.w - 20), static_cast<float>(y - top));
                 label.align = Align::Left;
                 label.fill = own ? kPaper : rankColor(static_cast<int>(i) + 1);
-                const auto name = own ? (row.published ? "已公开" : "私密配装") :
+                const auto name = own ? (row.historical ? "旧版成绩" : (row.published ? "已公开" : "私密配装")) :
                     std::to_string(i + 1) + ". " + row.name;
                 label.size = fit(name, (right - left) * 0.48, 15.0);
                 text(canvas, name, left, top + 12.0, label);
@@ -303,7 +303,7 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
                 text(canvas, formatCompact(row.damage / net::kPracticeWindowSeconds) + " DPS",
                      scoreRight, top + 18.0, label);
                 if (own) {
-                    pillButton(canvas, share, row.published ? "设为私密" : "公开", kLeaderboardSkin.border);
+                    if (!row.historical) pillButton(canvas, share, row.published ? "设为私密" : "公开", kLeaderboardSkin.border);
                     const bool confirm = pendingDeleteRecord_ == row.id && ctx.timeSeconds < pendingDeleteUntil_;
                     pillButton(canvas, remove, confirm ? "确认删除" : "删除",
                                confirm ? 0xB74A40u : kLeaderboardSkin.border);
@@ -318,7 +318,7 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
                             pendingDeleteUntil_ = ctx.timeSeconds + 4.0;
                         }
                     }
-                    if (!pending && ctx.pressed() && view.contains(mouse) && share.contains(mouse))
+                    if (!row.historical && !pending && ctx.pressed() && view.contains(mouse) && share.contains(mouse))
                         ctx.net.requestPracticeBoard(ctx.settings.showAdminsOnLeaderboard,
                             row.published ? net::PracticeBoardAction::Hide : net::PracticeBoardAction::Publish, row.id);
                 }

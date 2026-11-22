@@ -88,6 +88,36 @@ TEST(shard_apex_hammer_transfer_is_atomic_and_replays_once) {
     CHECK(authority.apply(node, input, plan)["replayed"].asBool());
     CHECK_EQ(authority.snapshot().dump(), snapshot.dump());
 }
+TEST(shard_hyper_abandon_releases_a_legacy_coin_only_claim) {
+    auto seed = hyperSeed();
+    seed["accounts"]["b"]["record"]["inventory"]["apex"]["petal_rose"] = 0;
+    seed["accounts"]["b"]["record"]["inventory"]["apex"]["petal_coin"] = 1;
+    const Node node{"one", "transaction-actor"};
+    Authority authority(seed, [](const Json&) { return Durability::Committed; });
+    const auto lease = acquireHyper(authority, node, "b");
+    CHECK(lease["ok"].asBool());
+
+    Json request = Json::object();
+    request["op"] = "hyper";
+    request["requestId"] = "abandon-legacy-coin";
+    request["account"] = "b";
+    request["action"] = "abandon";
+    request["forgeKey"] = "rose";
+    request["leases"]["b"]["epoch"] = lease["epoch"];
+    request["leases"]["b"]["revision"] = lease["revision"];
+    Json business;
+    const auto plan = [&](const Json& state) { return planHeldHyper(state, node, request, 1000, business); };
+    CHECK(authority.apply(node, request, plan)["ok"].asBool());
+    CHECK(business["ok"].asBool());
+    const auto after = authority.snapshot();
+    CHECK(after["globals"]["hyperForges"]["rose"]["owner"].asString().empty());
+    const auto& inventory = after["accounts"]["b"]["record"]["inventory"];
+    CHECK_EQ(inventory["apex"]["petal_coin"].asInt(), 1);
+    CHECK_EQ(inventory["unique"]["petal_rose"].asInt(), 2);
+    CHECK(authority.apply(node, request, plan)["replayed"].asBool());
+    CHECK_EQ(authority.snapshot().dump(), after.dump());
+}
+
 TEST(shard_hyper_planner_rejects_foreign_or_stale_owner_before_business_changes) {
     Node one{"one","boot"},two{"two","boot"};int saves=0;
     Authority authority(hyperSeed(),[&](const Json&){++saves;return Durability::Committed;});

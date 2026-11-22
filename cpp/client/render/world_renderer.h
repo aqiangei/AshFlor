@@ -414,7 +414,8 @@ private:
     void drawMapDecorations(Canvas&, const Camera&, Realm realm, double timeSeconds) const;
     void drawTeleporters(Canvas&, const Camera&, Realm realm, double timeSeconds) const;
     bool riftOpen_ = false;
-    void drawEntity(Canvas&, const RemoteEntity&, const Camera&, Vec2 at, double timeSeconds) const;
+    void drawEntity(Canvas&, const RemoteEntity&, const Camera&, Vec2 at, double timeSeconds,
+                    double distantMobMarkerLimit = 0.0) const;
     void drawFlower(Canvas&, const RemoteEntity&, const Camera&, Vec2 at, double timeSeconds) const;
     void drawDefaultFlower(Canvas&, const RemoteEntity&, double timeSeconds) const;
     bool drawMagicEyes(Canvas&, std::uint16_t equipFlags, double spacing, double y,
@@ -554,6 +555,7 @@ private:
     /// needs a mouth the live attack/defend bits would never produce, and the
     /// digger the one that needs a body that is not flower yellow.
     void drawReferenceHeadwear(Canvas&,std::uint16_t,double timeSeconds) const;
+    void drawWornPharaohCrown(Canvas&, std::uint16_t equipFlags) const;
     void drawFace(Canvas&, std::uint8_t faceFlags, std::uint16_t equipFlags, double eyeX,
                   double eyeY, double mouth, double timeSeconds,
                   std::uint32_t bodyColor = 0xFFE763u) const;

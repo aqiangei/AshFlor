@@ -662,36 +662,40 @@ void DungeonSystem::runWave(WaveRoom& room, World& world, const Terrain& terrain
         // Big bodies start further out; the outer lane stays 960 from the party.
         const double inner = std::max(520.0, radius + 200.0);
         const double step = std::max(0.0, (960.0 - inner) / (lanes - 1));
-        const Vec2 anchor = anchors[slot % standing];
         const int firstSector = (slot * 7 + round.number % sectors) % sectors;
         const double heading = kTau * (round.number % sectors) / (sectors * sectors);
         std::optional<Vec2> position;
-        for (int attempt = 0; attempt < positions; ++attempt) {
-            const int index = (firstSector * lanes + attempt) % positions;
-            const int lane = index % lanes;
-            const double angle = heading + kTau * (index / lanes + lane * 0.5) / sectors;
-            const Vec2 at = anchor + Vec2::fromAngle(angle, inner + lane * step);
-            const auto wall = terrain.resolveWall(at, radius, room.realm);
-            if (wall.collided || wall.unresolved) continue;
-            if (std::any_of(meteors.begin(), meteors.end(), [&](const auto& meteor) {
-                    const double reach = radius + meteor.second;
-                    return distanceSq(at, meteor.first) < reach * reach;
-                })) continue;
-            const auto tooClose = [&](Entity other, double gap) {
-                const auto* transform = world.tryGet<Transform>(other);
-                const auto* body = world.tryGet<Body>(other);
-                if (!transform || !body || transform->realm != room.realm) return false;
-                const double reach = radius + body->radius + gap;
-                return distanceSq(transform->position, at) < reach * reach;
-            };
-            if (std::any_of(room.members.begin(), room.members.end(),
-                            [&](const auto& member) { return tooClose(member.player, 150.0); }) ||
-                std::any_of(room.rounds.begin(), room.rounds.end(), [&](const auto& active) {
-                    return std::any_of(active.enemies.begin(), active.enemies.end(),
-                                       [&](Entity e) { return tooClose(e, 20.0); });
-                })) continue;
-            position = at;
-            break;
+        // This slot can be retried with the same queue index. Search the
+        // other standing players too so one blocked anchor cannot stall it.
+        for (int offset = 0; offset < standing && !position; ++offset) {
+            const Vec2 anchor = anchors[(slot + offset) % standing];
+            for (int attempt = 0; attempt < positions; ++attempt) {
+                const int index = (firstSector * lanes + attempt) % positions;
+                const int lane = index % lanes;
+                const double angle = heading + kTau * (index / lanes + lane * 0.5) / sectors;
+                const Vec2 at = anchor + Vec2::fromAngle(angle, inner + lane * step);
+                const auto wall = terrain.resolveWall(at, radius, room.realm);
+                if (wall.collided || wall.unresolved) continue;
+                if (std::any_of(meteors.begin(), meteors.end(), [&](const auto& meteor) {
+                        const double reach = radius + meteor.second;
+                        return distanceSq(at, meteor.first) < reach * reach;
+                    })) continue;
+                const auto tooClose = [&](Entity other, double gap) {
+                    const auto* transform = world.tryGet<Transform>(other);
+                    const auto* body = world.tryGet<Body>(other);
+                    if (!transform || !body || transform->realm != room.realm) return false;
+                    const double reach = radius + body->radius + gap;
+                    return distanceSq(transform->position, at) < reach * reach;
+                };
+                if (std::any_of(room.members.begin(), room.members.end(),
+                                [&](const auto& member) { return tooClose(member.player, 150.0); }) ||
+                    std::any_of(room.rounds.begin(), room.rounds.end(), [&](const auto& active) {
+                        return std::any_of(active.enemies.begin(), active.enemies.end(),
+                                           [&](Entity e) { return tooClose(e, 20.0); });
+                    })) continue;
+                position = at;
+                break;
+            }
         }
         if (!position) break;
         const Entity enemy = spawning.spawnMob(world, terrain, content, type, rarity, *position,
@@ -822,6 +826,7 @@ void DungeonSystem::run(World& world, const Terrain& terrain, const ContentRegis
     }
     std::vector<std::pair<Entity, Instance*>> adopted;
     Query<MobTag, Transform> mobs{world};
+    mobs.without<Pet>();
     mobs.each([&](Entity e, MobTag&, Transform& transform) {
         const int slot = byRealm_[realmIndex(transform.realm)];
         if (slot < 0) return;

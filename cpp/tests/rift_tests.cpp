@@ -101,6 +101,17 @@ TEST(rift_elimination_ends_the_round_and_champion_claims_all_rewards_once) {
     CHECK(h.stepUntil(clients, [&] { return winner.profile().stackCount(rock, Rarity::Rare) == 1; }, 150));
     CHECK_EQ(GameServerPeer::authorityDb(h.server).progress(entrant->userId)
                  .itemCount(Rarity::Rare, "petal_rock"), 0);
+    // The rift freezes XP, so absorbing must also leave the run bag intact.
+    const double xpBefore = h.server.world().get<PlayerProgress>(entrant->entity).totalXp;
+    winner.requestAbsorb({{rock, Rarity::Rare, 1}}, "password7");
+    CHECK(h.stepUntil(clients, [&] { return winner.absorbOutcome().pending; }));
+    const auto& absorb = winner.absorbOutcome();
+    CHECK(!absorb.success);
+    CHECK_EQ(absorb.reward, 0.0);
+    CHECK_EQ(absorb.absorbed, 0u);
+    CHECK(!absorb.reason.empty());
+    CHECK_EQ(entrant->arena->itemCount(Rarity::Rare, "petal_rock"), 1);
+    CHECK_EQ(h.server.world().get<PlayerProgress>(entrant->entity).totalXp, xpBefore);
     h.clock += 3.0 * 60 * 1000;
     CHECK(h.stepUntil(clients, [&] { return !winner.riftOpen(); }));
     auto& world = h.server.world();

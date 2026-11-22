@@ -94,84 +94,58 @@ TEST(a_bar_with_no_antennae_or_observer_asks_the_camera_for_nothing) {
     CHECK_NEAR(zoomOf(p), 1.0, 1e-12);
 }
 
-TEST(antennae_and_observer_zoom_the_camera_out_by_their_authored_figure) {
+TEST(antennae_and_observer_zoom_the_camera_out_at_their_supported_tiers) {
     if (!contentLoaded()) return;
     Profile p = emptyBar();
     p.loadout[2] = slot("antennae");
     CHECK_NEAR(zoomOf(p), 0.92, 1e-12);
     p.loadout[2] = slot("observer");
-    CHECK_NEAR(zoomOf(p), 0.85, 1e-12);
+    CHECK_NEAR(zoomOf(p), 1.0, 1e-12);
+    p.loadout[2] = slot("observer", Rarity::Rare);
+    CHECK_NEAR(zoomOf(p), 1.0 / 1.12, 1e-12);
 }
 
 TEST(two_of_them_show_the_better_one_and_never_stack) {
     if (!contentLoaded()) return;
     Profile p = emptyBar();
     p.loadout[0] = slot("antennae");
-    p.loadout[1] = slot("observer");
-    CHECK_NEAR(zoomOf(p), 0.85, 1e-12);
-    // Two observers are one observer, not 0.85 squared.
-    p.loadout[0] = slot("observer");
-    CHECK_NEAR(zoomOf(p), 0.85, 1e-12);
-    // And the stronger tier wins whichever slot it sits in. Unique antennae
-    // reaches the 10x effective output cap.
-    p.loadout[5] = slot("antennae", Rarity::Unique);
+    p.loadout[1] = slot("observer", Rarity::Rare);
+    CHECK_NEAR(zoomOf(p), 1.0 / 1.12, 1e-12);
+    p.loadout[0] = slot("observer", Rarity::Rare);
+    CHECK_NEAR(zoomOf(p), 1.0 / 1.12, 1e-12);
+    p.loadout[p.skills.loadoutSlots() - 1] = slot("antennae", Rarity::Unique);
     CHECK_NEAR(zoomOf(p), 0.1, 1e-12);
 }
 
-TEST(rarity_widens_the_view_by_four_thirds_a_tier) {
+TEST(observer_camera_zoom_uses_the_current_rarity_ladder) {
     if (!contentLoaded()) return;
     Profile p = emptyBar();
-    // 1 + (0.85 - 1) * 4/3 = 0.80 at uncommon, and the step is the same
-    // PROPORTION of the gap every tier after it rather than the same slice of
-    // a linear ramp.
-    p.loadout[0] = slot("observer", Rarity::Uncommon);
-    CHECK_NEAR(zoomOf(p), 0.80, 1e-12);
-    p.loadout[0] = slot("observer", Rarity::Rare);
-    CHECK_NEAR(zoomOf(p), scaled(0.85, Rarity::Rare), 1e-12);
-    CHECK_NEAR(1.0 - zoomOf(p), (1.0 - 0.80) * 4.0 / 3.0, 1e-12);
-
-    // Observer keeps its existing rarity ramp and generic camera floor.
-    double previous = 1.0;
-    for (int i = 0; i < kRarityCount; ++i) {
+    constexpr double vision[] = {1.0, 1.0, 1.12, 1.2, 1.3, 1.6, 2.2, 4.0, 8.0, 9.2};
+    static_assert(std::size(vision) == kLadderRarityCount);
+    for (int i = 0; i < kLadderRarityCount; ++i) {
         p.loadout[0] = slot("observer", static_cast<Rarity>(i));
-        const double zoom = zoomOf(p);
-        const double asked = scaled(0.85, static_cast<Rarity>(i));
-        CHECK_NEAR(zoom, std::max(kZoomFloor, asked), 1e-12);
-        if (asked > kZoomFloor) CHECK(zoom < previous);
-        else CHECK_NEAR(zoom, kZoomFloor, 1e-12);
-        previous = zoom;
+        CHECK_NEAR(zoomOf(p), 1.0 / vision[i], 1e-12);
     }
 }
 
-TEST(the_view_is_floored_where_the_browser_floored_it) {
+TEST(the_view_is_floored_for_generic_camera_petals) {
     if (!contentLoaded()) return;
     Profile p = emptyBar();
-    // Authored at 0.1, an apex scope would be 1 - 0.9 * 4.375: through zero
-    // and out the other side. It stops at 0.3, as getPetalStats did.
     p.loadout[0] = slot("scope", Rarity::Apex);
     CHECK(scaled(0.1, Rarity::Apex) < 0.0);
-    CHECK_NEAR(zoomOf(p), 0.3, 1e-12);
-    // On the geometric ladder the observer reaches the floor too, and that is
-    // what the floor is FOR: a petal authored 0.15 off 1 runs through zero
-    // partway up a curve that multiplies its distance from 1 nine times over.
-    // Mythic is the last tier it asks for anything the floor allows.
-    p.loadout[0] = slot("observer", Rarity::Mythic);
-    CHECK(zoomOf(p) > 0.3);
-    p.loadout[0] = slot("observer", Rarity::Ultra);
-    CHECK_NEAR(zoomOf(p), 0.3, 1e-12);
-    p.loadout[0] = slot("observer", Rarity::Apex);
-    CHECK_NEAR(zoomOf(p), 0.3, 1e-12);
+    CHECK_NEAR(zoomOf(p), kZoomFloor, 1e-12);
 }
 
 TEST(storage_grants_no_zoom) {
     if (!contentLoaded()) return;
     Profile p = emptyBar();
-    // Slot ten is the first secondary slot: an observer stashed there is not
-    // worn, just as its equipment bit is not set and it draws no antennae.
-    p.loadout[static_cast<std::size_t>(kLoadoutActiveSlots)] = slot("observer", Rarity::Unique);
+    const auto observer = slot("observer", Rarity::Rare);
+    p.loadout[kLoadoutActiveSlots] = observer;
     CHECK_NEAR(zoomOf(p), 1.0, 1e-12);
-    p.loadout[static_cast<std::size_t>(kLoadoutActiveSlots) - 1] = slot("observer");
-    CHECK_NEAR(zoomOf(p), 0.85, 1e-12);
+    p.loadout[p.skills.loadoutSlots()] = observer;
+    CHECK_NEAR(zoomOf(p), 1.0, 1e-12);
+    p.loadout[p.skills.loadoutSlots() - 1] = observer;
+    CHECK_NEAR(zoomOf(p), 1.0 / 1.12, 1e-12);
 }
 
 TEST(a_slot_the_content_does_not_know_is_skipped) {

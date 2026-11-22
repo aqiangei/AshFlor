@@ -686,10 +686,21 @@ void App::frame(double dt) {
     // frame takes hold of it.
     window_.setRenderScale(config_.lowMemoryGraphics
         ? std::min(0.5, menus_.settings().renderScale) : menus_.settings().renderScale);
-    const double loadoutZoom = loadoutCameraZoom(net_.profile(), content());
-    // Wide views render substantially more of the map. Wait for the complete
-    // frame before presenting it, even if low latency mode was requested.
-    window_.setDesynchronized(menus_.settings().desynchronizedCanvas && loadoutZoom >= 0.4);
+    const Profile& profile = net_.profile();
+    const double loadoutZoom = loadoutCameraZoom(profile, content());
+    // The mobile canvas presents complete frames. If either row can produce a
+    // wide view, keep the same presentation mode across a row swap so the
+    // browser does not replace the visible canvas during the zoom.
+    constexpr double kDesynchronizedZoomMin = 0.4;
+    bool desynchronized = menus_.settings().desynchronizedCanvas && loadoutZoom >= kDesynchronizedZoomMin;
+    const auto needsFullFrame = [&](int slot) {
+        const EquippedPetal petal = profile.equipped(content(), slot);
+        return !petal.empty() && equippedCameraZoom(content(), petal) < kDesynchronizedZoomMin;
+    };
+    for (int i = 0; coarsePointer_ && desynchronized && i < profile.skills.loadoutSlots(); ++i) {
+        desynchronized = !needsFullFrame(i) && !needsFullFrame(kLoadoutBarPrimary + i);
+    }
+    window_.setDesynchronized(desynchronized);
     // Apply after the slider gesture has finished so the track and the
     // pointer stay in the same coordinate space throughout the drag.
     if (window_.touches().empty() && !window_.touchPan().active &&

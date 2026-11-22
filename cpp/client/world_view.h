@@ -82,6 +82,16 @@ struct MobPlateEase {
 /// `elapsed * 0.008` radians, elapsed in milliseconds.
 inline constexpr double kPadSpinRadiansPerSecond = 8.0;
 
+/// Two stages of position easing for a flower. The offset is the first stage
+/// relative to the drawn position, so a newly placed flower starts at rest.
+struct FlowerPositionEase {
+    Vec2 guideOffset;
+    bool cutPending = false;
+
+    void observe(Vec2 previousTarget, Vec2 target);
+    void step(Vec2& position, Vec2 target, double fraction, double carry);
+};
+
 /// One entity as the client knows it.
 struct RemoteEntity {
     std::uint32_t dropQuantity = 1;
@@ -101,6 +111,7 @@ struct RemoteEntity {
 
     /// What the renderer reads: the DRAWN position and facing.
     Vec2 position;
+    FlowerPositionEase flowerPositionEase;
     double angle = 0;
 
     /// Mob-only position history, stamped on the shared server timeline (see
@@ -356,6 +367,9 @@ public:
         RemoteEntity& seeded = entities_[entity.netId] = entity;
         const auto guild=guildNames_.find(seeded.name);
         if(guild!=guildNames_.end()) seeded.guildName=guild->second;
+        if (seeded.kind == net::EntityKind::Player) {
+            seeded.flowerPositionEase.observe(seeded.position, seeded.targetPosition);
+        }
         seeded.healthBar.snap(entity.healthFraction, entity.shieldFraction);
         seeded.plate.snap(entity.healthFraction, entity.shieldFraction, plateShows(seeded));
     }
@@ -371,7 +385,12 @@ public:
     /// seedForTest() cannot serve: it replaces the record, ease state included.
     void setTargetForTest(std::uint32_t netId, Vec2 position) {
         const auto it = entities_.find(netId);
-        if (it != entities_.end()) it->second.targetPosition = position;
+        if (it == entities_.end()) return;
+        auto& entity = it->second;
+        if (entity.kind == net::EntityKind::Player) {
+            entity.flowerPositionEase.observe(entity.targetPosition, position);
+        }
+        entity.targetPosition = position;
     }
 
     const std::unordered_map<std::uint32_t, RemoteEntity>& entities() const { return entities_; }
@@ -475,6 +494,7 @@ private:
     /// on the self entity because the self entity does not exist until its
     /// spawn record arrives, and the camera needs an answer before then.
     Vec2 selfDrawnPosition_;
+    FlowerPositionEase selfPositionEase_;
     Vec2 localPreviewOffset_;
     int simulationPace_ = net::kTicksPerSecond;
     std::uint8_t localCombatInput_ = 0;

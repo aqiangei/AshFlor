@@ -10,6 +10,8 @@ if(process.argv[2]==='--legacy-third') {
   const cluster=require('./shards/ops/cluster-deploy.cjs');
   (process.argv[4]==='--resume-after-install'?cluster.resumeAfterInstall(process.argv[3],process.argv[5]):cluster.main(process.argv[3])).then(result=>console.log(JSON.stringify(result)))
     .catch(error=>{console.error(JSON.stringify({error:error.message,deployment:error.deployment}));process.exitCode=1;});
+} else if(process.env.FLORR_COORDINATED_RUN) {
+  require('./deploy-coordinated-realm.cjs');
 } else {
 // Run on the owner's Windows computer. A stopped snapshot must reach this
 // computer and pass SHA256 verification before any live files are replaced.

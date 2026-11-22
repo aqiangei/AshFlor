@@ -836,8 +836,14 @@ App::LobbyLayout App::lobbyLayout(int viewWidth, int viewHeight) const {
     // really has several doors to choose between.
     bool singleRow = true;
     for (const PickerTab& tab : tabs) singleRow &= tab.choices.size() <= 1;
+    // Centre the arrow and tabs together within the scaled viewport.
+    const bool showPrestige = !tabs.empty() && net_.profile().skills.prestigeUnlocked();
+    const double arrowSpace = showPrestige
+        ? kPickerGap + (singleRow ? kPickerSingleRowHeight : kPickerRowHeight) : 0.0;
+    const double tabSpace = rowSpace - arrowSpace;
+    const double tabCentre = centreX + arrowSpace * 0.5;
     const bool compact = tabs.size() * (kPickerMinWidth + kPickerGap) +
-                         kPickerMargin * 2.0 > rowSpace ||
+                         kPickerMargin * 2.0 > tabSpace ||
                          std::any_of(tabs.begin(), tabs.end(), [&](const PickerTab& tab) {
                              return tab.choices.size() * (kPickerMinWidth + kPickerGap) +
                                     kPickerMargin * 2.0 > rowSpace;
@@ -868,10 +874,10 @@ App::LobbyLayout App::lobbyLayout(int viewWidth, int viewHeight) const {
         append(layout.tabs, tabs.size());
         append(layout.doors, doorCount);
     } else if (singleRow) {
-        layPickerRow(layout.tabs, tabs.size(), pickerButtonWidth(tabs.size(), rowSpace), centreX,
+        layPickerRow(layout.tabs, tabs.size(), pickerButtonWidth(tabs.size(), tabSpace), tabCentre,
                      centreY - 20.0, kPickerSingleRowHeight);
     } else {
-        layPickerRow(layout.tabs, tabs.size(), pickerButtonWidth(tabs.size(), rowSpace), centreX,
+        layPickerRow(layout.tabs, tabs.size(), pickerButtonWidth(tabs.size(), tabSpace), tabCentre,
                      centreY + kPickerTwoRowTabsTop);
         for (const PickerTab& tab : tabs) {
             if (tab.id != pickerTab_ || tab.choices.size() < 2) continue;
@@ -885,7 +891,7 @@ App::LobbyLayout App::lobbyLayout(int viewWidth, int viewHeight) const {
     // first tab, so it reads as a switch on the whole row rather than as one
     // more biome. Only there once the talent is bought: left empty, it is
     // neither drawn nor hit.
-    if (!layout.tabs.empty() && net_.profile().skills.prestigeUnlocked()) {
+    if (showPrestige) {
         const Rect& first = layout.tabs.front();
         layout.prestige = compact
             ? Rect{layout.pickerView.x, layout.pickerView.y - 32.0, 28.0, 28.0}
@@ -1024,6 +1030,9 @@ void App::drawLobby(Canvas& canvas, double time) {
     hint.size = 14.0;
     hint.align = Align::Centre;
     hint.baseline = Baseline::Top;
+    const std::string movementHint = std::string(trEnZh("Press ", "按 ")) +
+        keyName(menus_.settings().controlKey(ControlAction::ToggleMouseControls)) +
+        trEnZh(" to switch between mouse and keyboard controls", " 在鼠标/键盘操控间切换");
     const char* lines[] = {
         trEnZh("Controls:", "操作："),
         trEnZh("Arrow keys to move", "方向键移动"),
@@ -1032,13 +1041,12 @@ void App::drawLobby(Canvas& canvas, double time) {
         trEnZh("Click a loadout item to use it.", "点击配装栏物品以使用。"),
         trEnZh("Press number keys 1-9 to swap items with secondary loadout",
                "按数字键 1-9 与副配装交换物品"),
-        trEnZh("Press K to switch between mouse and keyboard controls",
-               "按 K 在鼠标/键盘操控间切换"),
+        movementHint.c_str(),
         trEnZh("Use Q and E to swap petals", "用 Q / E 交换花瓣"),
-        trEnZh("Use T to unequip the selected petal", "用 T 卸下选中的花瓣"),
+        trEnZh("Use Delete to unequip the selected petal", "用 Delete 卸下选中的花瓣"),
     };
     // The last two lines name the keys that arm and empty the trash slot,
-    // which only the classic bar has. The modern one leaves Q/E/T unbound, so
+    // which only the classic bar has. The modern one uses different controls, so
     // it must not go on advertising them.
     const std::size_t shown =
         std::size(lines) - (menus_.settings().classicLoadoutBar ? 0u : 2u);

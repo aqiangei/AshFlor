@@ -37,9 +37,16 @@ TEST(feedback3748_rotation_follows_server_presets_and_autosave_policy) {
     command([&] { client.saveLoadoutPreset(0, 4); });
     command([&] { client.saveLoadoutPreset(1, 2); });
     CHECK_EQ(speed(0), 4); CHECK_EQ(speed(1), 2);
+    // Saving marks the slot active. Disable autosave for the first switch so
+    // the outgoing dial does not overwrite the other preset's saved speed.
+    client.setPresetAutosave(false);
+    CHECK(h.stepUntil({&client}, [&] { return !client.profile().presetAutosave; }));
     command([&] { client.loadLoadoutPreset(0, 4); });
     CHECK_EQ(client.takePresetRotationStep(), 4);
     CHECK_EQ(client.takePresetRotationStep(), 0);
+    CHECK_EQ(speed(1), 2);
+    client.setPresetAutosave(true);
+    CHECK(h.stepUntil({&client}, [&] { return client.profile().presetAutosave; }));
     command([&] { client.loadLoadoutPreset(1, 1); });
     CHECK_EQ(client.takePresetRotationStep(), 2);
     CHECK_EQ(speed(0), 1);

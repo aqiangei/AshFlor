@@ -191,6 +191,35 @@ TEST(a_save_cycle_loses_nothing_including_unknown_fields) {
     std::remove(path.c_str());
 }
 
+TEST(legacy_empty_titan_forge_counts_are_removed_without_losing_progress) {
+    const std::string path = scratchPath("forge-counts");
+    writeFile(path, R"({
+        "players": {
+            "smith": {"titanForgeCounts": {"rose": 1, "leaf": null, "oldPetal": 2}, "extraField": null},
+            "newcomer": {"titanForgeCounts": {"rose": null}}
+        },
+        "futureTable": {"smith": {"titanForgeCounts": {"leaf": null}}}
+    })");
+
+    Database db;
+    std::string error;
+    CHECK(db.load(path, error));
+    db.markDirty();
+    CHECK(db.save());
+
+    Json saved;
+    CHECK(Json::parse(readFile(path), saved, error));
+    const Json& root = saved;
+    const auto& smith = root["players"]["smith"];
+    CHECK_EQ(smith["titanForgeCounts"].size(), std::size_t(2));
+    CHECK_EQ(smith["titanForgeCounts"]["rose"].asInt(), 1);
+    CHECK_EQ(smith["titanForgeCounts"]["oldPetal"].asInt(), 2);
+    CHECK(!smith["titanForgeCounts"].contains("leaf"));
+    CHECK(smith.contains("extraField"));
+    CHECK(!root["players"]["newcomer"].contains("titanForgeCounts"));
+    CHECK(root["futureTable"]["smith"]["titanForgeCounts"].contains("leaf"));
+}
+
 TEST(an_unreadable_database_blocks_writes_instead_of_replacing_it) {
     const std::string path = scratchPath("corrupt");
     const std::string corrupt = "{ this is not json";

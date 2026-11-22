@@ -108,6 +108,11 @@ public:
     /// left untouched, so a caller can keep whatever it already had.
     static bool parse(const std::string& text, Json& out, std::string& error);
 
+    /// Transform each value in a named top-level object before keeping the
+    /// row in memory. The rest of the text follows the normal parse rules.
+    static bool parseWithRowTransform(const std::string& text, Json& out, std::string& error,
+                                      const char* table, void (*transform)(Json&));
+
     /// Convenience for callers with nothing to do about a parse failure.
     static Json parseOrNull(const std::string& text);
 

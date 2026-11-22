@@ -649,7 +649,8 @@ bool MobAiSystem::deepBulbApplies(const World& world, Entity self, Realm realm, 
 
 Entity MobAiSystem::acquireTarget(const World& world, const Terrain& terrain, const SpatialGrid& grid,
                                   Entity self, Vec2 from, Realm realm, double range,
-                                  bool raisedOnly, TargetScratch& scratch) const {
+                                  bool raisedOnly, TargetScratch& scratch,
+                                  double trainingClearance) const {
     // Never acquire what holdTarget() drops on the very next tick. A range
     // that grows with body size passes the retention radius at the top of the
     // ladder -- a unique queen ant's is over 14,000 units against 9,600 -- and
@@ -665,7 +666,7 @@ Entity MobAiSystem::acquireTarget(const World& world, const Terrain& terrain, co
     candidates.clear();
     for (const Entity candidate : scratch.entities) {
         if (candidate == self) continue;
-        if (!world.has<PlayerTag>(candidate)) continue;
+        if (!world.has<PlayerTag>(candidate) || isTrainingProtected(world, candidate)) continue;
         if (ghost) {
             const auto* visuals = world.tryGet<PlayerVisuals>(candidate);
             if (!visuals || !visuals->canSeeGhost(world.tryGet<MobType>(self)->rarity)) continue;
@@ -703,7 +704,10 @@ Entity MobAiSystem::acquireTarget(const World& world, const Terrain& terrain, co
     const std::size_t rays = std::min<std::size_t>(candidates.size(),
                                                    static_cast<std::size_t>(kTargetLosRayCap));
     for (std::size_t i = 0; i < rays; ++i) {
-        if (!terrain.segmentBlocked(from, candidates[i].position, realm)) return candidates[i].entity;
+        const auto& target = candidates[i];
+        if (trainingClearance > 0.0 &&
+            trainingSegmentBlocked(trainingZones_, realm, from, target.position, trainingClearance)) continue;
+        if (!terrain.segmentBlocked(from, target.position, realm)) return target.entity;
     }
     return NULL_ENTITY;
 }
@@ -757,7 +761,7 @@ Entity MobAiSystem::nearestAttacker(World& world, Entity self, Vec2 from, Realm 
         if (share.damage <= 0.0) continue;
         // Connection-keyed: a respawned flower still counts as the hitter.
         const Entity body = liveContributorBody(world, share);
-        if (body == NULL_ENTITY || !isStanding(world, body) ||
+        if (body == NULL_ENTITY || !isStanding(world, body) || isTrainingProtected(world, body) ||
             CombatSystem::gamblerIgnores(world, self, body)) continue;
         const Transform* transform = world.tryGet<Transform>(body);
         if (transform == nullptr) continue;
@@ -778,6 +782,7 @@ Entity MobAiSystem::nearestAttacker(World& world, Entity self, Vec2 from, Realm 
 bool MobAiSystem::holdTarget(const World& world, const Terrain& terrain, Entity self, Vec2 from, Realm realm,
                              MobAi& ai, double range, double nowMillis) const {
     const Entity target = ai.target;
+    if (isTrainingProtected(world, target)) return false;
     if (!isStanding(world, target) || CombatSystem::gamblerIgnores(world, self, target)) return false;
     const Transform* transform = world.tryGet<Transform>(target);
     if (transform == nullptr) return false;
@@ -1475,7 +1480,7 @@ void MobAiSystem::suckPlayers(World& world, const SpatialGrid& grid, Vec2 from, 
                               double dt) {
     grid.query(realm, from, kSandstormSuckRange, gridScratch_);
     for (const Entity candidate : gridScratch_) {
-        if (!world.has<PlayerTag>(candidate)) continue;
+        if (!world.has<PlayerTag>(candidate) || isTrainingProtected(world,candidate)) continue;
         if (!isStanding(world, candidate)) continue;
         Transform* at = world.tryGet<Transform>(candidate);
         if (at == nullptr) continue;
@@ -1880,12 +1885,11 @@ Vec2 MobAiSystem::stingerVolley(World& world, Entity self, const MobType& type, 
 // Level of detail
 // ---------------------------------------------------------------------------
 
-bool MobAiSystem::stepsThisTick(Entity self, Vec2 position, Realm realm, Rarity rarity,
-                                const std::vector<RealmPoint>& activePlayers) const {
+bool MobAiSystem::stepsThisTick(World& world, Entity self, Vec2 position, Realm realm, Rarity rarity) const {
     // A boss is never off: see the header. It is a few mobs' worth of full-rate
     // AI in exchange for the one class of mob whose behaviour anybody watches
     // from a distance.
-    if (fullSimulation_ || isBossRarity(rarity)) return true;
+    if (fullSimulation_ || alwaysSimulatesAsBoss(world, self, rarity)) return true;
     if (activePlayersIndex_.near(position, realm)) return true;
     return (tick_ + entityIndex(self)) % static_cast<std::uint64_t>(kMobFarStride) == 0;
 }
@@ -2684,8 +2688,7 @@ void MobAiSystem::followChains(World& world, const Terrain& terrain,
         const MobType* headType = world.tryGet<MobType>(head);
         const bool active =
             headTransform != nullptr && headType != nullptr &&
-            stepsThisTick(head, headTransform->position, headTransform->realm, headType->rarity,
-                          activePlayers);
+            stepsThisTick(world, head, headTransform->position, headTransform->realm, headType->rarity);
 
         visited_.insert(head);
         Entity ahead = head;
@@ -2998,7 +3001,7 @@ void MobAiSystem::prepareTargets(const World& world, const Terrain& terrain, con
             if (movingTargets[realm] || (ai->kind == AiKind::Neutral && !realmAggro_[realm].raised))
                 continue;
             if (!fullSimulation_ && ai->target == NULL_ENTITY &&
-                !isBossRarity(world.tryGet<MobType>(self)->rarity) &&
+                !alwaysSimulatesAsBoss(world, self, world.tryGet<MobType>(self)->rarity) &&
                 !activePlayersIndex_.near(at.position, at.realm, scratch.proximity) &&
                 (tick_ + entityIndex(self)) % static_cast<std::uint64_t>(kMobFarStride) != 0) continue;
 
@@ -3029,12 +3032,192 @@ void MobAiSystem::prepareTargets(const World& world, const Terrain& terrain, con
     });
 }
 
+bool MobAiSystem::validSilverfishLoad(World& world, Entity fish,
+                                          const SilverfishLoad& load) const {
+    const auto valid = [&](Entity e, const char* id) {
+        const auto* type = world.tryGet<MobType>(e);
+        const auto* at = world.tryGet<Transform>(e);
+        const auto* hp = world.tryGet<Health>(e);
+        const auto* ai = world.tryGet<MobAi>(e);
+        return world.isAlive(e) && type && at && hp && hp->alive() && ai &&
+            !ai->sleeping && !world.has<Dead>(e) && !world.has<Pet>(e) &&
+            type->configIndex < content().mobCount() && content().mob(type->configIndex).id == id &&
+            type->rarity == load.rarity && at->realm == load.realm && world.has<Body>(e);
+    };
+    if (!valid(fish, "silverfish") || !valid(load.bag, "garbage")) return false;
+    const auto* stableId = world.tryGet<NetId>(load.bag);
+    if (!stableId || !stableId->value) return false;
+    const auto& at = world.get<Transform>(fish);
+    const double reach = world.get<Body>(fish).radius + world.get<Body>(load.bag).radius + 96.0;
+    return distanceSq(at.position, load.lastCarrierAt) <= 600.0 * 600.0 &&
+        distanceSq(at.position, world.get<Transform>(load.bag).position) <= reach * reach;
+}
+
+void MobAiSystem::steerSilverfish(World& world, const Terrain& terrain,
+                                  const SpatialGrid& grid, const SpatialGrid& playerTargets,
+                                  double nowMillis, double dt) {
+    // Claim EXISTING same-rarity bags only. No spawn, inventory or reward mutation.
+    for (auto it = silverfishLoads_.begin(); it != silverfishLoads_.end();) {
+        if (!validSilverfishLoad(world, it->first, it->second)) it = silverfishLoads_.erase(it);
+        else ++it;
+    }
+    std::unordered_set<Entity> claimed;
+    for (const auto& row : silverfishLoads_) claimed.insert(row.second.bag);
+    constexpr double kBagReach = 900.0;
+    constexpr double kHomeArrival = 64.0;
+    for (const Entity fish : stepList_) {
+        const auto* type = world.tryGet<MobType>(fish);
+        auto* at = world.tryGet<Transform>(fish);
+        auto* motion = world.tryGet<Motion>(fish);
+        auto* brain = world.tryGet<MobAi>(fish);
+        const auto* hp = world.tryGet<Health>(fish);
+        if (!type || !at || !motion || !brain || !hp || !hp->alive() || brain->sleeping ||
+            world.has<Dead>(fish) || world.has<Pet>(fish) || type->configIndex >= content().mobCount() ||
+            content().mob(type->configIndex).id != "silverfish") continue;
+        const double speed = wildDriveFor(type->configIndex, type->rarity).chaseSpeed *
+                             slowFactorOf(world, fish, nowMillis);
+        auto load = silverfishLoads_.find(fish);
+        Entity bag = load == silverfishLoads_.end() ? NULL_ENTITY : load->second.bag;
+        const auto* home = world.tryGet<SilverfishHome>(fish);
+        const Vec2 homeward = home ? home->position - at->position : Vec2{};
+        const double homeDistanceSq = homeward.lengthSq();
+        const double radius = world.get<Body>(fish).radius;
+        const bool mustReturn = home && bag == NULL_ENTITY && homeDistanceSq > kBagReach * kBagReach &&
+            !terrain.segmentBlocked(at->position, home->position, at->realm) &&
+            !trainingSegmentBlocked(trainingZones_, at->realm, at->position, home->position, radius);
+        if (bag == NULL_ENTITY && !mustReturn) {
+            grid.query(at->realm, at->position, kBagReach, gridScratch_);
+            double best = kBagReach * kBagReach;
+            for (Entity e : gridScratch_) {
+                const auto* other = world.tryGet<MobType>(e);
+                const auto* pos = world.tryGet<Transform>(e);
+                const auto* health = world.tryGet<Health>(e);
+                const auto* stableId = world.tryGet<NetId>(e);
+                if (!stableId || !stableId->value || !other || !pos || !health || !health->alive() || world.has<Dead>(e) ||
+                    world.has<Pet>(e) || claimed.count(e) || !world.has<Body>(e) ||
+                    pos->realm != at->realm || other->rarity != type->rarity ||
+                    other->configIndex >= content().mobCount() || content().mob(other->configIndex).id != "garbage") continue;
+                const double gap = distanceSq(at->position, pos->position);
+                if (gap < best && !trainingSegmentBlocked(trainingZones_,at->realm,at->position,pos->position,world.get<Body>(fish).radius) && !terrain.segmentBlocked(at->position, pos->position, at->realm)) {
+                    bag = e; best = gap;
+                }
+            }
+            if (bag != NULL_ENTITY) {
+                const double touch = world.get<Body>(fish).radius + world.get<Body>(bag).radius + 12.0;
+                if (best <= touch * touch) {
+                    silverfishLoads_[fish] = {bag, type->rarity, at->realm, at->position};
+                    claimed.insert(bag);
+                    load = silverfishLoads_.find(fish);
+                }
+            }
+        }
+        const bool carrying = load != silverfishLoads_.end();
+        Vec2 desired{};
+        brain->target = NULL_ENTITY;
+        if (carrying || realmAggro_[realmIndex(at->realm)].raised) {
+            ++stats_.targetScans;
+            brain->target = acquireTarget(world, terrain, playerTargets, fish, at->position, at->realm,
+                                          900.0, !carrying, targetScratch_, world.get<Body>(fish).radius);
+        }
+        if (brain->target != NULL_ENTITY) {
+            desired = world.get<Transform>(brain->target).position - at->position;
+        } else if (mustReturn) {
+            desired = homeward;
+        } else if (!carrying && bag != NULL_ENTITY) {
+            claimed.insert(bag);
+            desired = world.get<Transform>(bag).position - at->position;
+        } else if (!carrying) {
+            Entity player = NULL_ENTITY; double best = 900.0 * 900.0;
+            grid.query(at->realm, at->position, 900.0, gridScratch_);
+            for (Entity e : gridScratch_) {
+                const auto* pos = world.tryGet<Transform>(e);
+                const auto* health = world.tryGet<Health>(e);
+                if (!world.has<PlayerTag>(e) || isTrainingProtected(world,e) || !pos || !health || !health->alive() ||
+                    world.has<Dead>(e) || pos->realm != at->realm) continue;
+                const double gap = distanceSq(at->position, pos->position);
+                if (gap < best && !trainingSegmentBlocked(trainingZones_,at->realm,at->position,pos->position,world.get<Body>(fish).radius) && !terrain.segmentBlocked(at->position, pos->position, at->realm)) {
+                    best = gap; player = e;
+                }
+            }
+            // The unladen insect only retreats from nearby players.
+            if (player != NULL_ENTITY && best < 450.0 * 450.0) {
+                desired = at->position - world.get<Transform>(player).position;
+            } else if (home && homeDistanceSq > kHomeArrival * kHomeArrival &&
+                       !terrain.segmentBlocked(at->position, home->position, at->realm) &&
+                       !trainingSegmentBlocked(trainingZones_, at->realm, at->position, home->position, radius)) {
+                desired = homeward;
+            }
+        }
+        bool exiting=false;
+        for(const auto& zone:trainingZones_) {
+            const double radius=zone.radius+world.get<Body>(fish).radius;
+            if(zone.realm==at->realm && distanceSq(zone.position,at->position)<radius*radius) {
+                desired=at->position-zone.position;if(desired.lengthSq()<1e-9)desired={1,0};exiting=true;break;
+            }
+        }
+        if(exiting) { motion->velocity=desired.normalized()*std::max(60.0,speed);brain->target=NULL_ENTITY;continue; }
+        if (desired.lengthSq() > 1.0) {
+            const double turn = (carrying ? 1.6 : 4.0) * dt;
+            at->angle = wrapAngle(at->angle + clamp(angleDelta(at->angle, desired.angle()), -turn, turn));
+            motion->velocity = Vec2::fromAngle(at->angle, speed * (carrying ? 0.65 : 1.0));
+        } else motion->velocity = {};
+        if(trainingSegmentBlocked(trainingZones_,at->realm,at->position,at->position+motion->velocity*dt,world.get<Body>(fish).radius))motion->velocity={};
+    }
+}
+
+void MobAiSystem::placeSilverfishLoads(World& world, const Terrain& terrain) {
+    // Movement roots garbage; this constraint runs after movement like centipede links.
+    // Release on death, variant/realm changes, sleep or teleports; never drag across a wall.
+    if (silverfishLoads_.empty()) return;
+    Query<PlantedMeteor, Transform, Body> meteors{world};
+    meteors.without<Dead>();
+    for (auto it = silverfishLoads_.begin(); it != silverfishLoads_.end();) {
+        if (!validSilverfishLoad(world, it->first, it->second)) { it = silverfishLoads_.erase(it); continue; }
+        const auto& fish = world.get<Transform>(it->first);
+        auto& bag = world.get<Transform>(it->second.bag);
+        const double radius = world.get<Body>(it->second.bag).radius;
+        const double reach = world.get<Body>(it->first).radius + radius + 2.0;
+        const Vec2 wanted = fish.position + Vec2::fromAngle(fish.angle, reach);
+        const auto placed = terrain.resolveWall(wanted, radius, fish.realm);
+        if (placed.unresolved || trainingSegmentBlocked(trainingZones_,fish.realm,bag.position,placed.position,radius) || terrain.segmentBlocked(bag.position, placed.position, fish.realm) ||
+            distanceSq(placed.position, wanted) > 16.0 * 16.0) {
+            it = silverfishLoads_.erase(it); continue;
+        }
+        // A stationary bag bypasses the mob movement pass. Sweep its full
+        // carried body here so the offset ahead of the fish cannot cross a meteor.
+        const Vec2 travel = placed.position - bag.position;
+        const double travelSq = travel.lengthSq();
+        bool hitsMeteor = false;
+        if (travelSq > 0.0) {
+            meteors.each([&](Entity, PlantedMeteor&, Transform& at, Body& body) {
+                if (hitsMeteor || at.realm != bag.realm) return;
+                const double reach = radius + sanitizeCollisionRadius(body.radius);
+                const Vec2 offset = at.position - bag.position;
+                const double toward = offset.x * travel.x + offset.y * travel.y;
+                // If a meteor is planted on the bag, allow it to move away.
+                if (toward <= 0.0) return;
+                const double fraction = std::min(1.0, toward / travelSq);
+                hitsMeteor = (offset - travel * fraction).lengthSq() < reach * reach;
+            });
+        }
+        if (hitsMeteor) {
+            it = silverfishLoads_.erase(it);
+            continue;
+        }
+        bag.position = placed.position;
+        if (auto* motion = world.tryGet<Motion>(it->second.bag)) motion->velocity = {};
+        it->second.lastCarrierAt = fish.position;
+        ++it;
+    }
+}
+
 void MobAiSystem::run(World& world, const Terrain& terrain, const SpatialGrid& grid,
                       const std::vector<RealmPoint>& activePlayers,
                       double nowMillis, double dt, CommandBuffer& commands,
                       const SpatialGrid* playerGrid) {
     // Wild scans only read flowers. Use a view with the same positions,
     // footprints and bucket order but without the pets' prey candidates.
+    trainingZones_ = refreshTrainingProtection(world, content());
     const SpatialGrid& playerTargets = playerGrid ? *playerGrid : grid;
     activePlayersIndex_.rebuild(activePlayers);
     sleepObservers_.rebuild(activePlayers);
@@ -3111,7 +3294,7 @@ void MobAiSystem::run(World& world, const Terrain& terrain, const SpatialGrid& g
         auto& brain = world.get<MobAi>(self);
         const bool wasSleeping = brain.sleeping;
         brain.sleeping = false;
-        const bool active = fullSimulation_ || isBossRarity(type->rarity) ||
+        const bool active = fullSimulation_ || alwaysSimulatesAsBoss(world, self, type->rarity) ||
             activePlayersIndex_.near(at->position, at->realm);
         // An unprovoked neutral without a local glow has no aggro search.
         // If it has been damaged, preserve the full provocation range.
@@ -3190,6 +3373,18 @@ void MobAiSystem::run(World& world, const Terrain& terrain, const SpatialGrid& g
                 lure = candidate; nearest = d;
             }
         }
+        // Existing wildlife must leave the test area as well as stop acquiring its users.
+        bool trainingExit=false;
+        if (!world.has<Pet>(self) && !world.has<Npc>(self)) for(const auto& zone:trainingZones_) {
+            const double radius=zone.radius+body->radius;
+            if(zone.realm!=transform->realm || distanceSq(zone.position,transform->position)>=radius*radius)continue;
+            Vec2 away=transform->position-zone.position;
+            if(away.lengthSq()<1e-9)away={1,0};
+            motion->velocity=away.normalized()*std::max(60.0,baitChaseSpeed);
+            ai->target=NULL_ENTITY;ai->unseenTarget=NULL_ENTITY;
+            transform->angle=away.angle();trainingExit=true;break;
+        }
+        if(trainingExit)continue;
         const auto* previousTarget = lure != NULL_ENTITY ? world.tryGet<Transform>(ai->target) : nullptr;
         if (lure != NULL_ENTITY && (prefersHoney ||
             !previousTarget || world.has<HoneyBait>(ai->target) ||
@@ -3202,6 +3397,7 @@ void MobAiSystem::run(World& world, const Terrain& terrain, const SpatialGrid& g
             if (delta.lengthSq() > 1.0) transform->angle = delta.angle();
             continue;
         }
+        if (content().mob(kind->configIndex).id == "silverfish") continue;
         const auto* plan = targetPlans_.empty() ? nullptr : &targetPlans_[index];
         steerMob(world, terrain, playerTargets, self, *transform, *motion, *body, *kind, *ai, drive,
                  nowMillis, dt, commands, plan);
@@ -3209,6 +3405,7 @@ void MobAiSystem::run(World& world, const Terrain& terrain, const SpatialGrid& g
         if (drive.dropsProjectile) dropProjectile(world, self, nowMillis, commands);
     }
 
+    steerSilverfish(world, terrain, grid, playerTargets, nowMillis, dt);
     steerPets(world, terrain, grid, nowMillis, dt, commands);
     pruneBroods(world);
     stepFlowerMobs(world,content(),nowMillis,dt,allocateNetId);
@@ -3218,6 +3415,7 @@ void MobAiSystem::placeChains(World& world, const Terrain& terrain,
                               const std::vector<RealmPoint>& activePlayers) {
     activePlayersIndex_.rebuild(activePlayers);
     followChains(world, terrain, activePlayers);
+    placeSilverfishLoads(world, terrain);
 }
 
 } // namespace flix

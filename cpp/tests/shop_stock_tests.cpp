@@ -148,7 +148,13 @@ TEST(shop_stock_regular_rotation_has_five_distinct_offers_of_each_tier) {
     Harness h("shop-stock-tiers");
     CHECK(h.ready);
     CHECK(!shopSellsRarity(Rarity::Ultra));
-    for (std::uint64_t rotation = 100; rotation < 200; ++rotation) {
+    const auto fission = content().petalIndex("fission");
+    const auto fusion = content().petalIndex("arctic_fusion");
+    CHECK(shopSellsPetal(fission));
+    CHECK(shopSellsPetal(fusion));
+    bool sawFission = false;
+    bool sawFusion = false;
+    for (std::uint64_t rotation = 100; rotation < 1000; ++rotation) {
         const auto offers = shopOffers(rotation);
         CHECK_EQ(offers.size(), std::size_t(kShopOfferCount));
         std::set<std::uint16_t> petals;
@@ -158,8 +164,16 @@ TEST(shop_stock_regular_rotation_has_five_distinct_offers_of_each_tier) {
             CHECK_EQ(offer.price, shopOfferPrice(offer.petalIndex, offer.rarity, offer.discountPercent));
             CHECK(shopSellsPetal(offer.petalIndex));
             CHECK(petals.insert(offer.petalIndex).second);
+            if (offer.petalIndex == fission) {
+                CHECK(offer.rarity == Rarity::Unique);
+                CHECK_EQ(offer.price, shopPrice(content().petalIndex("mimic"), Rarity::Unique));
+                sawFission = true;
+            }
+            if (offer.petalIndex == fusion) sawFusion = true;
         }
     }
+    CHECK(sawFission);
+    CHECK(sawFusion);
 }
 
 TEST(eternal_shop_charges_exact_quote_for_multiple_copies_across_cards_and_relogin) {
@@ -241,7 +255,7 @@ TEST(shop_stock_prices_preserve_mimic_and_anchor_new_items_by_rarity) {
         CHECK_EQ(shopPrice(petal, Rarity::Unique), 15 * super);
         CHECK_EQ(shopOfferPrice(petal, Rarity::Unique, 30), 15 * super);
         if (content().petal(petal).id.rfind("arctic_", 0) != 0 &&
-            content().petal(petal).id != "magic_golden_leaf")
+            content().petal(petal).id != "magic_golden_leaf" && content().petal(petal).id != "fission")
             CHECK_EQ(super, legacyShopPrice(petal, Rarity::Super));
     }
 }
@@ -475,7 +489,7 @@ TEST(apex_kill_pays_the_normal_top_tier_star_bounty) {
     }, 200);
     CHECK(credited);
     if (!credited) return;
-    CHECK_EQ(client.profile().stars, starsBefore + 1000.0);
+    CHECK_EQ(client.profile().stars, starsBefore + 8000.0);
 }
 
 TEST(tier_shop_locks_keep_the_other_tier_refreshing_and_preserve_quotes) {

@@ -357,7 +357,7 @@ std::vector<TipRow> description(SkillId skill, int tier) {
         case SkillId::ManaRegen:
             row({{cn ? "魔力回复：" : "Mana regeneration: "},
                  {fromTo(kManaRegenTalentScale, tier), kStatDamage}});
-            row({{cn ? "提升持续回蓝和花瓣回蓝量，不增加魔力上限。" : "Boosts passive and petal mana recovery, without increasing capacity."}});
+            row({{cn ? "提升持续回蓝和法力球的回蓝量。魔法尖牙与魔法牙齿的固定返还不受影响。" : "Boosts passive and Mana Orb recovery. Magic Fang and Magic Tooth retain their fixed mana refunds."}});
             break;
         case SkillId::ManaCap:
             row({{cn ? "魔力上限：" : "Mana capacity: "},
@@ -393,7 +393,12 @@ std::vector<TipRow> description(SkillId skill, int tier) {
             break;
         case SkillId::Absorbing:
             row({{cn ? "打怪与吸收花瓣经验：" : "Monster and petal absorption XP: "},
-                 {fromTo(kAbsorbTalentScale, tier), kStatHealth}});
+                 {tier == 0 ? percent(scaleAt(kAbsorbTalentScale, tier))
+                            : fromTo(kAbsorbTalentScale, tier), kStatHealth}});
+            if (tier == 0) {
+                row({{cn ? "解锁下一级，经验倍率可升至 " : "Unlocks the next tier, which raises XP to "},
+                     {percent(scaleAt(kAbsorbTalentScale, tier + 1)), kStatHealth}});
+            }
             break;
         case SkillId::MovementSpeed:
             row({{cn ? "移动速度：" : "Movement speed: "},

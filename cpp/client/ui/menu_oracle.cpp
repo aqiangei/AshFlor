@@ -16,8 +16,10 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <ctime>
 #include <string>
 
+#include "client/ui/content_i18n.h"
 #include "client/ui/item_tile.h"
 #include "client/ui/menu_theme.h"
 #include "client/ui/menus.h"
@@ -45,6 +47,16 @@ constexpr double kCraftTimeoutSeconds = 8.0;
 /// How long a refusal stays under the slot.
 constexpr double kRefusalSeconds = 3.0;
 
+std::string forecastTime(std::int64_t at) {
+    if (at < 0) return trEnZh("No listing in the next 7 days", "未来 7 天未上架");
+    constexpr std::int64_t beijingOffset = 8 * 3600;
+    const auto local = static_cast<std::time_t>(at + beijingOffset);
+    char date[32]{};
+    if (const auto* calendar = std::gmtime(&local))
+        std::strftime(date, sizeof(date), "%m-%d %H:%M", calendar);
+    return std::string(date) + trEnZh(" (UTC+8)", "（北京时间）");
+}
+
 } // namespace
 
 Vec2 OraclePanel::size(const Profile& profile) {
@@ -60,6 +72,11 @@ void OraclePanel::reset() {
     phase_ = Phase::Idle;
     resultPending_ = false;
     refusal_.clear();
+    shopForecastOpen_ = false;
+    shopSearch_.clear();
+    shopSearchField_.blur();
+    shopSearchMatches_.clear();
+    shopPetal_ = kNoPetal;
 }
 
 void OraclePanel::stage(const Profile& profile, std::uint16_t petalIndex, Rarity rarity) {
@@ -74,6 +91,78 @@ void OraclePanel::stage(const Profile& profile, std::uint16_t petalIndex, Rarity
     crafts_ = 1;
     // Whatever was refused, the player has moved on from it.
     refusal_.clear();
+}
+
+void OraclePanel::renderShopForecast(MenuContext& ctx, const SlotCardLayout& card) {
+    const Rect panel = card.panel;
+    const double columnWidth = (panel.w - 56.0) * 0.5;
+    const Rect searchRect{panel.x + 20.0, panel.y + 105.0, columnWidth, 28.0};
+    if (editSlotSearch(ctx, searchRect, shopSearch_, shopSearchField_)) {
+        shopSearchMatches_.clear();
+        shopPetal_ = kNoPetal;
+        if (!shopSearch_.empty()) {
+            for (const auto index : content().petalDisplayOrder())
+                if (shopSellsPetal(index)) shopSearchMatches_.push_back(index);
+            filterSlotTypes(shopSearchMatches_, shopSearch_);
+        }
+    }
+
+    const double firstRow = searchRect.bottom() + 9.0;
+    const auto resultRows = static_cast<std::size_t>(
+        std::clamp((panel.bottom() - firstRow - 12.0) / 34.0, 0.0, 5.0));
+    const auto mouse = ctx.mouse();
+    const auto rotation = shopRotation(shopClockNow());
+    const auto lookup = [&](std::uint16_t index) {
+        shopPetal_ = index;
+        shopAskedAt_ = ctx.timeSeconds;
+        shopAskedRotation_ = rotation;
+        ctx.net.requestOracleShopForecast(index);
+    };
+    for (std::size_t i = 0; i < std::min(resultRows, shopSearchMatches_.size()); ++i) {
+        const auto index = shopSearchMatches_[i];
+        const auto& petal = content().petal(index);
+        const Rect row{searchRect.x, firstRow + i * 34.0, columnWidth, 28.0};
+        const bool over = row.contains(mouse);
+        drawSlotButton(ctx.canvas, row, petalNameTr(petal.id, petal.name.c_str()),
+                       shopPetal_ == index ? std::optional<std::uint32_t>(0x5A9FDBu) : std::nullopt,
+                       over, over && ctx.window.mouseDown(MouseButton::Left));
+        if (over && ctx.pressed()) lookup(index);
+    }
+    if (shopPetal_ != kNoPetal && shopAskedRotation_ != rotation) lookup(shopPetal_);
+    SlotCardLayout line = card;
+    line.centreX = searchRect.x + columnWidth * 0.5;
+    line.lineY = firstRow + (resultRows == 0 ? 0.0 : 14.0);
+    if (shopSearchMatches_.empty())
+        drawSlotLine(ctx.canvas, line, shopSearch_.empty()
+            ? trEnZh("Search by petal name", "输入花瓣名称")
+            : trEnZh("No rotating petal matches", "轮换货架没有匹配的花瓣"));
+    line.centreX = panel.right() - 20.0 - columnWidth * 0.5;
+    const auto& result = ctx.net.oracleShopForecast();
+    if (shopPetal_ == kNoPetal) {
+        drawSlotLine(ctx.canvas, line, trEnZh("Choose a petal to see its next listing", "选择花瓣，查询下次上架时间"));
+        return;
+    }
+    const auto& petal = content().petal(shopPetal_);
+    drawSlotLine(ctx.canvas, line, petalNameTr(petal.id, petal.name.c_str()));
+    line.lineY += 32.0;
+    if (!result || result->petalIndex != shopPetal_) {
+        drawSlotLine(ctx.canvas, line, ctx.timeSeconds - shopAskedAt_ < kCraftTimeoutSeconds
+            ? trEnZh("Looking up the shop rotation…", "正在查询轮换…")
+            : trEnZh("No response. Select the petal to retry.", "查询超时，重新选择花瓣可重试。"));
+        return;
+    }
+    if (!result->available) {
+        drawSlotLine(ctx.canvas, line, trEnZh("Ask while standing near an oracle.", "请靠近神使后重试。"));
+        return;
+    }
+    if (petalComesAt(petal, Rarity::Super)) {
+        drawSlotLine(ctx.canvas, line, std::string(trEnZh("Super  ", "超级  ")) + forecastTime(result->superAt),
+                     rarityColor(Rarity::Super));
+        line.lineY += 32.0;
+    }
+    if (petalComesAt(petal, Rarity::Unique))
+        drawSlotLine(ctx.canvas, line, std::string(trEnZh("Eternal  ", "永恒  ")) + forecastTime(result->eternalAt),
+                     rarityColor(Rarity::Unique));
 }
 
 bool OraclePanel::render(MenuContext& ctx) {
@@ -143,9 +232,27 @@ bool OraclePanel::render(MenuContext& ctx) {
         }
     }
 
-    SlotCardLayout card = drawSlotCard(canvas, ctx.bounds, kOracleSkin,
-                                      trEnZh("Oracle", "神使"), "Craft", mouse);
+    const char* title = shopForecastOpen_ ? trEnZh("Shop rotation forecast", "商店轮换查询")
+                                          : trEnZh("Oracle", "神使");
+    SlotCardLayout card = drawSlotCard(canvas, ctx.bounds, kOracleSkin, title, "Craft", mouse);
     const Rect panel = card.panel;
+    const Rect mode{panel.right() - 172.0, panel.y + 61.0, 152.0, 30.0};
+    if (phase_ != Phase::Pulsing) {
+        const bool over = mode.contains(mouse);
+        drawSlotButton(canvas, mode, shopForecastOpen_ ? trEnZh("Back to crafting", "返回兑换")
+                                                       : trEnZh("Shop forecast", "查询商店轮换"),
+                       std::nullopt, over, over && ctx.window.mouseDown(MouseButton::Left));
+        if (over && ctx.pressed()) {
+            shopForecastOpen_ = !shopForecastOpen_;
+            shopSearchField_.blur();
+            return true;
+        }
+    }
+    if (shopForecastOpen_) {
+        if (card.close.contains(mouse) && ctx.pressed()) return false;
+        renderShopForecast(ctx, card);
+        return true;
+    }
     const double centre = card.button.x + card.button.w * 0.5;
     card.button.x = centre - 79.0;
     card.button.w = 158.0;

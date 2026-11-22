@@ -189,7 +189,7 @@ const std::array<ControlMeta, kControlCount> kControls = {{
     {"Inventory",             Key::Z,          MenuId::Inventory},
     {"Crafting",              Key::C,          MenuId::Crafting},
     {"Skills",                Key::X,          MenuId::Talents},
-    {"Toggle mouse controls", Key::K,          MenuId::None},
+    {"Toggle mouse controls", Key::T,          MenuId::None},
     {"Toggle hitboxes",       Key::H,          MenuId::None},
     {"Toggle debug menu",     Key::J,          MenuId::Debug},
     {"Zoom in",               Key::Equals,     MenuId::None},
@@ -743,6 +743,8 @@ void ClientSettings::bindControl(ControlAction action, Key key) {
     if (i < 0 || i >= kControlCount) return;
     const ControlMeta& meta = controlMeta(action);
     if (meta.menu == MenuId::None) {
+        // K was the default in old clients. Reserve it for other actions.
+        if (action == ControlAction::ToggleMouseControls && key == Key::K) key = Key::T;
         controls[static_cast<std::size_t>(i)] = key;
         return;
     }
@@ -865,7 +867,10 @@ bool ClientSettings::load(const std::string& path) {
             const int slot = std::atoi(key.c_str() + 4);
             if (slot >= 0 && slot < kControlCount && number >= 0 &&
                 number < static_cast<int>(Key::Count)) {
-                controls[static_cast<std::size_t>(slot)] = static_cast<Key>(number);
+                const auto action = static_cast<ControlAction>(slot);
+                if (controlMeta(action).menu == MenuId::None) {
+                    bindControl(action, static_cast<Key>(number));
+                }
             }
         }
     }
@@ -1020,11 +1025,27 @@ void MenuSystem::noteMobileLoadoutGestures(bool swapRowsTap, bool presetsHeld, b
     if (mobilePresetSticky_ || presetsHeld) presetBankShown_ = 1;
 }
 
+namespace {
+// The movement toggle takes precedence over presets when T has no other binding.
+bool mouseToggleOwnsT(const ClientSettings& settings) {
+    if (settings.controlKey(ControlAction::ToggleMouseControls) != Key::T) return false;
+    for (int i = 1; i < kMenuCount; ++i)
+        if (settings.hotkeys[static_cast<std::size_t>(i)] == Key::T) return false;
+    for (int i = 0; i < kControlCount; ++i)
+        if (i != static_cast<int>(ControlAction::ToggleMouseControls) &&
+            settings.controlKey(static_cast<ControlAction>(i)) == Key::T) return false;
+    return true;
+}
+} // namespace
+
 bool MenuSystem::handleKeys(Window& window, NetClient& net) {
     // A settings row waiting for a key must swallow every key: binding the
     // inventory to G should not also open the bestiary on the way past.
     if (settings_panel_.capturingKey()) return true;
-    if (wantsText_) return false;
+    // Swallow while a panel field owns the caret. Returning false used to
+    // rely on every caller also checking wantsText(); one miss left X/Z
+    // free to open talents/inventory over an absorb password prompt.
+    if (wantsText_) return true;
     // A shortcut is not a hotkey. Every menu binding is a bare letter, so
     // without this Ctrl/Cmd+C opens the forge on its way to copying a
     // selection, and Cmd+A opens the bestiary. Not the modifier ROW being
@@ -1103,8 +1124,12 @@ bool MenuSystem::handleKeys(Window& window, NetClient& net) {
         }
         if (window.keyPressed(Key::Q)) { settings_.rotationStep = std::max(1, settings_.rotationStep - 1); return true; }
         if (window.keyPressed(Key::E)) { settings_.rotationStep = std::min(4, settings_.rotationStep + 1); return true; }
-        if (loadoutMetrics(settings_.classicLoadoutBar).secondaryPicker) {
-            if (window.keyPressed(Key::T)) { pendingSecondaryDelete_ = true; return true; }
+        // T changes movement mode; Delete remains the explicit unequip key.
+        // Never let this gesture delete an armed secondary slot.
+        if (mouseToggleOwnsT(settings_) && window.keyPressed(Key::T)) {
+            settings_.useMouseControls = !settings_.useMouseControls;
+            settings_.settingsDirty = true;
+            return true;
         }
         static constexpr Key kLoadoutKeys[kLoadoutBarPrimary] = {
             Key::Num1, Key::Num2, Key::Num3, Key::Num4, Key::Num5,
@@ -1147,6 +1172,7 @@ bool MenuSystem::handleKeys(Window& window, NetClient& net) {
     if (inGame_) {
         if (boundPressed(settings_.controlKey(ControlAction::ToggleMouseControls))) {
             settings_.useMouseControls = !settings_.useMouseControls;
+            settings_.settingsDirty = true;
             return true;
         }
         if (boundPressed(settings_.controlKey(ControlAction::ToggleHitboxes))) {
@@ -1196,6 +1222,11 @@ Rect listPanel(double width, int, int viewHeight) {
 /// than the card the panel paints for itself.
 Rect cornerPanel(double width, double height, double top, int, int) {
     return {kMenuCornerX, top, width, height};
+}
+
+Rect expandedPanelBounds(int w, int h, double top) {
+    constexpr double inset = 10.0;
+    return {inset, top, std::max(0.0, w - 2.0 * inset), std::max(0.0, h - top - inset)};
 }
 
 } // namespace
@@ -1264,9 +1295,11 @@ Rect AccountPanel::bounds(int w, int h) {
     return cornerPanel(preferredWidth(), preferredHeight(), kMenuCornerY, w, h);
 }
 
-Rect MenuSystem::panelBounds(MenuId id, int viewWidth, int viewHeight) {
+Rect MenuSystem::panelBounds(MenuId id, int viewWidth, int viewHeight) const {
     switch (id) {
-        case MenuId::Inventory:     return InventoryPanel::bounds(viewWidth, viewHeight);
+        case MenuId::Inventory:
+            return inventory_.expanded() ? expandedPanelBounds(viewWidth, viewHeight, stripBottom())
+                                         : InventoryPanel::bounds(viewWidth, viewHeight);
         case MenuId::Talents:       return TalentsPanel::bounds(viewWidth, viewHeight);
         case MenuId::Gallery:       return GalleryPanel::bounds(viewWidth, viewHeight);
         case MenuId::Shop:          return ShopPanel::bounds(viewWidth, viewHeight);
@@ -1290,6 +1323,8 @@ Rect MenuSystem::craftPanelBounds(int w, int h) const {
     const double minimumHeight = nearbyNpc_ == NpcService::None && !absorbMode_
         ? CraftingPanel::minimumHeight() : 0.0;
     const int height = craftChatTop_ >= 0.0 ? std::min(h, static_cast<int>(craftChatTop_)) : h;
+    if (nearbyNpc_ == NpcService::None && !absorbMode_ && crafting_.expanded())
+        return expandedPanelBounds(w, height, stripBottom());
     return slotCardBounds(craftSize_.x, craftSize_.y, w, height, minimumHeight);
 }
 
@@ -2291,6 +2326,22 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
         canvas.restore();
     }
 
+    if (inGame_ && !touchLayout_) {
+        const Key toggleKey = mouseToggleOwnsT(settings_) ? Key::T :
+            settings_.controlKey(ControlAction::ToggleMouseControls);
+        const std::string mode = settings_.useMouseControls
+            ? trEnZh("Move: mouse (keys override)", "移动：鼠标跟随（按键优先）")
+            : trEnZh("Move: keyboard", "移动：键盘");
+        const std::string hint = toggleKey == Key::Unknown ? mode :
+            mode + " · " + keyName(toggleKey) + trEnZh(" to switch", " 切换");
+        TextStyle movementLabel;
+        movementLabel.size = 11.0;
+        movementLabel.align = Align::Centre;
+        movementLabel.baseline = Baseline::Bottom;
+        outlinedText(canvas, hint, canvas.width() * 0.5,
+                     std::max(14.0, loadoutRects_[0].y - 5.0), movementLabel, 1.0);
+    }
+
     mobilePresetConfirmRect_ = {};
     if (!touchLayout_ || open_ != MenuId::None || !mobilePresetSticky_) mobilePresetConfirm_ = -1;
     if (mobilePresetConfirm_ >= 0) {
@@ -2341,10 +2392,10 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
         return -1;
     });
     const int tipIndex=touchTip?loadoutTouchInspect_.target:hovered;
+    const bool hoverTip = loadoutTooltipDelay.update(
+        tipSlot && !window.pointerIsTouch() ? hovered : -1, timeSeconds, pointerDown);
     const bool showTip = tipIndex >= 0 && tipIndex < owned &&
-        tipIndex % kLoadoutBarPrimary < visibleSlots &&
-        (touchTip || (tipSlot && !window.pointerIsTouch() &&
-         loadoutTooltipDelay.update(hovered,timeSeconds,pointerDown)));
+        tipIndex % kLoadoutBarPrimary < visibleSlots && (touchTip || hoverTip);
     if (showTip) {
         const Profile::Slot& slot = shown[static_cast<std::size_t>(tipIndex)];
         const double reloadScale =
@@ -2383,12 +2434,23 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
                                       : trEnZh("Delete to unequip", "按 Delete 卸下"), 12.0});
         const bool alt = altMode_;
         const Vec2 size = measureTooltip(lines, 0.0, 0.0, alt);
-        // Slot boxes are laid out in screen space; the slide only moves the
-        // paint. Offset the anchor so the card tracks the drawn tile.
-        Rect anchor = loadoutRects_[static_cast<std::size_t>(tipIndex)];
-        anchor.y += (1.0 - loadoutSlide_) * 120.0;
-        const Vec2 at = tooltipAnchor(anchor, size, canvas.width(), canvas.height());
-        paintTooltip(canvas, at.x, at.y, lines, 0.0, 0.0, alt);
+        // Equip slots occupy the bottom rows, so put the card above both
+        // rows and keep it within the viewport even at large UI scales.
+        constexpr double gap = 8.0;
+        const Rect anchor = loadoutRects_[static_cast<std::size_t>(tipIndex)];
+        const double barTop = loadoutRects_[0].y + (1.0 - loadoutSlide_) * 120.0;
+        if (barTop <= 2 * gap || canvas.width() <= 2 * gap) return;
+        const double scale = std::min({1.0, (canvas.width() - 2 * gap) / size.x,
+                                          (barTop - 2 * gap) / size.y});
+        const double width = size.x * scale;
+        const double x = clamp(anchor.x + (anchor.w - width) * 0.5,
+                               gap, canvas.width() - gap - width);
+        const double y = barTop - gap - size.y * scale;
+        canvas.save();
+        canvas.translate(static_cast<float>(x), static_cast<float>(y));
+        canvas.scale(static_cast<float>(scale), static_cast<float>(scale));
+        paintTooltip(canvas, 0.0, 0.0, lines, 0.0, 0.0, alt);
+        canvas.restore();
     }
 }
 
@@ -3398,6 +3460,16 @@ void MenuSystem::render(Canvas& canvas, Window& window, NetClient& net, const Sp
         talents_.setOpen(talentsOpen_, open_ != MenuId::Talents);
     } else if (drawn_ != MenuId::None) {
         panelRect_ = panelBounds(drawn_, canvas.width(), canvas.height());
+        if (drawn_ == MenuId::Inventory && inventory_.expanded() &&
+            !net.profile().loadout.empty() && !net.controllingFlower()) {
+            // Keep the loadout outside the bag so a drop still reaches it.
+            const bool classic = settings_.classicLoadoutBar;
+            const double barTop = inGame_
+                ? canvas.height() - inGameLoadoutBarHeight(classic, canvas.width(),
+                                                          net.profile().skills.loadoutSlots())
+                : canvas.height() * 0.5 + titleLoadoutTopY(classic);
+            panelRect_.h = std::min(panelRect_.h, std::max(0.0, barTop - panelRect_.y - 10.0));
+        }
         // `transform: translateY(100vh)` -> `translateY(0)` over 300ms
         // `ease-out`, which is cubic-bezier(0, 0, 0.58, 1). 1-(1-t)^1.7 tracks
         // that curve to within a percent the whole way along, where the cubic

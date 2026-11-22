@@ -7,12 +7,18 @@
 
 namespace flix {
 
-// Apex/Ascendant crowns summon Hyper-tier beetles; Permanent Hyper keeps the
-// older Eternal summon so the two crowns are no longer identical (board #3930).
 inline constexpr Rarity pharaohCrownSummonRarity(Rarity crown) {
-    if (crown == Rarity::PermanentHyper) return Rarity::Unique;
-    if (isHyperPetal(crown)) return Rarity::Apex;
-    return Rarity::Super;
+    return isHyperPetal(crown) ? Rarity::Apex : Rarity::Super;
+}
+
+inline constexpr Rarity pharaohCrownSummonLabelRarity(Rarity crown) {
+    return crown == Rarity::Ascendant ? Rarity::Ascendant : pharaohCrownSummonRarity(crown);
+}
+
+// Permanent Hyper summons a Hyper beetle on its existing Eternal stat
+// budget, including the hull and undead duration.
+inline constexpr Rarity pharaohCrownSummonStatsRarity(Rarity crown) {
+    return crown == Rarity::PermanentHyper ? Rarity::Unique : pharaohCrownSummonRarity(crown);
 }
 
 enum class HyperTechnique {
@@ -49,6 +55,10 @@ struct HyperTechniqueInfo {
     const char* chinese;
     double amount;
 };
+
+inline constexpr HyperTechniqueInfo kAcidBombTechnique{"acid_bomb", HyperTechnique::AcidPoolBoost,
+    "Acid pools from this bomb deal 20% more damage per second.",
+    "该炸弹的酸池每秒伤害提高 20%。", 1.2};
 
 inline constexpr HyperTechniqueInfo kHyperTechniques[] = {
     {"air", HyperTechnique::GuardAir,
@@ -334,8 +344,8 @@ inline constexpr HyperTechniqueInfo kHyperTechniques[] = {
      "Attacking spreads the orange segments 18% wider.",
      "攻击时，橙子瓣间距扩大 18%。", 1.3},
     {"paranormal_goggles", HyperTechnique::GhostSight,
-     "While seeing ghosts, the goggles’ camera penalty is reduced from 25% to 15%.",
-     "看见幽灵时，护目镜的视野缩放惩罚从 25% 减到 15%。", 1.3},
+     "See and hit ghosts at this rarity or below. Visible width and height are about 23% smaller.",
+     "可看见并攻击同品质或更低品质的幽灵。可见范围的宽和高各缩小约 23%。", 1.3},
     {"pearl", HyperTechnique::QuickRecall,
      "Recalls to the ring in 80% of the usual time.",
      "收回珍珠时，回环所需时间缩短 20%。", 0.0},
@@ -385,8 +395,8 @@ inline constexpr HyperTechniqueInfo kHyperTechniques[] = {
      "While defending, Rubber loses 15% less durability to wild lightning.",
      "防御时，橡胶承受野怪闪电损失的耐久减少 15%。", 0.85},
     {"ruby", HyperTechnique::RubyEcho,
-     "Lightning against wild mobs below half health has an 8% larger repeat chance with the same repeat cap.",
-     "闪电打中生命低于一半的野怪时，红宝石重击概率相对提高 8%，次数上限相同。", 1.25},
+     "Lightning against wild mobs below half health has a 25% larger repeat chance with the same repeat cap.",
+     "闪电打中生命低于一半的野怪时，红宝石重击概率相对提高 25%，次数上限相同。", 1.25},
     {"salt", HyperTechnique::SaltRetort,
      "Defending reflects 10% more damage back to same-tier or stronger wild mobs on direct hits.",
      "防御时，受到同阶或更高阶野怪的直接伤害，返还的伤害提高 10%。", 1.10},
@@ -466,9 +476,7 @@ inline constexpr HyperTechniqueInfo kHyperTechniques[] = {
     {"torch", HyperTechnique::TorchWildfire,
      "Hyper Torch burn on wild mobs deals 20% more damage per second.",
      "超凡火把对野怪的燃烧每秒伤害提高 20%。", 1.2},
-    {"acid_bomb", HyperTechnique::AcidPoolBoost,
-     "Hyper Acid Bomb pools deal 20% more damage and last 20% longer.",
-     "超凡酸液炸弹酸池伤害与持续时间提高 20%。", 1.2},
+    kAcidBombTechnique,
     {"yggdrasil", HyperTechnique::RescueReach,
      "Extends revival reach by 25%. The extra reach needs a clear path.",
      "复活距离增加 25%。额外距离需要无遮挡。", 0.0},
@@ -483,6 +491,7 @@ inline constexpr HyperTechniqueInfo kHyperTechniques[] = {
 inline const HyperTechniqueInfo* hyperTechniqueInfo(std::string_view id, Rarity rarity,
                                                      bool copiedFromOtherTier = false) {
     if (!isHyperPetal(rarity) || copiedFromOtherTier) return nullptr;
+    if (id == kAcidBombTechnique.id) return &kAcidBombTechnique;
     const auto* end = kHyperTechniques + sizeof(kHyperTechniques) / sizeof(*kHyperTechniques);
     const auto* entry = std::lower_bound(kHyperTechniques, end, id,
         [](const HyperTechniqueInfo& info, std::string_view key) { return info.id < key; });
@@ -607,9 +616,10 @@ inline const char* hyperMysteryHint(HyperTechnique technique, bool chinese) {
             return chinese ? "组装成套，再把这一面朝向弹幕。" : "Complete the kit, then turn this side toward incoming fire.";
         case HyperTechnique::DeadLeafShelter:
             return chinese ? "和其他叶片一起装备，防御时看谁留得更久。" : "Equip it beside other leaves and see which ones last longer when you guard.";
+        case HyperTechnique::AcidPoolBoost:
+            return chinese ? "酸池伤害独立于炸弹的接触伤害。" : "Pool damage is separate from the bomb's contact damage.";
         case HyperTechnique::PowderRush:
         case HyperTechnique::TorchWildfire:
-        case HyperTechnique::AcidPoolBoost:
         case HyperTechnique::SingularityAnchor:
         case HyperTechnique::DiceFloor:
             return chinese ? "即使没掷出大奖，打野怪也有更高的底注。" : "Even a bad roll pays better against wild mobs.";

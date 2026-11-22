@@ -187,6 +187,14 @@ TEST(absorbing_on_the_title_screen_pays_the_account) {
 
     // Every stack in one request, priced once: 10 x 16 + 2 x 80 + 60.
     AbsorbOutcome outcome;
+    for (const char* password : {"", "wrong-editor-password"}) {
+        CHECK(absorb(h, client, {{rose, Rarity::Rare, 1}}, outcome, password));
+        CHECK(!outcome.success);
+        CHECK_EQ(outcome.absorbed, 0u);
+        CHECK_EQ(outcome.reward, 0.0);
+        CHECK_EQ(client.profile().stackCount(rose, Rarity::Rare), 10u);
+        CHECK_EQ(client.profile().totalXp, before);
+    }
     CHECK(absorb(h, client, {{light,Rarity::Common,1}},outcome));
     CHECK(outcome.success);CHECK_EQ(outcome.reward,1.0);
     CHECK(awaitProfile(h,client,[&](const Profile& p){return p.totalXp==before+1.0;}));
@@ -248,6 +256,80 @@ TEST(an_absorb_short_of_one_stack_takes_nothing) {
     CHECK_EQ(p.stackCount(basic, Rarity::Rare), 5u);
     CHECK_EQ(p.stackCount(rose, Rarity::Universal), 1u);
     CHECK_EQ(p.totalXp, before);
+}
+
+TEST(absorb_requires_a_chosen_password_for_permanent_high_tiers) {
+    Harness h("absorb-permanent-password");
+    CHECK(h.ready);
+    if (!h.ready) return;
+    auto& db = testsupport::GameServerPeer::authorityDb(h.server);
+    db.setPasswordCost(4);
+
+    NetClient client;
+    CHECK(connectClient(h, client));
+    client.requestGuest();
+    CHECK(h.stepUntil({&client}, [&] {
+        return client.status() == NetClient::Status::LoggedIn && !client.profile().username.empty();
+    }));
+    CHECK(!client.profile().hasPassword);
+    const Account* account = std::as_const(db).findUser(client.profile().username);
+    CHECK(account && !account->passwordChosen);
+    if (!account) return;
+    const std::string accountId = account->id;
+    auto& record = db.progress(accountId);
+    const auto rose = content().petalIndex("rose");
+    const auto light = content().petalIndex("light");
+    record.setItemCount(Rarity::PermanentHyper, "petal_rose", 3);
+    record.setItemCount(Rarity::Ascendant, "petal_light", 3);
+    record.setItemCount(Rarity::Common, "petal_rose", 4);
+    const double before = record.totalXp;
+
+    AbsorbOutcome outcome;
+    const std::vector<NetClient::AbsorbStack> mixed{
+        {rose, Rarity::Common, 2}, {rose, Rarity::PermanentHyper, 1}, {light, Rarity::Ascendant, 1}};
+    const auto unchanged = [&] {
+        CHECK_EQ(db.progress(accountId).itemCount(Rarity::Common, "petal_rose"), 4);
+        CHECK_EQ(db.progress(accountId).itemCount(Rarity::PermanentHyper, "petal_rose"), 3);
+        CHECK_EQ(db.progress(accountId).itemCount(Rarity::Ascendant, "petal_light"), 3);
+        CHECK_EQ(db.progress(accountId).totalXp, before);
+    };
+    for (const auto& stacks : {mixed,
+         std::vector<NetClient::AbsorbStack>{{rose, Rarity::PermanentHyper, 1}},
+         std::vector<NetClient::AbsorbStack>{{light, Rarity::Ascendant, 1}}}) {
+        CHECK(absorb(h, client, stacks, outcome, ""));
+        CHECK(!outcome.success);
+        CHECK_EQ(outcome.absorbed, 0u);
+        CHECK_EQ(outcome.reward, 0.0);
+        unchanged();
+    }
+
+    CHECK(absorb(h, client, {{rose, Rarity::Common, 1}}, outcome, ""));
+    CHECK(outcome.success);
+    CHECK_EQ(outcome.reward, 1.0);
+    CHECK_EQ(db.progress(accountId).itemCount(Rarity::Common, "petal_rose"), 3);
+
+    client.requestChangePassword("", "chosen-qa-password");
+    CHECK(h.stepUntil({&client}, [&] { return client.passwordOutcome().pending; }));
+    CHECK(client.passwordOutcome().ok);
+    CHECK(awaitProfile(h, client, [](const Profile& p) { return p.hasPassword; }));
+    for (const char* password : {"", "wrong-qa-password"}) {
+        CHECK(absorb(h, client, mixed, outcome, password));
+        CHECK(!outcome.success);
+        CHECK_EQ(outcome.absorbed, 0u);
+        CHECK_EQ(outcome.reward, 0.0);
+        CHECK_EQ(db.progress(accountId).itemCount(Rarity::Common, "petal_rose"), 3);
+        CHECK_EQ(db.progress(accountId).itemCount(Rarity::PermanentHyper, "petal_rose"), 3);
+        CHECK_EQ(db.progress(accountId).itemCount(Rarity::Ascendant, "petal_light"), 3);
+        CHECK_EQ(db.progress(accountId).totalXp, before + 1.0);
+    }
+    CHECK(absorb(h, client, mixed, outcome, "chosen-qa-password"));
+    CHECK(outcome.success);
+    CHECK_EQ(outcome.absorbed, 4u);
+    CHECK_EQ(outcome.reward, 856400002.0);
+    CHECK_EQ(db.progress(accountId).itemCount(Rarity::Common, "petal_rose"), 1);
+    CHECK_EQ(db.progress(accountId).itemCount(Rarity::PermanentHyper, "petal_rose"), 2);
+    CHECK_EQ(db.progress(accountId).itemCount(Rarity::Ascendant, "petal_light"), 2);
+    CHECK_EQ(db.progress(accountId).totalXp, before + 856400003.0);
 }
 
 TEST(the_absorption_talent_multiplies_what_absorbing_pays) {

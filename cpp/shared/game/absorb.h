@@ -41,6 +41,11 @@ inline double absorbUnits(Rarity rarity) {
 
 inline double absorbXpPerPetal(Rarity rarity) { return absorbUnits(rarity); }
 
+/// A passwordless account can absorb lower tiers after the UI confirmation.
+inline constexpr bool absorbRequiresPassword(Rarity rarity) {
+    return rarity == Rarity::PermanentHyper || rarity == Rarity::Ascendant;
+}
+
 /// Common through Eternal and the two permanent tiers, with existing exclusions.
 /// The forged Apex hammer is a tracked holding.
 

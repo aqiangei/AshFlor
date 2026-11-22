@@ -214,7 +214,7 @@ void App::sendInputFrame(double dt, bool periodic) {
     // built around: the flower runs toward the pointer, at a speed set by how
     // far away it is. The movement keys are offered as an alternative rather
     // than a supplement, and win when held so the two cannot fight -- and
-    // "Use Mouse Controls", which the K binding toggles in game, is what says
+    // "Use Mouse Controls", which the movement toggle hotkey changes, is what says
     // whether the cursor half is there at all. The arrows are not a binding:
     // the reference reads them beside whatever the four keys are bound to.
     const ClientSettings& settings = menus_.settings();
@@ -270,7 +270,7 @@ void App::sendInputFrame(double dt, bool periodic) {
         // follows, measured against the base radius instead of a distance.
         input.moveAngle = stick.direction.angle();
         input.moveStrength = stick.magnitude;
-    } else if (settings.useMouseControls && !touchControls && !menuOpen) {
+    } else if (settings.useMouseControls && window_.pointerInside() && !touchControls && !menuOpen) {
         const double distance = toCursor.length();
         input.moveAngle = distance > 1e-6 ? toCursor.angle() : 0.0;
         input.moveStrength = std::min(1.0, distance / kFullSpeedCursorDistance);
@@ -435,7 +435,10 @@ void App::updatePlaying(double dt) {
             // settings panel and no longer leaves the game, which is the red exit
             // button in the top strip's job alone.
             const bool consumed = menus_.handleKeys(window_, net_);
-            if (!consumed) {
+            // A focused menu field owns Enter as well as printable input.
+            // handleKeys() declines those keys for its field; that is not a
+            // second chance for chat to open and consume the same input.
+            if (!consumed && !menus_.wantsText()) {
                 if (boundKeyPressed(window_, menus_.settings().controlKey(ControlAction::Chat)) ||
                     pressedChatBox()) {
                     chatOpen_ = true;
@@ -483,7 +486,7 @@ void App::updateDead(double dt) {
     // AND presses the button, which is one click, not two.
     if (chatOpen_ && !menus_.wantsText()) {
         editChatLine();
-    } else if (pressedChatBox() || window_.keyPressed(Key::Enter)) {
+    } else if (!menus_.wantsText() && (pressedChatBox() || window_.keyPressed(Key::Enter))) {
         // Enter is chat's, card or no card: Continue has no key, and the slot
         // under the dimmed world still says "Press Enter to chat...".
         chatOpen_ = true;

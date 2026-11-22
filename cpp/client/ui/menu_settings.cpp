@@ -201,6 +201,7 @@ enum Slider : int { kRenderScale, kMobFramerate, kInterpolation, kUiScale, kCame
 enum Button : int {
     kSaveControls,
     kPresetAutosave,
+    kPetalPrivacy,
     kResetControls,
     kResetTutorial,
     kGrantAdmin,
@@ -801,6 +802,15 @@ bool SettingsPanel::render(MenuContext& ctx) {
             p.checkbox(kClassicLoadoutBar, tr(Msg::ClassicLoadoutBar));
             p.checkbox(kShowHitboxes, tr(Msg::ShowHitboxes));
             p.checkbox(kHideOtherPetals, tr(Msg::HideOtherPetals));
+            if (ctx.net.haveSession()) {
+                const bool hidden = ctx.net.profile().hidePetalTypes;
+                const char* label = hidden
+                    ? trEnZh("Hide my petal types: On", "向他人隐藏我的花瓣种类：开")
+                    : trEnZh("Hide my petal types: Off", "向他人隐藏我的花瓣种类：关");
+                if (p.button(Rect{p.x, p.cy, p.w, 26.0}, label, kNeutralFill, 12.0, kPetalPrivacy))
+                    ctx.net.setPetalPrivacy(!hidden);
+                p.cy += kRowStride;
+            }
             p.checkbox(kHideOtherPets, tr(Msg::HideOtherPets));
             p.checkbox(kHideOwnPets, trEnZh("Hide Own Summons", "隐藏自己的召唤物"));
             p.checkbox(kScreenShake, tr(Msg::ScreenShake));

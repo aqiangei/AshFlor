@@ -506,6 +506,20 @@ TEST(hyper_abandon_failed_save_restores_inventory_and_claim){
     CHECK_EQ(db.storedTable("hyperForges")["rose"].dump(),row.dump());
 }
 
+TEST(hyper_abandon_releases_claim_when_petal_already_gone){
+    Fixture f;f.give(f.a,"rose",5);
+    CHECK(forgeHyper(f.db,f.a,"rose",1000).ok);
+    CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Apex,"petal_rose"),1);
+    f.db.progress(f.a).addItem(Rarity::Apex,"petal_rose",-1);
+    CHECK_EQ(physicalApexCount(f.db.progress(f.a),"rose"),0);
+    CHECK_EQ(hyperClaimCount(f.db,f.a,"rose",Rarity::Apex),1);
+    CHECK(abandonHyper(f.db,f.a,"rose").ok);
+    CHECK(hyperForgeState(f.db,"rose").owner.empty());
+    CHECK_EQ(hyperForgeState(f.db,"rose").abandonedBy,f.a);
+    CHECK_EQ(hyperClaimCount(f.db,f.a,"rose",Rarity::Apex),0);
+    CHECK_EQ(hyperHoldingCount(f.db,f.a),0);
+}
+
 TEST(hyper_hammer_old_five_fragment_claim_refunds_only_its_actual_paid_minus_one){
     Fixture f;f.give(f.b,"fragment",10);f.db.progress(f.a).addItem(Rarity::Apex,"petal_mjolnir",1);
     Json old=Json::object();old["owner"]=f.a;old["input"]="fragment";old["paid"]=5;old["claims"]=1;old["protectedUntil"]=0;

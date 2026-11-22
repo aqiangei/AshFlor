@@ -175,7 +175,14 @@ std::uint8_t ownershipFlags(World& world, Entity e, Entity viewer,
                             net::ConnectionId viewerOwner) {
     Entity player = NULL_ENTITY;
     std::uint8_t flags = 0;
+    const auto isViewer = [&](Entity entity) {
+        if (entity == viewer) return true;
+        const auto* account = world.tryGet<PlayerAccount>(entity);
+        return account && viewerOwner != 0 && account->connection == viewerOwner;
+    };
     if (const PetalInstance* instance = world.tryGet<PetalInstance>(e)) {
+        // A loan is visible to the flower carrying it and to its lender.
+        if (instance->slot == kLentPetalSlot && isViewer(instance->creditTo)) return 0;
         player = instance->owner;
     } else if (const Pet* pet = world.tryGet<Pet>(e)) {
         player = pet->owner;
@@ -197,12 +204,7 @@ std::uint8_t ownershipFlags(World& world, Entity e, Entity viewer,
     } else {
         return 0;
     }
-    if (player == viewer) return flags;
-    const PlayerAccount* account = world.tryGet<PlayerAccount>(player);
-    if (account != nullptr && viewerOwner != 0 && account->connection == viewerOwner) {
-        return flags;
-    }
-    return flags | net::SpawnForeign;
+    return isViewer(player) ? flags : flags | net::SpawnForeign;
 }
 
 } // namespace
@@ -771,13 +773,22 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
     // the two record types would force it to tolerate either order.
     std::uint32_t previousSpawnId = 0;
     for (const Candidate& candidate : candidates_) {
+        const Replicated& info = world.get<Replicated>(candidate.entity);
+        const auto* petal = info.kind == net::EntityKind::Petal
+            ? world.tryGet<PetalInstance>(candidate.entity) : nullptr;
+        const auto* wearer = petal ? world.tryGet<PlayerAccount>(petal->owner) : nullptr;
+        const bool petalTypeHidden = wearer && wearer->hidePetalTypes &&
+            petal->owner != viewer && (viewerOwner == 0 || wearer->connection != viewerOwner);
+        const bool foreignLoan = petal && petal->slot == kLentPetalSlot &&
+            (ownershipFlags(world, candidate.entity, viewer, viewerOwner) & net::SpawnForeign);
         auto it = view.tracked.find(candidate.netId);
-        if (it != view.tracked.end()) {
+        if (it != view.tracked.end() && it->second.petalTypeHidden == petalTypeHidden &&
+            it->second.foreignLoan == foreignLoan) {
             it->second.seenThisTick = true;
             continue;
         }
-
-        const Replicated& info = world.get<Replicated>(candidate.entity);
+        // A privacy or lender change replaces the client's record with a fresh
+        // spawn of the same ID, including its current position and health.
         const Transform& transform = world.get<Transform>(candidate.entity);
         const double radius = replicatedRadius(world, candidate.entity);
 
@@ -796,7 +807,7 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         out.varU32(candidate.netId - previousSpawnId);
         previousSpawnId = candidate.netId;
         out.u8(static_cast<std::uint8_t>(info.kind));
-        out.u16(info.typeIndex);
+        out.u16(petalTypeHidden ? kNoPetal : info.typeIndex);
         out.u8(static_cast<std::uint8_t>(info.rarity));
         out.u8(flags);
         const double angle = replicatedAngle(world, candidate.entity, transform);
@@ -844,8 +855,18 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
             if (const NetId* ownerId = world.tryGet<NetId>(owner)) ownerNetId = ownerId->value;
             out.u32(ownerNetId);
             petalInstance = world.tryGet<PetalInstance>(candidate.entity);
-            out.u8(petalInstance ? (petalInstance->diceFace != 0 ? petalInstance->diceFace : petalInstance->dominoPips)
-                            : 255); // Domino pips or the current Dice face.
+            if (petalTypeHidden) {
+                const auto& config = content().petal(info.typeIndex);
+                std::uint8_t cues = 0;
+                if (config.hidden || config.id == "pharaoh_s_crown" || config.id == "corruption")
+                    cues |= net::PrivatePetalInvisible;
+                if (petalIsLaser(config)) cues |= net::PrivatePetalBeam;
+                out.u8(cues);
+            } else {
+                out.u8(petalInstance ? (petalInstance->diceFace != 0 ? petalInstance->diceFace
+                                                                   : petalInstance->dominoPips)
+                                    : 255);
+            }
         }
         if (info.kind == net::EntityKind::Npc) {
             // Which of its mob's recipes an assembler makes; 0 for any other.
@@ -875,12 +896,15 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         tracked.bestRarity = static_cast<std::uint8_t>(visuals.bestRarity);
         tracked.arenaScore = visuals.arenaScore;
         tracked.shield = visuals.shield;
-        if (petalInstance && (petalInstance->diceFace != 0 || content().petal(info.typeIndex).id == "dice")) {
+        tracked.petalTypeHidden = petalTypeHidden;
+        tracked.foreignLoan = foreignLoan;
+        if (!petalTypeHidden && petalInstance &&
+            (petalInstance->diceFace != 0 || content().petal(info.typeIndex).id == "dice")) {
             tracked.rollingDice = true;
             tracked.petalVariant = petalInstance->diceFace;
         }
         tracked.skinIdHash = skinIdHash(skinIdOf(visuals));
-        view.tracked.emplace(candidate.netId, tracked);
+        view.tracked.insert_or_assign(candidate.netId, tracked);
     }
     out.patchU16(spawnCountAt, spawnCount);
     const std::size_t wireUpdatesAt = out.size();

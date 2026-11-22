@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Ashflor 自助转服</title>
+<style>
+body{font:16px/1.55 system-ui,sans-serif;background:#102a22;color:#edf7f1;margin:0;padding:24px}main{max-width:450px;margin:auto;background:#193b30;padding:24px;border-radius:14px}h1{margin:0 0 12px}label{display:block;margin:12px 0}input,select,button{width:100%;box-sizing:border-box;font:inherit;padding:9px;border-radius:6px;border:1px solid #658779}button{background:#b9eccb;color:#102a22;cursor:pointer;font-weight:700}button:disabled{opacity:.5}.confirm input{width:auto}a{color:#cbf7d7}p[role=status]{min-height:2em}[hidden]{display:none!important}
+</style>
+<script defer src="/transfer/portal.js"></script>
+</head>
+<body>
+<main>
+<h1>自助转服</h1>
+<p><strong>仅支持一服、二服、三服互迁。</strong></p>
+<p>Apex 等花瓣实物随迁。原服仍有独占锻造名额时，请联系管理员处理。</p>
+<p id="source"></p>
+<form id="login" hidden>
+<label>原服账号<input name="username" required maxlength="64" autocomplete="username"></label>
+<label>原服密码<input name="password" type="password" required maxlength="72" autocomplete="current-password"></label>
+<button type="submit">登录原服</button>
+</form>
+<form id="transfer" hidden>
+<label>目标服<select name="realm" required></select></label>
+<label>目标服新账号<input name="username" required maxlength="64" autocomplete="off"></label>
+<label>目标服新密码<input name="password" type="password" required maxlength="72" autocomplete="new-password"></label>
+<label class="confirm"><input type="checkbox" required> 确认迁入成功后原服账号会归档注销，原服绑定权益不会随迁。</label>
+<button type="submit">确认转服</button>
+</form>
+<p role="status" aria-live="polite"></p>
+<a id="done" rel="noreferrer" hidden>前往目标服游戏登录</a>
+</main>
+</body>
+</html>

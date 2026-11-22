@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bitset>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -346,22 +347,37 @@ bool loadPresetSkills(PlayerRecord& record, const std::string& name) {
     return true;
 }
 
-void autoSaveActivePreset(PlayerRecord& record) {
+using PresetSlots = std::bitset<kLoadoutSlots>;
+
+void autoSaveActivePreset(PlayerRecord& record, PresetSlots editedSlots = {}) {
     if (record.extra["presetAutosaveOff"].asBool()) return;
-    const int active=record.extra["activeLoadoutPreset"].asInt(-1);
-    if(active<0||active>=kLoadoutPresetCount)return;
-    std::vector<std::optional<StoredItem>> slots(kLoadoutSlots);
-    for(std::size_t i=0;i<slots.size()&&i<record.loadout.size();++i)
-        if(record.loadout[i])slots[i]=presetItem(record.loadout[i]->petalType,record.loadout[i]->rarity);
+    const int active = record.extra["activeLoadoutPreset"].asInt(-1);
+    if (active < 0 || active >= kLoadoutPresetCount) return;
     const std::string name = loadoutPresetName(active);
-    record.loadoutPresets[name] = std::move(slots);
-    savePresetSkills(record, name);
+    // Loading can temporarily substitute a lower-tier petal or leave an
+    // empty slot. Only explicit edits replace the saved gear.
+    if (editedSlots.any()) {
+        auto& slots = record.loadoutPresets[name];
+        slots.resize(kLoadoutSlots);
+        for (std::size_t i = 0; i < slots.size(); ++i) {
+            if (!editedSlots.test(i)) continue;
+            const auto& worn = record.loadout[i];
+            if (worn) slots[i] = presetItem(worn->petalType, worn->rarity);
+            else slots[i].reset();
+        }
+    }
+    // When a preset's saved talents cost more points than the account can
+    // spend, load keeps the current tree and locks skill autosave so the
+    // expensive allocation is not overwritten -- petals still update.
+    if (!record.extra["activeLoadoutPresetSkillsLocked"].asBool())
+        savePresetSkills(record, name);
 }
 
 /// How closely a preset load came to what was saved.
 struct PresetLoad {
     int downgraded = 0;   ///< equipped, but at a lower rarity than was saved
     int missing = 0;      ///< not owned at the saved rarity or any below it
+    bool inventoryFull = false;
 };
 
 /// Re-equips a saved preset onto `record`.
@@ -375,13 +391,26 @@ struct PresetLoad {
 /// later slot would step down too. A petal owned at no rarity at or below its
 /// saved one leaves its slot empty.
 PresetLoad equipPreset(PlayerRecord& record, const std::vector<std::optional<StoredItem>>& preset, int unlockedSlots=10) {
-    if (record.loadout.size() < kLoadoutSlots) record.loadout.resize(kLoadoutSlots);
-    const std::vector<std::optional<StoredItem>> previous = record.loadout;
+    const auto& previous = record.loadout;
+    // Stage only the stacks this switch touches. A returned petal can be
+    // equipped again before the final bag is checked against its stack cap.
+    std::map<std::pair<Rarity, std::string>, std::int64_t> stagedCounts;
+    const auto countFor = [&](Rarity rarity, const std::string& key) -> std::int64_t& {
+        auto [it, inserted] = stagedCounts.try_emplace({rarity, key}, 0);
+        if (inserted) it->second = record.itemCount(rarity, key);
+        return it->second;
+    };
+    const auto takeOne = [&](std::uint16_t index, Rarity rarity) {
+        auto& count = countFor(rarity, inventoryKey(index));
+        if (count <= 0) return false;
+        --count;
+        return true;
+    };
     for (const std::optional<StoredItem>& worn : previous) {
         // Under its raw key, not via the index: a petal this build no longer
         // knows still belongs to the account, and the bag keeps unknown keys.
         if (worn && !worn->petalType.empty()) {
-            record.addItem(worn->rarity, "petal_" + worn->petalType, 1);
+            ++countFor(worn->rarity, "petal_" + worn->petalType);
         }
     }
 
@@ -394,7 +423,7 @@ PresetLoad equipPreset(PlayerRecord& record, const std::vector<std::optional<Sto
         const std::uint16_t index = content().petalIndex(preset[i]->petalType);
         if (index == kInvalidIndex) {
             ++result.missing;
-        } else if (takeFromInventory(record, index, preset[i]->rarity, 1)) {
+        } else if (takeOne(index, preset[i]->rarity)) {
             next[i] = presetItem(preset[i]->petalType, preset[i]->rarity);
         } else {
             unseated.push_back(i);
@@ -404,7 +433,7 @@ PresetLoad equipPreset(PlayerRecord& record, const std::vector<std::optional<Sto
         const std::uint16_t index = content().petalIndex(preset[i]->petalType);
         for (int tier = petalTier(preset[i]->rarity) - 1; tier >= 0 && !next[i]; --tier) {
             const Rarity rarity = static_cast<Rarity>(tier);
-            if (takeFromInventory(record, index, rarity, 1)) {
+            if (takeOne(index, rarity)) {
                 next[i] = presetItem(preset[i]->petalType, rarity);
             }
         }
@@ -420,6 +449,14 @@ PresetLoad equipPreset(PlayerRecord& record, const std::vector<std::optional<Sto
             next[i] = previous[i];
         }
     }
+    for (const auto& [key, count] : stagedCounts) {
+        if (count > kMaxStackCount) {
+            result.inventoryFull = true;
+            return result;
+        }
+    }
+    for (const auto& [key, count] : stagedCounts)
+        record.setItemCount(key.first, key.second, static_cast<int>(count));
     record.loadout = std::move(next);
     return result;
 }
@@ -593,12 +630,369 @@ struct GameServer::PendingLocalHyper {
     }
 };
 
+namespace {
+
+Json transferError(const std::string& error) {
+    Json reply = Json::object();
+    reply["error"] = error;
+    return reply;
+}
+
+Json transferSuccess() {
+    Json reply = Json::object();
+    reply["ok"] = true;
+    return reply;
+}
+
+bool transferReceipt(const std::string& value) {
+    return value.size() == 64 && std::all_of(value.begin(), value.end(), [](char c) {
+        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+    });
+}
+
+bool localTransferPetal(const Json& slot) {
+    const auto rarity = slot["rarity"].asString();
+    return rarity == "admin";
+}
+
+void stripTransferSlots(Json& slots) {
+    if (!slots.isArray()) return;
+    for (std::size_t i = 0; i < slots.size(); ++i)
+        if (localTransferPetal(slots[i])) slots[i] = Json{};
+}
+
+bool hasTransferForgeClaim(const Database& database, const std::string& userId) {
+    const auto& rows = database.storedTable("hyperForges").members();
+    return std::any_of(rows.begin(), rows.end(), [&](const auto& row) {
+        return row.second["owner"].asString() == userId;
+    });
+}
+
+bool hasHighRarityTransferItems(const PlayerRecord& progress) {
+    const Json stored = playerRecordJson(progress);
+    for (const char* rarity : {"apex", "ascendant"}) {
+        for (const auto& [item, count] : stored["inventory"][rarity].members())
+            if (count.asDouble() > 0) return true;
+    }
+    return false;
+}
+
+Json transferableProgress(const PlayerRecord& record) {
+    const Json source = playerRecordJson(record);
+    Json result = Json::object();
+    for (const char* field : {"totalXP", "stars", "inventory", "mobKills", "loadout",
+            "loadoutInInventory", "loadoutPresets", "skills", "tp", "talentPointBonus",
+            "mazeTotalXP", "mazeSkills", "mazeTp", "dailyStreak", "lastStreakDate",
+            "lastStreakReward", "loadoutPresetSkills", "presetAutosaveOff",
+            "titanForgeCounts", "lockedShopRotation", "lockedShopOffers",
+            "lockedShopOffersRotation", "shopTierLocks", "dailyDropBonus",
+            "titanHammerLeases", "titanHammerExpiresAt", "temporaryHyperHammer",
+            "waveBonusHammerDay"}) {
+        if (source.contains(field)) result[field] = source[field];
+    }
+    if (result["inventory"].isObject()) result["inventory"].erase("admin");
+    stripTransferSlots(result["loadout"]);
+    if (result["loadoutPresets"].isObject()) {
+        for (const auto& name : result["loadoutPresets"].keys())
+            stripTransferSlots(result["loadoutPresets"][name]);
+    }
+    return result;
+}
+
+} // namespace
+
+bool GameServer::transferBlocksLogin(const std::string& userId) const {
+    const auto state = database_.storedTable("accountTransferUsers")[userId]["state"].asString();
+    return state == "frozen" || state == "transferred" || state == "staged";
+}
+
+Json GameServer::accountTransfer(const std::string& token, const Json& request) {
+    if (database_.authoritative() || config_.authorityAuth || pendingLocalHyper_ || persistenceFrozen_)
+        return transferError("busy");
+    const auto action = request["action"].asString();
+    constexpr std::size_t maxTransferRecords = 512;
+    constexpr int maxPendingTransfers = 16;
+    constexpr std::int64_t stageWindowMillis = 90000;
+    const auto now = database_.nowMillis();
+    const auto unfinished = [](const Json& row) {
+        return row["state"].asString() == "frozen" ||
+            (row["state"].asString() == "transferred" && !row["sourceDeleted"].asBool());
+    };
+    if (action == "account-transfer-pending") {
+        Json reply = Json::object();
+        Json jobs = Json::array();
+        const auto after = request["after"].asString();
+        for (const auto& [key, row] : database_.storedTable("accountTransferOutgoing").members()) {
+            if (key <= after || !unfinished(row) || row["expiresAt"].asInt64() > now) continue;
+            Json job = Json::object();
+            job["operation"] = key;
+            job["realm"] = row["realm"];
+            job["state"] = row["state"];
+            job["delivered"] = row["delivered"].asBool();
+            job["expiresAt"] = row["expiresAt"].asInt64();
+            jobs.push(std::move(job));
+            if (jobs.size() == 4) break;
+        }
+        reply["jobs"] = std::move(jobs);
+        return reply;
+    }
+    const auto receipt = request["receipt"].asString();
+    const auto operation = request["operation"].asString();
+    if (!transferReceipt(receipt) && !transferReceipt(operation))
+        return transferError("invalid_request");
+    // Public requests supply a receipt. Only the trusted bridge may supply
+    // the stored digest directly, so recovery does not need browser secrets.
+    const auto key = operation.empty() ? crypto::sha256Hex(receipt) : operation;
+    const Json outgoing = database_.storedTable("accountTransferOutgoing")[key];
+    const Json incoming = database_.storedTable("accountTransferIncoming")[key];
+    const auto persist = [this]() -> Json {
+        return database_.save() ? transferSuccess() : transferError("save_pending");
+    };
+    if (action == "account-transfer-prepare") {
+        Json row = outgoing;
+        if (row.isNull()) {
+            const auto* session = database_.resolveSession(token, false);
+            if (!session) return transferError("login_required");
+            const auto id = session->userId;
+            const auto* account = std::as_const(database_).findUserById(id);
+            if (!account || account->admin || account->guest) return transferError("ineligible_account");
+            if (transferBlocksLogin(id)) return transferError("transfer_unavailable");
+            if (hasTransferForgeClaim(database_, id)) return transferError("transfer_forge_review");
+            const auto& journal = database_.storedTable("accountTransferOutgoing");
+            if (journal.size() >= maxTransferRecords) return transferError("transfer_capacity");
+            if (std::count_if(journal.members().begin(), journal.members().end(),
+                    [&](const auto& entry) { return unfinished(entry.second); }) >= maxPendingTransfers)
+                return transferError("transfer_capacity");
+            std::string reason;
+            const auto username = request["username"].asString();
+            const auto realm = request["realm"].asString();
+            if (!Database::validUsername(username, reason) || Database::isGuestUsername(username) ||
+                (realm != "1" && realm != "2" && realm != "3"))
+                return transferError("invalid_username");
+            if (!database_.findProgress(id)) return transferError("no_character");
+            adminDbSignOutConnections(id, "正在办理自助转服，请打开服务器指引查看。");
+            const auto* progress = database_.findProgress(id);
+            if (!progress) return transferError("no_character");
+            row = Json::object();
+            row["user"] = id;
+            row["state"] = "frozen";
+            row["realm"] = realm;
+            row["username"] = username;
+            row["expiresAt"] = Json(static_cast<long long>(now + stageWindowMillis));
+            row["progress"] = transferableProgress(*progress);
+            row["physicalHighRaritiesIncluded"] = true;
+            Json codes = Json::object();
+            for (const auto& [code, entry] : database_.storedTable("codes").members())
+                for (const auto& used : entry["usedBy"].items())
+                    if (used.asString() == id) codes[code] = entry["stars"];
+            row["codes"] = std::move(codes);
+            if (row.dump().size() > 900000) return transferError("character_too_large");
+            database_.rawTable("accountTransferOutgoing")[key] = row;
+            Json& user = database_.rawTable("accountTransferUsers")[id];
+            user["state"] = "frozen";
+            user["operation"] = key;
+            database_.markDirty();
+        }
+        if (row["realm"].asString() != request["realm"].asString() ||
+            row["username"].asString() != request["username"].asString())
+            return transferError("operation_mismatch");
+        if (row["state"].asString() == "cancelled") return transferError("cancelled");
+        if (const auto reply = persist(); !reply["ok"].asBool()) return reply;
+        row.erase("user");
+        return row;
+    }
+    if (action == "account-transfer-status") {
+        Json reply = transferSuccess();
+        if (incoming.isObject()) {
+            reply["present"] = !incoming.contains("error");
+            return database_.dirty() && !persist()["ok"].asBool() ? transferError("save_pending") : reply;
+        }
+        const auto expiresAt = request["expiresAt"].asInt64();
+        if (expiresAt > now) return transferError("save_pending");
+        // Persist a cutoff before declaring the destination empty. Even a
+        // delayed stage request or a wall-clock correction cannot reopen it.
+        const auto cutoff = database_.storedTable("accountTransferMeta")["stageCutoff"].asInt64();
+        if (expiresAt > cutoff) {
+            database_.rawTable("accountTransferMeta")["stageCutoff"] = Json(static_cast<long long>(expiresAt));
+            database_.markDirty();
+        }
+        if (database_.dirty() && !persist()["ok"].asBool()) return transferError("save_pending");
+        reply["present"] = false;
+        return reply;
+    }
+    if (action == "account-transfer-stage") {
+        if (!incoming.isNull()) {
+            const auto saved = persist();
+            if (!saved["ok"].asBool()) return saved;
+            if (incoming.contains("error")) return incoming;
+            const auto* account = std::as_const(database_).findUserById(incoming["user"].asString());
+            if (!account || !database_.passwordMatches(account->username, request["password"].asString()))
+                return transferError("password_mismatch");
+            return saved;
+        }
+        const auto expiresAt = request["expiresAt"].asInt64();
+        const auto cutoff = database_.storedTable("accountTransferMeta")["stageCutoff"].asInt64();
+        if (expiresAt <= now || expiresAt <= cutoff || expiresAt > now + 2 * stageWindowMillis)
+            return transferError("stage_expired");
+        if (database_.storedTable("accountTransferIncoming").size() >= maxTransferRecords)
+            return transferError("transfer_capacity");
+        const auto reject = [&](const std::string& reason) -> Json {
+            const auto reply = transferError(reason);
+            database_.rawTable("accountTransferIncoming")[key] = reply;
+            database_.markDirty();
+            const auto saved = persist();
+            return saved["ok"].asBool() ? reply : saved;
+        };
+        const auto username = request["username"].asString();
+        std::string reason;
+        const auto password = request["password"].asString();
+        if (!Database::validPassword(password, reason)) return reject("invalid_password");
+        if (!request["progress"].isObject() || !request["codes"].isObject())
+            return transferError("invalid_request");
+        // Include space for this account's ID in each matching redeemed-code row.
+        const auto payloadBytes = request["progress"].dump().size() + request["codes"].size() * 96;
+        constexpr std::size_t maxImportedBytes = 32 * 1024 * 1024;
+        std::size_t usedBytes = 0;
+        for (const auto& [key, row] : database_.storedTable("accountTransferIncoming").members())
+            usedBytes += static_cast<std::size_t>(std::max<std::int64_t>(0, row["bytes"].asInt64()));
+        if (payloadBytes > maxImportedBytes || usedBytes > maxImportedBytes - payloadBytes)
+            return transferError("transfer_capacity");
+        if (std::as_const(database_).findUser(username)) return reject("username_taken");
+        const auto result = database_.createUser(username, password);
+        if (!result.ok()) {
+            if (result.status == CreateStatus::UsernameInvalid) return reject("invalid_username");
+            return transferError("save_pending");
+        }
+        const auto id = result.account->id;
+        database_.progress(id) = parsePlayerRecord(request["progress"]);
+        for (const auto& [code, grant] : request["codes"].members()) {
+            const Json existing = database_.storedTable("codes")[code];
+            if (existing.isObject() && existing["stars"].dump() == grant.dump() &&
+                existing["usedBy"].isArray())
+                database_.rawTable("codes")[code]["usedBy"].push(id);
+        }
+        auto& arrival = database_.rawTable("accountTransferIncoming")[key];
+        arrival["user"] = id;
+        arrival["state"] = "staged";
+        arrival["bytes"] = Json(static_cast<std::uint64_t>(payloadBytes));
+        Json& user = database_.rawTable("accountTransferUsers")[id];
+        user["state"] = "staged";
+        user["operation"] = key;
+        database_.markDirty();
+        return persist();
+    }
+    if (action == "account-transfer-finalize" || action == "account-transfer-cancel") {
+        if (outgoing.isNull()) return transferError("unknown_operation");
+        const auto id = outgoing["user"].asString();
+        const auto state = outgoing["state"].asString();
+        const auto next = action == "account-transfer-finalize" ? "transferred" : "cancelled";
+        if (state != "frozen" && state != next) return transferError("operation_mismatch");
+        if (state == "frozen") {
+            auto& row = database_.rawTable("accountTransferOutgoing")[key];
+            row["state"] = next;
+            row.erase("progress");
+            row.erase("codes");
+            auto& users = database_.rawTable("accountTransferUsers");
+            if (action == "account-transfer-cancel") users.erase(id);
+            else {
+                users[id]["state"] = next;
+                if (const auto* account = std::as_const(database_).findUserById(id))
+                    database_.revokeSessionsForUser(account->username);
+            }
+            database_.markDirty();
+        }
+        return persist();
+    }
+    if (action == "account-transfer-delivered") {
+        if (outgoing["state"].asString() != "transferred") return transferError("unknown_operation");
+        if (!outgoing["delivered"].asBool()) {
+            database_.rawTable("accountTransferOutgoing")[key]["delivered"] = true;
+            database_.markDirty();
+        }
+        return database_.dirty() ? persist() : transferSuccess();
+    }
+    if (action == "account-transfer-source-archive" || action == "account-transfer-erase-source") {
+        if (outgoing["state"].asString() != "transferred" || !outgoing["delivered"].asBool())
+            return transferError("unknown_operation");
+        if (outgoing["sourceDeleted"].asBool()) {
+            auto reply = database_.dirty() ? persist() : transferSuccess();
+            if (reply["ok"].asBool()) reply["alreadyDeleted"] = true;
+            return reply;
+        }
+        const auto id = outgoing["user"].asString();
+        const auto* account = std::as_const(database_).findUserById(id);
+        const auto* progress = database_.findProgress(id);
+        const Json user = database_.storedTable("accountTransferUsers")[id];
+        if (!account || account->admin || !progress || user["state"].asString() != "transferred" ||
+            user["operation"].asString() != key)
+            return transferError("archive_identity_mismatch");
+        // Old transfers did not carry these tiers. Keep their source
+        // account until the missing items have been reconciled.
+        if (hasTransferForgeClaim(database_, id) ||
+            (!outgoing["physicalHighRaritiesIncluded"].asBool() && hasHighRarityTransferItems(*progress)))
+            return transferError("transfer_archive_review");
+        const auto username = account->username;
+        if (action == "account-transfer-source-archive") {
+            Json reply = transferSuccess();
+            reply["operation"] = key;
+            reply["account"] = accountRecordJson(*account);
+            reply["progress"] = playerRecordJson(*progress);
+            reply["migration"] = outgoing;
+            const auto guild = guildNameForUser(username);
+            if (!guild.empty()) reply["guild"] = database_.storedTable("guilds")[guild];
+            Json claims = Json::object();
+            for (const auto& [slot, row] : database_.storedTable("hyperForges").members())
+                if (row["owner"].asString() == id) claims[slot] = row;
+            reply["forgeClaims"] = std::move(claims);
+            Json skins = Json::object();
+            for (const auto& [skin, row] : database_.storedTable("customSkins").members())
+                if (row["ownerId"].asString() == id) skins[skin] = row;
+            reply["ownedSkins"] = std::move(skins);
+            return reply;
+        }
+        const auto digest = request["archiveSha256"].asString();
+        if (!transferReceipt(digest)) return transferError("invalid_archive");
+        removeTransferredAccountLinks(username, id);
+        if (!database_.eraseUser(username)) return transferError("archive_identity_mismatch");
+        database_.rawTable("accountTransferUsers").erase(id);
+        auto& receipt = database_.rawTable("accountTransferOutgoing")[key];
+        receipt["archiveSha256"] = digest;
+        receipt["sourceDeleted"] = true;
+        database_.markDirty();
+        return persist();
+    }
+    if (action == "account-transfer-activate") {
+        if (incoming.isNull() || incoming.contains("error")) return transferError("unknown_operation");
+        // A completed arrival remains complete even after this account
+        // transfers out again. Replaying it must never change the login lock.
+        if (incoming["state"].asString() == "active")
+            return database_.dirty() ? persist() : transferSuccess();
+        const auto id = incoming["user"].asString();
+        auto& user = database_.rawTable("accountTransferUsers")[id];
+        const auto state = user["state"].asString();
+        if (user["operation"].asString() != key || (state != "staged" && state != "active"))
+            return transferError("operation_mismatch");
+        user["state"] = "active";
+        user.erase("nextAllowedAt");
+        database_.rawTable("accountTransferIncoming")[key]["state"] = "active";
+        database_.markDirty();
+        return persist();
+    }
+    return transferError("invalid_request");
+}
+
 GameServer::GameServer() {
     net::web::setCouncilHandler([this](const std::string& token,const std::string& body) {
         if (persistenceFrozen_ || (pendingLocalHyper_ && pendingLocalHyper_->publishing))
             return std::string("{\"ok\":false,\"error\":\"authority_unavailable\"}");
         const auto request = Json::parseOrNull(body);
         const auto action = request["action"].asString();
+        if (action.rfind("account-transfer-", 0) == 0)
+            return accountTransfer(token, request).dump();
+        if (const auto* session = database_.resolveSession(token, false);
+            session && transferBlocksLogin(session->userId))
+            return std::string("{\"ok\":false,\"error\":\"account_transferred\"}");
+
         if (action.rfind("skin-review-", 0) == 0)
             return relaySkinReview(token, request).dump();
         const auto result = council::request(database_, token, request).dump();
@@ -770,7 +1164,7 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     // simulates -- its entities are simply not replicated, which is what a
     // headless test wants and what this must not be in production.
     petals_->allocateNetId = [this] { return netIds_.next(); };
-    petals_->jurassicMaps = &worldMaps_;
+    petals_->worldMaps = &worldMaps_;
     combat_->allocateNetId = [this] { return netIds_.next(); };
     mobAi_->allocateNetId = [this] { return netIds_.next(); };
     spawning_->netIds = &netIds_;
@@ -1197,11 +1591,7 @@ void GameServer::serviceSharedViews() {
                 // The current shard owns this player's recent writes. The
                 // authority may not have checkpointed them yet.
                 if (const auto* record = database_.findProgress(work.user)) {
-                    board["own"] = record->extra["practiceRecords"]["rows"];
-                    auto& rows = board["own"].items();
-                    std::sort(rows.begin(), rows.end(), [](const auto& a, const auto& b) {
-                        return a["damage"].asDouble() > b["damage"].asDouble();
-                    });
+                    putPracticeHistory(board, *record);
                 }
                 writePracticeBoard(w, board);
             } else if(work.query["kind"].asString()=="titan") {
@@ -2181,11 +2571,14 @@ void GameServer::runSystems(double nowMillis, double dt) {
     // The HUMAN list is what the arena and the maze are filled for: those are
     // generated realms with no bands, ModeSpawner stocks each one whole while
     // somebody is in it, and a bot has no business keeping one populated.
-    activePlayers_.clear();
     Query<PlayerTag, Transform> players{world_};
-    players.each([&](Entity, PlayerTag&, Transform& transform) {
-        activePlayers_.push_back({transform.position, transform.realm});
-    });
+    const auto refreshActivePlayers = [&] {
+        activePlayers_.clear();
+        players.each([&](Entity, PlayerTag&, Transform& transform) {
+            activePlayers_.push_back({transform.position, transform.realm});
+        });
+    };
+    refreshActivePlayers();
     humanPlayers_.clear();
     for (const auto& entry : sessions_) {
         if (!entry.second.playing()) continue;
@@ -2275,6 +2668,9 @@ void GameServer::runSystems(double nowMillis, double dt) {
     petals_->landShots(world_, content(), combat_->shotLandings(), terrain_.get(), nowMillis,&events_);
     servicePracticeTrials(nowMillis);
     markTickPhase("combat");
+    // Contact and world movement may have shoved either splitter body since
+    // the AI snapshot. Wake and clearance must use the committed positions.
+    refreshActivePlayers();
     spawning_->run(world_, *terrain_, content(), activePlayers_, rng_, nowMillis,
                    net::kTickSeconds, commands_);
     // What this tick's dead leave behind -- a tomb's mummy, its opened shell
@@ -2561,6 +2957,7 @@ void GameServer::reapDead() {
 }
 
 void GameServer::replicate(double nowMillis, double wallMillis) {
+    petals_->refreshCrownLoanCounters(world_, content());
     Replicator::Frame frame;
     frame.tick = tick_;
     frame.snapshotIndex = ++snapshotIndex_;
@@ -2921,6 +3318,34 @@ bool GameServer::prepareAuthorityAuth(Session& session,net::Connection& connecti
     return true;
 }
 
+#ifdef __EMSCRIPTEN__
+namespace {
+class ActiveMessageScope {
+public:
+    ActiveMessageScope(std::uint8_t kind, std::uint32_t bytes, std::uint32_t stage)
+        : previous_(current()) {
+        current() = {static_cast<std::uint32_t>(kind) + 1, bytes, stage};
+    }
+    ~ActiveMessageScope() { current() = previous_; }
+
+private:
+    static std::array<std::uint32_t, 3>& current() {
+        // This contains only transport metadata. The Node abort handler reads
+        // it directly while the failing call is still active.
+        static std::array<std::uint32_t, 3> context{};
+        static const bool registered = [] {
+            EM_ASM({ Module["activeMessageContext"] = $0; }, context.data());
+            return true;
+        }();
+        (void)registered;
+        return context;
+    }
+
+    std::array<std::uint32_t, 3> previous_;
+};
+} // namespace
+#endif
+
 void GameServer::onMessage(net::Connection& connection, ByteReader& reader) {
     if (persistenceFrozen_) return;
     ByteReader original=reader;
@@ -2928,6 +3353,12 @@ void GameServer::onMessage(net::Connection& connection, ByteReader& reader) {
     if (!session) return;
 
     const auto id = static_cast<net::ClientMessage>(reader.u8());
+    if (!reader.ok()) return;
+#ifdef __EMSCRIPTEN__
+    const ActiveMessageScope activeMessage(static_cast<std::uint8_t>(id),
+        static_cast<std::uint32_t>(original.remaining()),
+        static_cast<std::uint32_t>(session->stage));
+#endif
     struct MeasureArrivalMessage {
         ArrivalProbe* probe;
         net::ClientMessage id;
@@ -2991,7 +3422,9 @@ void GameServer::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ClientMessage::SaveLoadoutPreset:
         case net::ClientMessage::LoadLoadoutPreset:
         case net::ClientMessage::SetPresetAutosave:
+        case net::ClientMessage::SetPetalPrivacy:
         case net::ClientMessage::BulkCraft:
+        case net::ClientMessage::BulkCraftMythicUltra:
         case net::ClientMessage::DailyDropBonus:
         case net::ClientMessage::RequestWaveRoomStatus:
         case net::ClientMessage::DailyLoginClaim:
@@ -2999,6 +3432,7 @@ void GameServer::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ClientMessage::SkinReview:
         case net::ClientMessage::Craft:
         case net::ClientMessage::OracleCraft:
+        case net::ClientMessage::OracleShopForecast:
         case net::ClientMessage::Trade:
         case net::ClientMessage::TitanForge:
         case net::ClientMessage::Assemble:
@@ -3029,6 +3463,8 @@ void GameServer::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ClientMessage::Chat:          handleChat(*session, connection, reader); break;
         case net::ClientMessage::SetLoadout:    handleSetLoadout(*session, reader); break;
         case net::ClientMessage::BulkCraft: handleBulkCraft(*session, connection, reader); break;
+        case net::ClientMessage::BulkCraftMythicUltra:
+            handleBulkCraftMythicUltra(*session, connection, reader); break;
         case net::ClientMessage::DailyDropBonus: handleDropBonus(*session, connection, reader); break;
         case net::ClientMessage::RequestWaveRoomStatus: {
             ByteWriter status;
@@ -3063,6 +3499,24 @@ void GameServer::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ClientMessage::ProfileCheck:  handleProfileCheck(*session, connection, reader); break;
         case net::ClientMessage::SwapLoadout:   handleSwapLoadout(*session, reader); break;
         case net::ClientMessage::SwapLoadoutRows: handleSwapLoadoutRows(*session, connection); break;
+        case net::ClientMessage::SetPetalPrivacy: {
+            const bool hidden = reader.boolean();
+            if (!reader.ok() || reader.remaining() != 0) break;
+            const auto* settings = std::as_const(database_).findProgress(session->userId);
+            const bool wasHidden = settings && settings->extra["hidePetalTypes"].asBool();
+            if (wasHidden != hidden) {
+                auto& extra = database_.progress(session->userId).extra;
+                if (hidden) extra["hidePetalTypes"] = true;
+                else extra.erase("hidePetalTypes");
+                database_.markDirty();
+                for (Entity entity : bodiesOf(*session)) {
+                    if (auto* account = world_.tryGet<PlayerAccount>(entity))
+                        account->hidePetalTypes = hidden;
+                }
+            }
+            sendProfile(*session, connection);
+            break;
+        }
         case net::ClientMessage::SetPresetAutosave: {
             const bool enabled = reader.boolean();
             if (!reader.ok() || reader.remaining() != 0) break;
@@ -3084,6 +3538,9 @@ void GameServer::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ClientMessage::UsePetal:      handleUsePetal(*session, reader); break;
         case net::ClientMessage::Craft:         handleCraft(*session, connection, reader); break;
         case net::ClientMessage::OracleCraft:   handleOracleCraft(*session, connection, reader); break;
+        case net::ClientMessage::OracleShopForecast:
+            handleOracleShopForecast(*session, connection, reader);
+            break;
         case net::ClientMessage::Trade:         handleTrade(*session, connection, reader); break;
         case net::ClientMessage::TitanForge:    handleTitanForge(*session, connection, reader); break;
         case net::ClientMessage::Assemble:      handleAssemble(*session, connection, reader); break;
@@ -3372,6 +3829,10 @@ void GameServer::handleLogin(Session& session, net::Connection& connection, Byte
         sendAuthResult(connection, net::AuthStatus::ServerError, "", "", "Account could not be read.");
         return;
     }
+    if (transferBlocksLogin(account->id)) {
+        sendAuthResult(connection, net::AuthStatus::ServerError, "", "", "此角色正在转服或已转服。请打开服务器指引查看。");
+        return;
+    }
     // A player who signed in is not what the limit is for.
     if(!acquireAuthority(account->id)) {
         sendAuthResult(connection,net::AuthStatus::ServerError,"","","Account is active on another server or temporarily unavailable.");
@@ -3413,6 +3874,10 @@ void GameServer::handleResume(Session& session, net::Connection& connection, Byt
     // bodies into the database, and `record` points into it.
     const std::string userId = record->userId;
     const std::string username = record->username;
+    if (transferBlocksLogin(userId)) {
+        sendAuthResult(connection, net::AuthStatus::ServerError, "", "", "此角色正在转服或已转服。请打开服务器指引查看。");
+        return;
+    }
     if(!acquireAuthority(userId,crypto::sha256Hex(token))) {
         sendAuthResult(connection,net::AuthStatus::ServerError,"","","Account is active on another server or temporarily unavailable.");
         return;
@@ -3825,6 +4290,7 @@ void GameServer::signOut(Session& session) {
     session.displayName.clear();
     // Last: despawnPlayer() puts the stage back to Authenticated, and this is
     // what the socket actually is now.
+    session.bulkCraftTicket = {};
     session.stage = SessionStage::Anonymous;
 }
 
@@ -3848,9 +4314,9 @@ void GameServer::sendProfile(Session& session, net::Connection& connection) {
         if (account->guest) accountFlags |= net::kAccountGuest;
         if (!account->passwordChosen) accountFlags |= net::kAccountNoPassword;
     }
-    if (const auto* settings = database_.findProgress(session.userId);
-        settings && settings->extra["presetAutosaveOff"].asBool()) {
-        accountFlags |= net::kAccountPresetAutosaveOff;
+    if (const auto* settings = std::as_const(database_).findProgress(session.userId)) {
+        if (settings->extra["presetAutosaveOff"].asBool()) accountFlags |= net::kAccountPresetAutosaveOff;
+        if (settings->extra["hidePetalTypes"].asBool()) accountFlags |= net::kAccountPetalTypesHidden;
     }
     w.u8(accountFlags);
     w.f64(trackXp);
@@ -3945,8 +4411,9 @@ void GameServer::sendProfile(Session& session, net::Connection& connection) {
     // Persistent, per-petal forge progress; unknown old-save fields round-trip in extra.
     const auto ledgerAt = w.reserveU16();
     std::uint16_t ledgerSize = 0;
+    const auto& forgeCounts = std::as_const(record.extra)["titanForgeCounts"];
     for (std::uint16_t i = 0; i < content().petalCount(); ++i) {
-        const int completed = clamp(record.extra["titanForgeCounts"][content().petal(i).id].asInt(0), 0, 2);
+        const int completed = clamp(forgeCounts[content().petal(i).id].asInt(0), 0, 2);
         if (completed == 0) continue;
         w.u16(i); w.u8(static_cast<std::uint8_t>(completed)); ++ledgerSize;
     }
@@ -4380,12 +4847,13 @@ void GameServer::handleInput(Session& session, const net::Connection& connection
     // watching through another flower is culled to this same claim by
     // replicate(), and the flower they are steering keeps its own player's.
     if (input.viewportWidth > 0 && input.viewportHeight > 0) {
-        // Clamped against the loadout as it stands NOW, every frame, so taking
-        // the antennae off shrinks the claim on the next packet.
-        const Vec2 viewport = claimableViewport(world_, session.entity, content(),
-                                                input.viewportWidth, input.viewportHeight);
-        if (PlayerLocation* location = world_.tryGet<PlayerLocation>(session.entity)) {
-            location->viewport = viewport;
+        // Both halves are spawn viewers. Use the same reported dimensions
+        // but cap them against each body's own equipment and talents.
+        for (const Entity body : bodiesOf(session)) {
+            if (auto* location = world_.tryGet<PlayerLocation>(body)) {
+                location->viewport = claimableViewport(world_, body, content(),
+                                                       input.viewportWidth, input.viewportHeight);
+            }
         }
     }
 }
@@ -4625,6 +5093,19 @@ void GameServer::handleSetLoadout(Session& session, ByteReader& reader) {
     }
     if (record.loadout.size() < kLoadoutSlots) record.loadout.resize(kLoadoutSlots);
 
+    if (const auto& worn = record.loadout[slot]; worn && !worn->petalType.empty()) {
+        const auto wornIndex = content().petalIndex(worn->petalType);
+        const bool sameStack = wornIndex == petalIndex && worn->rarity == rarity;
+        if (wornIndex != kInvalidIndex && !sameStack &&
+            record.itemCount(worn->rarity, inventoryKey(wornIndex)) == kMaxStackCount) {
+            if (auto* peer = listener_.find(session.connection)) {
+                sendNotice(*peer, net::NoticeSeverity::Warning, "库存叠放已满，无法卸下该花瓣。");
+                sendProfile(session, *peer);
+            }
+            return;
+        }
+    }
+
     // Equipping must come out of the inventory, or a client can name any petal
     // it likes and simply be given it. The server's bag is the only one that
     // counts: a stack the client shows and this record does not hold was
@@ -4656,7 +5137,7 @@ void GameServer::handleSetLoadout(Session& session, ByteReader& reader) {
         item.rarity = rarity;
         record.loadout[slot] = item;
     }
-    autoSaveActivePreset(record);
+    autoSaveActivePreset(record, PresetSlots{}.set(slot));
     database_.markDirty();
 
     if (session.playing()) applyAccountToSession(session);
@@ -4715,7 +5196,7 @@ void GameServer::handleSwapLoadout(Session& session, ByteReader& reader) {
     if (a % kLoadoutActiveSlots >= slots || b % kLoadoutActiveSlots >= slots) return;
     if (record.loadout.size() < kLoadoutSlots) record.loadout.resize(kLoadoutSlots);
     std::swap(record.loadout[a], record.loadout[b]);
-    autoSaveActivePreset(record);
+    autoSaveActivePreset(record, PresetSlots{}.set(a).set(b));
     database_.markDirty();
 
     if (session.playing()) applyAccountToSession(session);
@@ -4742,15 +5223,15 @@ void GameServer::handleSwapLoadoutRows(Session& session, net::Connection& connec
 
     PlayerRecord& record = liveRecord(session);
     if (record.loadout.size() < kLoadoutSlots) record.loadout.resize(kLoadoutSlots);
-    bool changed = false;
+    PresetSlots editedSlots;
     for (int i = 0; i < record.skills.loadoutSlots(); ++i) {
         const auto& reserve = record.loadout[i + kLoadoutActiveSlots];
         if (!reserve || reserve->petalType.empty()) continue;
         std::swap(record.loadout[i], record.loadout[i + kLoadoutActiveSlots]);
-        changed = true;
+        editedSlots.set(i).set(i + kLoadoutActiveSlots);
     }
-    if (!changed) { sendProfile(session, connection); return; }
-    autoSaveActivePreset(record);
+    if (editedSlots.none()) { sendProfile(session, connection); return; }
+    autoSaveActivePreset(record, editedSlots);
     database_.markDirty();
 
     if (session.playing()) applyAccountToSession(session);
@@ -4784,6 +5265,10 @@ void GameServer::handleSaveLoadoutPreset(Session& session, net::Connection& conn
     record.loadoutPresets[name] = std::move(saved);
     savePresetSkills(record, name);
     record.extra["loadoutPresetRotation"][name] = static_cast<int>(rotationStep);
+    // Manual save makes this the active slot so later petal edits autosave
+    // here -- otherwise K1 (and any never-loaded preset) looked unsavable.
+    record.extra["activeLoadoutPreset"] = static_cast<int>(preset);
+    record.extra.erase("activeLoadoutPresetSkillsLocked");
     database_.markDirty();
     // The profile carries the presets, and the bar's K/L row is drawn from it.
     sendProfile(session, connection);
@@ -4814,8 +5299,6 @@ void GameServer::handleLoadLoadoutPreset(Session& session, net::Connection& conn
     autoSaveActivePreset(record);
     const std::string name = loadoutPresetName(preset);
     const int savedRotationStep = std::as_const(record.extra)["loadoutPresetRotation"][name].asInt(0);
-    session.pendingPresetRotationStep = savedRotationStep >= 1 && savedRotationStep <= 4
-        ? static_cast<std::uint8_t>(savedRotationStep) : 0;
     // A preset never saved is an empty loadout, and loads as one: every petal
     // goes back into the bag. Copied either way -- equipPreset rewrites the
     // record the preset lives in.
@@ -4826,15 +5309,28 @@ void GameServer::handleLoadLoadoutPreset(Session& session, net::Connection& conn
     // An untouched preset has no saved talent allocation. Keep the current
     // tree when selecting it; an explicitly saved empty tree still loads.
     const Json& presetSkills = std::as_const(record.extra)["loadoutPresetSkills"][name];
+    const SkillSet previousSkills = record.skills;
     const bool keepCurrentSkills = presetSkills.isObject() && !loadPresetSkills(record, name);
     const PresetLoad result = equipPreset(record, slots, record.skills.loadoutSlots());
-    // Keep the saved preset intact when applying only its petals. The original
-    // tree may fit again once the player earns more points or refunds Prestige.
-    record.extra["activeLoadoutPreset"] = keepCurrentSkills ? -1 : static_cast<int>(preset);
+    if (result.inventoryFull) {
+        record.skills = previousSkills;
+        database_.markDirty();
+        sendProfile(session, connection);
+        sendNotice(connection, net::NoticeSeverity::Warning, "库存叠放已满，无法切换配装。");
+        return;
+    }
+    session.pendingPresetRotationStep = savedRotationStep >= 1 && savedRotationStep <= 4
+        ? static_cast<std::uint8_t>(savedRotationStep) : 0;
+    // Stay on this preset so petal edits still autosave. If talents did not
+    // fit, lock skill autosave so the saved tree is not overwritten by the
+    // cheaper tree we kept wearing.
+    record.extra["activeLoadoutPreset"] = static_cast<int>(preset);
+    if (keepCurrentSkills) record.extra["activeLoadoutPresetSkillsLocked"] = true;
+    else record.extra.erase("activeLoadoutPresetSkillsLocked");
     autoSaveActivePreset(record);
     database_.markDirty();
 
-    if (session.playing()) applyAccountToSession(session);
+    if (session.playing()) applyAccountToSession(session, /*loadingPreset=*/true);
     sendProfile(session, connection);
 
     std::string text = "Loaded loadout " + name;
@@ -5002,6 +5498,159 @@ void GameServer::handleBulkCraft(Session& session, net::Connection& connection, 
     sendNotice(connection,net::NoticeSeverity::Info,groups>0 ? "一键合成完成：已处理目标等级以下的可用材料，装备花瓣保留。" : "目标等级以下没有足够合成的材料。");
 }
 
+void GameServer::handleBulkCraftMythicUltra(Session& session, net::Connection& connection,
+                                          ByteReader& reader) {
+    if (!session.authenticated()) return;
+    const auto action = reader.u8();
+    if (!reader.ok() || action > 1) return;
+
+    const bool preparing = action == 0;
+    const auto request = preparing ? reader.u32() : 0;
+    const auto replyTicket = [&](std::uint64_t ticket) {
+        ByteWriter reply;
+        reply.u8(static_cast<std::uint8_t>(net::ServerMessage::BulkCraftTicket));
+        reply.u32(request);
+        reply.u64(ticket);
+        connection.send(reply);
+    };
+    const auto refuse = [&](const char* reason) {
+        if (preparing) {
+            replyTicket(0);
+        } else {
+            sendNotice(connection, net::NoticeSeverity::Warning, reason);
+        }
+    };
+
+    const auto petalCount = content().petalCount();
+    std::array<std::vector<std::uint32_t>, 2> confirmed;
+    const std::array<Rarity, 2> sourceTiers{Rarity::Ultra, Rarity::Mythic};
+    if (preparing) {
+        const unsigned stackCount = reader.u16();
+        if (!reader.ok() || request == 0 || stackCount == 0 || stackCount > 2 * petalCount ||
+            reader.remaining() != stackCount * 7u) return;
+        session.bulkCraftTicket = {};
+        for (auto& tier : confirmed) tier.resize(petalCount);
+        for (unsigned i = 0; i < stackCount; ++i) {
+            const auto petal = reader.u16();
+            const auto rawRarity = reader.u8();
+            const auto count = reader.u32();
+            if (petal >= petalCount || count < kCraftBatch ||
+                count > static_cast<std::uint32_t>(kMaxStackCount) ||
+                (rawRarity != rarityIndex(Rarity::Ultra) && rawRarity != rarityIndex(Rarity::Mythic))) return;
+            const auto rarity = static_cast<Rarity>(rawRarity);
+            const auto& definition = content().petal(petal);
+            auto& staged = confirmed[rarity == Rarity::Ultra ? 0 : 1][petal];
+            if (staged != 0 || definition.id == "timed_mjolnir" || !petalComesAt(definition, rarity)) return;
+            staged = count;
+        }
+    } else {
+        const auto id = reader.u64();
+        if (!reader.ok() || reader.remaining() != 0 || id == 0) return;
+        if (session.bulkCraftTicket.id != id || wallClockMillis_ >= session.bulkCraftTicket.expiresAtMillis) {
+            refuse("本次合成确认已失效，请重新确认。");
+            return;
+        }
+        // Invalidate before any operation. This connection can never spend the same ticket twice.
+        confirmed = std::move(session.bulkCraftTicket.materials);
+        session.bulkCraftTicket = {};
+    }
+    if (session.inRift) {
+        refuse("裂隙对局中无法一键合成。");
+        return;
+    }
+    if (!preparing && wallClockMillis_ < session.nextBulkCraftMillis) {
+        refuse("一键合成冷却中，请稍后重新确认。");
+        return;
+    }
+
+    auto& record = liveRecord(session);
+    for (std::size_t tier = 0; tier < sourceTiers.size(); ++tier) {
+        const auto rarity = sourceTiers[tier];
+        for (std::uint16_t petal = 0; petal < petalCount; ++petal) {
+            const auto count = confirmed[tier][petal];
+            if (count == 0) continue;
+            const auto key = inventoryKey(petal);
+            // A ticket approves only the listed quantities. Extra stock is left alone.
+            if (record.itemCount(rarity, key) < static_cast<int>(count)) {
+                resyncProfile(session, connection);
+                refuse("合成材料已变化，请核对数量后重新确认。");
+                return;
+            }
+            auto held = record.itemCount(upgradeRarity(rarity), key);
+            // Ultra is processed first. Its unapproved stock stays in the bag,
+            // along with at most four returned petals from the approved pool.
+            if (rarity == Rarity::Mythic && confirmed[0][petal] != 0) {
+                held -= static_cast<int>(confirmed[0][petal]) - (kCraftBatch - 1);
+            }
+            if (held > kMaxStackCount - static_cast<int>(count / kCraftBatch)) {
+                refuse("产物背包容量不足，请清出空间后重试。");
+                return;
+            }
+        }
+    }
+
+    if (preparing) {
+        constexpr double kTicketLifetimeMillis = 15000;
+        session.bulkCraftTicket = {++nextBulkCraftTicket_, wallClockMillis_ + kTicketLifetimeMillis,
+                                   std::move(confirmed)};
+        replyTicket(session.bulkCraftTicket.id);
+        return;
+    }
+
+    session.nextBulkCraftMillis = wallClockMillis_ + 1500;
+    // Craft the confirmed Ultra pools before adding anything from Mythic.
+    for (std::size_t tier = 0; tier < sourceTiers.size(); ++tier) {
+        for (std::uint16_t petal = 0; petal < petalCount; ++petal) {
+            const auto count = confirmed[tier][petal];
+            if (count == 0) continue;
+            ByteWriter request;
+            request.u16(petal);
+            request.u8(static_cast<std::uint8_t>(sourceTiers[tier]));
+            request.u32(count);
+            ByteReader input(request.data(), request.size());
+            handleCraft(session, connection, input, true);
+        }
+    }
+    sendProfile(session, connection);
+    sendNotice(connection, net::NoticeSeverity::Info, "已按确认数量合成神话、究极材料。");
+}
+
+void GameServer::handleOracleShopForecast(Session& session, net::Connection& connection,
+                                         ByteReader& reader) {
+    const auto index = reader.u16();
+    if (!reader.ok() || reader.remaining() != 0) return;
+
+    const bool standing = session.playing() && world_.isAlive(session.entity) &&
+                          !world_.has<Dead>(session.entity);
+    const auto* body = standing ? world_.tryGet<Transform>(session.entity) : nullptr;
+    const bool available = body && shopSellsPetal(index) &&
+        npcs_->findService(world_, NpcService::Oracle, body->position, body->realm,
+                           kNpcServiceReach + kNpcServiceSlack) != NULL_ENTITY;
+    std::array<std::int64_t, 2> starts{-1, -1};
+    if (available) {
+        const auto current = shopRotation(shopClockNow());
+        if (shopForecastRotation_ != current || shopForecast_.empty()) {
+            shopForecast_.assign(content().petalCount(), starts);
+            for (int hour = 1; hour <= kShopForecastHours; ++hour) {
+                const auto rotation = current + hour;
+                for (const auto& offer : shopOffers(rotation)) {
+                    auto& first = shopForecast_[offer.petalIndex][offer.rarity == Rarity::Unique ? 1 : 0];
+                    if (first == -1) first = shopRotationEnd(rotation - 1);
+                }
+            }
+            shopForecastRotation_ = current;
+        }
+        starts = shopForecast_[index];
+    }
+    ByteWriter w;
+    w.u8(static_cast<std::uint8_t>(net::ServerMessage::OracleShopForecast));
+    w.u16(index);
+    w.boolean(available);
+    w.i64(starts[0]);
+    w.i64(starts[1]);
+    connection.send(w);
+}
+
 void GameServer::handleOracleCraft(Session& session, net::Connection& connection,
                                   ByteReader& reader) {
     const std::uint16_t petalIndex = reader.u16();
@@ -5144,6 +5793,12 @@ void GameServer::handleTrade(Session& session, net::Connection& connection, Byte
         return;
     }
     PlayerRecord& record = liveRecord(session);
+    // Contested (titan-forged) Hypers cannot be traded for coins. Drop Hypers
+    // with no forge claim still can.
+    if (hyperClaimCount(database_, session.userId, content().petal(petalIndex).id, rarity) > 0) {
+        refuse("争夺中的超凡不能换成硬币；请先在泰坦处解除。");
+        return;
+    }
     if (!takeFromInventory(record, petalIndex, rarity, 1)) {
         refuse("You don't have that petal.");
         resyncProfile(session, connection);
@@ -5367,12 +6022,25 @@ void GameServer::handleAbsorb(Session& session, net::Connection& connection,
         reply(false, 0, 0, mode != 0 ? "花瓣回收换星已关闭。" : "Nothing to absorb.");
         return;
     }
-    if (const Account* account = std::as_const(database_).findUserById(session.userId);
-        account && account->passwordChosen) {
+    if (session.inRift) {
+        reply(false, 0, 0, "裂隙中无法吸收花瓣。");
+        return;
+    }
+    const Account* accountInfo = std::as_const(database_).findUserById(session.userId);
+    if (!accountInfo) {
+        reply(false, 0, 0, "请重新登录后再吸收。");
+        return;
+    }
+    if (accountInfo->passwordChosen) {
         if (password.empty() || !database_.verifyPassword(session.username, password)) {
             reply(false, 0, 0, "密码错误或未填写。");
             return;
         }
+    } else if (std::any_of(stacks.begin(), stacks.end(), [](const Stack& stack) {
+        return absorbRequiresPassword(stack.rarity);
+    })) {
+        reply(false, 0, 0, "请先在账户菜单设置密码，再吸收永久超凡或 Apex 花瓣。");
+        return;
     }
 
     // All or nothing: every stack is checked before any is taken, so a
@@ -5511,7 +6179,7 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
                 exchange.quantity = std::min(owned / kPermanentHyperCost, space);
                 exchange.cost = exchange.quantity * kPermanentHyperCost;
             } else {
-                completed = clamp(record.extra["titanForgeCounts"][id].asInt(0), 0, 2);
+                completed = clamp(std::as_const(record.extra)["titanForgeCounts"][id].asInt(0), 0, 2);
                 exchange = titanForgeBatch(owned, space, completed, id);
             }
             if (exchange.quantity <= 0 ||
@@ -5642,7 +6310,7 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
     if (outputIndex >= content().petalCount()) { reply(false, "锻造产物不存在。"); return; }
     PlayerRecord& record = liveRecord(session);
     if (expireTimedHammer(record) && session.playing()) applyAccountToSession(session);
-    const int completed = clamp(record.extra["titanForgeCounts"][petal.id].asInt(0), 0, 2);
+    const int completed = clamp(std::as_const(record.extra)["titanForgeCounts"][petal.id].asInt(0), 0, 2);
     const int space = kMaxStackCount - record.itemCount(kTitanOutputRarity, inventoryKey(outputIndex));
     if (space <= 0) {
         reply(false, "目标花瓣堆叠已满。");
@@ -6067,18 +6735,17 @@ void GameServer::bankKills() {
             PlayerRecord& record = database_.progress(session->userId);
             record.recordKill(mobId, type->rarity);
 
-            // Stars are the mythic-and-above bounty. Awarded on the live entity
-            // rather than the record so the HUD sees them this tick;
-            // persistPlayer copies them back the same way it does XP.
-            // Silently: the reference pays the bounty and updates the star
-            // counter, and says nothing. A notice per mythic kill is a line
-            // every few seconds in a mythic zone.
+            // Each death pays the account once. Publish the balance to both
+            // halves before the next death is credited: they can kill different
+            // mobs in this same tick and a later max of their balances would
+            // lose one of those rewards.
             if (stars > 0) {
-                if (PlayerProgress* live = world_.tryGet<PlayerProgress>(share.player)) {
-                    live->stars += stars;
-                    record.stars = live->stars;
-                } else {
-                    record.stars += stars;
+                const auto* credited = world_.tryGet<PlayerProgress>(share.player);
+                record.stars = (credited ? credited->stars : record.stars) + stars;
+                for (const Entity body : bodiesOf(*session)) {
+                    if (body == NULL_ENTITY) continue;
+                    if (auto* progress = world_.tryGet<PlayerProgress>(body))
+                        progress->stars = record.stars;
                 }
             }
             database_.markDirty();
@@ -8144,6 +8811,38 @@ void GameServer::handleGuildLeave(Session& session, net::Connection& connection)
     broadcastGuildRoster(guild);
 }
 
+void GameServer::removeTransferredAccountLinks(const std::string& username, const std::string& id) {
+    const auto name = lowerCase(username);
+    guildInvites_.erase(name);
+    const auto guildName = guildNameForUser(username);
+    if (!guildName.empty()) {
+        auto& guilds = database_.rawTable("guilds");
+        auto& guild = guilds[guildName];
+        auto& members = guild["memberUsernames"].items();
+        const auto removed = std::remove_if(members.begin(), members.end(),
+            [&](const Json& member) { return lowerCase(member.asString()) == name; });
+        members.erase(removed, members.end());
+        if (members.empty()) guilds.erase(guildName);
+        else {
+            if (lowerCase(guild["leaderUsername"].asString()) == name)
+                guild["leaderUsername"] = members.front().asString();
+            setGuildDeputies(guild, guildDeputies(guild));
+            broadcastGuildRoster(guild);
+        }
+    }
+    for (const auto& slot : database_.storedTable("hyperForges").keys()) {
+        if (database_.storedTable("hyperForges")[slot]["owner"].asString() != id) continue;
+        auto& row = database_.rawTable("hyperForges")[slot];
+        row["owner"] = "";
+        row["protectedUntil"] = 0;
+        row["abandonedBy"] = id;
+    }
+    for (const auto& skin : database_.storedTable("customSkins").keys()) {
+        if (database_.storedTable("customSkins")[skin]["ownerId"].asString() == id)
+            database_.rawTable("customSkins")[skin]["ownerId"] = "";
+    }
+}
+
 void GameServer::handleGuildKick(Session& session, net::Connection& connection,
                                  ByteReader& reader) {
     const std::string raw = reader.str();
@@ -9440,12 +10139,14 @@ Entity GameServer::createPlayerBody(Session& session, Realm realm, Vec2 spawn) {
     world_.add<ShieldState>(entity);
     // The nameplate carries the flower's name, which is what the title screen
     // asked for; the account name stays on the session for chat and for saves.
+    const auto* settings = std::as_const(database_).findProgress(session.userId);
     world_.add<PlayerAccount>(entity,
                               PlayerAccount{session.userId,
                                             session.inRift ? "Rift Player" :
                                             session.displayName.empty() ? session.username
                                                                         : session.displayName,
-                                            session.connection, session.admin});
+                                            session.connection, session.admin,
+                                            settings && settings->extra["hidePetalTypes"].asBool()});
 
     const PlayerRecord& record = liveRecord(session);
     applyAccountToEntity(record, entity);
@@ -9539,12 +10240,28 @@ void GameServer::applyAccountToEntity(const PlayerRecord& record, Entity entity)
         // touch, and would make re-equipping the same petal over one that just
         // broke a way to dodge its reload entirely.
     }
+    // Multiple loadout edits can arrive before the next equipment fold.
+    if (auto* status = world_.tryGet<Afflictions>(entity);
+        status && (status->toiletArmed || status->toiletBoostActive) &&
+        !hasToiletPaperCombo(content(), loadout)) {
+        status->toiletArmed = false;
+        status->toiletBoostActive = false;
+    }
 }
 
-void GameServer::applyAccountToSession(Session& session) {
+void GameServer::applyAccountToSession(Session& session, bool loadingPreset) {
     const PlayerRecord& record = liveRecord(session);
     for (const Entity body : bodiesOf(session)) {
-        if (body != NULL_ENTITY && world_.isAlive(body)) applyAccountToEntity(record, body);
+        if (body == NULL_ENTITY || !world_.isAlive(body)) continue;
+        const auto* loadout = loadingPreset ? world_.tryGet<Loadout>(body) : nullptr;
+        if (!loadout) {
+            applyAccountToEntity(record, body);
+            continue;
+        }
+        const auto previousSlots = loadout->slots;
+        const int previousActiveSlots = loadout->activeSlots;
+        applyAccountToEntity(record, body);
+        petals_->carryPresetShovels(world_, content(), body, previousSlots, previousActiveSlots);
     }
 }
 
@@ -10073,7 +10790,7 @@ void GameServer::servicePyramidRotation(std::int64_t cycle) {
 void GameServer::servicePyramidMaps(double now) {
     // Separate RNG and bounded stock: these are navigation aids, never 30x loot rolls.
     for (const auto& map : worldMaps_.maps()) {
-        if (map.biome() != "pyramid" || map.prestige() || activePyramidRealm(map.realm()) != map.realm()) continue;
+        if (map.biome() != "pyramid" || activePyramidRealm(map.realm()) != map.realm()) continue;
         const Realm realm = map.realm();
         auto& stock = pyramidMaps_[static_cast<unsigned>(realm)];
         auto& scrolls = stock.scrolls;

@@ -392,7 +392,11 @@ public:
             for (const auto& key : touched_) {
                 const auto it = byKey_.find(key);
                 if (it == byKey_.end()) changes.push_back({key, {}, std::nullopt});
-                else if (it->second.cached) changes.push_back({key, {}, it->second.text});
+                else if (it->second.cached) {
+                    auto& row = it->second;
+                    changes.push_back({key, {}, std::exchange(row.text, {})});
+                    row.cached = false;
+                }
                 else {
                     auto value = std::make_shared<SnapshotValue>(it->second.value);
                     it->second.pending = value;
@@ -732,6 +736,7 @@ public:
     /// What save() writes: byte for byte toJson().dump(0), but assembled from
     /// each row's cached text (see Table) instead of rebuilt as a tree.
     std::string serialise() const;
+    std::size_t serialiseTo(std::string* out) const;
 
     // -- backups -----------------------------------------------------------
     //

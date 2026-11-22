@@ -1486,6 +1486,15 @@ inline bool petalCanBeAttracted(const PetalConfig& config) {
            (!config.defendOnly || config.id == "sawblade");
 }
 
+/// Laser: continuous outward lightning beam plus ordinary contact damage.
+inline bool petalIsLaser(const PetalConfig& config) { return config.id == "laser"; }
+
+/// Wiki ratio held against AshFlor's contact ladder: beam DPS = 10 × damage.
+inline double laserBeamDamagePerSecond(const PetalStats& stats) {
+    return stats.damage * kLaserBeamDpsFactor;
+}
+
+
 inline bool petalIsLooseBody(const PetalConfig& config) {
     return config.id == kWaxPetalId || config.id == kMoonPetalId || config.id == "moon_rock";
 }
@@ -1641,14 +1650,13 @@ inline int configuredSummonCount(const PetalConfig& config, Rarity rarity,
     return config.petSummonTiers ? copies : summonSquadSize(copies, rarity);
 }
 
-/// Ice dragons follow the egg's gameplay rarity, including the Apex tier
-/// beyond the ordinary mob ladder. Their authored incubation still applies.
-inline bool apexNukeHatchesHyper(const PetalConfig& config, Rarity rarity) {
-    return rarity == Rarity::Ascendant && config.id == "arctic_nuke_egg";
+inline bool apexEggHatchesHyper(const PetalConfig& config, Rarity rarity) {
+    return rarity == Rarity::Ascendant &&
+           (config.id == "arctic_nuke_egg" || config.id == "arctic_spider_cave_egg");
 }
 
 inline Rarity configuredSummonRarity(const PetalConfig& config, Rarity rarity) {
-    if (apexNukeHatchesHyper(config, rarity)) return Rarity::Apex;
+    if (apexEggHatchesHyper(config, rarity)) return Rarity::Apex;
     if (config.id == "arctic_ice_dragon_egg" || !config.petSummonTiers)
         return petalGameplayRarity(rarity);
     return (*config.petSummonTiers)[ladderIndex(rarity)];
@@ -1657,8 +1665,10 @@ inline Rarity configuredSummonRarity(const PetalConfig& config, Rarity rarity) {
 /// The shell itself is a one-hit body with no contact damage; the summons are
 /// the egg's worth, so every egg's hatchlings get the bigger pool below.
 inline double eggSummonHealthScale(const PetalConfig& config) {
-    if (config.id == "void_zatan_egg") return 1.10;
-    return petalIsEgg(config) ? 2.5 : 1.0;
+    // Restore one fifth of current hatchling health, retaining the
+    // lower base multiplier for Zatan and the common scale for non-eggs.
+    if (config.id == "void_zatan_egg") return 1.32;
+    return petalIsEgg(config) ? 3.0 : 1.0;
 }
 /// And both halves of the summons' combat worth, pool and bite, climb together:
 /// the shell's own stat block carries neither of them.
@@ -1682,9 +1692,9 @@ inline double hyperSummonScale(const PetalConfig& config, Rarity rarity) {
     return config.id == "magic_stick" || config.id == "mysterious_stick" ? 1.5 : 1.25;
 }
 
-// Keep the Apex nuke's existing total combat budget when it hatches Hyper bodies.
+// Preserve the Eternal-tier health and damage budget when hatching Hyper bodies.
 inline double configuredSummonStrength(const PetalConfig& config, Rarity rarity) {
-    const double promotionOffset = apexNukeHatchesHyper(config, rarity) ? 1.0 / 1.1 : 1.0;
+    const double promotionOffset = apexEggHatchesHyper(config, rarity) ? 1.0 / 1.1 : 1.0;
     return strengthBoost(rarity) * hyperSummonScale(config, rarity) * promotionOffset;
 }
 
@@ -1703,6 +1713,12 @@ inline double ascendantSummonHealthScale(Rarity petalRarity) {
 }
 inline double ascendantSummonDamageScale(Rarity petalRarity) {
     return petalRarity == Rarity::Ascendant ? kAscendantPetalDamageScale : 1.0;
+}
+
+inline double configuredSummonDamageScale(const PetalConfig& config, Rarity rarity) {
+    const double base = ascendantSummonDamageScale(rarity);
+    return rarity == Rarity::Ascendant && config.id == "arctic_centipede_egg"
+        ? base * 1.5 : base;
 }
 
 /// The sacrifice: florr's "On death, summons a mob to fight again". Worn on

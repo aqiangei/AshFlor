@@ -36,6 +36,32 @@ inline std::string practiceLoadout(const ContentRegistry& content, const Loadout
     return slots.dump();
 }
 
+// This timestamp falls between the last shard stopping and the first
+// shard resuming for the Nov 22 damage change.
+inline bool practiceHistorical(const Json& row) {
+    constexpr double cutoff = 1795309600000.0;
+    if (row["at"].asDouble() >= cutoff) return false;
+    const auto loadout = Json::parseOrNull(row["loadout"].asString());
+    for (const auto& slot : loadout.items()) {
+        const auto petal = slot["petal"].asString();
+        if (petal == "toilet_paper" || petal == "void_elemental") return true;
+        if (petal == "arctic_centipede_egg" &&
+            slot["tier"].asInt() == rarityIndex(Rarity::Ascendant)) return true;
+    }
+    return false;
+}
+
+inline void putPracticeHistory(Json& board, const PlayerRecord& progress) {
+    board["own"] = progress.extra["practiceRecords"]["rows"];
+    for (auto& row : board["own"].items()) row["historical"] = practiceHistorical(row);
+    auto& rows = board["own"].items();
+    std::sort(rows.begin(), rows.end(), [](const auto& a, const auto& b) {
+        if (a["historical"].asBool() != b["historical"].asBool())
+            return !a["historical"].asBool();
+        return a["damage"].asDouble() > b["damage"].asDouble();
+    });
+}
+
 // Keep the best result for each loadout. A public result is immutable until
 // the owner deliberately hides or replaces it; later private tests stay private.
 inline void savePracticeScore(Database& db, const std::string& userId,
@@ -48,16 +74,19 @@ inline void savePracticeScore(Database& db, const std::string& userId,
     if (!stored.isArray()) stored = Json::array();
     auto& rows = stored.items();
     std::size_t replace = rows.size();
+    std::size_t activeCount = 0;
     for (std::size_t i = 0; i < rows.size(); ++i) {
         const auto& row = rows[i];
+        if (practiceHistorical(row)) continue;
+        ++activeCount;
         if (row["loadout"].asString() != loadout) continue;
         if (row["damage"].asDouble() >= damage) return;
         if (!row["public"].asBool()) replace = i;
     }
-    if (replace == rows.size() && rows.size() >= net::kPracticeHistoryLimit) {
+    if (replace == rows.size() && activeCount >= net::kPracticeHistoryLimit) {
         // Never silently revoke a result the player already shared.
         for (std::size_t i = 0; i < rows.size(); ++i) {
-            if (rows[i]["public"].asBool()) continue;
+            if (rows[i]["public"].asBool() || practiceHistorical(rows[i])) continue;
             if (replace == rows.size() || rows[i]["damage"].asDouble() < rows[replace]["damage"].asDouble())
                 replace = i;
         }
@@ -81,6 +110,7 @@ inline void sharePracticeScore(Database& db, const std::string& userId, std::uin
     auto& rows = db.progress(userId).extra["practiceRecords"]["rows"].items();
     for (auto& row : rows) {
         if (row["id"].asDouble() != id) continue;
+        if (publish && practiceHistorical(row)) return;
         if (row["public"].asBool() != publish) {
             row["public"] = publish;
             db.markDirty();
@@ -110,9 +140,9 @@ inline Json practiceBoardView(const Database& db, const std::string& viewer, boo
     result["public"] = Json::array();
     double ownBest = 0.0;
     if (const auto* record = db.findProgress(viewer)) {
-        result["own"] = record->extra["practiceRecords"]["rows"];
+        putPracticeHistory(result, *record);
         for (const auto& row : result["own"].items())
-            ownBest = std::max(ownBest, row["damage"].asDouble());
+            if (!row["historical"].asBool()) ownBest = std::max(ownBest, row["damage"].asDouble());
     }
     std::vector<std::pair<const Account*, const Json*>> publicRows;
     unsigned ownRank = ownBest > 0 ? 1 : 0;
@@ -123,6 +153,7 @@ inline Json practiceBoardView(const Database& db, const std::string& viewer, boo
         const Json* bestPublic = nullptr;
         double best = 0.0;
         for (const auto& row : record->extra["practiceRecords"]["rows"].items()) {
+            if (practiceHistorical(row)) continue;
             const double damage = row["damage"].asDouble();
             best = std::max(best, damage);
             if (damage > 0.0 && row["public"].asBool() &&
@@ -144,9 +175,6 @@ inline Json practiceBoardView(const Database& db, const std::string& viewer, boo
         row["name"] = account->username;
         result["public"].push(std::move(row));
     }
-    auto& ownRows = result["own"].items();
-    std::sort(ownRows.begin(), ownRows.end(),
-              [](const auto& a, const auto& b) { return a["damage"].asDouble() > b["damage"].asDouble(); });
     result["rank"] = static_cast<double>(ownRank);
     return result;
 }
@@ -165,11 +193,12 @@ inline void writePracticeBoard(ByteWriter& out, const Json& board) {
             out.f64(row["damage"].asDouble());
             out.f64(row["at"].asDouble());
             out.boolean(row["public"].asBool());
+            out.boolean(row["historical"].asBool());
             out.str(row["loadout"].asString());
             out.str(row["breakdown"].dump());
         }
     };
-    list("own", net::kPracticeHistoryLimit);
+    list("own", net::kPracticeVisibleHistoryLimit);
     list("public", net::kPracticeBoardRows);
 }
 

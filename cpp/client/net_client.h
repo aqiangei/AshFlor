@@ -42,6 +42,7 @@ struct Profile {
     /// no current one (net::kAccountNoPassword).
     bool hasPassword = true;
     bool presetAutosave = true;
+    bool hidePetalTypes = false;
     double totalXp = 0;
     int talentPointBonus = 0;
     int level = 1;
@@ -140,6 +141,7 @@ struct PracticeBoardRow {
     double damage = 0.0;
     double atMillis = 0.0;
     bool published = false;
+    bool historical = false;
     std::vector<PracticeBoardItem> loadout;
     std::vector<PracticeBoardDamage> breakdown;
 };
@@ -275,6 +277,13 @@ struct CraftOutcome {
     std::uint32_t attempts = 0;
     std::uint32_t consumed = 0;
     std::string reason;
+};
+
+struct OracleShopForecast {
+    std::uint16_t petalIndex = kNoPetal;
+    bool available = false;
+    std::int64_t superAt = -1;
+    std::int64_t eternalAt = -1;
 };
 
 /// The outcome of the last oracle craft, for the oracle panel's pulse.
@@ -679,6 +688,7 @@ public:
     /// server answers both with a Notice.
     void saveLoadoutPreset(int preset, int rotationStep = 4);
     void setPresetAutosave(bool enabled);
+    void setPetalPrivacy(bool hidden);
     void loadLoadoutPreset(int preset, int rotationStep = 4);
     /// A successful preset load may restore its saved speed. Zero means that
     /// an old preset has no saved speed, or there is no unconsumed response.
@@ -697,9 +707,18 @@ public:
     void usePetal(int slot);
     void requestCraft(std::uint16_t petalIndex, Rarity rarity, int count);
     void requestBulkCraft(Rarity target, const std::vector<std::uint16_t>& excluded = {});
+    std::uint32_t prepareMythicUltraCraft(const std::vector<Profile::Stack>& materials);
+    // An empty optional is still awaiting a reply. A zero ticket was refused.
+    std::optional<std::uint64_t> mythicUltraTicket(std::uint32_t request) const {
+        if (request == 0 || request != mythicUltraReply_) return std::nullopt;
+        return mythicUltraTicket_;
+    }
+    void confirmMythicUltraCraft(std::uint64_t ticket);
     /// Buys one guaranteed upgrade of this petal from the oracle the body is
     /// standing at, for oracleCraftCost(rarity) of it.
     void requestOracleCraft(std::uint16_t petalIndex, Rarity rarity, std::uint16_t quantity = 1);
+    void requestOracleShopForecast(std::uint16_t petalIndex);
+    const std::optional<OracleShopForecast>& oracleShopForecast() const { return oracleShopForecast_; }
     void requestDailyLoginClaim();
     void requestAccountQQ(bool save, const std::string& value = "");
     std::string accountQQ;
@@ -1211,6 +1230,7 @@ private:
     void handleRevived(ByteReader&);
     void handleCraftResult(ByteReader&);
     void handleOracleResult(ByteReader&);
+    void handleOracleShopForecast(ByteReader&);
     void handleTradeResult(ByteReader&);
     void handleTitanForgeResult(ByteReader&);
     void handleAssembleResult(ByteReader&);
@@ -1332,6 +1352,7 @@ private:
     CraftOutcome craftOutcome_;
     std::uint64_t craftAttemptCount_ = 0;
     OracleOutcome oracleOutcome_;
+    std::optional<OracleShopForecast> oracleShopForecast_;
     /// When, on this client's steady clock, the oracle wait the last profile
     /// reported runs out.
     double oracleReadyAtMillis_ = 0;
@@ -1368,6 +1389,9 @@ private:
     /// frame of every message, and the names are only needed once a second
     /// when the overlay asks.
     std::array<std::uint32_t, 256> incomingBytes_{};
+    std::uint32_t mythicUltraRequest_ = 0;
+    std::uint32_t mythicUltraReply_ = 0;
+    std::uint64_t mythicUltraTicket_ = 0;
     std::array<std::uint32_t, 256> outgoingBytes_{};
 
     ServerDebugStats serverDebugStats_;

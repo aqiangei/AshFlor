@@ -57,6 +57,10 @@
                    `${Math.round(process.memoryUsage.rss() / 1048576)} MB resident\n`;
         const stack = error && error.stack ? String(error.stack) : String(error);
         text += stack + "\n";
+        if (typeof wasmMemory !== "undefined" && wasmMemory) {
+            text += `[crash-memory] wasmHeapBytes=${wasmMemory.buffer.byteLength}\n`;
+        }
+        if (abortMessageContext) text += abortMessageContext;
         if (stack.includes("Aborted(")) {
             text += "[crash] an abort is a failed check or a C++ throw; the first C++ frame " +
                     "above, under abort and the glue, is where it came from\n";
@@ -73,7 +77,19 @@
     // the exit is armed here too, a turn later, for an abort the handler
     // below never sees. The stack is taken now, while it still runs through
     // the C++ that aborted.
+    let abortMessageContext = "";
     Module["onAbort"] = (reason) => {
+        const address = Module["activeMessageContext"];
+        if (Number.isInteger(address) && address > 0 && typeof HEAPU32 !== "undefined") {
+            const index = address >>> 2;
+            if (index + 2 < HEAPU32.length) {
+                const kind = HEAPU32[index];
+                if (kind > 0 && kind <= 256) {
+                    abortMessageContext = "[crash-message] type=" + (kind - 1) +
+                        " bytes=" + HEAPU32[index + 1] + " stage=" + HEAPU32[index + 2] + "\n";
+                }
+            }
+        }
         abortStack = new Error(`Aborted(${reason})`);
         setTimeout(() => {
             report("the server aborted", abortStack);

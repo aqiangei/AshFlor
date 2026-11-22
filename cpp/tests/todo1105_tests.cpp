@@ -457,16 +457,28 @@ TEST(todo1105_shovel_defense_burrows_then_expires) {
  w.add<PlayerModifiers>(p); w.add<PetalRing>(p); w.add<Loadout>(p);
  w.add<PlayerInput>(p); w.add<Faction>(p,Faction{Team::Players,false});
  auto& slot=w.get<Loadout>(p).slots[0];
- slot.configIndex=c.petalIndex("shovel"); slot.rarity=Rarity::Unique;
+ slot.configIndex=c.petalIndex("shovel"); slot.rarity=Rarity::Super;
  for(int i=0;i<200;++i) {petals.run(w,c,i*50,.05,commands);commands.flush();}
  w.get<PlayerInput>(p).current.flags=net::InputDefend;
  petals.run(w,c,10000,.05,commands);commands.flush();
  const auto* state=w.tryGet<BurrowState>(p);
  CHECK(state && state->active);
  if(!state)return;
- CHECK_NEAR(state->untilMillis,12000,1e-9);
+ CHECK_NEAR(state->untilMillis,14000.0,1e-9);
+
+ // A single Super shovel has time to reload and prepare during the burrow.
+ // Holding defend must renew it without a surface tick for combat.
+ for (double now = 10050.0; now <= 30000.0; now += 50.0) {
+     petals.run(w,c,now,.05,commands);commands.flush();
+     CHECK(w.get<BurrowState>(p).active);
+     for (const Entity e : Query<Dead>{w}.collect()) w.destroy(e);
+ }
+ const double emergeAtMillis = w.get<BurrowState>(p).untilMillis;
+ CHECK_NEAR(emergeAtMillis,34000.0,1e-9);
  w.get<PlayerInput>(p).current.flags=0;
- petals.run(w,c,12000,.05,commands);commands.flush();
+ petals.run(w,c,emergeAtMillis-50.0,.05,commands);commands.flush();
+ CHECK(w.get<BurrowState>(p).active);
+ petals.run(w,c,emergeAtMillis,.05,commands);commands.flush();
  CHECK(!w.get<BurrowState>(p).active);
 }
 

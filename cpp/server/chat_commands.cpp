@@ -645,6 +645,7 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
             switch (row.source) {
             case Source::Petal: category = "\u82b1\u74e3"; break;
             case Source::Summon: category = "\u53ec\u5524"; break;
+            case Source::Burn: category = "\u6301\u7eed\u71c3\u70e7"; break;
             case Source::Poison: category = "\u6301\u7eed\u6bd2\u4f24"; break;
             case Source::Reflect: category = "\u53cd\u4f24"; break;
             case Source::Field: category = "\u8303\u56f4\u6548\u679c"; break;
@@ -1119,7 +1120,7 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
     if (verb == "/hyper-abandon") {
         persistPlayer(session);
         if(argument.empty()) {
-            out("主动放弃会销毁所选1份超凡，不返还材料；其他花瓣保留。用法：/hyper-abandon 编号；可放弃的持有记录：");
+            out("主动放弃会销毁所选1份超凡，不返还材料；若已换成硬币也可解除并释放名额。请按下列编号输入 /hyper-abandon 编号 confirm；可放弃的持有记录：");
             for(const auto& [key,row]:database_.storedTable("hyperForges").members())
                 if(row["owner"].asString()==session.userId)out(escapedMarkup(key));
             return true;
@@ -2522,6 +2523,13 @@ void GameServer::runAdminCommand(Session& session, net::Connection& connection,
             PlayerRecord& record = database_.progress(userId);
             for (std::size_t i = 0; i < content().petalCount(); ++i) {
                 if (excluded[i]) continue;
+                if (record.itemCount(rarity, "petal_" + content().petal(i).id) > kMaxStackCount - amount) {
+                    out("Grant refused: an inventory stack would exceed its limit.");
+                    return;
+                }
+            }
+            for (std::size_t i = 0; i < content().petalCount(); ++i) {
+                if (excluded[i]) continue;
                 record.addItem(rarity, "petal_" + content().petal(i).id, amount);
             }
             database_.markDirty();
@@ -2592,8 +2600,16 @@ void GameServer::runAdminCommand(Session& session, net::Connection& connection,
         }
 
         PlayerRecord& record = database_.progress(userId);
+        if (amount > kMaxStackCount ||
+            record.itemCount(rarity, "petal_" + content().petal(petalIndex).id) > kMaxStackCount - amount) {
+            out("Grant refused: the inventory stack would exceed its limit.");
+            return;
+        }
         record.addItem(rarity, "petal_" + content().petal(petalIndex).id, amount);
         database_.markDirty();
+        std::printf("[admin-grant] actor=%s account=%s petal=%s rarity=%s amount=%d\n",
+                    session.userId.c_str(), userId.c_str(),
+                    content().petal(petalIndex).id.c_str(), rarityName(rarity), amount);
         if (online) {
             if (net::Connection* peer = listener_.find(target.session->connection)) {
                 sendProfile(*target.session, *peer);

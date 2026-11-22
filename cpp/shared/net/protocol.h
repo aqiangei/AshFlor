@@ -27,7 +27,7 @@ using ConnectionId = std::uint32_t;
 // Version 128: snapshot update records are smaller. The mask is a varint with
 // the common fields in its low seven bits, a short move is two bytes, and the
 // state byte carries only the bits a client draws from.
-inline constexpr std::uint16_t kProtocolVersion = 141; // Absorb confirm sends trailing password.
+inline constexpr std::uint16_t kProtocolVersion = 145; // Practice history eligibility.
 inline constexpr std::size_t kBossDamageRows = 3;
 inline constexpr std::size_t kBossDamageTargets = 6;
 struct BossDamageRow {
@@ -64,10 +64,11 @@ inline constexpr double kSnapshotMillis = 1000.0 / kSnapshotsPerSecond;
 // Message ids
 // ---------------------------------------------------------------------------
 
-enum class PracticeSource : std::uint8_t { Petal, Summon, Poison, Reflect, Field, Other };
+enum class PracticeSource : std::uint8_t { Petal, Summon, Poison, Reflect, Field, Other, Burn };
 inline constexpr int kPracticeWindowSeconds = 10;
 inline constexpr std::uint8_t kPracticeBoardRows = 20;
 inline constexpr std::uint8_t kPracticeHistoryLimit = 12;
+inline constexpr std::uint8_t kPracticeVisibleHistoryLimit = 2 * kPracticeHistoryLimit;
 enum class PracticeBoardAction : std::uint8_t { Read, Start, Publish, Hide, Delete };
 
 enum class ClientMessage : std::uint8_t {
@@ -258,6 +259,9 @@ enum class ClientMessage : std::uint8_t {
     RequestWaveRoomStatus, ///< no payload.
     SkinReview,        ///< u8 SkinReviewAction, str skinId for decisions.
     SetPresetAutosave, ///< bool enabled.
+    OracleShopForecast, ///< u16 itemType.
+    SetPetalPrivacy,    ///< bool hide the owner’s equipped petal types from other players.
+    BulkCraftMythicUltra, ///< u8 action. 0: u32 request, u16 count, then {u16 item, u8 rarity, u32 count} per stack. 1: u64 ticket.
 };
 
 enum class ServerMessage : std::uint8_t {
@@ -495,6 +499,8 @@ enum class ServerMessage : std::uint8_t {
     RunLoot,            ///< u32 count, {u16 petal, u8 rarity, u32 count}* (own run).
     RunKills,           ///< u32 count, {u16 mob, u8 rarity, u32 count}* (own run).
     BossDamage,         ///< u8 count, {u32 mob net ID, u8 rows, {str name, f64 damage}*}*.
+    OracleShopForecast, ///< u16 itemType, bool available, i64 superAt, i64 eternalAt (Unix seconds, -1 if absent).
+    BulkCraftTicket,    ///< u32 request, u64 ticket (zero on refusal).
 };
 
 // ---------------------------------------------------------------------------
@@ -560,6 +566,7 @@ enum AccountFlags : std::uint8_t {
     /// account, and ChangePassword does not ask for the current one.
     kAccountNoPassword = 1u << 1,
     kAccountPresetAutosaveOff = 1u << 2,
+    kAccountPetalTypesHidden = 1u << 3,
 };
 
 /// Which shop action a ShopResult answers.
@@ -786,6 +793,13 @@ enum class EntityKind : std::uint8_t {
 /// an Npc record carries u8 recipe, the index into its mob's `npc.recipes` of
 /// the one recipe an assembler makes (0 for any other NPC). Version 85 adds
 /// u8 nextRecipe and f64 recipeRefreshAtMillis (server clock) after that byte.
+/// For a foreign equipped Petal with type 0xFFFF, the variant byte carries
+/// only the rendering hints needed to preserve readable combat cues.
+enum PrivatePetalCue : std::uint8_t {
+    PrivatePetalInvisible = 1u << 0,
+    PrivatePetalBeam = 1u << 1,
+};
+
 enum SpawnFlags : std::uint8_t {
     SpawnHasName    = 1 << 0,   ///< a player name follows
     SpawnIsSelf     = 1 << 1,   ///< this is the viewer's own body

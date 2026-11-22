@@ -11,7 +11,7 @@ struct ShopSuperPrice {
 inline constexpr ShopSuperPrice kShopSuperPrices[] = {
     {"arctic_amethyst", 5500},
     {"arctic_banana", 5500},
-    {"arctic_blueberries", 8000},
+    {"arctic_blueberries", 32000},
     {"arctic_centipede_egg", 13500},
     {"arctic_corium", 22500},
     {"arctic_cryo_bomb", 8000},
@@ -52,6 +52,9 @@ inline constexpr ShopSuperPrice kShopSuperPrices[] = {
     {"arctic_stick", 8000},
     {"arctic_tick_egg", 13500},
     {"arctic_visaber", 8000},
+    // Fission copies at full strength; use the same premium as Mimic.
+    // Its minimum tier keeps this reference price off the Super shelf.
+    {"fission", 45000},
     {"magic_golden_leaf", 22500},
 };
 

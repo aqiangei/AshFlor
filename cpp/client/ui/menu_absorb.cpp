@@ -431,7 +431,11 @@ bool AbsorbPanel::render(MenuContext& ctx) {
 
     // --- the button --------------------------------------------------------------
     const bool needPassword = profile.hasPassword;
-    if (!confirming_ || staged_.empty()) {
+    const bool passwordSetupNeeded = !needPassword &&
+        std::any_of(staged_.begin(), staged_.end(), [](const Staged& stack) {
+            return absorbRequiresPassword(stack.rarity);
+        });
+    if (!confirming_ || staged_.empty() || passwordSetupNeeded) {
         confirming_ = false;
         if (!password_.empty()) {
             password_.clear();
@@ -442,6 +446,7 @@ bool AbsorbPanel::render(MenuContext& ctx) {
                            kButtonWidth + 80.0, 28.0};
     if (confirming_ && needPassword && !waiting_) {
         if (passwordField_.focused) {
+            ctx.wantsText = true;
             ui::TextEditOptions typing;
             typing.maxBytes = 72;
             typing.copyable = false;
@@ -455,7 +460,7 @@ bool AbsorbPanel::render(MenuContext& ctx) {
     const double rim = kButtonBorder * 0.5;
     const Rect buttonHit{button.x - rim, button.y - rim, button.w + kButtonBorder,
                          button.h + kButtonBorder};
-    const bool usable = !staged_.empty() && !waiting_;
+    const bool usable = !staged_.empty() && !waiting_ && !passwordSetupNeeded;
     const bool overButton = usable && buttonHit.contains(mouse);
     drawFlorrButton(canvas, button, usable ? kButtonFace : kButtonIdleFace, kButtonBorder,
                     kButtonRadius, overButton, overButton && mouseDown);
@@ -561,7 +566,7 @@ bool AbsorbPanel::render(MenuContext& ctx) {
     // A refusal says why where the warning stands, for as long as it is news.
     const bool refused = !refusal_.empty() && nowMs < refusalUntil_;
     TextStyle second = panelLabel(kLineSize, Align::Centre, Baseline::Middle);
-    if (refused) second.fill = kSlotCardRefusalInk;
+    if (refused || passwordSetupNeeded) second.fill = kSlotCardRefusalInk;
     const char* warn = confirming_
         ? (needPassword
                ? trEnZh("Confirm again. Enter account password, then Confirm destroy.",
@@ -570,7 +575,12 @@ bool AbsorbPanel::render(MenuContext& ctx) {
                         "再次确认将永久销毁已放入的花瓣。"))
         : trEnZh("WARNING: Selected petals will be permanently destroyed",
                  "注意：所选花瓣会永久销毁，请保留需要使用的装备");
-    outlinedText(canvas, refused ? refusal_ : warn, centreX, panel.y + kLine2Y, second, 1.0);
+    if (passwordSetupNeeded) {
+        warn = trEnZh("Set an account password to absorb Permanent Hyper or Apex.",
+                      "请先在账户菜单设置密码，再吸收永久超凡或 Apex 花瓣。");
+    }
+    outlinedText(canvas, refused && !passwordSetupNeeded ? refusal_ : warn,
+                 centreX, panel.y + kLine2Y, second, 1.0);
 
     // --- the grid ----------------------------------------------------------------
     SlotCardLayout list = card;
@@ -612,6 +622,10 @@ bool AbsorbPanel::render(MenuContext& ctx) {
     if (!ctx.pressed()) return true;
     if (card.close.contains(mouse)) return false;
     if (switchRect.contains(mouse)) {
+        confirming_ = false;
+        password_.clear();
+        passwordField_.blur();
+        ctx.wantsText = false;
         switchPressed_ = true;
         return true;
     }
@@ -619,6 +633,13 @@ bool AbsorbPanel::render(MenuContext& ctx) {
     if (waiting_) return true;
     if (confirming_ && needPassword && passwordBox.contains(mouse)) {
         passwordField_.focusAtEnd(password_, ctx.timeSeconds);
+        ctx.wantsText = true;
+        return true;
+    }
+    if (!canBatch && batchHit.contains(mouse)) {
+        refusal_ = trEnZh("Take back the manually selected petals before selecting a batch.",
+                           "请先取回手动放入的花瓣，再使用批选。");
+        refusalUntil_ = nowMs + kRefusalMs;
         return true;
     }
     if (overBatch) {
@@ -665,14 +686,23 @@ bool AbsorbPanel::render(MenuContext& ctx) {
         if (!confirming_) {
             confirming_ = true;
             password_.clear();
-            passwordField_.blur();
             refusal_.clear();
+            // Focus immediately so typing the password cannot trip menu
+            // hotkeys (X = talents, Z = inventory). #3978 only blocked
+            // hotkeys once a field was already focused.
+            if (needPassword) {
+                passwordField_.focusAtEnd(password_, ctx.timeSeconds);
+                ctx.wantsText = true;
+            } else {
+                passwordField_.blur();
+            }
             return true;
         }
         if (needPassword && password_.empty()) {
             refusal_ = trEnZh("Enter your account password to absorb.", "请输入账户密码后再吸收。");
             refusalUntil_ = nowMs + kRefusalMs;
             passwordField_.focusAtEnd(password_, ctx.timeSeconds);
+            ctx.wantsText = true;
             return true;
         }
         std::vector<NetClient::AbsorbStack> stacks;

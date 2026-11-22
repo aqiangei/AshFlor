@@ -422,14 +422,21 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         // {0:rarity} is: a champion's crown hands out a Basic of whatever tier
         // the crown is.
         std::string description = petalDescTr(config.id, config.description.c_str());
-        if (config.id == "laser") {
+        if (config.id == "paranormal_goggles") {
+            const double zoom = hyperAmount(technique, HyperTechnique::GhostSight, 1.25);
+            const std::string loss = std::to_string(std::lround(100.0 * (1.0 - 1.0 / zoom)));
+            description = language() == Language::Zh
+                ? "装备在主栏可看见并攻击同品质或更低品质的幽灵。可见范围的宽和高各缩小约 " + loss + "%。"
+                : "Equip on the active bar to see and hit ghosts at this rarity or below. "
+                  "Visible width and height are about " + loss + "% smaller.";
+        } else if (config.id == "laser") {
             const bool pulses = technique && technique->technique == HyperTechnique::LaserPulse;
             if (language() == Language::Zh) {
-                description = pulses ? "接触时造成伤害，攻击时还会发射短促脉冲。"
-                                     : "当前品质只造成接触伤害。";
+                description = pulses ? "造成接触伤害和连续闪电光束伤害，攻击时还会额外发射短促脉冲。"
+                                     : "造成接触伤害，并持续向外发射闪电光束。";
             } else {
-                description = pulses ? "Deals contact damage and fires a brief pulse while attacking."
-                                     : "This tier deals contact damage only.";
+                description = pulses ? "Deals contact damage and fires a continuous lightning beam. Attacking also fires a brief pulse."
+                                     : "Deals contact damage and fires a continuous lightning beam.";
             }
         }
         if (fragment) {
@@ -502,7 +509,7 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         }
     }
 
-    if (technique) {
+    if (technique && technique->technique != HyperTechnique::GhostSight) {
         const bool zh = language() == Language::Zh;
         TooltipLine special{std::string(zh ? "超凡机制 · " : "Hyper technique · ") +
                             (zh ? technique->chinese : technique->english), 12.0, kPaper};
@@ -526,8 +533,10 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     if (!stats.breakable) { hp.text = std::string(tipHp()) + (language() == Language::Zh ? "不可破坏" : "Unbreakable"); hp.altText = hp.text; }
     lines.push_back(hp);
 
-    const std::string damageLabel = config.id == "battery" || config.id == "lightning" ||
-        config.id == "mecha_missile" || config.id == "magic_peas"
+    const std::string damageLabel = config.id == "flower"
+        ? (language() == Language::Zh ? "花瓣接触伤害：" : "Petal contact damage: ")
+        : config.id == "battery" || config.id == "lightning" ||
+        config.id == "mecha_missile" || config.id == "magic_peas" || petalIsLaser(config)
         ? (language() == Language::Zh ? "接触伤害：" : "Contact damage: ") : tipDamage();
     TooltipLine hit{damageLabel + abbreviate(damage), 12.0};
     hit.alpha = 0.56;
@@ -551,6 +560,19 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         hit.markup = true;
     }
     lines.push_back(hit);
+
+    // Wiki Laser: beam DPS is lightning, separate from emitter contact, 10×.
+    if (petalIsLaser(config)) {
+        const double beam = laserBeamDamagePerSecond(stats);
+        const std::string beamLabel = language() == Language::Zh ? "光束伤害：" : "Beam damage: ";
+        const std::string note = " " + colourMarkup(tipLightning(), kStatLightning);
+        TooltipLine beamLine{beamLabel + abbreviate(beam) + "/s" + note, 12.0};
+        beamLine.alpha = 0.56;
+        beamLine.labelColor = kStatLightning;
+        beamLine.altText = beamLabel + exactNumber(beam) + "/s" + note;
+        beamLine.markup = true;
+        lines.push_back(beamLine);
+    }
     if (config.projectile.present) {
         const bool zh = language() == Language::Zh;
         lines.push_back({zh ? "发射物伤害加成：宠物伤害天赋。" :
@@ -635,11 +657,11 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     if(config.burrowDurationMillis>0){
         special("潜地准备：", "Burrow charge: ",config.burrowChargeMillis/1000.0,"s");
         special("潜地持续：", "Burrow duration: ",config.burrowDurationMillis/1000.0,"s");
-        lines.push_back({chinese?"准备后按防御潜地；仍会被Worm和沙漠蜈蚣命中，不可穿墙。":"Defend after charging to burrow. Worms and Desert Centipedes can still hit you; walls remain solid.",12.0});
+        lines.push_back({chinese?"准备后按防御潜地；沙漠蜈蚣仍可命中你。墙体依然阻挡移动。":"Defend after charging to burrow. Desert Centipedes can still hit you. Walls remain solid.",12.0});
     }
     if(config.id=="arctic_nuke") {
-        special("整套爆炸基础总预算：", "Total base blast budget: ",180.0*petalDamageScale(rarity));
-        lines.push_back({chinese?"主爆炸占75%，所有子爆炸共用其余25%；增加子爆炸数量不会增加整套总伤害。":"The main blast uses 75%; all sub-blasts share the remaining 25%. Extra sub-blasts do not increase the total budget.",12.0});
+        special("整套爆炸基础总预算：", "Total base blast budget: ",210.0 * referenceOffenseScale(config, rarity));
+        lines.push_back({chinese?"主爆炸约占总伤害的64%，其余由外围子爆炸平分。子爆炸数量增加时，整套总伤害不变。":"The main blast deals about 64% of the total damage. The sub-blasts share the rest. More sub-blasts leave the total damage unchanged.",12.0});
     }
     if (config.spill.kind != SpillKind::None) {
         special("流体基础半径：", "Base spill radius: ", spillBaseRadius(config.spill, rarity));
@@ -647,10 +669,19 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
             special("液池基础治疗/秒：", "Base pool healing per second: ",
                     config.spill.strength * petalHealScale(rarity));
         } else if (config.spill.kind != SpillKind::Blood) {
-            const double scale = config.spill.kind == SpillKind::Nitrogen
+            const double scale = config.spill.onHit || config.spill.kind == SpillKind::Nitrogen
                 ? petalStrengthScale(rarity) : referenceOffenseScale(config, rarity);
-            special("液池基础伤害/秒：", "Base pool damage per second: ",
-                    config.spill.strength * scale * fluidDamageScale(config.spill.kind));
+            const double basePoolDamage = config.spill.strength * scale * fluidDamageScale(config.spill.kind);
+            special("液池基础伤害/秒：", "Base pool damage per second: ", basePoolDamage);
+            if (technique && technique->technique == HyperTechnique::AcidPoolBoost) {
+                special("专属酸池伤害/秒：", "Pool damage per second with technique: ",
+                        basePoolDamage * technique->amount);
+                TooltipLine duration{std::string(chinese ? "酸池持续时间：" : "Pool duration: ") +
+                                     reloadSeconds(config.spill.durationMillis), 12.0};
+                duration.alpha = 0.72;
+                duration.labelColor = kStatGeneric;
+                lines.push_back(duration);
+            }
         }
     }
     if (config.id == "void_soap") {
@@ -677,17 +708,39 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
                     spinBonusPercent * hyperAmount(technique, HyperTechnique::FastOrbit), "%");
         }
     }
+    if (config.id == "dead_leaf") {
+        special("花瓣耐久：+", "Petal durability: +", deadLeafDurabilityBonus(rarity) * 100.0, "%");
+        lines.push_back({chinese ? "重装时间 +5%，耐久与金仙人掌只取最高加成。"
+                                 : "Reload time +5%. Only the strongest durability bonus from Dead Leaf or Golden Cactus applies.", 12.0});
+    }
     if (stats.modifiers.attackRange > 0) special("攻击范围：+", "Attack range: +", stats.modifiers.attackRange);
     if (stats.modifiers.magnetism > 0) special("拾取范围：+", "Pickup range: +", stats.modifiers.magnetism);
+    if (config.id == "flower") {
+        const auto glitchFlower = content().mobIndex("glitch_flower");
+        if (glitchFlower != kInvalidIndex) {
+            const auto& summon = content().mob(glitchFlower);
+            const double scale = petalStatScale(rarity) * strengthBoost(rarity) *
+                eggSummonCombatScale(config) * hyperSummonPromotionScale(config, rarity);
+            const double contactDamage = summon.damage * scale * summon.petDamageScale *
+                summonDamageScale(config, rarity) * configuredSummonDamageScale(config, rarity) *
+                skills.effectScale(SkillId::PetDamage);
+            special("单只故障花接触伤害：", "Contact damage per Glitch Flower: ", contactDamage);
+        }
+    }
     if (config.id == "pharaoh_s_crown") {
-        const auto summonRarity = pharaohCrownSummonRarity(rarity);
+        const auto summonRarity = pharaohCrownSummonLabelRarity(rarity);
         lines.push_back({std::string(chinese ? "召唤物稀有度：" : "Summon rarity: ") +
                          rarityTr(summonRarity), 12.0, rarityColor(summonRarity)});
         const auto mummy = content().mobIndex("mummy_beetle");
         if (mummy != kInvalidIndex) {
             const auto& mob = content().mob(mummy);
-            special("召唤物生命：", "Summon health: ", mob.health * petalStatScale(summonRarity) *
-                mob.petHealthScale * kSummonedMobHealthScale * skills.healthScale(SkillId::Summoner));
+            const auto statsRarity = pharaohCrownSummonStatsRarity(rarity);
+            const double scale = petalStatScale(statsRarity) * hyperSummonPromotionScale(config, statsRarity);
+            special("召唤物生命：", "Summon health: ", mob.health * scale * mob.petHealthScale *
+                kSummonedMobHealthScale * skills.healthScale(SkillId::Summoner) * ascendantSummonHealthScale(rarity));
+            special("召唤物接触伤害：", "Summon contact damage: ", mob.damage * scale *
+                mob.petDamageScale * summonDamageScale(config, statsRarity) *
+                skills.effectScale(SkillId::PetDamage) * ascendantSummonDamageScale(rarity));
         }
     }
     if (config.petMobIndex != kInvalidIndex) {
@@ -702,13 +755,16 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         special("召唤物生命：", "Summon health: ",summon.health*summonScale*summon.petHealthScale*kSummonedMobHealthScale*skills.healthScale(SkillId::Summoner)*eggSummonHealthScale(config)*ascendantSummonHealthScale(rarity));
         lines.push_back({std::string(chinese ? "召唤物稀有度：" : "Summon rarity: ") + rarityTr(summonRarity), 12.0});
         special("召唤物接触伤害：", "Summon contact damage: ",
-                summon.damage * summonScale * summon.petDamageScale * summonDamageScale(config, rarity) * ascendantSummonDamageScale(rarity) *
+                summon.damage * summonScale * summon.petDamageScale * summonDamageScale(config, rarity) * configuredSummonDamageScale(config, rarity) *
                 skills.effectScale(SkillId::PetDamage));
         if(apex && petalIsEgg(config))lines.push_back({chinese?"H护甲：己方召唤物受到不高于蛋稀有度的野怪体伤时，单次最多损失35%最大生命；不抵挡玩家、毒素或技能。":"H escort armour: wild body hits up to the egg tier deal at most 35% of summon max health per hit; no protection from players, poison or abilities.",12.0});
         if(config.id=="egg"||config.id=="beetle_egg")lines.push_back({chinese?"蛋壳不造成接触伤害；蛋壳破碎不会收回已孵化召唤物。":"The shell deals no contact damage; breaking it does not recall hatched pets.",12.0});
         if (config.petLifetimeMillis > 0) special("召唤持续：", "Summon lifetime: ", config.petLifetimeMillis / 1000.0, "s");
-        if (config.petSummonTiers)
-            special("孵化等待：", "Hatch delay: ", stats.reloadMillis / 1000.0, "s");
+        if (config.petSummonTiers) {
+            const double hatchDelay = std::max(stats.reloadMillis * skills.reloadScale(), net::kTickMillis);
+            lines.push_back({std::string(chinese ? "孵化等待：" : "Hatch delay: ") +
+                             oneDecimal(hatchDelay / 1000.0) + "s", 12.0});
+        }
         if (config.id == "egg" || config.id == "beetle_egg") special("孵化等待：", "Hatch delay: ", 1.0, "s");
         if (summon.ai != AiKind::Sandstorm) lines.push_back({chinese
             ? "自动索敌优先主人 600 范围内的高阶怪。主人侧上限 1250，灯泡可提高。空闲离主人 900、战斗中 1650 后回跟。光标指挥优先。"
@@ -1209,6 +1265,11 @@ bool InventoryPanel::renderRunLoot(MenuContext& ctx) {
     panelTitle(canvas, panel, zh ? "本局" : "This Run", "");
     const Rect close = closeButtonRect(panel);
     panelClose(canvas, close, close.contains(mouse));
+    if (drawPanelExpand(ctx, close.y + close.h * 0.5, kInventorySkin.fill, expanded_)) {
+        expanded_ = !expanded_;
+        runLootScroll_.thumbGrab.reset();
+        return true;
+    }
     const Rect back{panel.x + kControlsPad, panel.y + kControlsY, 100.0, kControlsHeight};
     drawSlotButton(canvas, back, zh ? "返回背包" : "Back", kInventorySkin.fill,
                    back.contains(mouse), false);
@@ -1332,6 +1393,12 @@ bool InventoryPanel::render(MenuContext& ctx) {
 
     // --- header controls ---------------------------------------------------
     const Rect closeRect = closeButtonRect(panel);
+    if (drawPanelExpand(ctx, closeRect.y + closeRect.h * 0.5, kInventorySkin.fill, expanded_)) {
+        expanded_ = !expanded_;
+        searchField_.blur();
+        scroll_.thumbGrab.reset();
+        return true;
+    }
     const Rect toggleBoxRect{panel.x + kControlsPad,
                              panel.y + kControlsY + (kControlsHeight - kToggleBoxSize) * 0.5,
                              kToggleBoxSize, kToggleBoxSize};
@@ -1603,6 +1670,11 @@ bool InventoryPanel::render(MenuContext& ctx) {
             (1.0 - barReloadCut(content(), [&](int i) { return profile.equipped(content(), i); }, &profile.skills));
         auto lines =
             petalTooltipLines(cell.petalIndex, cell.rarity, profile.skills, reloadScale);
+        if (!ctx.net.isSkinAdmin()) {
+            const std::string quantity = trEnZh("In inventory: ", "背包持有：") +
+                                         std::to_string(cell.count);
+            lines.insert(lines.begin() + 2, TooltipLine{quantity, 14.0});
+        }
         if (cell.petalIndex == content().petalIndex("timed_mjolnir")) {
             showTimedHammerExpiry(lines, profile, -1);
         }

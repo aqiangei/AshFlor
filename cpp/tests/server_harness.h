@@ -836,6 +836,9 @@ struct GameServerPeer {
         server.serviceJurassicRotation(server.jurassicCycle_ + 1);
         server.commands_.flush();
     }
+    static void stagePyramidMaps(GameServer& server, double now) {
+        server.servicePyramidMaps(now);
+    }
     static void advancePyramidCycle(GameServer& server) {
         server.servicePyramidRotation(server.pyramidCycle_ + 1);
         server.commands_.flush();

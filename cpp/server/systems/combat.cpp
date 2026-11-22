@@ -17,6 +17,7 @@
 
 #include "server/loot_eligibility.h"
 #include "server/systems/movement.h"
+#include "server/systems/petals.h"
 #include "server/systems/spawning.h"
 #include "server/workers.h"
 #include "shared/game/npc.h"
@@ -592,6 +593,11 @@ std::vector<CombatSystem::PracticeDamage> CombatSystem::practiceDamage(
     return result;
 }
 
+bool CombatSystem::isPracticeDummy(const World& world, const ContentRegistry& registry, Entity entity) {
+    const auto* npc = world.tryGet<Npc>(entity);
+    return npc && registry.mob(npc->configIndex).id == "target_dummy";
+}
+
 void CombatSystem::recordPracticeDamage(const World& world, Entity dummy, Entity source,
                                         DamageKind kind, double amount, double nowMillis) {
     const auto* npc = world.tryGet<Npc>(dummy);
@@ -624,6 +630,8 @@ void CombatSystem::recordPracticeDamage(const World& world, Entity dummy, Entity
         hit = {PracticeSource::Petal, registry.petalIndex("magic_eye"), lightning->rarity, amount};
     } else if (kind == DamageKind::Poison) {
         hit.source = PracticeSource::Poison;
+    } else if (kind == DamageKind::Burn) {
+        hit.source = PracticeSource::Burn;
     } else if (world.has<GroundEffect>(source)) {
         hit.source = PracticeSource::Field;
     }
@@ -789,11 +797,6 @@ DamageResult CombatSystem::applyDamageWithRuby(World& world, Entity victim, Enti
                                                double amount, double nowMillis, DamageKind kind,
                                                Entity checkedTarget, std::optional<Vec2> impactPoint) {
     if(const auto* petal=world.tryGet<PetalInstance>(source); petal &&
-       content().petal(petal->configIndex).id=="toilet_paper") {
-        const auto* status=world.tryGet<Afflictions>(petal->owner);
-        if(status && nowMillis<status->toiletBoostUntilMillis)amount*=10.0;
-    }
-    if(const auto* petal=world.tryGet<PetalInstance>(source); petal &&
        content().petal(petal->configIndex).id=="void_sad" && amount>0) {
         if(const auto* ownerAt=world.tryGet<Transform>(petal->owner)) {
             const auto origin=*ownerAt;int observers=0;
@@ -843,7 +846,8 @@ DamageResult CombatSystem::applyDamageWithRuby(World& world, Entity victim, Enti
         }
     }
     if (kind != DamageKind::Lightning || resolvingRuby_ || amount <= 0.0 ||
-        !world.has<MobTag>(victim) || world.has<Pet>(victim)) {
+        world.has<Pet>(victim) ||
+        (!world.has<MobTag>(victim) && !isPracticeDummy(world, content(), victim))) {
         return applyDamageOnce(world, victim, source, amount, nowMillis, kind, checkedTarget, impactPoint);
     }
     const Entity dealer = creditedPlayer(world, source);
@@ -893,6 +897,20 @@ DamageResult CombatSystem::applyDamageOnce(World& world, Entity victim, Entity s
                                        double amount, double nowMillis, DamageKind kind,
                                        Entity checkedTarget, std::optional<Vec2> impactPoint) {
     DamageResult result;
+    bool toiletBoosted = false;
+    if (const auto* petal = world.tryGet<PetalInstance>(source); petal &&
+        content().petal(petal->configIndex).id == "toilet_paper") {
+        const auto* status = world.tryGet<Afflictions>(petal->owner);
+        const auto* wearer = world.tryGet<Health>(petal->owner);
+        const double hp = wearer ? wearer->fraction() : 0.0;
+        toiletBoosted = status && status->toiletBoostActive && nowMillis < status->toiletBoostUntilMillis &&
+            hp >= .01 && hp < .10 && !world.has<Undead>(petal->owner);
+        if (toiletBoosted) {
+            const auto* loadout = world.tryGet<Loadout>(petal->owner);
+            toiletBoosted = loadout && hasToiletPaperCombo(content(), *loadout);
+            if (toiletBoosted) amount *= 3.0;
+        }
+    }
     if(const auto* burrow=world.tryGet<BurrowState>(victim))
         if(burrow->active&&nowMillis<burrow->untilMillis&&(kind==DamageKind::Direct||kind==DamageKind::Lightning)&&!canNoticeBurrowed(world,source,victim)){
             result.refused=true;return result;
@@ -982,7 +1000,8 @@ DamageResult CombatSystem::applyDamageOnce(World& world, Entity victim, Entity s
             }
             if (armorBlunts(kind)) {
                 const double armor = effectiveArmor(world, victim, nowMillis);
-                if (armor != 0.0) amount = std::max(0.0, amount - armor);
+                const auto* share = world.tryGet<ElementalOffenseShare>(source);
+                if (armor != 0.0) amount = std::max(0.0, amount - armor * (share ? share->value : 1.0));
             }
             if (amount <= 0.0) return result;
             return shareHit(world, colonyScratch_, victim, source, amount, nowMillis, kind,
@@ -1174,6 +1193,9 @@ DamageResult CombatSystem::applyDamageOnce(World& world, Entity victim, Entity s
     // A colony's share was blunted whole, before it was split (above).
     if (armorBlunts(kind) && !sharingColonyHit_) {
         double armor = effectiveArmor(world, victim, nowMillis);
+        if (armor != 0.0 && isDirectHit(kind)) {
+            if (const auto* share = world.tryGet<ElementalOffenseShare>(source)) armor *= share->value;
+        }
         if (armor > 0.0 && kind == DamageKind::Recoil && isWildMob(world, source) &&
             !world.has<MobRingPetal>(source)) {
             const auto* armorState = world.tryGet<Armor>(victim);
@@ -1392,6 +1414,9 @@ DamageResult CombatSystem::applyDamageOnce(World& world, Entity victim, Entity s
     // Training NPCs never lose HP: their damage readout must not be capped
     // by a decorative health pool (which differs between rarity tiers).
     const double applied = invulnerable ? amount : std::min(amount, health.current);
+    const bool canTriggerToiletPaper = !invulnerable && applied > 0.0 &&
+        world.has<PlayerTag>(victim) && !world.has<Undead>(victim);
+    const bool wasAboveToiletThreshold = canTriggerToiletPaper && health.fraction() > 0.9;
     // The same loss against the whole bar, for the client's hit flash. Taken
     // now: `health` dangles past trySecondChance below.
     const double share = health.max > 0.0 ? applied / health.max : 0.0;
@@ -1400,17 +1425,6 @@ DamageResult CombatSystem::applyDamageOnce(World& world, Entity victim, Entity s
     // comes off, so nothing an NPC is hit by can kill it.
     if (!invulnerable) {
         health.current -= applied;
-        if(world.has<PlayerTag>(victim) && applied>0 && health.current>0 && health.fraction()<.1) {
-            if(auto* status=world.tryGet<Afflictions>(victim); status && status->toiletArmed) {
-                const auto* loadout=world.tryGet<Loadout>(victim);
-                bool equipped=false;
-                if(loadout)for(int slot=0;slot<std::min(loadout->activeSlots,kLoadoutActiveSlots);++slot) {
-                    const auto& item=loadout->slots[slot];
-                    if(!item.empty() && content().petal(item.configIndex).id=="toilet_paper")equipped=true;
-                }
-                if(equipped){status->toiletBoostUntilMillis=nowMillis+10000.0;status->toiletArmed=false;}
-            }
-        }
         if (applied > 0 && isDirectHit(kind) && source != victim) {
             const auto* arc = kind == DamageKind::Lightning ? world.tryGet<LightningTarget>(source) : nullptr;
             // Two batteries must not feed each other's retaliation.
@@ -1448,11 +1462,33 @@ DamageResult CombatSystem::applyDamageOnce(World& world, Entity victim, Entity s
     //
     // `health` dangles from this call on: the lockout is a component, and
     // adding one relocates the victim's row.
-    if (fatal && trySecondChance(world, victim, nowMillis)) fatal = false;
+    const bool savedBySecondChance = fatal && trySecondChance(world, victim, nowMillis);
+    if (savedBySecondChance) fatal = false;
     // A worn bandage turns what is left of a killing blow into Undead: the
     // flower stands at 1 HP until the bandage's time is up, and dies then.
     // After Second Chance, which spares the flower outright.
     if (fatal && tryUndead(world, victim, source, nowMillis)) fatal = false;
+
+    // Use both the HP before the hit and the HP after either lifesaver.
+    // A heal and hit can happen between two equipment updates.
+    if (canTriggerToiletPaper && !fatal) {
+        const double hp = world.get<Health>(victim).fraction();
+        const bool belowThreshold = hp < .10;
+        const bool rescued = savedBySecondChance || world.has<Undead>(victim);
+        auto* status = world.tryGet<Afflictions>(victim);
+        if (rescued && status) status->toiletBoostActive = false;
+        const bool armed = status && status->toiletArmed;
+        const auto* loadout = world.tryGet<Loadout>(victim);
+        if (loadout && ((wasAboveToiletThreshold && !armed) || (belowThreshold && armed)) &&
+            hasToiletPaperCombo(content(), *loadout)) {
+            auto& toilet = status ? *status : world.ensure<Afflictions>(victim);
+            toilet.toiletArmed = !belowThreshold;
+            if (!rescued && belowThreshold && hp >= .01 && nowMillis >= toilet.toiletBoostUntilMillis) {
+                toilet.toiletBoostUntilMillis = nowMillis + 9000.0;
+                toilet.toiletBoostActive = true;
+            }
+        }
+    }
 
     creditSwing(world, victim, source, amount);
 
@@ -1490,6 +1526,7 @@ DamageResult CombatSystem::applyDamageOnce(World& world, Entity victim, Entity s
         if (const NetId* id = world.tryGet<NetId>(shown)) {
             const Transform* transform = world.tryGet<Transform>(shown);
             std::uint8_t flags{0};
+            if (toiletBoosted) flags |= net::DamageCritical;
             if (kind == DamageKind::Poison) flags |= net::DamagePoison;
             // Every strike in the game reaches here as DamageKind::Lightning --
             // the petal cutter's burst, a jellyfish's reach and a firefly's
@@ -1908,7 +1945,8 @@ void CombatSystem::awardBounty(World& world, Entity victim) {
 
     // The corpse's XP is not split. Hyper adjusts each recipient's share
     // from their own contribution, including players admitted by a squad.
-    const double baseXp = bounty->xp;
+    const double baseXp = bounty->xp * (world.has<WaveEnemy>(victim)
+        ? 1.0 : mobKillXpMultiplier(rarity));
     const double maxHealth = health ? health->max : 0.0;
     for (const Entity recipient : recipients) {
         double xp = baseXp;
@@ -2713,6 +2751,10 @@ void CombatSystem::runContactPhase(World& world, const SpatialGrid& grid,
     prepareMeleeCandidates(world, grid, hostileTargets, placements != nullptr, timing);
     if (timing) mark(timing->parallelSearchMs);
     resolveMelee(world, grid, content, nowMillis, hostileTargets, placements != nullptr, timing);
+    // After the emitter's own body swing: the beam is a separate lightning
+    // ray, and a mob finished by contact must not also take a beam tick from
+    // a gather that still held a live pointer into it.
+    tickLaserBeams(world, grid, content, nowMillis);
     if (!timing) return;
     mark(timing->orderedMs);
     timing->orderedMs = std::max(0.0, timing->orderedMs - timing->fallbackSearchMs);
@@ -2795,9 +2837,18 @@ void CombatSystem::ignite(World& world, Entity victim, Entity emitter, Entity ow
     auto existing = std::find_if(burns.begin(), burns.end(),
         [emitter](const BurnStack& burn) { return burn.emitter == emitter; });
     if (existing != burns.end()) {
-        *existing = {emitter, owner, rate, now + duration};
-    } else if (burns.size() < 32) {
-        burns.push_back({emitter, owner, rate, now + duration});
+        *existing = {emitter, owner, rate, now + duration, existing->budgetWeight};
+    } else {
+        const auto* share = world.tryGet<ElementalOffenseShare>(emitter);
+        const double weight = share ? share->value : 1.0;
+        // Elemental's fragments consume only their fraction of a burn stack.
+        // Retain the same saturation budget for ordinary emitters.
+        if (burns.size() >= 32) {
+            double occupied = 0.0;
+            for (const auto& burn : burns) occupied += burn.budgetWeight;
+            if (occupied + weight > 32.0 + 1e-9) return;
+        }
+        burns.push_back({emitter, owner, rate, now + duration, weight});
     }
 }
 
@@ -2841,7 +2892,7 @@ void CombatSystem::tickAfflictions(World& world, const ContentRegistry& content,
         const Entity source = world.isAlive(burn.source) ? burn.source : NULL_ENTITY;
         const auto* modifiers = world.tryGet<PlayerModifiers>(burn.victim);
         const double scale = modifiers ? 1.0 - modifiers->fireResistance : 1.0;
-        applyDamage(world, burn.victim, source, burn.amount * scale, nowMillis, DamageKind::Periodic);
+        applyDamage(world, burn.victim, source, burn.amount * scale, nowMillis, DamageKind::Burn);
     }
     poison_.clear();
     burns_.clear();
@@ -2916,7 +2967,7 @@ void CombatSystem::tickAfflictions(World& world, const ContentRegistry& content,
             ? burn.source : NULL_ENTITY;
         const auto* modifiers = world.tryGet<PlayerModifiers>(burn.victim);
         const double scale = modifiers ? 1.0 - modifiers->fireResistance : 1.0;
-        applyDamage(world, burn.victim, source, burn.amount * scale, nowMillis, DamageKind::Periodic);
+        applyDamage(world, burn.victim, source, burn.amount * scale, nowMillis, DamageKind::Burn);
     }
     for (const PoisonTick& tick : poison_) {
         // A source that has since been reaped becomes environmental damage.
@@ -3021,16 +3072,8 @@ void CombatSystem::createSpill(World& world, Entity owner, Vec2 at, Rarity rarit
     const auto* modifiers = world.tryGet<PlayerModifiers>(owner);
     const double radius = spillBaseRadius(spill, rarity) *
         (modifiers ? modifiers->spillRadiusScale : 1.0);
-    double poolScale = scale;
-    double durationScale = 1.0;
-    if (kind == GroundEffectKind::AcidSpill && isHyperPetal(rarity)) {
-        if (const auto* tech = hyperTechniqueInfo("acid_bomb", rarity, false);
-            tech && tech->technique == HyperTechnique::AcidPoolBoost) {
-            poolScale *= tech->amount;
-            durationScale *= tech->amount;
-        }
-    }
-    GroundEffect field{kind, owner, radius, spill.strength * poolScale * fluidDamageScale(spill.kind), spill.frostFactor, rarity};
+    GroundEffect field{kind, owner, radius, spill.strength * scale * fluidDamageScale(spill.kind),
+                       spill.frostFactor, rarity};
     field.poisonDurationMillis = spill.lingerMillis;
     world.add<GroundEffect>(e, field);
     if(spill.health>0) {
@@ -3038,7 +3081,7 @@ void CombatSystem::createSpill(World& world, Entity owner, Vec2 at, Rarity rarit
         world.add<Health>(e,Health{durability,durability});world.add<Body>(e,Body{radius,1.0});
         const auto* side=world.tryGet<Faction>(owner);world.add<Faction>(e,side?*side:Faction{Team::Players,false});
     }
-    world.add<Lifetime>(e, Lifetime{spill.durationMillis / 1000.0 * durationScale});
+    world.add<Lifetime>(e, Lifetime{spill.durationMillis / 1000.0});
     Replicated rep;
     rep.kind = net::EntityKind::Effect;
     rep.typeIndex = static_cast<std::uint16_t>(kind);
@@ -3155,8 +3198,7 @@ void CombatSystem::tickGroundEffects(World& world, const SpatialGrid& grid,
             }
             if (!canHit(world, victim, field.effect, nowMillis)) continue;
             if (isFluidField(field.kind)) {
-                const auto* npc = world.tryGet<Npc>(victim);
-                const bool practiceTarget = npc && content.mob(npc->configIndex).id == "target_dummy";
+                const bool practiceTarget = isPracticeDummy(world, content, victim);
                 if (!isWildMob(world, victim) && !practiceTarget) continue;
                 if(field.kind==GroundEffectKind::NitrogenSpill) {
                     const Entity target=poolOwner(world,victim);
@@ -3527,7 +3569,11 @@ void CombatSystem::gatherPetals(World& world, const ContentRegistry& content, do
         source.position = transform.position;
         source.realm = transform.realm;
         source.radius = body.radius;
-        source.damage = petalContactDamage(config, stats, petal.rarity) * petal.combinationStrength;
+        double offenseScale = petal.combinationStrength;
+        if (config.id == "void_elemental") {
+            if (const auto* share = world.tryGet<ElementalOffenseShare>(e)) offenseScale *= share->value;
+        }
+        source.damage = petalContactDamage(config, stats, petal.rarity) * offenseScale;
         if (config.id == "magic_bone") {
             if (const auto* mods = world.tryGet<PlayerModifiers>(petal.owner))
                 source.wildDamageScale *= 1.0 + mods->magicBoneDamageBonus[ladderIndex(petal.rarity)];
@@ -3540,7 +3586,7 @@ void CombatSystem::gatherPetals(World& world, const ContentRegistry& content, do
         source.petalBreakable = stats.breakable;
         source.jellyKnockback = config.id == "jelly";
         source.knockback = stats.knockback;
-        source.poisonPerSecond = stats.poisonPerSecond * petal.combinationStrength;
+        source.poisonPerSecond = stats.poisonPerSecond * offenseScale;
         source.poisonDurationMillis = stats.poisonDurationMillis;
         source.slowFactor = stats.slowFactor;
         source.slowDurationMillis = stats.slowDurationMillis;
@@ -3549,7 +3595,7 @@ void CombatSystem::gatherPetals(World& world, const ContentRegistry& content, do
         source.armorReduction = config.id == "blood" ? 0.0 : stats.armorReduction;
         source.armorDamageFraction = config.armorDamageFraction;
         if (config.id != "magic_fire")
-            source.burnPerSecond = config.burnPerSecond * referenceOffenseScale(config,petal.rarity)*petal.combinationStrength;
+            source.burnPerSecond = config.burnPerSecond * referenceOffenseScale(config,petal.rarity) * offenseScale;
             if (config.id == "torch") {
                 if (const auto* tech = hyperTechniqueInfo("torch", petal.rarity, petal.mimicked);
                     tech && tech->technique == HyperTechnique::TorchWildfire)
@@ -3557,7 +3603,7 @@ void CombatSystem::gatherPetals(World& world, const ContentRegistry& content, do
             }
         source.burnMillis = config.burnMillis;
         if (config.spill.onHit && config.spill.kind != SpillKind::None) source.impactSpill = &config.spill;
-        source.critDamage = stats.critDamage * petal.combinationStrength;
+        source.critDamage = stats.critDamage * offenseScale;
         if (config.id == "dice") {
             const auto* tree = world.tryGet<PlayerSkillTree>(petal.owner);
             const double luck = tree ? tree->skills.luck() : 0.0;
@@ -3949,7 +3995,14 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
             // A claw's bonus is decided here, per victim, off the health the
             // victim has BEFORE this hit.
             sample.mark(Phase::Formula);
-            const double baseDamage = wild ? source.damage * source.wildDamageScale : source.damage;
+            // A training dummy reports the Magic Bone hit a wild target would take.
+            const auto* practiceNpc = !wild && source.isPetal && source.wildDamageScale != 1.0
+                ? world.tryGet<Npc>(victim) : nullptr;
+            const bool practiceBone = practiceNpc &&
+                registry.mob(practiceNpc->configIndex).id == "target_dummy" &&
+                registry.petal(world.get<PetalInstance>(source.attacker).configIndex).id == "magic_bone";
+            const double baseDamage = (wild || practiceBone)
+                ? source.damage * source.wildDamageScale : source.damage;
             double swing = swingDamage(world, baseDamage, source.critDamage, victim);
             if (wild && source.isPetal &&
                 registry.petal(world.get<PetalInstance>(source.attacker).configIndex).id == "void_gunpowder") {
@@ -4099,9 +4152,16 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
             }
             if (landed && wild && source.impactSpill) {
                 const auto* at = world.tryGet<Transform>(victim);
-                if (at) createSpill(world, source.owner, at->position, source.rarity, *source.impactSpill,
-                                    petalStrengthScale(source.rarity),
-                                    allocateNetId ? allocateNetId() : 0);
+                if (at) {
+                    double scale = petalStrengthScale(source.rarity);
+                    if (const auto* petal = world.tryGet<PetalInstance>(source.attacker)) {
+                        const auto* technique = hyperTechniqueInfo(
+                            registry.petal(petal->configIndex).id, source.rarity, petal->mimicked);
+                        scale *= hyperAmount(technique, HyperTechnique::AcidPoolBoost);
+                    }
+                    createSpill(world, source.owner, at->position, source.rarity, *source.impactSpill,
+                                scale, allocateNetId ? allocateNetId() : 0);
+                }
                 if (auto* health = world.tryGet<Health>(source.attacker)) health->current = 0.0;
                 break;
             }
@@ -4153,7 +4213,7 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
                 }
             }
             if (landed && !hit.killed) {
-                if (wild && source.burnPerSecond > 0.0)
+                if (source.burnPerSecond > 0.0 && (wild || isPracticeDummy(world, registry, victim)))
                     ignite(world, victim, source.attacker, source.owner, source.burnPerSecond,
                               source.burnMillis, nowMillis);
                 if (wild && source.armorDamageFraction > 0.0) {
@@ -4243,8 +4303,13 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
                 }
                 const double poisonWindow = guarding ?
                     hyperAmount(wildTechnique, HyperTechnique::WildPoisonWindow) : 1.0;
+                const auto* petal = source.poisonPerSecond > 0.0
+                    ? world.tryGet<PetalInstance>(source.attacker) : nullptr;
+                const std::string_view poisonId = petal ? std::string_view{registry.petal(petal->configIndex).id} : std::string_view{};
+                const bool stackPoison = poisonId == "stinger" || poisonId == "magic_stinger" ||
+                                         poisonId == "void_elemental";
                 applyPoison(world, victim, source.attacker, source.poisonPerSecond / poisonWindow,
-                            source.poisonDurationMillis * poisonWindow, nowMillis);
+                            source.poisonDurationMillis * poisonWindow, nowMillis, stackPoison);
                 applySlow(world, victim, source.slowFactor,
                           source.slowDurationMillis * hyperAmount(wildTechnique, HyperTechnique::WildSlow),
                           source.rarity, nowMillis, source.inflictsFrost);
@@ -4401,6 +4466,88 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
 // ---------------------------------------------------------------------------
 // Lightning
 // ---------------------------------------------------------------------------
+
+void CombatSystem::tickLaserBeams(World& world, const SpatialGrid& grid,
+                                  const ContentRegistry& content, double nowMillis) {
+    // Gather then apply: applyDamage and ensure<HitCooldowns> relocate rows.
+    struct Pending {
+        Entity petal = NULL_ENTITY;
+        Entity victim = NULL_ENTITY;
+        double amount = 0;
+    };
+    std::vector<Pending> pending;
+    Query<PetalInstance, Transform> lasers{world};
+    lasers.without<Dead>();
+    lasers.without<LoosePetal>();
+    lasers.each([&](Entity e, PetalInstance& petal, Transform& at) {
+        const PetalConfig& config = content.petal(petal.configIndex);
+        if (!petalIsLaser(config)) return;
+        PetalStats stats = computerSetStats(content, world, petal.owner, petal.configIndex,
+                                            petal.rarity,
+                                            content.petalStats(petal.configIndex, petal.rarity));
+        double dps = laserBeamDamagePerSecond(stats);
+        if (dps <= 0.0) return;
+        if (const PlayerModifiers* modifiers = world.tryGet<PlayerModifiers>(petal.owner)) {
+            dps *= modifiers->petalDamageScale;
+        }
+        const double amount = dps * (kPetalHitIntervalMillis / 1000.0);
+        if (amount <= 0.0) return;
+
+        // Orbital bearing: wiki keeps the beam pointing outward with the ring.
+        const double heading = petal.facingAngle;
+        const Vec2 axis = Vec2::fromAngle(heading);
+        const Vec2 start = at.position;
+        const Vec2 end = start + axis * kLaserBeamLength;
+        const Vec2 mid = (start + end) * 0.5;
+        queryBodies(grid, at.realm, mid,
+                    kLaserBeamLength * 0.5 + kLaserBeamHalfWidth + kBroadphasePad, candidates_,
+                    petal.owner);
+
+        const HitCooldowns* cool = world.tryGet<HitCooldowns>(e);
+        for (const Entity victim : candidates_) {
+            if (victim == e) continue;
+            // Wiki: the beam ignores enemy projectiles.
+            if (isFiledShot(victim) || world.has<Projectile>(victim)) continue;
+            if (!world.isAlive(victim) || world.has<Dead>(victim)) continue;
+            if (world.has<PetalInstance>(victim) || world.has<GroundEffectTag>(victim)) continue;
+            const Transform* victimAt = world.tryGet<Transform>(victim);
+            const Body* body = world.tryGet<Body>(victim);
+            if (victimAt == nullptr || body == nullptr || victimAt->realm != at.realm) continue;
+
+            const Vec2 toVictim = victimAt->position - start;
+            const double along = clamp(toVictim.x * axis.x + toVictim.y * axis.y, 0.0,
+                                       kLaserBeamLength);
+            const Vec2 nearest = start + axis * along;
+            const double reach = kLaserBeamHalfWidth + body->radius;
+            const double half = squareMobHalfExtent(world, victim);
+            if (half > 0.0) {
+                if (!segmentTouchesSquare(start, end, victimAt->position, half, victimAt->angle,
+                                          kLaserBeamHalfWidth)) {
+                    continue;
+                }
+            } else if ((victimAt->position - nearest).lengthSq() > reach * reach) {
+                continue;
+            }
+
+            const Entity pool = poolOwner(world, victim);
+            if (cool != nullptr && !cool->ready(pool, nowMillis)) continue;
+            if (!canHit(world, pool, e, nowMillis)) continue;
+            pending.push_back({e, victim, amount});
+        }
+    });
+
+    for (const Pending& hit : pending) {
+        if (!world.isAlive(hit.petal) || world.has<Dead>(hit.petal)) continue;
+        if (!world.isAlive(hit.victim) || world.has<Dead>(hit.victim)) continue;
+        // Several queued segments can share one health pool. Recheck the
+        // ledger here, while keeping the struck segment for damage numbers.
+        const Entity pool = poolOwner(world, hit.victim);
+        HitCooldowns& cooldown = world.ensure<HitCooldowns>(hit.petal);
+        if (!cooldown.ready(pool, nowMillis)) continue;
+        cooldown.arm(pool, nowMillis + kPetalHitIntervalMillis);
+        applyDamage(world, hit.victim, hit.petal, hit.amount, nowMillis, DamageKind::Lightning);
+    }
+}
 
 void CombatSystem::strikeLightning(World& world, const SpatialGrid& grid, Entity source, Vec2 at,
                                    Realm realm, double radius, double damage, double nowMillis) {
@@ -4845,6 +4992,7 @@ void CombatSystem::tickProjectiles(World& world, const SpatialGrid& grid,
     });
 
     prepareShotImpacts(world, grid, bodyGridOnly);
+    std::vector<Entity> terminalShots;
     for (std::size_t index = 0; index < shots_.size(); ++index) {
         const ShotSource& shot = shots_[index];
         if (!world.isAlive(shot.entity) || world.has<Dead>(shot.entity)) continue;
@@ -4855,8 +5003,11 @@ void CombatSystem::tickProjectiles(World& world, const SpatialGrid& grid,
         // shot. Subtracting the same travel again halves every projectile's
         // configured range.
         if (projectile->remainingDistance <= 0.0) {
-            world.add<Dead>(shot.entity);
-            continue;
+            if (!projectile->bouncesOffWalls || shot.flownLength <= 1e-9) {
+                world.add<Dead>(shot.entity);
+                continue;
+            }
+            terminalShots.push_back(shot.entity);
         }
         // Copied before anything structural: the component moves the moment a
         // victim is marked Dead.
@@ -5048,7 +5199,8 @@ void CombatSystem::tickProjectiles(World& world, const SpatialGrid& grid,
                     applyKnockback(world, impact.victim, impact.offset, strength);
                 }
                 const auto& ammoConfig = content.petal(petalIndex);
-                if (ammoConfig.burnPerSecond > 0 && victimIsMob && isWildMob(world, impact.victim))
+                if (!hit.refused && ammoConfig.burnPerSecond > 0 &&
+                    (isWildMob(world, impact.victim) || isPracticeDummy(world, content, impact.victim)))
                     ignite(world, impact.victim, shot.entity, owner,
                         ammoConfig.burnPerSecond * referenceOffenseScale(ammoConfig,rarity)*effectStrength, ammoConfig.burnMillis, nowMillis);
                 applyPoison(world, impact.victim, shot.entity, stats.poisonPerSecond*effectStrength,
@@ -5083,6 +5235,9 @@ void CombatSystem::tickProjectiles(World& world, const SpatialGrid& grid,
             const double share = health->max > 0.0 ? cost / health->max : 0.0;
             flashStruck(world, shot.entity, cost, share, false);
         }
+    }
+    for (Entity terminal : terminalShots) {
+        if (world.isAlive(terminal) && !world.has<Dead>(terminal)) world.add<Dead>(terminal);
     }
 }
 

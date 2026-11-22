@@ -65,6 +65,12 @@ inline constexpr bool isHyperPetal(Rarity r) { return petalGameplayRarity(r) == 
 inline constexpr bool samePetalTier(Rarity a, Rarity b) {
     return petalGameplayRarity(a) == petalGameplayRarity(b);
 }
+inline constexpr double mobKillXpMultiplier(Rarity rarity) {
+    if (rarity == Rarity::Apex) return 2.0;
+    if (rarity == Rarity::Ascendant) return 3.0;
+    return 1.0;
+}
+
 inline constexpr const char* rarityName(Rarity r) {
     return rarityIndex(r) < kRarityCount ? kRarityNames[rarityIndex(r)] : "common";
 }

@@ -76,6 +76,8 @@ public:
         std::uint8_t shield = 0;
         std::uint8_t petalVariant = 255;
         bool rollingDice = false;
+        bool petalTypeHidden = false;
+        bool foreignLoan = false;
         /// A hash of the equipped skin id, not the id itself.
         ///
         /// One Tracked exists per entity per viewer -- mobs, petals, drops and
@@ -367,18 +369,14 @@ public:
     /// the box is everything drawn plus the same distance a default screen
     /// gets. Without that cap, unique antennae's tenfold view would stream the
     /// whole map.
-    double viewportReach = 2.0;
+    double viewportReach = 1.2;
 
     /// How far out an entity still gets an update EVERY snapshot, as a
     /// multiple of the viewport per axis.
     ///
-    /// The streamed box is four screens across (viewportReach above), and the
-    /// screen inside it is one -- so fifteen sixteenths of everything streamed
-    /// is, at any moment, being described to a client that is not drawing it.
-    /// Those entities are streamed so they are KNOWN before they are drawn,
-    /// which is a statement about existence, not about being current to the
-    /// tick: a mob two screens away can be a tenth of a second stale without a
-    /// single pixel being wrong.
+    /// Entities in the preload margin are known before they are drawn.
+    /// The outer part of that margin needs sparser updates than the drawn
+    /// rectangle and its immediate surroundings.
     ///
     /// The viewport a client reports is the world rectangle it DRAWS -- it
     /// divides by its own zoom before sending, so a wide loadout lens widens
