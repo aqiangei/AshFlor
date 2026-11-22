@@ -169,6 +169,12 @@ struct Session {
     double councilSampleAt = 0;
     double nextTitanQueryMillis = 0;
     double nextBulkCraftMillis = 0;
+    struct BulkCraftTicket {
+        std::uint64_t id = 0;
+        double expiresAtMillis = 0;
+        std::array<std::vector<std::uint32_t>, 2> materials;
+    };
+    BulkCraftTicket bulkCraftTicket;
     double nextSummonManaWarningMillis = 0;
     double nextTitanForgeAllMillis = 0;
 

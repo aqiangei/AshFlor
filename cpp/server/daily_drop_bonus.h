@@ -9,7 +9,9 @@ inline std::int64_t dropBonusNow() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 }
 inline std::int64_t dropBonusDay(std::int64_t now) { return (now+8LL*3600000)/86400000; }
-inline constexpr double kDropBonusDurationMillis = 3600000.0;
+inline constexpr double dropBonusDurationMillis(int multiplier) {
+    return (multiplier == 3 ? 4.0 : 3.0) * 60 * 60 * 1000;
+}
 
 inline bool dropBonusClaimedToday(const Json& bonus, std::int64_t now) {
     return bonus["day"].asDouble(-1) == dropBonusDay(now);
@@ -24,13 +26,14 @@ inline bool pauseDropBonusForMaintenance(Json& b,std::int64_t stoppedAt,const st
     const double remaining=b["until"].asDouble()-stoppedAt;
     if(!(remaining>0))return false;
     b["maintenancePause"]["id"]=id;
-    b["maintenancePause"]["remainingMillis"]=clamp(remaining, 0.0, kDropBonusDurationMillis);
+    b["maintenancePause"]["remainingMillis"]=clamp(remaining, 0.0, dropBonusDurationMillis(b["multiplier"].asInt()));
     b["until"]=0;return true;
 }
 inline bool resumeDropBonusAfterMaintenance(PlayerRecord& r,std::int64_t now) {
     auto& b=r.extra["dailyDropBonus"];
     if(!b["maintenancePause"].isObject())return false;
-    const double remaining=clamp(b["maintenancePause"]["remainingMillis"].asDouble(), 0.0, kDropBonusDurationMillis);
+    const double remaining=clamp(b["maintenancePause"]["remainingMillis"].asDouble(),
+                                   0.0, dropBonusDurationMillis(b["multiplier"].asInt()));
     b.erase("maintenancePause");
     if (remaining > 0.0 && dropBonusClaimedToday(b, now)) b["until"] = now + remaining;
     return true;
@@ -44,7 +47,7 @@ inline double dropBonusRemaining(const PlayerRecord& r, std::int64_t now) {
     if (!dropBonusClaimedToday(bonus, now)) return 0.0;
     const double paused = bonus["pausedMillis"].asDouble();
     return clamp(paused > 0.0 ? paused : bonus["until"].asDouble() - now,
-                 0.0, kDropBonusDurationMillis);
+                 0.0, dropBonusDurationMillis(bonus["multiplier"].asInt()));
 }
 
 inline bool setDropBonusEnabled(PlayerRecord& r, std::int64_t now, bool enabled) {
@@ -67,7 +70,7 @@ inline bool compensateSlowDropBonus(PlayerRecord& r, std::int64_t now,
         current["pausedMillis"].asDouble() > 0.0 || until <= now - wallMillis)
         return false;
     r.extra["dailyDropBonus"]["until"] =
-        std::min(until + saved, now + kDropBonusDurationMillis);
+        std::min(until + saved, now + dropBonusDurationMillis(current["multiplier"].asInt()));
     return true;
 }
 
@@ -79,8 +82,9 @@ inline bool claimDropBonus(PlayerRecord& r, std::int64_t now) {
     const int streak = dropBonusStreak(r, now) + 1;
     bonus["day"] = static_cast<double>(today);
     bonus["streak"] = streak;
-    bonus["multiplier"] = streak % 4 == 0 ? 3 : 2;
-    bonus["until"] = now + kDropBonusDurationMillis;
+    const int multiplier = streak % 4 == 0 ? 3 : 2;
+    bonus["multiplier"] = multiplier;
+    bonus["until"] = now + dropBonusDurationMillis(multiplier);
     bonus["pausedMillis"] = 0.0;
     bonus.erase("maintenancePause");
     return true;

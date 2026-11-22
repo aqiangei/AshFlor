@@ -210,7 +210,6 @@ bool TitanPanel::render(MenuContext& ctx) {
     if (editSlotSearch(ctx, searchRect, search_, searchField_)) grid_.reset();
 
     if (abandon_) {
-        if (knownPetal(stagedPetal_) && profile.stackCount(stagedPetal_, Rarity::Apex) == 0) reset();
         if (knownPetal(stagedPetal_) && now - askedAt_ > 1) {
             ctx.net.requestTitanHolder(stagedPetal_);
             askedAt_ = now;
@@ -220,13 +219,18 @@ bool TitanPanel::render(MenuContext& ctx) {
         const Rect releaseButton{panel.x+panel.w*0.5+12,panel.y+225,panel.w*0.5-32,46};
         const Rect releaseSlot{panel.x+panel.w*0.25-45,panel.y+207,90,90};
         const bool hammer=knownPetal(stagedPetal_)&&content().petal(stagedPetal_).id=="mjolnir";
+        const bool missingCopy = knownPetal(stagedPetal_) &&
+                                 profile.stackCount(stagedPetal_, Rarity::Apex) == 0;
         SlotCardLayout line = card;
         line.lineY = panel.y + 139;
         drawSlotLine(canvas, line, "选择在这位泰坦处持有的超凡花瓣。");
         line.lineY += kLinePitch;
         drawSlotLine(canvas, line, hammer ? "解除会永久销毁花费的10个永恒碎片。" : "解除会永久销毁花费的5个永恒。");
         line.lineY += kLinePitch;
-        drawSlotLine(canvas, line, "材料不予返还；所选超凡也会销毁，并释放名额。",kSlotCardRefusalInk);
+        drawSlotLine(canvas, line,
+                     missingCopy ? "花瓣已不在库存时仍可解除并释放名额；材料不返还。"
+                                 : "材料不予返还；所选超凡也会销毁，并释放名额。",
+                     kSlotCardRefusalInk);
         if (knownPetal(stagedPetal_)) {
             ItemTile tile;
             tile.petalIndex = stagedPetal_;
@@ -240,6 +244,9 @@ bool TitanPanel::render(MenuContext& ctx) {
         line.lineY = panel.y + kFirstLineY;
         drawSlotLine(canvas, line, !knownPetal(stagedPetal_) ? "请从下方选择" :
                      !holder ? "正在查询持有记录…" : ownedHere ? "此处持有，可解除" : "此处没有你的持有记录");
+        const Rect listClaims{panel.x + (panel.w - 240.0) * 0.5, panel.y + 336.0, 240.0, 34.0};
+        drawSlotButton(canvas, listClaims, "已换币？查看解除编号", 0x7653ABu,
+                       listClaims.contains(mouse), false);
         const auto hovered = grid_.render(ctx, card, kTitanSkin, Rarity::Apex, kColumns, kGridTop,
             [](std::uint16_t, std::uint32_t count) {
                 SlotCell cell; cell.count = count;
@@ -253,6 +260,9 @@ bool TitanPanel::render(MenuContext& ctx) {
             ctx.net.forgetTitanHolder(stagedPetal_);
             askedAt_ = -10;
             confirmForge_ = false;
+        } else if (listClaims.contains(mouse)) {
+            confirmForge_ = false;
+            ctx.net.sendChat("/hyper-abandon");
         } else if (ownedHere && releaseButton.contains(mouse)) {
             if (!confirmForge_) confirmForge_ = true;
             else {

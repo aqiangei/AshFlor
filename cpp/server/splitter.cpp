@@ -87,6 +87,7 @@ void GameServer::parkBody(Entity body, bool stopMotion) {
         input->current.sequence = previous.sequence;
         input->current.aimAngle = previous.aimAngle;
         input->current.aimDistance = previous.aimDistance;
+        input->current.rotationStep = previous.rotationStep;
         input->current.flags = net::InputNoPetPointer;
         input->mirroredBubbleHeading.reset();
     }
@@ -259,6 +260,10 @@ bool GameServer::splitSession(Session& session) {
     if (Transform* moved = world_.tryGet<Transform>(session.entity)) moved->position = left;
     session.splitOther = clone;
     parkBody(clone);
+    if (const auto* location = world_.tryGet<PlayerLocation>(session.entity))
+        world_.get<PlayerLocation>(clone).viewport = location->viewport;
+    if (const auto* input = world_.tryGet<PlayerInput>(session.entity))
+        world_.get<PlayerInput>(clone).current.rotationStep = input->current.rotationStep;
     // The petal system initializes the slot later this tick.
     session.splitSwitchReadyAtMillis = -1.0;
 
@@ -429,6 +434,7 @@ void GameServer::serviceSplitters(double nowMillis) {
                                           | net::InputNoPetPointer;
                 spareInput->current.aimAngle = activeInput->current.aimAngle;
                 spareInput->current.aimDistance = activeInput->current.aimDistance;
+                spareInput->current.rotationStep = activeInput->current.rotationStep;
                 if (activeInput->current.moveStrength > 0.0)
                     spareInput->mirroredBubbleHeading = activeInput->current.moveAngle;
             }

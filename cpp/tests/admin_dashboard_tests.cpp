@@ -691,15 +691,15 @@ TEST(each_side_keeps_its_own_viewport_claim) {
     CHECK_NEAR(world.get<PlayerLocation>(bossBody).viewport.y, 360.0, 0.5);
 
     // And each stream culled to its own claim, around the visitor's flower:
-    // half the window plus a margin of 1.5 windows (Replicator::viewportReach)
-    // per axis -- 1280 x 720 for the admin's, 3200 x 1800 for the visitor's.
+    // half the window plus a margin of 0.7 windows (Replicator::viewportReach)
+    // per axis -- 768 x 432 for the admin's, 1920 x 1080 for the visitor's.
     // Carol stands where only the larger box reaches.
     const Vec2 at = world.get<Transform>(visitorBody).position;
     const Vec2 spot = openPointWhere(h.server.terrain(), at, [&](Vec2 p) {
         const double dx = std::abs(p.x - at.x);
         const double dy = std::abs(p.y - at.y);
-        const bool outsideAdmin = dx >= 1280.0 + 200.0 || dy >= 720.0 + 200.0;
-        const bool insideVisitor = dx < 3200.0 - 200.0 && dy < 1800.0 - 200.0;
+        const bool outsideAdmin = dx >= 768.0 + 200.0 || dy >= 432.0 + 200.0;
+        const bool insideVisitor = dx < 1920.0 - 200.0 && dy < 1080.0 - 200.0;
         return outsideAdmin && insideVisitor;
     });
     world.get<Transform>(carolBody).position = spot;

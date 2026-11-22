@@ -624,17 +624,9 @@ bool ShopPanel::render(MenuContext& ctx) {
 
     // Keep the complete card on narrow or short viewports. Pointer and text
     // field coordinates follow the same transform as the drawing.
-    const bool touchLayout = ctx.window.coarsePointer() || ctx.window.touchSeen();
-    const double cssScale = ctx.window.uiScale() /
-        std::max(0.01, ctx.window.devicePixelRatio() * ctx.window.renderScale());
-    const double footerScale = touchLayout ? std::max(1.0, 0.75 / cssScale) : 1.0;
-    // One footer band: tip lines sit beside the QQ plate and star balance, even
-    // on touch / narrow viewports (do not stack the tips under the balance).
-    const double footerHeight = 72.0 * footerScale;
     const double fit = std::max(0.1, std::min({1.0,
         (canvas.width() - 18.0) / panel.w,
-        (canvas.height() - panel.y - 8.0 - footerHeight) /
-            (panel.h - kFooterSize * kLineHeight * 2.0)}));
+        (canvas.height() - panel.y - 8.0) / panel.h}));
     const Vec2 offset{panel.x * (1.0 - fit), panel.y * (1.0 - fit)};
     canvas.save();
     struct RestoreCanvas { Canvas& canvas; ~RestoreCanvas() { canvas.restore(); } } restore{canvas};
@@ -716,9 +708,7 @@ bool ShopPanel::render(MenuContext& ctx) {
     const auto at = [&](double x, double y) { return Vec2{panel.x + x, panel.y + y}; };
 
     // --- window -------------------------------------------------------------
-    Rect drawnPanel = panel;
-    drawnPanel.h += footerHeight / fit - kFooterSize * kLineHeight * 2.0;
-    drawFlorrPanel(canvas, drawnPanel, kWindowFill, kWindowRim);
+    drawFlorrPanel(canvas, panel, kWindowFill, kWindowRim);
 
     text(canvas, menuTitle(MenuId::Shop), panel.x + panel.w * 0.5, panel.y + kTitleMiddle,
          shopText(kTitleSize));
@@ -757,51 +747,27 @@ bool ShopPanel::render(MenuContext& ctx) {
     // --- the footer, on every tab -------------------------------------------
     // The balance is shared by every tab, so it is the
     // window's footer rather than the store's.
-    Rect supportButton{};
     {
-        const double footerMiddle = kFooterTop + 32.0 * footerScale / fit;
         const std::string balance = withSeparators(stars);
         const double width = kBalanceInset + kBalanceStar + measure(balance, kBalanceSize) +
                              textPad(kBalanceSize) + kBalanceInset;
         const Rect plate{panel.right() - kWindowPad - width,
-                         panel.y + footerMiddle - kBalanceHeight * 0.5, width, kBalanceHeight};
+                         panel.y + kFooterMiddle - kBalanceHeight * 0.5, width, kBalanceHeight};
         fillQuadRound(canvas, plate, kPlateRadius, kWindowRim);
         drawStarIcon(canvas, plate.x + kBalanceInset, plate.y + (plate.h - kBalanceStar) * 0.5,
                      kBalanceStar);
         text(canvas, balance, plate.x + kBalanceInset + kBalanceStar + textPad(kBalanceSize) * 0.5,
              plate.y + plate.h * 0.5, shopText(kBalanceSize, Align::Left));
 
-        const char* supportLabel = trEnZh("Top-up QQ 3028753757", "氪金联系QQ 3028753757");
-        const double supportSize = kFooterSize * footerScale / fit;
-        const double supportWidth = (measure(supportLabel, kFooterSize) + 24.0) * footerScale / fit;
-        supportButton = {plate.x - 10.0 - supportWidth,
-                         panel.y + footerMiddle - 20.0 * footerScale / fit, supportWidth,
-                         40.0 * footerScale / fit};
-        const bool supportHover = supportButton.contains(under);
-        if (supportHover) cursor = CursorShape::Hand;
-        drawFlorrButton(canvas, supportButton, kPriceFace, kButtonBorder, kButtonRadius,
-                        supportHover, !modalUp && pressing(supportButton));
-        text(canvas, supportLabel, supportButton.x + supportButton.w * 0.5,
-             supportButton.y + supportButton.h * 0.5, shopText(supportSize));
-
-        const double right = supportButton.x - 10.0;
-        const double descriptionSize = 14.0 * footerScale / fit;
-        const double line = 16.0 * footerScale / fit;
-        const double descriptionMiddle = panel.y + footerMiddle;
+        const double right = plate.x - 10.0;
+        const double line = kFooterSize * kLineHeight;
         text(canvas,
-             trEnZh("25 yuan for one random Apex", "25 元一个随机 Apex"),
-             right, descriptionMiddle - line * 1.5, shopText(descriptionSize, Align::Right));
+             trEnZh("You gain stars by completing challenges, or by",
+                    "通过完成挑战，或在「奖励」页"),
+             right, panel.y + kFooterTop + line * 0.5, shopText(kFooterSize, Align::Right));
         text(canvas,
-             trEnZh("10 yuan for one permanent Hyper Mimic",
-                    "10 元一个永久超凡拟态（Mimic）"),
-             right, descriptionMiddle - line * 0.5, shopText(descriptionSize, Align::Right));
-        text(canvas,
-             trEnZh("10 yuan to migrate to another server", "10 元迁移服务器"),
-             right, descriptionMiddle + line * 0.5, shopText(descriptionSize, Align::Right));
-        text(canvas,
-             trEnZh("Three servers renewed for 6 months: 2,892 yuan",
-                    "三个服务器已续租半年，共 2892 元"),
-             right, descriptionMiddle + line * 1.5, shopText(descriptionSize, Align::Right));
+             trEnZh("redeeming a code on the Bonus tab.", "兑换兑换码获得星星。"),
+             right, panel.y + kFooterTop + line * 1.5, shopText(kFooterSize, Align::Right));
     }
 
     // --- tab contents -------------------------------------------------------
@@ -965,8 +931,9 @@ bool ShopPanel::render(MenuContext& ctx) {
         bonusCanClaim = live && canClaim;
         bonusCanToggle = live && hasBonusTime;
         const double y=box.bottom()+28;
-        text(canvas,trEnZh("Daily Drop Bonus","每日掉落 Bonus"),panel.x+panel.w*.5,y,shopText(20));
-        text(canvas,trEnZh("1 hour: 2x / 2x / 2x / 3x. Ultra and below.","每日1小时：2倍 / 2倍 / 2倍 / 3倍，究极及以下怪物。"),
+        text(canvas,trEnZh("Daily Drop Bonus","每日掉落加成"),panel.x+panel.w*.5,y,shopText(20));
+        text(canvas,trEnZh("Days 1–3: 2x for 3 hours. Day 4: 3x for 4 hours. Ultra and below.",
+                    "第 1–3 天 2 倍（3 小时），第 4 天 3 倍（4 小时），究极及以下怪物。"),
             panel.x+panel.w*.5,y+30,shopText(14));
         text(canvas,trEnZh("S: 1.5/2x; E: 1.6/2.2x; H: 1.4/1.8x. Personal rolls.","普通日/第4天：S 1.5/2倍，E 1.6/2.2倍，H 1.4/1.8倍，仅本人加抽。"),
             panel.x+panel.w*.5,y+53,shopText(13));
@@ -978,8 +945,12 @@ bool ShopPanel::render(MenuContext& ctx) {
         if (hot) cursor = CursorShape::Hand;
         drawFlorrButton(canvas, bonusButton, canClaim ? 0x55B8D4u : kButtonIdle,
                         kButtonBorder, kButtonRadius, hot, hot && pressing(bonusButton));
-        const char* claimLabel = !hasBonusState ? trEnZh("Checking…", "同步中…")
-            : canClaim ? trEnZh("Claim 1 hour", "领取 1 小时") : trEnZh("Claimed today", "今日已领取");
+        const char* claimLabel = trEnZh("Checking…", "同步中…");
+        if (hasBonusState) {
+            if (!canClaim) claimLabel = trEnZh("Claimed today", "今日已领取");
+            else if (ctx.net.dropBonusStreak % 4 == 3) claimLabel = trEnZh("Claim 4 hours", "领取 4 小时");
+            else claimLabel = trEnZh("Claim 3 hours", "领取 3 小时");
+        }
         text(canvas, claimLabel, bonusButton.x + bonusButton.w * 0.5,
              bonusButton.y + bonusButton.h * 0.5, shopText(16));
 
@@ -994,7 +965,12 @@ bool ShopPanel::render(MenuContext& ctx) {
             label += ctx.net.dropBonusMultiplier == 3 ? trEnZh(" enhanced bonus · ", "强化加成 · ")
                                                      : trEnZh(" bonus · ", "普通加成 · ");
             const auto seconds = (left + 999) / 1000;
-            label += std::to_string(seconds / 60) + ":" + (seconds % 60 < 10 ? "0" : "") +
+            const auto minutes = seconds / 60 % 60;
+            if (seconds >= 3600) {
+                label += std::to_string(seconds / 3600) + ":";
+                if (minutes < 10) label += "0";
+            }
+            label += std::to_string(minutes) + ":" + (seconds % 60 < 10 ? "0" : "") +
                      std::to_string(seconds % 60);
         }
         text(canvas, label, bonusToggle.x + bonusToggle.w * 0.5,
@@ -1183,7 +1159,7 @@ bool ShopPanel::render(MenuContext& ctx) {
     }
 
     // Again over everything, as florr does, so nothing inside overruns it.
-    drawFlorrRim(canvas, drawnPanel, kWindowRim);
+    drawFlorrRim(canvas, panel, kWindowRim);
 
     // The tooltip is an overlay: in particular the shop rim must not paint
     // through the text when the card straddles the panel's edge.
@@ -1299,19 +1275,6 @@ bool ShopPanel::render(MenuContext& ctx) {
     }
 
     if (clicked(closeRect)) return false;
-
-    if (clicked(supportButton)) {
-        state.field.blur();
-        // Opens the desktop/mobile QQ chat handoff for this QQ number.
-        if (!openExternalLink("https://wpa.qq.com/msgrd?v=3&uin=3028753757&site=qq&menu=yes")) {
-            state.modal = ShopState::Modal::Alert;
-            state.lines = wrapMessage(
-                trEnZh("Your browser blocked the new tab. Please allow pop-ups and try again.",
-                       "浏览器阻止了新标签页，请允许弹出窗口后重试。"),
-                kDialogLineSize, 260.0);
-        }
-        return true;
-    }
 
     for (int i = 0; i < static_cast<int>(kTabLabels.size()); ++i) {
         if (!clicked(tabRects[static_cast<std::size_t>(i)])) continue;

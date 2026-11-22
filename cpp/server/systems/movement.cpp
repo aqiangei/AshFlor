@@ -1,4 +1,5 @@
 #include "server/systems/movement.h"
+#include "server/systems/spawning.h"
 #include "server/workers.h"
 
 #include <algorithm>
@@ -1139,6 +1140,9 @@ void MovementSystem::moveProjectiles(World& world, const Terrain& terrain, doubl
         // that stayed square to its bearing would slide sideways like a crab.
         if (stepSpeed > kMinProjectileSpeed) transform.angle = step.angle();
         if (!(projectile.remainingDistance > 0.0)) {
+            // Bouncing shots still hit along their final clipped segment.
+            // Combat resolves and retires them in this same tick.
+            if (bounces && out.displacement.lengthSq() > 0.0) return;
             motion.velocity = {0, 0};
             spentProjectiles_.push_back(e);
             return;
@@ -1161,10 +1165,8 @@ void MovementSystem::moveProjectiles(World& world, const Terrain& terrain, doubl
         }
     });
 
-    // Expiry is a movement result, so movement owns the transition to Dead.
-    // Combat retains its zero-range check as a backstop for callers that edit
-    // Projectile state between phases, but ordinary flight no longer depends
-    // on combat happening to clean up a projectile parked on the ground.
+    // Expire spent shots here except a bouncing shot with a final swept
+    // segment still pending in combat.
     for (const Entity e : spentProjectiles_) {
         if (world.isAlive(e) && !world.has<Dead>(e)) world.add<Dead>(e);
     }
@@ -1257,12 +1259,12 @@ Vec2 MovementSystem::aimAtLaunch(World& world, Entity self, Vec2 position,
 // Mob separation
 // ---------------------------------------------------------------------------
 
-bool MovementSystem::activeForSeparation(Vec2 position, Realm realm, Rarity rarity) const {
+bool MovementSystem::activeForSeparation(World& world, Entity entity, Vec2 position, Realm realm, Rarity rarity) const {
     // A boss is never off, the same exception the AI phase makes: it is an
     // announced event standing where the server said it would be, and a raid
     // arriving to find its escorts sitting inside each other is the visible
     // half of "asleep".
-    if (isBossRarity(rarity)) return true;
+    if (alwaysSimulatesAsBoss(world, entity, rarity)) return true;
     // Nobody connected is the PERMISSIVE case, as it is in the reference's
     // activity field: with no observer there is nothing to save the work for,
     // and a bench or a test that never adds a player sees the unmodified rule.
@@ -1302,7 +1304,7 @@ void MovementSystem::buildSeparationSet(World& world) {
         // Far from every flower: sit this tick out, the same LOD rule the AI
         // phase applies. A shove nobody is near enough to see is missed
         // outright rather than applied one-sided.
-        if (!activeForSeparation(position, transform.realm, type.rarity)) return;
+        if (!activeForSeparation(world, e, position, transform.realm, type.rarity)) return;
 
         SeparationEntry entry;
         entry.entity = e;

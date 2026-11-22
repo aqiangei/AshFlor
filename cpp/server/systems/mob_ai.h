@@ -1,4 +1,5 @@
 #pragma once
+#include "server/training_safety.h"
 // Mob intent: what every wild mob and every summoned pet decides to do this
 // tick.
 //
@@ -731,6 +732,7 @@ public:
     const Stats& stats() const { return stats_; }
 
 private:
+    std::vector<TrainingZone> trainingZones_;
     /// The per-tier numbers the AI needs, flattened out of the content tables.
     ///
     /// Memoised by (config, rarity): mobStats() is a dozen multiplies and two
@@ -882,8 +884,7 @@ private:
     /// them by name and sent the bots at it, and a boss that stutters at a
     /// fifth speed until somebody gets within five thousand units is a boss
     /// that is visibly asleep in front of the raid walking up to it.
-    bool stepsThisTick(Entity self, Vec2 position, Realm realm, Rarity rarity,
-                       const std::vector<RealmPoint>& activePlayers) const;
+    bool stepsThisTick(World& world, Entity self, Vec2 position, Realm realm, Rarity rarity) const;
 
     /// What a far mob does on a tick it did not think.
     ///
@@ -977,7 +978,8 @@ private:
     /// neutral mob's scan: it sees only flowers whose aggro is raised (a bulb).
     Entity acquireTarget(const World& world, const Terrain& terrain, const SpatialGrid& grid,
                          Entity self, Vec2 from, Realm realm, double range,
-                         bool raisedOnly, TargetScratch& scratch) const;
+                         bool raisedOnly, TargetScratch& scratch,
+                         double trainingClearance = 0.0) const;
     /// The PET a wild mob settles for when no flower is to be had. Distinct
     /// from acquirePetPrey() below, which is the wild mob a pet goes after.
     ///
@@ -1128,6 +1130,12 @@ private:
     /// a value of it, so a mob that dropped a target does not silently pick it
     /// back up off damage it took minutes ago.
     std::unordered_map<Entity, double> ledgerSeen_;
+    struct SilverfishLoad { Entity bag; Rarity rarity; Realm realm; Vec2 lastCarrierAt; };
+    std::unordered_map<Entity, SilverfishLoad> silverfishLoads_;
+    bool validSilverfishLoad(World&, Entity, const SilverfishLoad&) const;
+    void steerSilverfish(World&, const Terrain&, const SpatialGrid&,
+                         const SpatialGrid& playerTargets, double, double);
+    void placeSilverfishLoads(World&, const Terrain&);
 
     // Scratch, reused so that a steady-state tick allocates nothing.
     std::vector<Entity> stepList_;

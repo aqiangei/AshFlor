@@ -10,6 +10,7 @@
 // Nothing here re-derives a stat from a rarity: that ladder is rarity.h's job,
 // and a second copy of it is how the two drift apart.
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <functional>
@@ -32,6 +33,25 @@ class WorldMaps;
 class EventQueue;
 struct SquadEntityIndex;
 struct ShotLanding;
+
+inline bool hasToiletPaperCombo(const ContentRegistry& registry, const Loadout& loadout) {
+    bool paper = false;
+    bool sponge = false;
+    for (int i = 0; i < std::min(loadout.activeSlots, kLoadoutActiveSlots); ++i) {
+        const auto item = equippedPetal(registry, loadout, i);
+        if (item.empty()) continue;
+        const auto& id = registry.petal(item.configIndex).id;
+        paper |= id == "toilet_paper";
+        sponge |= id == "sponge";
+        if (paper && sponge) return true;
+    }
+    return false;
+}
+
+// Fraction of the single-body Elemental's offensive budget on this body.
+struct ElementalOffenseShare {
+    double value = 1.0;
+};
 
 /// How long a root takes to bank one armour stack, and how many it may hold.
 ///
@@ -228,6 +248,8 @@ class PetalSystem {
 public:
     int volleyEntityLimit = 0;
     void onKill(World&, const ContentRegistry&, Entity player, double nowMillis);
+    /// Count the live borrowed Basics after combat, just before snapshots.
+    void refreshCrownLoanCounters(World& world, const ContentRegistry& registry);
     /// One tick. Phase 4: after movement, so the ring orbits where the flower
     /// ended up; before combat, so a petal hits from its final position.
     ///
@@ -259,7 +281,7 @@ public:
     /// hook. Left unset, everything still simulates and simply is not
     /// replicated, which is what a headless test wants.
     std::function<std::uint32_t()> allocateNetId;
-    const WorldMaps* jurassicMaps = nullptr;
+    const WorldMaps* worldMaps = nullptr;
 
     /// Spend one slot outright: take its petals off the ring and start its
     /// reload, exactly as breaking the last of them would.
@@ -282,6 +304,11 @@ public:
     bool spendSlot(World& world, const ContentRegistry& registry, Entity player,
                    std::uint8_t slot, double nowMillis, bool recallSummons = true,
                    bool restartReload = false);
+
+    /// Move a continuously equipped shovel's ring state when loading a preset.
+    void carryPresetShovels(World& world, const ContentRegistry& registry, Entity player,
+                            const std::array<LoadoutSlot, kLoadoutSlots>& previousSlots,
+                            int previousActiveSlots);
 
     /// Put the petal that hatched `pet` back on its reload, as a summon
     /// retired for getting lost does. For whoever ends a pet from outside
@@ -355,13 +382,8 @@ private:
     /// keeps the flowers it already lends ahead of nearer newcomers, and a
     /// flower it turns away goes to the next crown in reach that has room.
     /// Run once, ahead of the ring pass, so that every loan is judged from the
-    /// same positions. Also counts each person's loans out as the tick opens
-    /// (crownLoansOut_), which their crown's slot prints.
+    /// same positions.
     void gatherCrownLenders(World& world, const ContentRegistry& registry);
-    /// The number a crown's slot on `player`'s bar prints: how many of the
-    /// Basics its wearer -- both splitter halves together -- has lent are out
-    /// on the field. 0 for a flower that is no wearer this tick.
-    int crownLoansOutOf(Entity player) const;
     /// Carry out one flower's loan: put the lent petal out once its reload has
     /// run, put it back on that reload when it breaks, and take it off at once,
     /// unbroken, when the loan ends. After reconcileSlots, which drops a petal
@@ -619,8 +641,8 @@ private:
     /// chosen spot and size -- and, if its config has one, its ammunition
     /// ring. summonPets lays chains and broods on top.
     Entity hatchPetBody(World& world, const ContentRegistry& registry, Entity player,
-                        std::uint8_t slot, std::uint16_t mobIndex, Rarity rarity, Vec2 at,
-                        double angle, Realm realm, double radius, double sizeJitter,
+                        std::uint8_t slot, std::uint16_t mobIndex, Rarity rarity, Rarity statsRarity,
+                        Vec2 at, double angle, Realm realm, double radius, double sizeJitter,
                         double strength, double expiresAtMillis);
     /// A summoned queen's soldiers (PetBrood): on her config's clock, up to
     /// its maxAlive, each a timed pet of the same owner and slot.
@@ -741,3 +763,4 @@ private:
 } // namespace flix
 
 FLIX_COMPONENT(flix::PetalSlotState);
+FLIX_COMPONENT(flix::ElementalOffenseShare);

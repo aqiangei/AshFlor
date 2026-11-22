@@ -194,8 +194,8 @@ bool TradePanel::render(MenuContext& ctx) {
         drawSlotLine(canvas, card, trEnZh("Trade 1 petal for 1 coin? Tap the slot to cancel.",
                                         "用 1 个花瓣兑换 1 枚硬币？点花瓣槽取消。"));
     } else {
-        drawSlotLine(canvas, card, trEnZh("Trade a petal for a coin of the same rarity",
-                                         "用一片花瓣兑换一枚同品质硬币"));
+        drawSlotLine(canvas, card, trEnZh("Trade a petal for a coin of the same rarity (contested Hyper excluded)",
+                                         "用一片花瓣兑换一枚同品质硬币（争夺中的超凡除外）"));
     }
 
     // --- the grid ----------------------------------------------------------
@@ -212,7 +212,7 @@ bool TradePanel::render(MenuContext& ctx) {
             // A lone petal carries no badge, as in the inventory.
             if (cell.count > 1) cell.badge = "x" + stackCountText(cell.count);
             return cell;
-        });
+        }, true);
 
     // Tiles on their way out go over everything but the words.
     motion_.drawVanishing(canvas, ctx.sprites, dtMs);

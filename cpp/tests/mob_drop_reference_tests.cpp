@@ -100,7 +100,7 @@ TEST(apex_reward_roll_increases_for_a_qualified_finisher) {
     CHECK(finisher > normal);
     CHECK_NEAR(static_cast<double>(finisher) / trials, kApexFinisherPetalDropChance, 0.009);
     CHECK_EQ(countApex(kills("crab", Rarity::Ascendant, 240, false, 1, nullptr,
-                             false, 0.9, nullptr, true)), 0);
+                             false, 0.49, nullptr, true)), 0);
 }
 
 TEST(hyper_personal_permanent_drop_matches_the_apex_rate_and_damage_floor) {
@@ -118,8 +118,8 @@ TEST(hyper_personal_permanent_drop_matches_the_apex_rate_and_damage_floor) {
         const auto drops = kills("ladybug", Rarity::Apex, trials, false, bonus, nullptr, true);
         CHECK_NEAR(static_cast<double>(countPermanent(drops)) / trials, kApexPetalDropChance, 0.011);
     }
-    CHECK_EQ(countPermanent(kills("ladybug", Rarity::Apex, trials, false, 3, nullptr, false, 0.9)), 0);
-    const auto atFloor = kills("ladybug", Rarity::Apex, trials, false, 1, nullptr, false, 1.0);
+    CHECK_EQ(countPermanent(kills("ladybug", Rarity::Apex, trials, false, 3, nullptr, false, 0.49)), 0);
+    const auto atFloor = kills("ladybug", Rarity::Apex, trials, false, 1, nullptr, false, 0.5);
     CHECK_NEAR(static_cast<double>(countPermanent(atFloor)) / trials, kApexPetalDropChance, 0.011);
 }
 
@@ -149,8 +149,8 @@ TEST(boss_participation_floor_only_tops_up_empty_qualified_kills) {
             return drops;
         };
         CHECK(withoutFloor(old) == withoutFloor(now));
-        const auto beforeLow = kills("ladybug", mob, 60, false, 1, nullptr, false, 0.9, &lowBaseline);
-        const auto afterLow = kills("ladybug", mob, 60, false, 1, nullptr, false, 0.9, &lowCandidate);
+        const auto beforeLow = kills("ladybug", mob, 60, false, 1, nullptr, false, 0.49, &lowBaseline);
+        const auto afterLow = kills("ladybug", mob, 60, false, 1, nullptr, false, 0.49, &lowCandidate);
         CHECK(beforeLow == afterLow);
     }
 }
@@ -249,11 +249,21 @@ TEST(hyper_drop_budget_bonus_uses_one_point_four_and_one_point_eight_rates){
         CHECK_NEAR(eternal/2000.0,expectedHyperEternals("ladybug")*1.3*(bonus==2?1.4:1.8),0.1);
     }
 }
-TEST(reference_pharaoh_crown_drops_at_eternal_from_super_eternal_and_hyper_beetles){
-    for(const auto tier:{Rarity::Super,Rarity::Unique,Rarity::Apex}){
-        const auto result=kills("pharaoh_beetle",tier,1000);
-        const int crowns=total(result,"pharaoh_s_crown");CHECK(crowns>20&&crowns<110);
-        for(const auto&[key,n]:result)if(key.first=="pharaoh_s_crown")CHECK_EQ(key.second,rarityIndex(Rarity::Unique));
+TEST(reference_pharaoh_crown_regular_drops_are_eternal_from_super_eternal_and_hyper_beetles) {
+    for (const auto tier : {Rarity::Super, Rarity::Unique, Rarity::Apex}) {
+        const auto result = kills("pharaoh_beetle", tier, 1000);
+        int eternalCrowns = 0;
+        for (const auto& [key, count] : result) {
+            if (key.first != "pharaoh_s_crown") continue;
+            if (key.second == rarityIndex(Rarity::Unique)) {
+                eternalCrowns += count;
+            } else {
+                // The personal roll on a Hyper kill has a separate reward tier.
+                CHECK(tier == Rarity::Apex);
+                CHECK_EQ(key.second, rarityIndex(Rarity::PermanentHyper));
+            }
+        }
+        CHECK(eternalCrowns > 20 && eternalCrowns < 110);
     }
 }
 

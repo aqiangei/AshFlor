@@ -235,6 +235,7 @@ constexpr ChatCommand kChatCommands[] = {
     {"/wave", "Wave challenge: start / join code / leave", false},
     {"/biome", "Show the most populated biome", false},
     {"/boss-timers", "Show each biome's unique/apex cooldown", false},
+    {"/hyper-abandon", "List or relinquish a contested Hyper claim", false},
     {"/admin save", "Save player progress", true},
     {"/admin list-players", "List online players", true},
     {"/admin list-sockets", "List connected sockets", true},
@@ -790,7 +791,7 @@ bool App::pressedChatBox() const {
     // Against the box the LAST frame painted, like everything else that
     // hit-tests the chat: this runs before the draw pass, and the slot does not
     // move between the two.
-    if (chatOpen_ || chatBox_.w <= 0) return false;
+    if (chatOpen_ || menus_.wantsText() || chatBox_.w <= 0) return false;
     const Vec2 pointer{window_.mouseX(), window_.mouseY()};
     // A panel over the slot owns the press. The tall lists start at x = 100
     // and the slot at 115, so they really do overlap -- and the two panels
@@ -852,6 +853,8 @@ bool App::scrollChat() {
 }
 
 void App::editChatLine() {
+    // Do not read typed/pasted text (including /w commands) from another field.
+    if (menus_.wantsText()) return;
     const std::string before = chatDraft_;
     ui::TextEditOptions typing;
     // What the channel puts in front of the line counts against the server's

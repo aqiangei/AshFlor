@@ -449,7 +449,8 @@ std::size_t SlotGrid::rows(const Profile& profile, SlotGridTiers tiers) {
     return heldTypes(profile, [&](Rarity rarity) { return slotGridShows(tiers, rarity); }).size();
 }
 
-bool editSlotSearch(MenuContext& ctx, Rect rect, std::string& query, ui::TextFieldState& field) {
+bool editSlotSearch(MenuContext& ctx, Rect rect, std::string& query, ui::TextFieldState& field,
+                    const char* placeholder) {
     trackTextMouse(ctx.window, field, rect, inputFieldRun(rect, query, field), query, ctx.timeSeconds);
     const auto before = query;
     if (field.focused) {
@@ -460,32 +461,72 @@ bool editSlotSearch(MenuContext& ctx, Rect rect, std::string& query, ui::TextFie
         if (ctx.window.keyPressed(Key::Enter) || ctx.window.keyPressed(Key::Escape)) field.blur();
     }
     if (rect.contains(ctx.mouse())) ctx.window.setCursorShape(CursorShape::Text);
-    inputField(ctx.canvas, rect, query, trEnZh("Search petals", "查找花瓣"),
+    inputField(ctx.canvas, rect, query, placeholder ? placeholder : trEnZh("Search petals", "查找花瓣"),
                field.focused, ctx.timeSeconds, &field);
     return query != before;
 }
 
-static void filterSlotTypes(std::vector<std::uint16_t>& types, const std::string& search) {
+bool drawPanelExpand(MenuContext& ctx, double titleY, std::uint32_t tint, bool expanded) {
+    const Rect button{ctx.bounds.x + 14.0, titleY - 14.0, 100.0, 28.0};
+    const bool over = ctx.over(button);
+    const bool pressed = over && ctx.pressed();
+    const char* label = expanded ? trEnZh("Restore", "还原") : trEnZh("Fullscreen", "全屏");
+    drawSlotButton(ctx.canvas, button, label, tint, over, pressed);
+    return pressed;
+}
+
+CraftSearchQuery parseCraftSearch(const std::string& search) {
+    const std::string query = trimmed(lowerCase(search));
+    if (query.empty()) return {};
+    CraftSearchQuery result{query, std::nullopt};
+    std::size_t longest = 0;
+    const auto separator = [](char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; };
+    for (int i = 0; i < kRarityCount; ++i) {
+        const auto rarity = static_cast<Rarity>(i);
+        for (const char* label : {rarityLabel(rarity), rarityNameZh(rarity)}) {
+            const std::string alias = lowerCase(label);
+            if (alias.size() <= longest || alias.size() > query.size()) continue;
+            if (query == alias || (query.compare(0, alias.size(), alias) == 0 &&
+                                   separator(query[alias.size()]))) {
+                result = {trimmed(query.substr(alias.size())), rarity};
+            } else {
+                const std::size_t start = query.size() - alias.size();
+                if (start == 0 || !separator(query[start - 1]) ||
+                    query.compare(start, alias.size(), alias) != 0) continue;
+                result = {trimmed(query.substr(0, start)), rarity};
+            }
+            longest = alias.size();
+        }
+    }
+    return result;
+}
+
+void filterSlotTypes(std::vector<std::uint16_t>& types, const std::string& search, bool bilingual) {
     const auto needle = trimmed(lowerCase(search));
     if (needle.empty()) return;
     types.erase(std::remove_if(types.begin(), types.end(), [&](std::uint16_t i) {
         const auto& petal = content().petal(i);
         return lowerCase(petal.id).find(needle) == std::string::npos &&
                lowerCase(petal.name).find(needle) == std::string::npos &&
-               lowerCase(petalNameTr(petal.id, petal.name.c_str())).find(needle) == std::string::npos;
+               lowerCase(petalNameTr(petal.id, petal.name.c_str())).find(needle) == std::string::npos &&
+               (!bilingual || lowerCase(petalNameZh(petal.id)).find(needle) == std::string::npos);
     }), types.end());
 }
 
 std::optional<SlotGrid::Pick> SlotGrid::render(
     MenuContext& ctx, const SlotCardLayout& layout, const PanelSkin& skin, SlotGridTiers tiers,
     const std::function<SlotCell(std::uint16_t petalIndex, Rarity, std::uint32_t owned)>& look,
-    bool showScrollbar, Pick* inspected, const std::string& search) {
+    bool showScrollbar, Pick* inspected, const std::string& search,
+    const CraftSearchQuery* craftSearch, bool fitWidth) {
     Canvas& canvas = ctx.canvas;
+    const auto searchRarity = craftSearch ? craftSearch->rarity : std::nullopt;
     const Profile& profile = ctx.craftInventory ? *ctx.craftInventory : ctx.net.profile();
     const Vec2 mouse = ctx.mouse();
-    const std::size_t columns = tierColumns(tiers);
-    auto types = heldTypes(profile, [&](Rarity rarity) { return slotGridShows(tiers, rarity); });
-    filterSlotTypes(types, search);
+    const std::size_t columns = searchRarity ? 1 : tierColumns(tiers);
+    auto types = heldTypes(profile, [&](Rarity rarity) {
+        return searchRarity ? rarity == *searchRarity : slotGridShows(tiers, rarity);
+    });
+    filterSlotTypes(types, craftSearch ? craftSearch->name : search, craftSearch != nullptr);
     // Index the bag once. Each visible row previously scanned the entire
     // inventory again for every tier it displayed.
     std::vector<std::array<std::uint32_t, kRarityCount>> counts(content().petalCount());
@@ -495,8 +536,11 @@ std::optional<SlotGrid::Pick> SlotGrid::render(
         if (count == 0) count = stack.count;
     }
 
-    const Rect clip = listClip(layout, columns);
-    const double contentHeight = contentHeightFor(types.size(), layout.listInsetY);
+    Rect clip = listClip(layout, columns);
+    const double scale = fitWidth ? clamp((layout.panel.w - 2.0 * kScrollbarHitWidth) / clip.w, 0.0, 1.0) : 1.0;
+    clip.x += (1.0 - scale) * clip.w * 0.5;
+    clip.w *= scale;
+    const double contentHeight = contentHeightFor(types.size(), layout.listInsetY) * scale;
     const bool scrollable = showScrollbar && clip.h > 0.0 && contentHeight > clip.h;
     // A narrow viewport may crop the panel's right gutter.
     const bool leftBar = layout.panel.right() > canvas.width();
@@ -511,11 +555,15 @@ std::optional<SlotGrid::Pick> SlotGrid::render(
     scroll_.offset -= touchScroll(ctx.window, touchView, scroll_.maxOffset() > 0 && touchView.h > 0);
     scroll_.offset = clamp(scroll_.offset, 0.0, scroll_.maxOffset());
 
+    // Keep ownership on the release frame too. A thumb dragged over the
+    // action button or result slot must never turn into a panel click.
+    const bool wasDragging = thumbGrab_.has_value();
     if (!scrollable || (!ctx.pressed() && !ctx.window.mouseDown(MouseButton::Left))) {
         thumbGrab_.reset();
     }
     if (scrollable) {
-        const double trackX = leftBar ? clip.x - kScrollbarWidth - 1.0 : clip.right() + 1.0;
+        const double trackX = searchRarity || fitWidth ? hit.x + (hit.w - kScrollbarWidth) * 0.5
+            : leftBar ? clip.x - kScrollbarWidth - 1.0 : clip.right() + 1.0;
         const Rect track{trackX, clip.y, kScrollbarWidth, clip.h};
         const double thumbHeight = std::max(std::min(kMinThumbHeight, track.h * 0.5),
                                             track.h * clip.h / contentHeight);
@@ -535,26 +583,36 @@ std::optional<SlotGrid::Pick> SlotGrid::render(
                       std::min(track.w, thumbHeight) * 0.5, kPaper);
     }
 
+    ctx.scrollbarOwnsPointer |= wasDragging || thumbGrab_.has_value();
+
     canvas.save();
     canvas.beginPath();
     canvas.rect(static_cast<float>(clip.x), static_cast<float>(clip.y), static_cast<float>(clip.w),
                 static_cast<float>(clip.h));
     canvas.clip();
 
+    if (types.empty() && craftSearch && (!craftSearch->name.empty() || searchRarity)) {
+        TextStyle hint;
+        hint.size = 14.0;
+        hint.align = Align::Centre;
+        text(canvas, trEnZh("No matching petals", "没有符合条件的花瓣"),
+             layout.centreX, clip.y + 26.0, hint);
+    }
+
     std::optional<Pick> hovered;
     for (std::size_t row = 0; row < types.size(); ++row) {
         const std::uint16_t petalIndex = types[row];
-        const double y =
-            clip.y - scroll_.offset + layout.listInsetY + static_cast<double>(row) * kGridPitch;
-        if (y + kGridCell < clip.y || y > clip.bottom()) continue;
+        const double y = clip.y - scroll_.offset +
+                         (layout.listInsetY + static_cast<double>(row) * kGridPitch) * scale;
+        if (y + kGridCell * scale < clip.y || y > clip.bottom()) continue;
         // Each row RIGHT TO LEFT, as florr paints it: the oracle's
         // "owned/price" labels hang past a cell's right edge over the next
         // one, and painting that cell after it would cut the label off.
         for (std::size_t k = 0; k < columns; ++k) {
             const std::size_t column = columns - 1 - k;
-            const Rarity rarity = slotGridRarity(tiers, column);
-            const Rect rect{clip.x + kCellInsetX + static_cast<double>(column) * kGridPitch, y,
-                            kGridCell, kGridCell};
+            const Rarity rarity = searchRarity.value_or(slotGridRarity(tiers, column));
+            const Rect rect{clip.x + (kCellInsetX + static_cast<double>(column) * kGridPitch) * scale,
+                            y, kGridCell * scale, kGridCell * scale};
             const SlotCell cell = look(petalIndex, rarity, counts[petalIndex][rarityIndex(rarity)]);
             if (cell.count == 0) {
                 // A tier the account holds none of: a flat square in the
@@ -580,7 +638,7 @@ std::optional<SlotGrid::Pick> SlotGrid::render(
         }
     }
     canvas.restore();
-    return hovered;
+    return ctx.scrollbarOwnsPointer ? std::nullopt : hovered;
 }
 
 std::size_t SlotTierGrid::rows(const Profile& profile, Rarity tier, std::size_t columns) {

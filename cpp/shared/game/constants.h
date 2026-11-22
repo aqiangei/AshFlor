@@ -400,6 +400,13 @@ inline constexpr double kDefaultPetalReloadMillis = 10000.0;
 /// see HitCooldowns::armGlobal.
 inline constexpr double kPetalHitIntervalMillis = 1000.0 / 20.0;
 
+/// Laser beam (florr wiki): continuous lightning DPS along a narrow outward
+/// ray, separate from the emitter's contact damage. Beam DPS is 10× the
+/// petal's contact damage on every authored tier.
+inline constexpr double kLaserBeamDpsFactor = 10.0;
+inline constexpr double kLaserBeamLength = 250.0;
+inline constexpr double kLaserBeamHalfWidth = 3.0;
+
 /// Multiplier on every petal reload wait (equip + after break).
 /// Ashflor matches florrclone `feel.js`: `reloadMult *= 0.5` (half reload).
 inline constexpr double kPetalReloadFeelScale = 0.5;

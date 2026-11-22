@@ -11,6 +11,7 @@ namespace flix {
 namespace ui {
 
 const char* rarityTr(Rarity r);
+const char* rarityNameZh(Rarity r);
 const char* skillTr(SkillId id, int tier = 0);
 const char* petalNameZh(const std::string& id);
 const char* petalNameTr(const std::string& id, const char* fallback);

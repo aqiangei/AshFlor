@@ -1391,7 +1391,7 @@ TEST(jurassic_feather_cost_and_amulet_squad_damage_follow_equipment_and_map) {
     CHECK(found);
     if (!found) return;
     PetalSystem petals;
-    petals.jurassicMaps = &maps;
+    petals.worldMaps = &maps;
     CommandBuffer commands{world};
     const auto& registry = shippedContent();
     const Vec2 centre = terrain.spawnPoint(realm);
@@ -2237,6 +2237,95 @@ TEST(jungle_refills_near_a_stationary_viewer_after_kills) {
     }
 }
 
+TEST(prestige_ocean_refills_repeated_clears_for_a_stationary_viewer) {
+    WorldMaps full;
+    Terrain terrain;
+    std::string error;
+    CHECK(full.load(dataDir(), &terrain, error));
+    bool found = false;
+    const Realm realm = full.realmOfId("prestige_2_ocean", found);
+    CHECK(found);
+    if (!found) return;
+    const MapData& map = *full.forRealm(realm);
+    std::vector<const MapElement*> bands;
+    for (const auto& element : map.elements())
+        if (element.isSpawnBand() && !element.singular && element.forceRarity < 0)
+            bands.push_back(&element);
+    CHECK(!bands.empty());
+    if (bands.empty()) return;
+    std::sort(bands.begin(), bands.end(), [](const auto* a, const auto* b) {
+        return a->difficulty > b->difficulty;
+    });
+    Rng rng{400};
+    Vec2 at;
+    CHECK(map.spawnInElement(*bands.front(), rng, terrain, at));
+    at = terrain.resolveCircle(at, kPlayerBaseRadius, realm);
+
+    // Keep this scenario independent of stock in unrelated maps.
+    std::vector<MapData> subset(static_cast<std::size_t>(worldMapSlot(realm)) + 1);
+    for (std::size_t i = 0; i < subset.size(); ++i)
+        subset[i].setId("unused_" + std::to_string(i));
+    subset[worldMapSlot(realm)] = map;
+    WorldMaps maps;
+    maps.adoptMaps(std::move(subset));
+
+    World world;
+    SpawnSystem spawn;
+    spawn.worldMaps = &maps;
+    spawn.mobCap = 4500;
+    spawn.sizePlacementGrids(terrain);
+    CommandBuffer commands{world};
+    const auto player = world.create();
+    world.add<PlayerTag>(player);
+    world.add<Transform>(player, Transform{at, 0.0, realm});
+    world.add<Body>(player, Body{25.0, 1.0});
+    world.add<Health>(player, Health{1e12, 1e12});
+    const Vec2 viewport{1920, 1080};
+    world.add<PlayerLocation>(player, PlayerLocation{viewport});
+    const Vec2 centre = boundedViewportCentre(at, viewport, terrain.cameraExtent(realm));
+    const std::vector<RealmPoint> viewers{{at, realm}};
+    const auto& content = shippedContent();
+
+    std::vector<Entity> cleared;
+    int emptyTicks = 0;
+    int longestEmpty = 0;
+    int clears = 0;
+    for (int tick = 0; tick < 360; ++tick) {
+        const double now = (tick + 1) * 100.0;
+        spawn.run(world, terrain, content, viewers, rng, now, 0.1, commands);
+        commands.flush();
+        if (!cleared.empty()) {
+            spawn.answerDeaths(world, terrain, content, cleared, rng, now, 0.1, commands);
+            commands.flush();
+            for (Entity entity : cleared)
+                if (world.isAlive(entity)) world.destroy(entity);
+            cleared.clear();
+        }
+        if (tick < 60) continue;
+
+        std::vector<Entity> visible;
+        Query<MobTag, MobType, Transform, Body> mobs{world};
+        mobs.without<Dead, Pet>();
+        mobs.each([&](Entity e, MobTag&, MobType& type, Transform& where, Body& body) {
+            if (where.realm != realm || content.mob(type.configIndex).neverAmbient) return;
+            const double dx = std::max(0.0, std::abs(where.position.x - centre.x) - viewport.x * 0.5);
+            const double dy = std::max(0.0, std::abs(where.position.y - centre.y) - viewport.y * 0.5);
+            if (dx * dx + dy * dy <= body.radius * body.radius &&
+                !terrain.segmentBlocked(at, where.position, realm)) visible.push_back(e);
+        });
+        emptyTicks = visible.empty() ? emptyTicks + 1 : 0;
+        longestEmpty = std::max(longestEmpty, emptyTicks);
+        if (tick % 60 == 0 && !visible.empty()) {
+            cleared = std::move(visible);
+            for (Entity entity : cleared) world.add<Dead>(entity);
+            ++clears;
+        }
+        CHECK(spawn.census().mobs <= spawn.mobCap);
+    }
+    CHECK(clears >= 4);
+    CHECK(longestEmpty <= 60);
+}
+
 TEST(deep_jungle_refills_a_reachable_empty_room_for_a_stationary_flower) {
     WorldMaps maps;
     Terrain terrain;
@@ -3001,6 +3090,126 @@ TEST(pyramid_layouts_have_connected_routes_and_share_the_active_spawn_rules) {
     CHECK_EQ(layouts, 4);
 }
 
+TEST(prestige_pyramid_scrolls_follow_each_active_layout_and_reveal_one_visit) {
+    const std::array<const char*, 3> names{"pyramidwalker", "pyramidclimber", "pyramidveteran"};
+    Harness h("prestige-pyramid-scrolls", [&](const std::string& path) {
+        for (const char* name : names) seedUser(path, name, "password7");
+        seedProgress(path, names[1], true);
+        Database db;
+        std::string error;
+        db.load(path, error);
+        if (const Account* account = db.findUser(names[2])) {
+            db.progress(account->id).skills.set(SkillId::Prestige, 1);
+            db.markDirty();
+            db.save();
+        }
+    }, dataDir(), 0);
+    CHECK(h.ready);
+    if (!h.ready) return;
+
+    const auto& maps = h.server.worldMaps();
+    bool found = false;
+    const auto baseRealm = maps.realmOfId("pyramid", found);
+    CHECK(found);
+    const auto& choices = maps.spawnChoices();
+    const auto entry = std::find_if(choices.begin(), choices.end(), [&](const SpawnChoice& choice) {
+        return choice.realm == baseRealm;
+    });
+    CHECK(entry != choices.end());
+    if (!found || entry == choices.end()) return;
+
+    std::array<NetClient, 3> clients;
+    auto& world = h.server.world();
+    std::array<Entity, 3> bodies;
+    for (std::size_t i = 0; i < clients.size(); ++i) {
+        CHECK(logIn(h, clients[i], names[i]));
+        CHECK(join(h, clients[i], names[i], i != 0, entry->id));
+        bodies[i] = bodyNamed(world, names[i]);
+        CHECK(bodies[i] != NULL_ENTITY);
+        if (bodies[i] == NULL_ENTITY) return;
+    }
+
+    auto poll = [&] {
+        for (int frame = 0; frame < 12; ++frame) {
+            h.server.serviceNetwork(1);
+            for (auto& client : clients) client.poll(1);
+        }
+    };
+    auto scrollsByRealm = [&] {
+        std::map<Realm, std::vector<Entity>> result;
+        Query<Replicated, Transform>{world}.each([&](Entity e, const Replicated& entry,
+                                                      const Transform& at) {
+            if (entry.kind == net::EntityKind::Effect &&
+                entry.typeIndex == static_cast<std::uint16_t>(GroundEffectKind::PyramidMap)) {
+                result[at.realm].push_back(e);
+            }
+        });
+        return result;
+    };
+
+    std::set<Realm> layouts;
+    for (int cycle = 0; cycle < 4; ++cycle) {
+        poll();
+        const auto ordinary = realmOf(world, bodies[0]);
+        layouts.insert(ordinary);
+        const double clock = GameServerPeer::practiceClock(h.server) + cycle * 100000.0;
+        GameServerPeer::stagePyramidMaps(h.server, clock);
+        auto stock = scrollsByRealm();
+        CHECK_EQ(stock.size(), 3u);
+        for (std::size_t tier = 0; tier < clients.size(); ++tier) {
+            const Realm realm = realmOf(world, bodies[tier]);
+            const MapData* map = maps.forRealm(realm);
+            CHECK(map != nullptr);
+            if (!map) return;
+            CHECK_EQ(map->biome(), std::string("pyramid"));
+            CHECK_EQ(map->prestigeLevel(), static_cast<int>(tier));
+            CHECK(!map->showsMinimap());
+            CHECK(clients[tier].view().realm() == realm);
+            CHECK(!clients[tier].pyramidMapRevealed);
+            CHECK_EQ(stock[realm].size(), 40u);
+        }
+        if (stock.size() != 3 || stock[realmOf(world, bodies[1])].empty() ||
+            stock[realmOf(world, bodies[2])].empty()) return;
+
+        for (std::size_t tier = 0; tier < clients.size(); ++tier) {
+            const Realm realm = realmOf(world, bodies[tier]);
+            const Entity picked = stock[realm].front();
+            const auto inventory = clients[tier].profile().inventory.size();
+            world.get<Transform>(bodies[tier]).position = world.get<Transform>(picked).position;
+            GameServerPeer::stagePyramidMaps(h.server, clock);
+            poll();
+            CHECK(clients[tier].pyramidMapRevealed);
+            CHECK(!world.isAlive(picked));
+            CHECK_EQ(scrollsByRealm()[realm].size(), 39u);
+            CHECK_EQ(clients[tier].profile().inventory.size(), inventory);
+            for (std::size_t other = tier + 1; other < clients.size(); ++other) {
+                CHECK(!clients[other].pyramidMapRevealed);
+            }
+        }
+        GameServerPeer::stagePyramidMaps(h.server, clock + 29999.0);
+        for (const auto body : bodies) CHECK_EQ(scrollsByRealm()[realmOf(world, body)].size(), 39u);
+        GameServerPeer::stagePyramidMaps(h.server, clock + 30000.0);
+        const auto refilled = scrollsByRealm();
+        for (const auto body : bodies) CHECK_EQ(refilled.at(realmOf(world, body)).size(), 40u);
+        if (cycle < 3) {
+            GameServerPeer::advancePyramidCycle(h.server);
+            CHECK(scrollsByRealm().empty());
+        }
+    }
+    CHECK_EQ(layouts.size(), 4u);
+
+    // Leaving after a real pickup resets the visit even at the same prestige tier.
+    CHECK(clients[1].pyramidMapRevealed);
+    clients[1].leaveGame();
+    for (int frame = 0; frame < 12; ++frame) {
+        h.server.serviceNetwork(1);
+        clients[1].poll(1);
+    }
+    CHECK(!clients[1].pyramidMapRevealed);
+    CHECK(join(h, clients[1], names[1], true, entry->id));
+    CHECK(!clients[1].pyramidMapRevealed);
+}
+
 TEST(pyramid_rotation_returns_ordinary_and_prestige_players_to_the_new_entrance) {
     Harness h("pyramid-rotation",
               [](const std::string& path) {
@@ -3282,7 +3491,7 @@ TEST(wave_kills_feed_totem_without_paying_world_kill_rewards) {
 }
 
 TEST(wave_batches_find_another_bearing_when_a_meteor_blocks_the_spawn) {
-    const auto firstBatch = [](const std::vector<Vec2>& obstacles, bool dead, bool otherRealm) {
+    const auto firstBatch = [](const std::vector<Vec2>& obstacles, bool dead, bool otherRealm, bool blockedHost = false) {
         World world;
         Terrain terrain;
         WorldMaps maps;
@@ -3306,8 +3515,26 @@ TEST(wave_batches_find_another_bearing_when_a_meteor_blocks_the_spawn) {
         world.add<Health>(player, Health{100.0, 100.0});
         world.add<Transform>(player, Transform{terrain.spawnPoint(Realm::Overworld), 0.0});
         dungeon.run(world, terrain, content, spawner, combat, rng, 0.0, commands);
-        dungeon.waveCommand(world, terrain, player, "start", rng, 1000.0);
+        const auto reply = dungeon.waveCommand(world, terrain, player, "start", rng, 1000.0);
         const auto realm = world.get<Transform>(player).realm;
+        if (blockedHost) {
+            const auto codeStart = reply.find_first_of("0123456789");
+            CHECK(codeStart != std::string::npos);
+            if (codeStart == std::string::npos) return std::vector<Vec2>{};
+            const Entity guest = world.create();
+            world.add<PlayerTag>(guest);
+            world.add<Body>(guest, Body{25.0, 1.0});
+            world.add<Health>(guest, Health{100.0, 100.0});
+            world.add<Transform>(guest, Transform{terrain.spawnPoint(Realm::Overworld), 0.0});
+            dungeon.waveCommand(world, terrain, guest, "join " + reply.substr(codeStart, 6), rng, 2000.0);
+            CHECK(world.get<Transform>(guest).realm == realm);
+            world.get<Transform>(player).position = {1024, 1024};
+            world.get<Transform>(guest).position = {3072, 3072};
+            const Entity meteor = world.create();
+            world.add<PlantedMeteor>(meteor, PlantedMeteor{player});
+            world.add<Transform>(meteor, Transform{{1024, 1024}, 0.0, realm});
+            world.add<Body>(meteor, Body{1050.0, 1.0});
+        }
         CHECK(dungeon.inWave(world, player));
         for (const Vec2 at : obstacles) {
             const Entity meteor = world.create();
@@ -3330,6 +3557,10 @@ TEST(wave_batches_find_another_bearing_when_a_meteor_blocks_the_spawn) {
             });
         return positions;
     };
+    const auto fallback = firstBatch({}, false, false, true);
+    CHECK_EQ(fallback.size(), 2u);
+    for (const Vec2 point : fallback)
+        CHECK(distance(point, {3072, 3072}) <= 961.0);
     const auto clear = firstBatch({}, false, false);
     CHECK_EQ(clear.size(), 2u);
     if (clear.empty()) return;

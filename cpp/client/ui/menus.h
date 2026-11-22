@@ -491,6 +491,8 @@ struct MenuContext {
     float wheel() const { return window.wheelDelta(); }
 };
 
+bool drawPanelExpand(MenuContext&, double titleY, std::uint32_t tint, bool expanded);
+
 // ---------------------------------------------------------------------------
 // Panels
 // ---------------------------------------------------------------------------
@@ -508,9 +510,10 @@ public:
     /// Where the card hangs in a view of this size. Defined in menus.cpp with
     /// the rest of the panel geometry, so the anchors can be read side by side.
     static Rect bounds(int viewWidth, int viewHeight);
+    bool expanded() const { return expanded_; }
 
 private:
-
+    bool expanded_ = false;
     ui::Scroller scroll_;
     /// One slot per item TYPE at its best tier, instead of one per tier.
     bool stacked_ = false;
@@ -667,7 +670,14 @@ void drawSlotLine(Canvas&, const SlotCardLayout&, const std::string& text,
 void drawSlotRefusal(Canvas&, const SlotCardLayout&, const std::string& text);
 
 /// What one cell of the grid says, as its panel decides it.
-bool editSlotSearch(MenuContext&, Rect, std::string&, ui::TextFieldState&);
+bool editSlotSearch(MenuContext&, Rect, std::string&, ui::TextFieldState&,
+                    const char* placeholder = nullptr);
+struct CraftSearchQuery {
+    std::string name;
+    std::optional<Rarity> rarity;
+};
+CraftSearchQuery parseCraftSearch(const std::string&);
+void filterSlotTypes(std::vector<std::uint16_t>&, const std::string&, bool bilingual = false);
 
 struct SlotCell {
     /// How many the cell shows as held: the account's stack, less whatever the
@@ -703,7 +713,8 @@ public:
     std::optional<Pick> render(
         MenuContext&, const SlotCardLayout&, const ui::PanelSkin&, SlotGridTiers tiers,
         const std::function<SlotCell(std::uint16_t petalIndex, Rarity, std::uint32_t owned)>& look,
-        bool showScrollbar = false, Pick* inspected = nullptr, const std::string& search = {});
+        bool showScrollbar = false, Pick* inspected = nullptr, const std::string& search = {},
+        const CraftSearchQuery* craftSearch = nullptr, bool fitWidth = false);
 
 private:
     ui::Scroller scroll_;
@@ -861,6 +872,7 @@ public:
     /// set the one and its rows the other.
     static double minimumHeight();
     static Vec2 size(const Profile&);
+    bool expanded() const { return expanded_; }
     /// Whether the Switch button was pressed since the last call: the menu
     /// system turns the window over to Absorb.
     bool takeSwitch() { return std::exchange(switchPressed_, false); }
@@ -875,6 +887,7 @@ private:
     void animate(double dtMs);
 
     SlotGrid grid_;
+    bool expanded_ = false;
     std::string search_;
     ui::TextFieldState searchField_;
     ui::TooltipDelay tooltip_;
@@ -899,6 +912,9 @@ private:
     int bulkTarget_ = 2;
     bool bulkArmed_ = false;
     bool editingBlacklist_ = false;
+    std::optional<std::vector<Profile::Stack>> mythicUltraMaterials_;
+    bool mythicUltraRefreshed_ = false;
+    std::uint32_t mythicUltraRequest_ = 0;
 
     Phase phase_ = Phase::Idle;
     double phaseStarted_ = 0;
@@ -1080,7 +1096,15 @@ private:
     /// Puts one upgrade's price of this petal in the slot, replacing whatever
     /// was there: the oracle sells one upgrade per craft.
     void stage(const Profile&, std::uint16_t petalIndex, Rarity rarity);
+    void renderShopForecast(MenuContext&, const SlotCardLayout&);
 
+    bool shopForecastOpen_ = false;
+    std::string shopSearch_;
+    ui::TextFieldState shopSearchField_;
+    std::vector<std::uint16_t> shopSearchMatches_;
+    std::uint16_t shopPetal_ = kNoPetal;
+    double shopAskedAt_ = 0.0;
+    std::int64_t shopAskedRotation_ = -1;
     SlotGrid grid_;
     SlotMotion motion_;
     std::uint16_t stagedPetal_ = kNoPetal;
@@ -1872,7 +1896,7 @@ private:
     enum class PanelLayer : std::uint8_t { Under, Over };
     static PanelLayer panelLayer(MenuId, bool inGame);
 
-    static Rect panelBounds(MenuId, int viewWidth, int viewHeight);
+    Rect panelBounds(MenuId, int viewWidth, int viewHeight) const;
     /// Draws whichever card is on screen -- which is `drawn_`, not `open_`,
     /// while one is still sliding out.
     void renderOpenPanel(Canvas&, Window&, NetClient&, const SpriteCache&, const WorldRenderer&,

@@ -525,6 +525,7 @@ bool WorldView::applySnapshot(ByteReader& reader, double receivedMillis, bool ke
     // client's render clock. See toRenderClock().
     const double sampleMillis = toRenderClock(serverTime, receivedMillis);
 
+    selfPositionEase_.observe(self_.position, selfPosition);
     self_.position = selfPosition;
     self_.health = health;
     self_.maxHealth = maxHealth;
@@ -619,11 +620,15 @@ bool WorldView::applySnapshot(ByteReader& reader, double receivedMillis, bool ke
         // never to the rendered one: `position` and `angle` are mutated every
         // frame by interpolate(), so feeding them back in would have the
         // client chase its own lagging output and wobble.
+        const Vec2 previousTarget = e.targetPosition;
         if (u.mask & net::FieldPositionDelta) {
             e.targetPosition.x += u.deltaX / net::kPositionDeltaScale;
             e.targetPosition.y += u.deltaY / net::kPositionDeltaScale;
         } else if (u.mask & net::FieldPosition) {
             e.targetPosition = u.position;
+        }
+        if (e.kind == net::EntityKind::Player) {
+            e.flowerPositionEase.observe(previousTarget, e.targetPosition);
         }
         if (u.mask & net::FieldAngle) e.targetAngle = u.angle;
         if (isBuffered(e.kind)) pushSample(e, sampleMillis);
@@ -739,26 +744,40 @@ bool playBack(const std::vector<RemoteEntity::Sample>& samples, double renderMil
     return true;
 }
 
-/// Eases `position` a fraction `t` of the way to `target`.
-///
-/// `cut` asks for the flower rules: a gap wider than a teleport is a portal, a
-/// respawn or the maze's rotation moving everyone to the new entrance, and
-/// must not be glided across, and a gap under the settle epsilon lands exactly
-/// instead of asymptoting.
-void easePosition(Vec2& position, Vec2 target, double t, bool cut) {
-    const Vec2 gap = target - position;
-    if (cut && (gap.lengthSq() > kTeleportSnapDistance * kTeleportSnapDistance ||
-                (std::fabs(gap.x) < kSettleEpsilon && std::fabs(gap.y) < kSettleEpsilon))) {
-        position = target;
-        return;
-    }
-    position += gap * t;
+} // namespace
+
+void FlowerPositionEase::observe(Vec2 previousTarget, Vec2 target) {
+    // Check the hop between authoritative positions. A fast flower can outrun
+    // its rendered position by this much without ever making a teleport.
+    cutPending |= distanceSq(previousTarget, target) >
+                  kTeleportSnapDistance * kTeleportSnapDistance;
 }
 
-} // namespace
+void FlowerPositionEase::step(Vec2& position, Vec2 target, double fraction, double carry) {
+    const Vec2 gap = target - position;
+    const Vec2 guideGap = gap - guideOffset;
+    if (cutPending ||
+        (std::fabs(gap.x) < kSettleEpsilon && std::fabs(gap.y) < kSettleEpsilon &&
+         std::fabs(guideGap.x) < kSettleEpsilon && std::fabs(guideGap.y) < kSettleEpsilon)) {
+        position = target;
+        *this = {};
+        return;
+    }
+
+    // Exact update of two cascaded exponential eases. A new target changes
+    // the guide's speed first, so the drawn speed is continuous at receipt.
+    const Vec2 movement = gap * fraction - guideGap * carry;
+    guideOffset += guideGap * fraction - movement;
+    position += movement;
+}
 
 void WorldView::interpolate(double nowMillis, double dtSeconds) {
     const double t = easeFraction(easeTimeConstantSeconds, dtSeconds);
+    // Split the time constant to keep the same steady-motion lag.
+    const double flowerStep = 2.0 * clamp(dtSeconds, 0.0, kMaxEaseStepSeconds) /
+                              easeTimeConstantSeconds;
+    const double flowerFraction = -std::expm1(-flowerStep);
+    const double flowerCarry = flowerStep * std::exp(-flowerStep);
     const double eyeT = easeFraction(kEyeEaseSeconds, dtSeconds);
 
     // Slewed rather than set: the delay is where on the timeline playback is
@@ -808,9 +827,10 @@ void WorldView::interpolate(double nowMillis, double dtSeconds) {
     const bool selfJoined = selfSnapPending_;
     if (selfSnapPending_) {
         selfDrawnPosition_ = self_.position;
+        selfPositionEase_ = {};
         selfSnapPending_ = false;
     } else {
-        easePosition(selfDrawnPosition_, self_.position, t, true);
+        selfPositionEase_.step(selfDrawnPosition_, self_.position, flowerFraction, flowerCarry);
     }
 
     // --- everything that is not a petal -----------------------------------
@@ -823,11 +843,14 @@ void WorldView::interpolate(double nowMillis, double dtSeconds) {
         if (e.needsSnap) {
             e.position = e.targetPosition;
             e.angle = e.targetAngle;
+            e.flowerPositionEase = {};
             e.needsSnap = false;
+        } else if (isFlower) {
+            e.flowerPositionEase.step(e.position, e.targetPosition, flowerFraction, flowerCarry);
         } else if (isBuffered(e.kind) && playBack(e.samples, renderMillis, e.position)) {
             // Position came from the sample history; facing is handled below.
         } else {
-            easePosition(e.position, e.targetPosition, t, isFlower);
+            e.position += (e.targetPosition - e.position) * t;
         }
 
         // Facing. A flower's comes straight off the wire because it drives the
@@ -912,7 +935,7 @@ void WorldView::interpolate(double nowMillis, double dtSeconds) {
             e.position = e.targetPosition;
             e.needsSnap = false;
         } else {
-            easePosition(e.position, e.targetPosition, t, false);
+            e.position += (e.targetPosition - e.position) * t;
         }
         e.angle = e.targetAngle;
     }

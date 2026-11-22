@@ -9,6 +9,7 @@
 #include "svg.h"
 
 #include "client/ui/text.h"
+#include "client/ui/text_input.h"
 #include "client/ui/text_select.h"
 #include "client/ui/touch_scroll.h"
 
@@ -208,36 +209,30 @@ void paintRow(Canvas& canvas, const std::string& s, double x, double y, const Te
     paintRun(canvas, s, x, y + ascent(style.size), style, 1.0, fillAlpha);
 }
 
-/// Greedy wrap on spaces, as the browser does. A single word wider than the
-/// limit still gets its own row and overflows -- breaking mid-word would be
-/// worse to read than a slightly wide box.
-///
-/// Rows come out as [begin, end) byte ranges of `text`, shifted by `offset`,
-/// so a markup line can look up what colour each of their bytes was marked.
+/// Prefer word boundaries, with a UTF-8 boundary fallback for long runs.
+/// Offsets remain byte ranges so markup continues to use the original tint.
 void wrapParagraph(const std::string& text, std::size_t offset, double size, double maxWidth,
                    std::vector<std::pair<std::size_t, std::size_t>>& out) {
-    const std::size_t before = out.size();
-    if (maxWidth > 0 && measure(text, size) > maxWidth) {
-        std::size_t rowStart = 0;
-        std::size_t rowEnd = 0;
-        bool started = false;
-        std::size_t at = 0;
-        while (at <= text.size()) {
-            const std::size_t space = text.find(' ', at);
-            const std::size_t wordEnd = space == std::string::npos ? text.size() : space;
-            if (started && measure(text.substr(rowStart, wordEnd - rowStart), size) > maxWidth) {
-                out.push_back({offset + rowStart, offset + rowEnd});
-                rowStart = at;
-            }
-            rowEnd = wordEnd;
-            started = true;
-            if (space == std::string::npos) break;
-            at = space + 1;
-        }
-        if (started) out.push_back({offset + rowStart, offset + rowEnd});
+    if (maxWidth <= 0 || measure(text, size) <= maxWidth) {
+        out.push_back({offset, offset + text.size()});
+        return;
     }
-    // An empty paragraph is still a row: florr's "<n/><n/>" is a blank line.
-    if (out.size() == before) out.push_back({offset, offset + text.size()});
+
+    std::size_t start = 0;
+    while (start < text.size()) {
+        std::size_t end = start, lastSpace = std::string::npos;
+        while (end < text.size()) {
+            if (text[end] == ' ' && end > start) lastSpace = end;
+            const auto next = utf8Next(text, end);
+            if (end > start && measure(text.substr(start, next - start), size) > maxWidth)
+                break;
+            end = next;
+        }
+        if (end < text.size() && lastSpace != std::string::npos) end = lastSpace;
+        out.push_back({offset + start, offset + end});
+        start = end;
+        while (start < text.size() && text[start] == ' ') ++start;
+    }
 }
 
 /// The 15 px icon after a header piece, its box's top-left at (x, y).

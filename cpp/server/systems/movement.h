@@ -405,7 +405,7 @@ private:
     void buildSeparationSet(World& world);
     /// The LOD gate: false for a mob too far from every flower to be worth
     /// colliding this tick.
-    bool activeForSeparation(Vec2 position, Realm realm, Rarity rarity) const;
+    bool activeForSeparation(World& world, Entity entity, Vec2 position, Realm realm, Rarity rarity) const;
 
     /// Collected lazily: a tick with no seeking projectile pays nothing.
     void collectSeekTargets(const World& world);

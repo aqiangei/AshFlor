@@ -88,7 +88,7 @@ TEST(loadout_preset_names_follow_the_keys_that_load_them) {
     CHECK(loadoutPresetName(-1).empty());
 }
 
-TEST(r_swaps_every_slot_of_the_top_row_with_the_one_below_it) {
+TEST(r_swaps_unlocked_nonempty_reserve_slots_and_keeps_the_other_slots) {
     Harness h("preset-row-swap", [](const std::string& path) {
         seedKeeper(path, [](PlayerRecord& record) {
             record.loadout[0] = petal("rose", Rarity::Rare);
@@ -102,13 +102,13 @@ TEST(r_swaps_every_slot_of_the_top_row_with_the_one_below_it) {
     NetClient client;
     CHECK(login(h, client));
     client.swapLoadoutRows();
-    CHECK(h.stepUntil({&client}, [&] { return slotIs(client, 10, "rose", Rarity::Rare); }));
+    CHECK(h.stepUntil({&client}, [&] { return slotIs(client, 3, "light", Rarity::Epic); }));
 
-    CHECK(slotEmpty(client, 0));
+    CHECK(slotIs(client, 0, "rose", Rarity::Rare));
+    CHECK(slotEmpty(client, 10));
     CHECK(slotIs(client, 13, "basic", Rarity::Common));
-    CHECK(slotIs(client, 3, "light", Rarity::Epic));
-    CHECK(slotIs(client, 9, "stinger", Rarity::Common));
-    CHECK(slotEmpty(client, 19));
+    CHECK(slotEmpty(client, 9));
+    CHECK(slotIs(client, 19, "stinger", Rarity::Common));
 }
 
 TEST(a_clump_swapped_onto_the_bar_reloads_instead_of_arriving_whole) {
@@ -156,6 +156,80 @@ TEST(a_clump_swapped_onto_the_bar_reloads_instead_of_arriving_whole) {
     CHECK(h.stepUntil({&client}, [&] { return onRing("sand") == 4; }));
 }
 
+TEST(preset_moves_a_shovel_between_active_slots_without_resetting_its_timers) {
+    Harness h("preset-shovel-timers", [](const std::string& path) {
+        seedKeeper(path, [](PlayerRecord& record) {
+            record.loadout[0] = petal("shovel", Rarity::Super);
+            record.loadout[2] = petal("rose", Rarity::Common);
+            record.loadoutPresets["K1"] = record.loadout;
+            auto moved = record.loadout;
+            std::swap(moved[0], moved[2]);
+            record.loadoutPresets["K2"] = moved;
+        });
+    }, dataDir(), 0);
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient client;
+    if (!login(h, client)) { CHECK(false); return; }
+    client.joinGame(1280, 720, {}, kName);
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; }));
+    auto& world = h.server.world();
+    Entity body = NULL_ENTITY;
+    Query<PlayerTag, PlayerAccount>{world}.each(
+        [&](Entity e, PlayerTag&, PlayerAccount&) { body = e; });
+    CHECK(body != NULL_ENTITY);
+    if (body == NULL_ENTITY) return;
+
+    const auto loadout = [&]() -> const Loadout& { return world.get<Loadout>(body); };
+    const auto findShovel = [&] {
+        for (const Entity e : loadout().spawned) {
+            const auto* instance = world.tryGet<PetalInstance>(e);
+            if (instance && instance->configIndex == content().petalIndex("shovel")) return e;
+        }
+        return NULL_ENTITY;
+    };
+
+    CHECK(h.stepUntil({&client}, [&] { return loadout().slots[0].broken; }));
+    const double initialReload = loadout().slots[0].reloadReadyAtMillis;
+    client.loadLoadoutPreset(1);
+    CHECK(h.stepUntil({&client}, [&] { return slotIs(client, 2, "shovel", Rarity::Super); }));
+    CHECK(loadout().slots[2].broken);
+    CHECK_NEAR(loadout().slots[2].reloadReadyAtMillis, initialReload, 1e-6);
+
+    CHECK(h.stepUntil({&client}, [&] { return findShovel() != NULL_ENTITY; }));
+    const Entity live = findShovel();
+    if (live == NULL_ENTITY) return;
+    const double charge = world.get<PetalInstance>(live).nextActionMillis;
+    client.loadLoadoutPreset(0);
+    CHECK(h.stepUntil({&client}, [&] { return slotIs(client, 0, "shovel", Rarity::Super); }));
+    CHECK(findShovel() == live);
+    if (!world.isAlive(live)) return;
+    CHECK_EQ(world.get<PetalInstance>(live).slot, 0);
+    CHECK_NEAR(world.get<PetalInstance>(live).nextActionMillis, charge, 1e-6);
+
+    net::InputFrame input{};
+    input.flags = net::InputDefend;
+    bool burrowed = false;
+    for (int i = 0; i < 100 && !burrowed; ++i) {
+        ++input.sequence;
+        CHECK(client.sendInput(input));
+        h.step(1, {&client});
+        const auto* burrow = world.tryGet<BurrowState>(body);
+        burrowed = burrow && burrow->active;
+    }
+    CHECK(burrowed);
+    ++input.sequence;
+    input.flags = 0;
+    CHECK(client.sendInput(input));
+    CHECK(loadout().slots[0].broken);
+    const double spentReload = loadout().slots[0].reloadReadyAtMillis;
+    client.loadLoadoutPreset(1);
+    CHECK(h.stepUntil({&client}, [&] { return slotIs(client, 2, "shovel", Rarity::Super); }));
+    CHECK(loadout().slots[2].broken);
+    CHECK_NEAR(loadout().slots[2].reloadReadyAtMillis, spentReload, 1e-6);
+    CHECK(findShovel() == NULL_ENTITY);
+}
+
 TEST(a_saved_loadout_loads_back_out_of_the_bag_and_the_bar_alike) {
     Harness h("preset-round-trip", [](const std::string& path) {
         seedKeeper(path, [](PlayerRecord& record) {
@@ -169,7 +243,9 @@ TEST(a_saved_loadout_loads_back_out_of_the_bag_and_the_bar_alike) {
     NetClient client;
     CHECK(login(h, client));
     client.saveLoadoutPreset(0);
-    CHECK(h.stepUntil({&client}, [&] { return sawText(client, "Saved loadout K1."); }));
+    CHECK(h.stepUntil({&client}, [&] {
+        return sawText(client, "Saved loadout K1.") || sawText(client, "已保存配装 K1。");
+    }));
     // The profile carries it back, which is what the K row is drawn from.
     const std::vector<Profile::Slot>& k1 = client.profile().presets[0];
     CHECK_EQ(k1.size(), static_cast<std::size_t>(kLoadoutSlots));
@@ -181,13 +257,18 @@ TEST(a_saved_loadout_loads_back_out_of_the_bag_and_the_bar_alike) {
     }
     CHECK(client.profile().presets[1].empty());
 
-    // Scramble it: the rose moves along the bar, the basic goes back into the
-    // bag, and the light comes up out of the storage row.
-    client.swapLoadoutSlots(0, 5);
+    // Manual save marks K1 active; pause autosave so the scramble below does
+    // not overwrite the snapshot we are about to restore.
+    client.setPresetAutosave(false);
+    CHECK(h.stepUntil({&client}, [&] { return !client.profile().presetAutosave; }));
+
+    // Scramble within the base five unlocked slots -- slot 5+ needs the
+    // loadout-slot talent and is rejected on a fresh account.
+    client.swapLoadoutSlots(0, 3);
     client.setLoadoutSlot(1, kNoPetal, Rarity::Common);
     client.swapLoadoutSlots(12, 2);
     CHECK(h.stepUntil({&client}, [&] {
-        return slotIs(client, 5, "rose", Rarity::Rare) && slotEmpty(client, 1) &&
+        return slotIs(client, 3, "rose", Rarity::Rare) && slotEmpty(client, 1) &&
                slotIs(client, 2, "light", Rarity::Epic);
     }));
     CHECK_EQ(client.profile().stackCount(content().petalIndex("basic"), Rarity::Common), 1u);
@@ -196,13 +277,13 @@ TEST(a_saved_loadout_loads_back_out_of_the_bag_and_the_bar_alike) {
     CHECK(h.stepUntil({&client}, [&] { return slotIs(client, 0, "rose", Rarity::Rare); }));
     CHECK(slotIs(client, 1, "basic", Rarity::Common));
     CHECK(slotIs(client, 12, "light", Rarity::Epic));
-    CHECK(slotEmpty(client, 5));
+    CHECK(slotEmpty(client, 3));
     CHECK(slotEmpty(client, 2));
     // Every petal is accounted for: the basic came out of the bag, and
     // nothing the load moved was left behind in it.
     CHECK_EQ(client.profile().stackCount(content().petalIndex("basic"), Rarity::Common), 0u);
     CHECK_EQ(client.profile().stackCount(content().petalIndex("rose"), Rarity::Rare), 0u);
-    CHECK(sawText(client, "Loaded loadout K1."));
+    CHECK(sawText(client, "Loaded loadout K1.") || sawText(client, "已切换配装 K1。"));
 
     const PlayerRecord* record = keeperRecord(h);
     CHECK(record != nullptr);
@@ -222,6 +303,7 @@ TEST(a_petal_the_account_no_longer_has_comes_back_a_rarity_down) {
             record.loadoutPresets["L3"] = preset;
             record.addItem(Rarity::Epic, bagKey("rose"), 1);
             record.addItem(Rarity::Rare, bagKey("rose"), 1);
+            record.addItem(Rarity::Common, bagKey("light"), 1);
             record.loadout[7] = petal("basic", Rarity::Common);
         });
     }, dataDir(), 0);
@@ -245,8 +327,30 @@ TEST(a_petal_the_account_no_longer_has_comes_back_a_rarity_down) {
     CHECK_EQ(client.profile().stackCount(content().petalIndex("rose"), Rarity::Rare), 0u);
     CHECK_EQ(client.profile().stackCount(content().petalIndex("basic"), Rarity::Common), 0u);
     CHECK(h.stepUntil({&client}, [&] {
-        return sawText(client, "Loaded loadout L3 (2 petals at a lower rarity, 1 petal not found).");
+        return sawText(client, "Loaded loadout L3 (2 petals at a lower rarity, 1 petal not found).") ||
+               sawText(client, "已切换配装 L3");
     }));
+    // An edit in another slot must not overwrite either a downgraded
+    // petal or an unavailable one, on switch-out or after reconnecting.
+    client.setLoadoutSlot(4, content().petalIndex("light"), Rarity::Common);
+    CHECK(h.stepUntil({&client}, [&] { return slotIs(client, 4, "light", Rarity::Common); }));
+    client.loadLoadoutPreset(0);
+    CHECK(h.stepUntil({&client}, [&] { return slotEmpty(client, 4); }));
+    client.disconnect();
+    h.step(6, {});
+    NetClient reconnected;
+    CHECK(login(h, reconnected));
+    const auto& saved = reconnected.profile().presets[kLoadoutPresetsPerBank + 2];
+    CHECK_EQ(saved.size(), static_cast<std::size_t>(kLoadoutSlots));
+    if (saved.size() != static_cast<std::size_t>(kLoadoutSlots)) return;
+    CHECK(saved[0].rarity == Rarity::Legendary);
+    CHECK_EQ(saved[2].petalIndex, content().petalIndex("stinger"));
+    CHECK(saved[3].rarity == Rarity::Mythic);
+    CHECK_EQ(saved[4].petalIndex, content().petalIndex("light"));
+    reconnected.loadLoadoutPreset(kLoadoutPresetsPerBank + 2);
+    CHECK(h.stepUntil({&reconnected}, [&] { return slotIs(reconnected, 4, "light", Rarity::Common); }));
+    CHECK(slotIs(reconnected, 0, "rose", Rarity::Rare));
+    CHECK(slotEmpty(reconnected, 2));
 }
 
 TEST(loading_a_preset_that_was_never_saved_empties_the_loadout) {
@@ -266,7 +370,31 @@ TEST(loading_a_preset_that_was_never_saved_empties_the_loadout) {
     // Both petals went back into the bag rather than vanishing.
     CHECK_EQ(client.profile().stackCount(content().petalIndex("rose"), Rarity::Rare), 1u);
     CHECK_EQ(client.profile().stackCount(content().petalIndex("basic"), Rarity::Common), 1u);
-    CHECK(h.stepUntil({&client}, [&] { return sawText(client, "Loaded loadout L0."); }));
+    CHECK(h.stepUntil({&client}, [&] { return sawText(client, "Loaded loadout L0.") || sawText(client, "已切换配装 L0"); }));
+}
+
+TEST(loadout_preset_full_inventory_never_discards_equipped_gear) {
+    Harness h("preset-full-stack", [](const std::string& path) {
+        seedKeeper(path, [](PlayerRecord& record) {
+            record.loadout[0] = petal("rose", Rarity::Rare);
+            record.setItemCount(Rarity::Rare, bagKey("rose"), kMaxStackCount);
+            record.loadoutPresets["K1"] = record.loadout;
+        });
+    }, dataDir(), 0);
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient client;
+    CHECK(login(h, client));
+    client.loadLoadoutPreset(0);
+    CHECK(h.stepUntil({&client}, [&] { return sawText(client, "Loaded loadout K1.") || sawText(client, "已切换配装 K1"); }));
+    CHECK_EQ(keeperRecord(h)->itemCount(Rarity::Rare, bagKey("rose")), kMaxStackCount);
+    client.setLoadoutSlot(0, kNoPetal, Rarity::Common);
+    CHECK(h.stepUntil({&client}, [&] { return sawText(client, "库存叠放已满，无法卸下该花瓣。"); }));
+    client.loadLoadoutPreset(1);
+    CHECK(h.stepUntil({&client}, [&] { return sawText(client, "库存叠放已满，无法切换配装。"); }));
+    CHECK(slotIs(client, 0, "rose", Rarity::Rare));
+    CHECK_EQ(keeperRecord(h)->itemCount(Rarity::Rare, bagKey("rose")), kMaxStackCount);
+    CHECK_EQ(keeperRecord(h)->extra["activeLoadoutPreset"].asInt(-1), 0);
 }
 
 TEST(loadout_preserves_current_prestige_and_restores_saved_talents_when_affordable) {
@@ -312,6 +440,10 @@ TEST(loadout_preserves_current_prestige_and_restores_saved_talents_when_affordab
     CHECK(equip("rose"));
     client.saveLoadoutPreset(l2);
     CHECK(h.stepUntil({&client}, [&] { return !client.profile().presets[l2].empty(); }));
+
+    // Leave L2 before editing so autosave keeps its allocation intact.
+    client.loadLoadoutPreset(l1);
+    CHECK(h.stepUntil({&client}, [&] { return slotEmpty(client, 0); }));
 
     // Prestige II leaves only two ordinary points. Save L1 and enter its map.
     client.requestDowngradeSkill(SkillId::Health, 0);

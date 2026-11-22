@@ -39,7 +39,8 @@ inline double legacyShopPrice(std::uint16_t petalIndex, Rarity rarity) {
         if (id == "sawblade") variety = std::max(variety, 8.0);
     }
     const double previous=std::max(1.0,std::floor(tierPrices[clamp(rarityIndex(rarity),0,11)]*variety));
-    return 2.0 * std::ceil(previous * 1.25);
+    const double price=2.0*std::ceil(previous*1.25);
+    return content().petal(petalIndex).id=="arctic_blueberries"?4.0*price:price;
 }
 
 inline double shopPrice(std::uint16_t index, Rarity rarity) {
@@ -56,8 +57,10 @@ inline double shopPrice(std::uint16_t index, Rarity rarity) {
 
 inline double shopOfferPrice(std::uint16_t index, Rarity rarity, int discount) {
     if (rarity == Rarity::Unique) return shopPrice(index, rarity);
-    return 2.0 * std::floor((shopPrice(index, rarity) / 2.0) *
-                            (100 - clamp(discount, 0, 30)) / 100.0);
+    const double multiplier=content().petal(index).id=="arctic_blueberries"?4.0:1.0;
+    // Preserve the old discount rounding, then apply this item's fourfold price.
+    return multiplier*2.0*std::floor((shopPrice(index,rarity)/multiplier/2.0)*
+                                    (100-clamp(discount,0,30))/100.0);
 }
 
 /// By id. An id no petal answers to has no price at all and quotes zero --
@@ -82,10 +85,11 @@ inline bool shopSellsPetal(std::uint16_t petalIndex) {
     if (petalIndex >= content().petalCount()) return false;
     const PetalConfig& petal = content().petal(petalIndex);
     if (petal.isAdminPetal) return false;
-    // Handed out by a rule of their own: the sacrifice, the crown.
-    if (petalHasOwnSource(petal)) return false;
-    // One that only comes from a tier the shop does not sell has no card.
-    if (!petalComesAt(petal, Rarity::Super)) return false;
+    // Fission keeps its Eternal minimum and is the only dedicated-source
+    // petal explicitly included in this rotation.
+    const bool fission = petal.id == "fission";
+    if (petalHasOwnSource(petal) && !fission) return false;
+    if (!petalComesAt(petal, fission ? Rarity::Unique : Rarity::Super)) return false;
     constexpr char kEggSuffix[] = "_egg";
     constexpr std::size_t kEggSuffixLen = sizeof(kEggSuffix) - 1;
     if (petal.id.size() > kEggSuffixLen &&
@@ -110,6 +114,7 @@ inline bool shopSellsPetal(std::uint16_t petalIndex) {
 /// rotation against this and the server prices a purchase by the rotation the
 /// clock is in, so the number is shared rather than spelled out twice.
 inline constexpr std::int64_t kShopRotationSeconds = 3600;
+inline constexpr int kShopForecastHours = 7 * 24;
 
 inline constexpr int kShopTierOfferCount = 5;
 inline constexpr int kShopOfferCount = 2 * kShopTierOfferCount;
@@ -177,8 +182,11 @@ inline std::uint64_t shopOfferSeed(std::int64_t rotation) {
 /// The hourly selection, shared by all servers.
 inline std::vector<ShopOffer> shopOffers(std::int64_t rotation) {
     std::vector<std::uint16_t> pool;
+    std::vector<std::uint16_t> eternalOnly;
     for (const std::uint16_t index : content().petalDisplayOrder()) {
-        if (shopSellsPetal(index)) pool.push_back(index);
+        if (!shopSellsPetal(index)) continue;
+        auto& eligiblePool = petalComesAt(content().petal(index), Rarity::Super) ? pool : eternalOnly;
+        eligiblePool.push_back(index);
     }
 
     Rng rng(shopOfferSeed(rotation));
@@ -200,6 +208,7 @@ inline std::vector<ShopOffer> shopOffers(std::int64_t rotation) {
     pool.erase(std::remove_if(pool.begin(), pool.end(), [](std::uint16_t petal) {
         return !petalComesAt(content().petal(petal), Rarity::Unique);
     }), pool.end());
+    pool.insert(pool.end(), eternalOnly.begin(), eternalOnly.end());
     const auto eternalCount = std::min<std::size_t>(kShopTierOfferCount, pool.size());
     for (std::size_t slot = 0; slot < eternalCount; ++slot) {
         const auto remaining = static_cast<std::uint32_t>(pool.size() - slot);
@@ -223,8 +232,8 @@ inline int starsForKill(Rarity mobRarity) {
         case Rarity::Ultra:  return 5;
         case Rarity::Super:  return 25;
         case Rarity::Unique: return 100;
-        case Rarity::Apex: return 250;
-        case Rarity::Ascendant: return 1000;
+        case Rarity::Apex: return 2000;
+        case Rarity::Ascendant: return 8000;
         default: return 0;
     }
 }

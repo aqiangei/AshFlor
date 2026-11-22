@@ -1029,7 +1029,7 @@ TEST(nothing_ever_wakes_in_a_flowers_lap) {
     // touching the flower, and body damage is dealt on the very next tick.
     //
     // So the clearance is re-tested at the moment the ENTITY appears, and a
-    // record that fails it needs a safe point in the same band.
+    // record that fails it can wait until the flower leaves.
     const Rect band{kCentre.x - 3000.0, kCentre.y - 3000.0, 6000.0, 6000.0};
     WorldMaps maps;
     makeBandedWorld(maps, {band}, "bee 100%");
@@ -1054,16 +1054,17 @@ TEST(nothing_ever_wakes_in_a_flowers_lap) {
     // And not one of them is in the flower's lap.
     CHECK_EQ(sim.mobsWithin(underfoot, kMinSpawnDistance), 0);
 
-    // The ready record underfoot no longer waits for the flower to move.
+    // The ready record is still asleep under the flower.
     bool held = false;
     for (const SpawnSystem::LatentSite& site : sim.latent()) {
         if (distanceSq(site.position, underfoot) == 0.0) held = true;
     }
-    CHECK(!held);
+    CHECK(held);
     CHECK(sim.populationIn(band) >= static_cast<int>(stocked.size()));
-    const std::vector<Vec2> stepped{underfoot + Vec2{kMinSpawnDistance + 400.0, 0.0}};
-    for (int i = 0; i < 200; ++i) sim.tick(stepped);
-    CHECK_EQ(sim.mobsWithin(underfoot, kMinSpawnDistance), 0);
+    const Vec2 movedTo = underfoot + Vec2{kMinSpawnDistance + 400.0, 0.0};
+    for (int i = 0; i < 200; ++i) sim.tick({movedTo});
+    CHECK_EQ(sim.mobsWithin(underfoot, 1e-6), 1);
+    CHECK_EQ(sim.mobsWithin(movedTo, kMinSpawnDistance), 0);
 }
 
 namespace {

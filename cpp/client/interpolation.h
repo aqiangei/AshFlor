@@ -5,8 +5,9 @@
 // which is itself gardn's. The two rules that matter, and why:
 //
 //  * FLOWERS ARE NEVER PREDICTED. Every flower -- the viewer's included --
-//    eases toward the authoritative position with one fixed time constant
-//    (client/ease.h). The client runs no movement simulation of its own, so
+//    eases toward the authoritative position in two stages, each using half
+//    the configured time constant. This keeps the drawn speed continuous when
+//    a fast dash arrives in steps. The client runs no movement simulation, so
 //    there is nothing to reconcile and nothing to snap back.
 //
 //    This client used to predict locally and reconcile on every snapshot, and
@@ -82,7 +83,7 @@ inline std::int64_t wallClockMillis() {
 /// constant, by easeTimeConstant() (client/ease.h).
 inline constexpr double kDefaultInterpolationAmount = 0.15;
 
-/// Beyond this gap an ease is a glide across the map rather than a smoothing.
+/// An authoritative position jump beyond this gap is drawn as a teleport.
 /// Respawns, portals and a maze rotation all produce it.
 inline constexpr double kTeleportSnapDistance = 600.0;
 

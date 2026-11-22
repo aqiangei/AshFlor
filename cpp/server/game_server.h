@@ -390,9 +390,11 @@ private:
     bool loadoutLockedInMaze(Session&);
     void handleCraft(Session&, net::Connection&, ByteReader&, bool quiet = false);
     void handleBulkCraft(Session&, net::Connection&, ByteReader&);
+    void handleBulkCraftMythicUltra(Session&, net::Connection&, ByteReader&);
     /// A guaranteed craft at an oracle. Refused unless the session's body is
     /// alive and standing at one; see NpcSystem::findService.
     void handleOracleCraft(Session&, net::Connection&, ByteReader&);
+    void handleOracleShopForecast(Session&, net::Connection&, ByteReader&);
     /// One petal for one coin of its tier at a trader. Refused unless the
     /// session's body is alive and standing at one, as the oracle's craft is.
     void handleTrade(Session&, net::Connection&, ByteReader&);
@@ -447,6 +449,11 @@ private:
         std::uint8_t shown = 0;
     };
     std::array<LeaderboardCache, 2> leaderboardCache_;
+
+    // The next Super and Eternal start times for each item, indexed by petal.
+    std::int64_t shopForecastRotation_ = -1;
+    std::vector<std::array<std::int64_t, 2>> shopForecast_;
+
     std::vector<HyperHoldingRow> leaderboardHoldings_;
     double leaderboardHoldingsRefreshAtMillis_ = -1.0;
     void refreshLeaderboard(LeaderboardCache&, bool includeAdmins);
@@ -1178,7 +1185,7 @@ private:
     /// wearing the previous ring until it was switched to, which is the shape
     /// the browser build's per-body loadout clone turned into a duplication
     /// bug (see src/server/connection/inventory.ts's splitState block).
-    void applyAccountToSession(Session&);
+    void applyAccountToSession(Session&, bool loadingPreset = false);
     /// Credits the mob kills from this tick to every player who earned loot
     /// rights on the corpse: the gallery ledger, and the stars a mythic-or-
     /// better kill is worth.
@@ -1581,6 +1588,9 @@ private:
     std::uint64_t authorityReleaseTicket_=UINT64_MAX;
     double authorityNextReleaseCheck_=0;
     bool shutdownDone_ = false;
+    Json accountTransfer(const std::string& token, const Json& request);
+    void removeTransferredAccountLinks(const std::string& username, const std::string& id);
+    bool transferBlocksLogin(const std::string& userId) const;
     bool commitBeforeReply();
     void captureLiveProgress();
     net::Connection::DrainDecision drainAuthoritative(bool durable,std::uint64_t& ticket);
@@ -1681,6 +1691,7 @@ private:
     int botCountOverride_ = -1;
 
     std::unordered_map<net::ConnectionId, Session> sessions_;
+    std::uint64_t nextBulkCraftTicket_ = 0;
     double nextAutoSquadMillis_ = 0.0;
     // Account-keyed protection survives bodies/reconnects; never persisted.
     std::unordered_map<std::string, double> markProtectedUntil_;

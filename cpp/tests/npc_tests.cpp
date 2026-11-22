@@ -1178,6 +1178,52 @@ TEST(the_oracle_serves_only_a_flower_standing_at_it) {
     removeDataDir(dir);
 }
 
+TEST(oracle_shop_forecast_matches_future_rotations_and_requires_reach) {
+    const std::string dir = oracleWorld("oracle-shop-forecast");
+    Harness h("oracle-shop-forecast", [](const std::string& path) {
+        seedAccount(path, "seer");
+    }, dir, 0);
+    if (!h.ready) { CHECK(false); removeDataDir(dir); return; }
+    const auto index = content().petalIndex("arctic_blueberries");
+    CHECK(shopSellsPetal(index));
+    NetClient client;
+    CHECK(connectClient(h, client));
+    client.requestLogin("seer", "password7");
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::LoggedIn; }));
+
+    const auto query = [&] {
+        client.requestOracleShopForecast(index);
+        return h.stepUntil({&client}, [&] { return client.oracleShopForecast().has_value(); });
+    };
+    CHECK(query());
+    if (client.oracleShopForecast())
+        CHECK(!client.oracleShopForecast()->available);
+
+    client.joinGame(1920, 1080, {}, "seer");
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; }));
+    standBeside(h, client, "oracle");
+    const auto before = shopRotation(shopClockNow());
+    CHECK(query());
+    const auto after = shopRotation(shopClockNow());
+    if (const auto& actual = client.oracleShopForecast()) {
+        CHECK(actual->available);
+        CHECK_EQ(actual->petalIndex, index);
+        const auto matches = [&](std::int64_t current) {
+            std::int64_t superAt = -1, eternalAt = -1;
+            for (int hour = 1; hour <= kShopForecastHours; ++hour) {
+                for (const auto& offer : shopOffers(current + hour)) {
+                    if (offer.petalIndex != index) continue;
+                    auto& at = offer.rarity == Rarity::Unique ? eternalAt : superAt;
+                    if (at == -1) at = shopRotationEnd(current + hour - 1);
+                }
+            }
+            return actual->superAt == superAt && actual->eternalAt == eternalAt;
+        };
+        CHECK(matches(before) || matches(after));
+    }
+    removeDataDir(dir);
+}
+
 TEST(a_super_bought_from_the_oracle_is_announced) {
     const std::string dir = oracleWorld("oracle-announce");
     Harness h("oracle-announce", [](const std::string& path) {
@@ -1480,6 +1526,63 @@ TEST(the_trader_refuses_what_it_does_not_take_and_a_refusal_starts_no_wait) {
     CHECK(outcome.success);
     CHECK(awaitProfile(h, client, [&](const Profile& p) {
         return p.stackCount(rose, Rarity::Apex) == 0u && p.stackCount(coin, Rarity::Apex) == 1u;
+    }));
+    removeDataDir(dir);
+}
+
+TEST(the_trader_refuses_a_contested_hyper_for_a_coin) {
+    const std::string dir = traderWorld("trader-contested-hyper");
+    std::string userId;
+    Harness h("trader-contested-hyper", [&](const std::string& path) {
+        seedAccount(path, "merchant");
+        seedStack(path, "merchant", "petal_rose", Rarity::Unique, 5);
+        seedStack(path, "merchant", "petal_fragment", Rarity::Ascendant, kApexHammerForgeCost);
+        seedStack(path, "merchant", "petal_mjolnir", Rarity::Apex, 1);
+        Database db;
+        std::string error;
+        CHECK(db.load(path, error));
+        userId = db.findUser("merchant")->id;
+        CHECK(forgeHyper(db, userId, "rose", db.nowMillis()).ok);
+        CHECK(forgeHyper(db, userId, "fragment", db.nowMillis(), {}, "garden", true).ok);
+        CHECK(db.save());
+    }, dir, 0);
+    if (!h.ready) { CHECK(false); removeDataDir(dir); return; }
+    const std::uint16_t rose = content().petalIndex("rose");
+    const std::uint16_t hammer = content().petalIndex("mjolnir");
+    const std::uint16_t coin = content().petalIndex(kTraderCoinPetal);
+
+    NetClient client;
+    CHECK(joinAs(h, client, "merchant"));
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stackCount(rose, Rarity::Apex) == 1u &&
+               p.stackCount(hammer, Rarity::Apex) == 1u &&
+               p.stackCount(hammer, Rarity::Ascendant) == 1u;
+    }));
+
+    TradeOutcome outcome;
+    standBeside(h, client, "trader");
+    client.requestTrade(rose, Rarity::Apex);
+    CHECK(awaitTrade(h, client, outcome));
+    CHECK(!outcome.success);
+    CHECK(outcome.reason.find("争夺") != std::string::npos);
+    h.step(5, {&client});
+    CHECK_EQ(client.profile().stackCount(rose, Rarity::Apex), 1u);
+    CHECK_EQ(client.profile().stackCount(coin, Rarity::Apex), 0u);
+    CHECK_EQ(client.traderCooldownRemainingMillis(), 0.0);
+    client.requestTrade(hammer, Rarity::Ascendant);
+    CHECK(awaitTrade(h, client, outcome));
+    CHECK(!outcome.success);
+    CHECK(outcome.reason.find("争夺") != std::string::npos);
+    CHECK_EQ(client.traderCooldownRemainingMillis(), 0.0);
+
+    client.requestTrade(hammer, Rarity::Apex);
+    CHECK(awaitTrade(h, client, outcome));
+    CHECK(outcome.success);
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stackCount(hammer, Rarity::Apex) == 0u &&
+               p.stackCount(hammer, Rarity::Ascendant) == 1u &&
+               p.stackCount(coin, Rarity::Apex) == 1u &&
+               p.stackCount(coin, Rarity::Ascendant) == 0u;
     }));
     removeDataDir(dir);
 }
@@ -3282,7 +3385,16 @@ TEST(pyramid_map_scrolls_reveal_one_visit_without_inventory_and_refill) {
     CHECK(h.ready); if (!h.ready) return;
     NetClient watcher, explorer; CHECK(joinAs(h, watcher, "watcher"));
     h.step(3, {&watcher});
-    bool found = false; const auto realm = h.server.worldMaps().realmOfId("pyramid", found); CHECK(found);
+    CHECK(connectClient(h, explorer)); explorer.requestLogin("explorer", "password7");
+    CHECK(h.stepUntil({&watcher,&explorer},[&]{return explorer.status()==NetClient::Status::LoggedIn;}));
+    explorer.joinGame(1280,720,"pyramid:spawn","explorer");
+    CHECK(h.stepUntil({&watcher,&explorer},[&]{return explorer.status()==NetClient::Status::Playing;}));
+    const auto realm = explorer.view().realm();
+    const auto* map = h.server.worldMaps().forRealm(realm);
+    CHECK(map != nullptr);
+    if (!map) return;
+    CHECK_EQ(map->biome(), std::string("pyramid"));
+    CHECK_EQ(map->prestigeLevel(), 0);
     auto scrolls = [&] {
         std::vector<Entity> result; Query<Replicated,Transform> q{h.server.world()};
         q.each([&](Entity e, Replicated& r, Transform& t) {
@@ -3290,21 +3402,19 @@ TEST(pyramid_map_scrolls_reveal_one_visit_without_inventory_and_refill) {
                r.typeIndex==static_cast<std::uint16_t>(GroundEffectKind::PyramidMap)) result.push_back(e);
         }); return result;
     };
-    CHECK_EQ(scrolls().size(), 40u);
-    for (auto e : scrolls()) {
+    const auto initialScrolls = scrolls();
+    CHECK_EQ(initialScrolls.size(), 40u);
+    if (initialScrolls.empty()) return;
+    for (const auto e : initialScrolls) {
         const auto at = h.server.world().get<Transform>(e).position;
         CHECK(!h.server.terrain().blocked(at, realm));
         CHECK_NEAR(distance(h.server.terrain().resolveCircle(at,30,realm),at), 0, 0.01);
     }
-    CHECK(connectClient(h, explorer)); explorer.requestLogin("explorer", "password7");
-    CHECK(h.stepUntil({&watcher,&explorer},[&]{return explorer.status()==NetClient::Status::LoggedIn;}));
-    explorer.joinGame(1280,720,"pyramid:spawn","explorer");
-    CHECK(h.stepUntil({&watcher,&explorer},[&]{return explorer.status()==NetClient::Status::Playing;}));
     const auto before = explorer.profile().inventory;
     auto& world=h.server.world(); const auto body=bodyNamed(world,"explorer"); CHECK(body!=NULL_ENTITY);
     if(body==NULL_ENTITY)return;
     CHECK(!explorer.pyramidMapRevealed);
-    const auto picked=scrolls().front();
+    const auto picked = initialScrolls.front();
     world.get<Transform>(body).position=world.get<Transform>(picked).position;
     CHECK(h.stepUntil({&watcher,&explorer},[&]{return explorer.pyramidMapRevealed;}));
     CHECK(!world.isAlive(picked)); CHECK_EQ(scrolls().size(),39u);
@@ -3471,7 +3581,13 @@ TEST(daily_bonus_cycle_expiry_missed_day_and_duplicate_claim) {
         CHECK(claimDropBonus(record,now));
         CHECK_EQ(activeDropBonus(record,now),day%4==3?3:2);
         CHECK(!claimDropBonus(record,now+1000));
-        CHECK_EQ(activeDropBonus(record,now+3600000),1);
+        CHECK_EQ(activeDropBonus(record, now + 3600000), day % 4 == 3 ? 3 : 2);
+        if (day % 4 == 3) {
+            CHECK_EQ(activeDropBonus(record, now + 10800000), 3);
+            CHECK_EQ(activeDropBonus(record, now + 14400000), 1);
+        } else {
+            CHECK_EQ(activeDropBonus(record, now + 10800000), 1);
+        }
     }
     CHECK(claimDropBonus(record,start+10*86400000));
     CHECK_EQ(dropBonusStreak(record,start+10*86400000),1);
@@ -3486,6 +3602,8 @@ TEST(daily_bonus_claim_is_account_scoped_and_reported_over_network) {
     bonus.requestDailyDropBonus(true);
     CHECK(h.stepUntil({&bonus,&plain},[&]{return bonus.dropBonusMultiplier==2 && bonus.dropBonusStreak==1;}));
     CHECK_EQ(plain.dropBonusMultiplier,1);
+    const auto reportedDuration = bonus.dropBonusUntil - bonus.dropBonusUpdatedAt;
+    CHECK(reportedDuration > 10799000 && reportedDuration <= 10800000);
     const auto until=bonus.dropBonusUntil;bonus.requestDailyDropBonus(true);h.step(8,{&bonus,&plain});
     CHECK_EQ(bonus.dropBonusStreak,1);CHECK(std::abs(bonus.dropBonusUntil-until)<1000);
     removeDataDir(dir);
@@ -3494,18 +3612,19 @@ TEST(daily_bonus_claim_is_account_scoped_and_reported_over_network) {
 TEST(shop_locked_rotation_survives_login_and_purchase_charges_exact_quote) {
     CHECK(ensureShippedContent());
     const auto dir=titanWorld("shop-lock-purchase");const auto old=shopRotation(shopClockNow())-10;
+    ShopOffer offer;
     Harness h("shop-lock-purchase",[&](const std::string& path){seedAccount(path,"buyer");
         Database db;std::string error;CHECK(db.load(path,error));auto& r=db.progress(db.findUser("buyer")->id);
         r.stars=1000000000;r.extra["lockedShopRotation"]=Json(static_cast<double>(old));
         // Stored stock deliberately differs from regenerating this rotation.
         // This simulates adding content between lock and server restart.
+        offer = shopOffers(old - 1).front();
         captureShopLock(r,old-1);r.extra["lockedShopOffersRotation"]=static_cast<double>(old);
         db.markDirty();CHECK(db.save());
     },dir,0);CHECK(h.ready);if(!h.ready){removeDataDir(dir);return;}
     NetClient buyer;CHECK(joinAs(h,buyer,"buyer"));CHECK_EQ(buyer.lockedShopRotation,old);
     CHECK_EQ(buyer.lockedShopOffers.size(),std::size_t(kShopOfferCount));
     if(buyer.lockedShopOffers.empty()){removeDataDir(dir);return;}
-    const auto offer=shopOffers(old-1).front();
     CHECK_EQ(buyer.lockedShopOffers.front().petalIndex,offer.petalIndex);
     CHECK(buyer.lockedShopOffers.front().rarity==offer.rarity);
     CHECK_NEAR(buyer.lockedShopOffers.front().price,offer.price,1e-9);
@@ -3543,6 +3662,33 @@ TEST(loadout_presets_autosave_edits_without_shift_or_manual_save) {
     c.setLoadoutSlot(0,basic,Rarity::Common);CHECK(awaitProfile(h,c,[&](const Profile& p){return p.loadout[0].petalIndex==basic;}));
     c.loadLoadoutPreset(1);CHECK(awaitProfile(h,c,[&](const Profile& p){return p.loadout[0].petalIndex==rose;}));
     CHECK_EQ(c.profile().stackCount(basic,Rarity::Common),101u);CHECK_EQ(c.profile().stackCount(rose,Rarity::Common),0u);
+    removeDataDir(dir);
+}
+
+// Manual save to K1 (preset 0) must mark it active so later petal edits stick
+// without Shift -- the old path left active unset and K1 looked unsavable.
+TEST(loadout_preset_k1_manual_save_then_edits_autosave) {
+    const auto dir=titanWorld("preset-k1-save");Harness h("preset-k1-save",[](const std::string& path){
+        seedAccount(path,"k1saver");seedStack(path,"k1saver","petal_basic",Rarity::Common,100);
+        seedStack(path,"k1saver","petal_rose",Rarity::Common,1);seedWorn(path,"k1saver",0,"basic",Rarity::Common);
+    },dir,0);CHECK(h.ready);if(!h.ready){removeDataDir(dir);return;}
+    NetClient c;CHECK(joinAs(h,c,"k1saver"));
+    const auto basic=content().petalIndex("basic"),rose=content().petalIndex("rose");
+    c.saveLoadoutPreset(0);
+    CHECK(awaitProfile(h,c,[&](const Profile& p){
+        return !p.presets[0].empty() && p.presets[0][0].petalIndex==basic;
+    }));
+    const auto* account = h.server.database().findUser("k1saver");
+    CHECK(account != nullptr); if (!account) { removeDataDir(dir); return; }
+    const auto* record = h.server.database().findProgress(account->id);
+    CHECK(record != nullptr); if (!record) { removeDataDir(dir); return; }
+    CHECK_EQ(record->extra["activeLoadoutPreset"].asInt(-1), 0);
+    c.setLoadoutSlot(0,rose,Rarity::Common);
+    CHECK(awaitProfile(h,c,[&](const Profile& p){return p.loadout[0].petalIndex==rose;}));
+    c.loadLoadoutPreset(2);
+    CHECK(awaitProfile(h,c,[](const Profile& p){return p.loadout[0].empty();}));
+    c.loadLoadoutPreset(0);
+    CHECK(awaitProfile(h,c,[&](const Profile& p){return p.loadout[0].petalIndex==rose;}));
     removeDataDir(dir);
 }
 
@@ -3903,6 +4049,64 @@ TEST(apex_hammer_network_forge_and_quote) {
     }));
     removeDataDir(dir);
 }
+TEST(hyper_abandon_network_recovers_legacy_coin_only_claims) {
+    const auto dir = titanWorld("legacy-coin-claims");
+    Harness h("legacy-coin-claims", [](const std::string& path) {
+        seedAccount(path, "smith");
+        seedStack(path, "smith", "petal_rose", Rarity::Unique, 5);
+        seedStack(path, "smith", "petal_fragment", Rarity::Ascendant, kApexHammerForgeCost);
+        Database db;
+        std::string error;
+        CHECK(db.load(path, error));
+        const auto* account = db.findUser("smith");
+        if (account == nullptr) { CHECK(false); return; }
+        const auto& user = account->id;
+        CHECK(forgeHyper(db, user, "rose", db.nowMillis()).ok);
+        CHECK(forgeHyper(db, user, "fragment", db.nowMillis(), {}, "", true).ok);
+        auto& record = db.progress(user);
+        record.addItem(Rarity::Apex, "petal_rose", -1);
+        record.addItem(Rarity::Ascendant, "petal_mjolnir", -1);
+        record.addItem(Rarity::Apex, "petal_coin", 1);
+        record.addItem(Rarity::Ascendant, "petal_coin", 1);
+        CHECK(db.save());
+    }, dir, 0);
+    CHECK(h.ready);
+    if (!h.ready) { removeDataDir(dir); return; }
+    NetClient client;
+    CHECK(joinAs(h, client, "smith"));
+    const auto rose = content().petalIndex("rose");
+    const auto hammer = content().petalIndex("mjolnir");
+    const auto coin = content().petalIndex(kTraderCoinPetal);
+    const auto keepsCoins = [&](const Profile& p) {
+        return p.stackCount(rose, Rarity::Apex) == 0 &&
+            p.stackCount(hammer, Rarity::Ascendant) == 0 &&
+            p.stackCount(coin, Rarity::Apex) == 1 &&
+            p.stackCount(coin, Rarity::Ascendant) == 1;
+    };
+    CHECK(awaitProfile(h, client, keepsCoins));
+
+    const auto& db = h.server.database();
+    const auto user = db.findUser("smith")->id;
+    const auto hammerKey = hyperForgeKey("mjolnir", "", true);
+    CHECK_EQ(hyperHoldingCount(db, user), 2);
+    client.sendChat("/hyper-abandon");
+    const auto listed = [&](const std::string& key) {
+        return std::any_of(client.chat().begin(), client.chat().end(),
+            [&](const ChatLine& line) { return line.text == key; });
+    };
+    CHECK(h.stepUntil({&client}, [&] { return listed("rose") && listed(hammerKey); }, 120));
+
+    standAtTitan(h, {&client}, "smith");
+    client.sendChat("/hyper-abandon here rose confirm");
+    CHECK(h.stepUntil({&client}, [&] { return hyperHoldingCount(db, user) == 1; }, 120));
+    CHECK(hyperForgeState(db, "rose").owner.empty());
+    client.sendChat("/hyper-abandon " + hammerKey + " confirm");
+    CHECK(h.stepUntil({&client}, [&] { return hyperHoldingCount(db, user) == 0; }, 120));
+    CHECK(hyperForgeState(db, "mjolnir", "", true).owner.empty());
+    CHECK(awaitProfile(h, client, keepsCoins));
+    removeDataDir(dir);
+}
+
 TEST(hyper_garden_and_jungle_network_quotes_and_holdings_are_independent){
     const double cell=kTileSize;
     const auto map=fixtureMap(24,24,fixtureDoor("spawn","Spawn",cell*2,cell*2,cell,cell,true,0.0),

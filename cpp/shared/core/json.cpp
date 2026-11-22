@@ -152,7 +152,9 @@ namespace {
 
 class Parser {
 public:
-    Parser(const std::string& text) : s_(text) {}
+    explicit Parser(const std::string& text, const char* table = nullptr,
+                    void (*transform)(Json&) = nullptr)
+        : s_(text), rowTable_(table), rowTransform_(transform) {}
 
     bool parse(Json& out, std::string& error) {
         skipWhitespace();
@@ -167,6 +169,8 @@ public:
 
 private:
     const std::string& s_;
+    const char* rowTable_;
+    void (*rowTransform_)(Json&);
     std::size_t pos_ = 0;
     std::string error_;
     // Bounds recursion so a hostile or corrupt file cannot blow the C stack.
@@ -193,7 +197,7 @@ private:
         return true;
     }
 
-    bool parseValue(Json& out) {
+    bool parseValue(Json& out, bool transformRows = false) {
         if (depth_ >= kMaxDepth) { fail("nesting too deep"); return false; }
         if (pos_ >= s_.size()) { fail("unexpected end of input"); return false; }
 
@@ -203,7 +207,7 @@ private:
             case 'f': if (literal("false")) { out = Json(false); return true; } break;
             case '"': { std::string str; if (!parseString(str)) return false; out = Json(std::move(str)); return true; }
             case '[': return parseArray(out);
-            case '{': return parseObject(out);
+            case '{': return parseObject(out, transformRows);
             default: return parseNumber(out);
         }
         fail("invalid literal");
@@ -296,7 +300,7 @@ private:
         }
     }
 
-    bool parseObject(Json& out) {
+    bool parseObject(Json& out, bool transformRows) {
         ++pos_; // '{'
         ++depth_;
         out = Json::object();
@@ -311,7 +315,9 @@ private:
             ++pos_;
             skipWhitespace();
             Json value;
-            if (!parseValue(value)) return false;
+            const bool rowTable = rowTransform_ && depth_ == 1 && key == rowTable_;
+            if (!parseValue(value, rowTable)) return false;
+            if (transformRows) rowTransform_(value);
             out[key] = std::move(value);
             skipWhitespace();
             if (pos_ >= s_.size()) { fail("unterminated object"); return false; }
@@ -326,7 +332,12 @@ private:
 } // namespace
 
 bool Json::parse(const std::string& text, Json& out, std::string& error) {
-    Parser parser(text);
+    return parseWithRowTransform(text, out, error, nullptr, nullptr);
+}
+
+bool Json::parseWithRowTransform(const std::string& text, Json& out, std::string& error,
+                                 const char* table, void (*transform)(Json&)) {
+    Parser parser(text, table, transform);
     Json parsed;
     if (!parser.parse(parsed, error)) return false;
     out = std::move(parsed);

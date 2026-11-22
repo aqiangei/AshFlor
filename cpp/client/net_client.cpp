@@ -69,9 +69,12 @@ const char* clientMessageName(std::uint8_t id) {
         case net::ClientMessage::GuildEdit:           return "guildEdit";
         case net::ClientMessage::ChangePassword:      return "changePassword";
         case net::ClientMessage::OracleCraft:         return "oracleCraft";
+        case net::ClientMessage::OracleShopForecast:  return "oracleShopForecast";
         case net::ClientMessage::SwapLoadoutRows:     return "swapLoadoutRows";
         case net::ClientMessage::SaveLoadoutPreset:   return "saveLoadoutPreset";
         case net::ClientMessage::SetPresetAutosave:   return "setPresetAutosave";
+        case net::ClientMessage::SetPetalPrivacy:     return "setPetalPrivacy";
+        case net::ClientMessage::BulkCraftMythicUltra: return "bulkCraftMythicUltra";
         case net::ClientMessage::LoadLoadoutPreset:   return "loadLoadoutPreset";
         case net::ClientMessage::Trade:               return "trade";
         case net::ClientMessage::AdminDb:             return "adminDb";
@@ -123,6 +126,7 @@ const char* serverMessageName(std::uint8_t id) {
         case net::ServerMessage::RealmChange:         return "realmChange";
         case net::ServerMessage::ChangePasswordResult: return "changePasswordResult";
         case net::ServerMessage::OracleResult:        return "oracleResult";
+        case net::ServerMessage::OracleShopForecast:  return "oracleShopForecast";
         case net::ServerMessage::SessionReplaced:     return "sessionReplaced";
         case net::ServerMessage::ChatHistory:         return "chatHistory";
         case net::ServerMessage::TradeResult:         return "tradeResult";
@@ -136,6 +140,7 @@ const char* serverMessageName(std::uint8_t id) {
         case net::ServerMessage::SetUsernameResult:   return "setUsernameResult";
         case net::ServerMessage::Teleported:          return "teleported";
         case net::ServerMessage::ProfileDelta:        return "profileDelta";
+        case net::ServerMessage::BulkCraftTicket:     return "bulkCraftTicket";
         case net::ServerMessage::OnlineRoster:        return "onlineRoster";
         case net::ServerMessage::SquadInviteReceived: return "squadInvite";
     }
@@ -357,6 +362,7 @@ void NetClient::forgetAccount() {
     shopLockMask=0;lockedShopRotation=-1;lockedShopOffers.clear();currentShopRotation=-1;currentShopOffers.clear();dropBonusStreak=0;dropBonusMultiplier=1;dropBonusUntil=dropBonusNextClaim=dropBonusUpdatedAt=0;dropBonusPaused=false;dropBonusCountdownRate=net::kTicksPerSecond;
     waveRoomStatus = {};
     oracleOutcome_ = OracleOutcome{};
+    oracleShopForecast_.reset();
     oracleReadyAtMillis_ = 0;
     tradeOutcome_ = TradeOutcome{};
     traderReadyAtMillis_ = 0;
@@ -477,6 +483,13 @@ void NetClient::setPresetAutosave(bool enabled) {
     send(w);
 }
 
+void NetClient::setPetalPrivacy(bool hidden) {
+    ByteWriter w;
+    beginMessage(w, net::ClientMessage::SetPetalPrivacy);
+    w.boolean(hidden);
+    send(w);
+}
+
 void NetClient::saveLoadoutPreset(int preset, int rotationStep) {
     if (preset < 0 || preset >= kLoadoutPresetCount) return;
     ByteWriter w;
@@ -528,6 +541,34 @@ void NetClient::requestBulkCraft(Rarity target, const std::vector<std::uint16_t>
     send(w);
 }
 
+std::uint32_t NetClient::prepareMythicUltraCraft(const std::vector<Profile::Stack>& materials) {
+    if (materials.empty() || materials.size() > UINT16_MAX) return 0;
+    if (++mythicUltraRequest_ == 0) ++mythicUltraRequest_;
+    mythicUltraTicket_ = 0;
+    ByteWriter message;
+    beginMessage(message, net::ClientMessage::BulkCraftMythicUltra);
+    message.u8(0);
+    message.u32(mythicUltraRequest_);
+    message.u16(static_cast<std::uint16_t>(materials.size()));
+    for (const auto& stack : materials) {
+        message.u16(stack.petalIndex);
+        message.u8(static_cast<std::uint8_t>(stack.rarity));
+        message.u32(stack.count);
+    }
+    send(message);
+    return mythicUltraRequest_;
+}
+
+void NetClient::confirmMythicUltraCraft(std::uint64_t ticket) {
+    if (ticket == 0) return;
+    ByteWriter message;
+    beginMessage(message, net::ClientMessage::BulkCraftMythicUltra);
+    message.u8(1);
+    message.u64(ticket);
+    mythicUltraTicket_ = 0;
+    send(message);
+}
+
 void NetClient::requestCraft(std::uint16_t petalIndex, Rarity rarity, int count) {
     ByteWriter w;
     beginMessage(w, net::ClientMessage::Craft);
@@ -558,6 +599,14 @@ void NetClient::requestOracleCraft(std::uint16_t petalIndex, Rarity rarity, std:
     w.u16(petalIndex);
     w.u8(static_cast<std::uint8_t>(rarity));
     w.u16(quantity);
+    send(w);
+}
+
+void NetClient::requestOracleShopForecast(std::uint16_t petalIndex) {
+    oracleShopForecast_.reset();
+    ByteWriter w;
+    beginMessage(w, net::ClientMessage::OracleShopForecast);
+    w.u16(petalIndex);
     send(w);
 }
 
@@ -1334,6 +1383,15 @@ void NetClient::onMessage(net::Connection& connection, ByteReader& reader) {
         }
         case net::ServerMessage::Profile:      handleProfile(reader); break;
         case net::ServerMessage::ProfileDelta: handleProfileDelta(reader); break;
+        case net::ServerMessage::BulkCraftTicket: {
+            const auto request = reader.u32();
+            const auto ticket = reader.u64();
+            if (reader.ok() && reader.remaining() == 0 && request == mythicUltraRequest_) {
+                mythicUltraReply_ = request;
+                mythicUltraTicket_ = ticket;
+            }
+            break;
+        }
         case net::ServerMessage::JoinAccepted: handleJoinAccepted(reader); break;
         case net::ServerMessage::Snapshot: {
             if (clearViewOnSnapshot_) {
@@ -1433,6 +1491,7 @@ void NetClient::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ServerMessage::ChangePasswordResult: handleChangePasswordResult(reader); break;
         case net::ServerMessage::SetUsernameResult: handleSetUsernameResult(reader); break;
         case net::ServerMessage::OracleResult:  handleOracleResult(reader); break;
+        case net::ServerMessage::OracleShopForecast: handleOracleShopForecast(reader); break;
         case net::ServerMessage::TradeResult:   handleTradeResult(reader); break;
         case net::ServerMessage::TitanForgeResult: handleTitanForgeResult(reader); break;
         case net::ServerMessage::AssembleResult: handleAssembleResult(reader); break;
@@ -1579,6 +1638,7 @@ void NetClient::handleProfile(ByteReader& reader) {
     next.guest = (accountFlags & net::kAccountGuest) != 0;
     next.hasPassword = (accountFlags & net::kAccountNoPassword) == 0;
     next.presetAutosave = (accountFlags & net::kAccountPresetAutosaveOff) == 0;
+    next.hidePetalTypes = (accountFlags & net::kAccountPetalTypesHidden) != 0;
     next.totalXp = reader.f64();
     next.level = reader.u16();
     next.stars = reader.f64();
@@ -1758,6 +1818,15 @@ void NetClient::handleCraftResult(ByteReader& reader) {
     craftOutcome_ = std::move(outcome);
 }
 
+void NetClient::handleOracleShopForecast(ByteReader& reader) {
+    OracleShopForecast result;
+    result.petalIndex = reader.u16();
+    result.available = reader.boolean();
+    result.superAt = reader.i64();
+    result.eternalAt = reader.i64();
+    if (reader.ok()) oracleShopForecast_ = result;
+}
+
 void NetClient::handleOracleResult(ByteReader& reader) {
     OracleOutcome outcome;
     outcome.success = reader.boolean();
@@ -1893,6 +1962,7 @@ void NetClient::handlePracticeBoard(ByteReader& reader) {
             row.damage = reader.f64();
             row.atMillis = reader.f64();
             row.published = reader.boolean();
+            row.historical = reader.boolean();
             const auto loadout = Json::parseOrNull(reader.str());
             const auto breakdown = Json::parseOrNull(reader.str());
             for (const auto& item : breakdown.items()) {
@@ -1920,7 +1990,7 @@ void NetClient::handlePracticeBoard(ByteReader& reader) {
         }
         return reader.ok();
     };
-    if (read(board.own, net::kPracticeHistoryLimit) && read(board.published, net::kPracticeBoardRows))
+    if (read(board.own, net::kPracticeVisibleHistoryLimit) && read(board.published, net::kPracticeBoardRows))
         practiceBoard_ = std::move(board);
 }
 

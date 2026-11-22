@@ -648,7 +648,7 @@ constexpr Pair kPetalDescs[] = {
     {"arctic_electron_missile", "攻击时发射导弹，命中后使敌人减速。"},
     {"arctic_cryo_bomb", "碰撞或破碎时爆开，短暂冻结范围内的敌人。"},
     {"arctic_plutonium", "放射范围内的敌人会受到持续灼烧。"},
-    {"arctic_fission", "将紧邻右侧且稀有度不高于自身的适用花瓣分裂成多个较弱的个体：超级及以下分 3 份，永恒分 4 份，超凡及以上分 6 份。每份的生命、伤害、护甲、暴击伤害、毒伤和雷电伤害只有原来的 1/3、1/4 或 1/6（与份数对应），总量不变。法力上限等花朵加成按一份计算。"},
+    {"arctic_fission", "将紧邻右侧且稀有度不高于自身的适用花瓣分裂成多个较弱的个体：超级及以下分 3 份，永恒分 4 份，超凡及以上分 6 份。\n每份的生命、伤害、护甲、暴击伤害、毒伤和雷电伤害只有原来的 1/3、1/4 或 1/6（与份数对应），总量不变。\n法力上限等花朵加成按一份计算。"},
     {"arctic_fusion", "装备后，临时合并右侧连续、同种同档且不高于融合品质的适用花瓣。超级及以下最多 3 片，永恒最多 6 片，超凡及以上不限。合并后部分战斗属性按片数累加，库存材料不会消耗。"},
     {"arctic_corium", "使放射范围内的敌人中毒并灼烧。"},
     {"arctic_nuke", "碰撞或破碎时引爆，随后在周围触发多次子爆炸。"},
@@ -681,7 +681,7 @@ constexpr Pair kPetalDescs[] = {
     {"fire_bomb", "触敌或破裂时爆炸，使附近的野怪燃烧。"},
     {"magic_electron_missile", "消耗法力发射导弹。连锁闪电会点燃野怪。"},
     {"acid", "伸出或收拢花瓣时，滴下能使敌人中毒的酸液。"},
-    {"acid_bomb", "接触敌人或破裂时爆炸，并留下酸液。"},
+    {"acid_bomb", "命中野怪后爆炸，留下可叠加的酸液池。"},
     {"antibody", "发射抗体，使敌人的护甲降低 5 秒。"},
     {"blood", "充能后洒下血液。接触血池的野怪会降低护甲。"},
     {"cancer", "命中同阶或低阶野怪时标记。幽灵和挑战怪免疫。目标死亡后分裂一次，分裂体不提供额外奖励。在花环上停留十秒会被自身吸收，降低最大生命值，药片可治疗。"},
@@ -694,9 +694,9 @@ constexpr Pair kPetalDescs[] = {
     {"hemoglobin", "提高自身受到的花瓣治疗量。多枚按递减收益叠加，总加成最多 115%。"},
     {"iodine", "每秒治疗范围内的友方花朵。"},
     {"job_application", "使同阶或低阶野怪失去目标五秒。"},
-    {"fission", "将右侧紧邻、同级或更低稀有度的兼容花瓣裂变成三份，每份保持原有强度（不削弱）。只对有伤害、治疗或发射物的花瓣生效，蛋和法力宝珠等不会被裂变。法力上限等花朵加成按一份计算。"},
+    {"fission", "将右侧紧邻、同级或更低稀有度的兼容花瓣裂变成三份，每份保持原有强度（不削弱）。\n只对有伤害、治疗或发射物的花瓣生效，蛋和法力宝珠等不会被裂变。\n法力上限等花朵加成按一份计算。"},
     {"magic_chromosome", "消耗法力，为自己在同一地图上已经展开的花瓣提供临时护盾。"},
-    {"opal", "使同稀有度花瓣的攻击有概率暴击。"},
+    {"opal", "使同阶及以下花瓣的直接攻击有概率暴击，概率与倍率按被强化花瓣的阶位计算。"},
     {"oxygen", "延长野怪已有的燃烧时间。氧气本身不会造成伤害或点燃目标。"},
     {"pill", "恢复生命并治疗癌变。稀有度越高，每片治疗的癌变越多。"},
     {"rna", "提高宠物的移动速度。多个 RNA 的加速可叠加。"},
@@ -796,7 +796,6 @@ constexpr Pair kPetalDescs[] = {
     {"hornet_egg", "孵化一个大黄蜂宠物"},
     {"hornet_missile", "对目标造成伤害的导弹"},
     {"infinity", "只是一片无限花瓣，普通与否？"},
-    {"iris", "它毒性很强，但需要一点时间才能发挥作用。\n对其他花朵造成的伤害减少50%。"},
     {"item_spawner_egg", "孵化一个物品生成器宠物"},
     {"javascript_egg", "孵化一个JavaScript宠物"},
     {"jelly", "没有人会想碰它。"},
@@ -822,7 +821,7 @@ constexpr Pair kPetalDescs[] = {
     {"magic_eye", "装备后将花朵的两只眼睛换成魔眼。"},
     {"magic_orb", "创造魔力。"},
     {"magic_peas", "“嘭”地爆开；现在有了额外的秘密成分：闪电。"},
-    {"magic_stinger", "攻击很强，却十分脆弱。"},
+    {"magic_stinger", "消耗法力生成。每根魔法刺针命中后独立施加 3 秒毒伤。"},
     {"magnet", "增加花朵的掉落物拾取距离。"},
     {"mantis_egg", "孵化一个螳螂宠物"},
     {"mimic", "用与此花瓣相同的品质复制此花瓣左边的花瓣。"},
@@ -878,7 +877,7 @@ constexpr Pair kPetalDescs[] = {
     {"starfish", "在花朵生命值低于75%时治疗花朵。"},
     {"starfish_egg", "孵化一个海星宠物"},
     {"stick", "神秘的树枝，能动用风的力量。"},
-    {"stinger", "攻击很强，却十分脆弱。"},
+    {"stinger", "伤害高但非常脆弱。每根刺针命中后独立施加 3 秒毒伤。"},
     {"sun_egg", "孵化一个太阳宠物"},
     {"sun_pet_egg", "孵化一个太阳宠物宠物"},
     {"talisman", "一条能让佩戴者闪避敌人攻击的神秘项链。"},
@@ -944,7 +943,7 @@ constexpr Pair kPetalDescs[] = {
     {"magic_bone", "生成时消耗法力。每多装备一个魔法骨头，所有已装备的魔法骨头对野怪伤害加算 +50%。"},
     {"magic_crystal_leaf", "治疗自己的召唤物。最强的魔法水晶叶会消耗法力，为召唤物抵挡野怪伤害。"},
     {"magic_fang", "按此花瓣造成的伤害回复生命，每次咬中怪物还会回复法力。"},
-    {"magic_fire", "攻击时消耗法力，点燃最近的野怪 3 秒。"},
+    {"magic_fire", "攻击时消耗法力，点燃最近的敌人 3 秒。每次施放独立叠火。"},
     {"magic_palm_leaf", "持续回复生命、护盾和法力。"},
     {"magic_poo", "装备后持续消耗法力，扩大普通召唤物的追击范围。同类只取最高效果。"},
     {"magic_rock", "高耐久，带护甲。生成时消耗法力。"},
@@ -961,8 +960,8 @@ constexpr Pair kPetalDescs[] = {
     {"void_cyanide", "命中同级或更低稀有度的野怪时，延长已有中毒。自身不施加毒伤。"},
     {"void_dark_matter", "产自虚空的花瓣。"},
     {"void_dizzy", "提高其他花瓣的直接接触伤害。与伤口同时装备时取较高增益。"},
-    {"void_dvd", "带护甲的花瓣，接触野怪时使其燃烧 3 秒：普通品质每秒 3 点燃烧伤害，品质每高一档乘 3，超凡为永恒的 1.5 倍。"},
-    {"void_elemental", "产自虚空的花瓣。"},
+    {"void_dvd", "带护甲，接触敌人时使其燃烧 3 秒。普通每秒 3 点，品质每高一档乘 3，超凡为永恒的 1.5 倍。多个花瓣可叠火。"},
+    {"void_elemental", "三个花瓣分摊本槽的接触、毒伤和燃烧伤害。装备被动按槽生效。"},
     {"void_fan", "降低受到的持续燃烧伤害，多件风扇只取最高减伤。"},
     {"void_fire", "接触野怪时使其燃烧 3 秒：普通品质每秒 10 点燃烧伤害，品质每高一档乘 3，超凡为永恒的 1.5 倍。本身没有接触伤害，伤害全部来自燃烧。"},
     {"void_gunpowder", "装备时提高导弹飞行速度，取最高加成。火药命中燃烧的野怪时造成五倍接触伤害。"},
@@ -978,7 +977,7 @@ constexpr Pair kPetalDescs[] = {
     {"void_quantum", "产自虚空的花瓣。"},
     {"void_relativity", "产自虚空的花瓣。"},
     {"void_sad", "产自虚空的花瓣。"},
-    {"void_scar", "命中已不死的敌方花朵或野怪时，同级或更高品质可缩短其剩余不死时间 25%。每次不死最多生效一次。"},
+    {"void_scar", "命中已不死的敌方花朵或野怪时，同级或更高品质可缩短其剩余不死时间 25%。每次不死最多生效一次。虚空伤疤出现 6.66 秒后，会尝试把你随机传送到当前地图可落脚的位置。"},
     {"void_scythe", "产自虚空的花瓣。"},
     {"void_slime", "两枚花瓣，命中时击退敌人。"},
     {"void_soap", "装备时扩大自己产生的溢液范围，包括血池。"},
@@ -1028,16 +1027,16 @@ const char* lookup(const Pair* table, std::size_t n, const std::string& id,
 }
 } // namespace
 
-const char* rarityTr(Rarity r) {
-    static constexpr const char* kEn[] = {
-        "Common","Unusual","Rare","Epic","Legendary","Mythic",
-        "Ultra","Super","Eternal","Hyper","Devine","Admin","Permanent Hyper","Apex"};
-    static constexpr const char* kZh[] = {
+const char* rarityNameZh(Rarity r) {
+    static constexpr std::array<const char*, kRarityCount> kZh = {
         "普通","罕见","稀有","史诗","传说","神话",
         "究极","超级","永恒","超凡","神圣","管理","永久超凡","Apex"};
     const int i = rarityIndex(r);
-    if (i < 0 || i >= kRarityCount) return zh() ? kZh[0] : kEn[0];
-    return zh() ? kZh[i] : kEn[i];
+    return i < kRarityCount ? kZh[i] : kZh[0];
+}
+
+const char* rarityTr(Rarity r) {
+    return zh() ? rarityNameZh(r) : rarityLabel(r);
 }
 
 const char* skillTr(SkillId id, int /*tier*/) {
@@ -1202,12 +1201,12 @@ const char* petalDescTr(const std::string& id, const char* fallback) {
         {"ring_magnet", "缓慢拉近可拾取的同图掉落，不能穿墙。多枚取最强。"},
         {"gas_bomb", "接触或破碎时爆开，对范围内的敌人施毒。"},
         {"bubble_bomb", "爆开时击退附近的野怪。"},
-        {"hel_missile", "攻击时发射，命中野怪后点燃目标。"},
+        {"hel_missile", "攻击时发射，每发导弹命中时独立施加燃烧。"},
         {"viper", "攻击时发射，命中后使目标中毒。"},
         {"golden_cactus", "增加装备花瓣的最大生命，多枚取最强。"},
         {"hel_honey", "使你的蜂蜜诱饵灼烧附近敌人。"},
         {"irey", "使你的蜂蜜诱饵对附近敌人施毒。"},
-        {"toilet_paper", "生命曾高于 90%，随后受击降到 10% 以下且存活时，卫生纸伤害提高至 10 倍，持续 10 秒。"},
+        {"toilet_paper", "生命曾高于 90%，受伤后自然存活且血量在 1% 至不足 10% 时，卫生纸伤害变为 3 倍。仅在这个血量范围内生效，窗口最长 9 秒。卸下卫生纸、第二次机会或绷带会结束强化，下次仍须等到上次触发后 9 秒。对同一目标每 0.5 秒最多命中一次。"},
         {"fractal", "爆裂时释放分叉闪电，同次闪电不会重复选择目标。"},
         {"marble", "攻击时放出弹珠。弹珠撞墙反弹，对同一目标最多每秒命中一次。"},
         {"magic_marble", "消耗法力形成，遇墙反弹，破碎时放出三枚玻璃碎片。"},
@@ -1248,6 +1247,8 @@ const char* petalDescTr(const std::string& id, const char* fallback) {
          "Costs mana to form and deals contact damage."},
         {"bomb", "碰撞或破碎时爆炸，造成范围伤害，随后进入重装。",
          "Explodes on collision or break, dealing area damage before reloading."},
+        {"iris", "它毒性很强，但需要一点时间才能发挥作用。\n对其他花朵造成的伤害减少50%。重瓣天赋不会增加鸢尾的数量。",
+         "Very poisonous, but takes a little while to do its work.\n-50% damage vs other flowers. Duplicator does not add copies of Iris."},
         {"magic_bubble_bomb", "碰到野怪时爆炸，对附近野怪造成少量伤害和击退。分裂天赋不会增加这个单瓣花瓣的数量。",
          "Explodes on contact with wild mobs, damaging and knocking back nearby wild mobs. Duplicator does not add copies of this single-particle petal."},
         {"void_cross", "可在花瓣环中承受伤害，本体不造成接触伤害。",

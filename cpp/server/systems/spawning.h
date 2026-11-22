@@ -55,6 +55,8 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <map>
+#include <tuple>
 #include <optional>
 #include <set>
 #include <string>
@@ -93,6 +95,9 @@ struct NewLeechContactGrace {
     double untilMillis = 0.0;
 };
 
+// The spawn position of a wild silverfish, before it chases a bag or flees.
+struct SilverfishHome { Vec2 position; };
+
 struct AmbientMob {
     /// Last time the mob was inside any player's buffered viewport. Stamped at
     /// spawn, so a mob placed into an empty world still gets the full grace period rather
@@ -117,7 +122,20 @@ struct AmbientMob {
     bool managedPopulation = false;
     std::uint16_t replacedSpecies = kInvalidIndex;
     bool independentGhost = false;
+    bool routineSuperQuota = false;
 };
+
+inline bool alwaysSimulatesAsBoss(const World& world, Entity entity, Rarity rarity) {
+    if (!isBossRarity(rarity)) return false;
+    const auto* ambient = world.tryGet<AmbientMob>(entity);
+    if (ambient && ambient->routineSuperQuota) return false;
+    const auto* link = world.tryGet<BodySegment>(entity);
+    if (link && !link->head && world.isAlive(link->chainHead)) {
+        const auto* head = world.tryGet<AmbientMob>(link->chainHead);
+        if (head && head->routineSuperQuota) return false;
+    }
+    return true;
+}
 
 /// A nest working through the escalating `spawn_waves` list in its config.
 ///
@@ -181,6 +199,8 @@ struct LatentMob {
     std::uint16_t replacedSpecies = kInvalidIndex;
     bool ghostAlreadyAnnounced = false;
     bool previouslyAwake = false;
+    bool densityRelocated = false;
+    bool managedPopulation = false;
 };
 
 // ---------------------------------------------------------------------------
@@ -430,6 +450,9 @@ public:
         int despawnedTotal = 0;
         int promotedTotal = 0;                         ///< records brought to life
         int demotedTotal = 0;                          ///< live mobs put back to records
+        int sparseProbeTotal = 0;
+        int sparseMatureCandidatesTotal = 0;
+        int sparsePlacedTotal = 0;
     };
 
     /// One player's neighbourhood, as this system has to see it.
@@ -460,6 +483,8 @@ public:
         /// a small one rather than having them appear inside it.
         double radius = kPlayerBaseRadius;
         Vec2 viewportCentre;
+        std::size_t sourceToken=0;
+        Entity identity=NULL_ENTITY;
     };
 
     /// The live-mob ceiling this pass will not spawn past.
@@ -478,6 +503,7 @@ public:
     void sizePlacementGrids(const Terrain& terrain) {
         placementGrid_.sizeToRealms(terrain);
         latentPlacementGrid_.sizeToRealms(terrain);
+        roomLivingGrid_.sizeToRealms(terrain);
     }
 
     /// Assigns the wire id for every entity this system creates.
@@ -738,6 +764,13 @@ private:
         /// The outline's bounding box: what the viewport test and the point
         /// sampler both work in.
         Rect bounds;
+        bool usesLivePlacement=false;
+        double maxDormantRadius=0.0;
+        double maxDormantReach=0.0;
+        struct RefillAnchor { Vec2 at; std::uint16_t mobIndex=kInvalidIndex; Rarity rarity=Rarity::Common; };
+        std::array<RefillAnchor,4> refillAnchors{};
+        int refillAnchorCount=0;
+        int refillAnchorNext=0;
         /// The outline itself, or empty when the zone is a plain rectangle.
         /// Copied off the map element rather than pointed at it, because these
         /// zones outlive nothing but they are rebuilt from a MapData the system
@@ -849,7 +882,8 @@ private:
                    SpawnZone& zone, std::uint16_t zoneIndex, const std::vector<Viewer>& viewers,
                    Rng& rng, double nowMillis, Slot slot = Slot::TopUp, Vec2 lostAt = Vec2{},
                    bool fixedSuper = false, Rarity managedTier = Rarity::Super, bool superFarm = false,
-                   std::uint16_t replacementType = kInvalidIndex);
+                   std::uint16_t replacementType = kInvalidIndex, double liveDensity = -1.0,
+                   std::optional<Rarity> lastLowerTier = std::nullopt);
 
     /// Gives each band back the population that died in it, where it died.
     ///
@@ -871,7 +905,7 @@ private:
     /// Files a band mob that has just become an entity: in the placement
     /// record the rest of this pass spaces itself against, and on the list the
     /// next census looks for it on.
-    void noteLiveBandMob(World& world, Entity e, std::uint16_t zone);
+    void noteLiveBandMob(World& world, Entity e, std::uint16_t zone, const ContentRegistry& content);
 
     bool isDeepPrestigeFactory(const SpawnZone& zone) const;
 
@@ -882,7 +916,7 @@ private:
     /// only those that have outrun what was woken for them (wakeAhead).
     void promoteLatent(World& world, const Terrain& terrain, const ContentRegistry& content,
                        const std::vector<Viewer>& seers, const std::vector<Viewer>& viewers,
-                       Rng& rng, double nowMillis);
+                       Rng& rng, double nowMillis, bool redistribute = true);
     /// Between passes: wakes round every viewer that has moved further than
     /// half of kLatentWakeMargin from everywhere a wake was last done from.
     void wakeAhead(World& world, const Terrain& terrain, const ContentRegistry& content, Rng& rng,
@@ -978,13 +1012,18 @@ private:
     /// mobs nobody is looking at yet, and it buys a stocking pass that costs
     /// the band's own population rather than the map's.
     bool crowdedAt(Realm realm, Vec2 position, double halfSize, double extraGap,
-                   std::uint16_t zoneIndex);
+                   std::uint16_t zoneIndex, std::size_t ignoreLatent=static_cast<std::size_t>(-1), const Terrain* placementTerrain=nullptr, bool respectDormant=true);
     void notePlacement(Realm realm, Vec2 position, double radius);
-    void addLatent(std::uint16_t zoneIndex, LatentMob record);
+    void addLatent(std::uint16_t zoneIndex, LatentMob record, const ContentRegistry& content);
 
     /// True when `position` is inside somebody's viewport, grown by `margin`.
     bool seenBy(const std::vector<Viewer>& viewers, Realm realm, Vec2 position,
                 double margin) const;
+
+    struct WakeClearance {
+        const std::vector<Viewer>& viewers;
+        bool sparseRescue;
+    };
 
     /// `facing` is the way the mob faces when it appears, and so the way a
     /// chain head's body trails away behind it; unset, it is rolled. The roll
@@ -997,7 +1036,8 @@ private:
                       std::uint16_t mobIndex, Rarity rarity, Vec2 position, Realm realm,
                       double nowMillis, Rng& rng, int depth, std::uint16_t zone,
                       std::optional<double> facing = std::nullopt, bool clockGated = true,
-                      bool announce = true, bool prestigePromotion = false);
+                      bool announce = true, bool prestigePromotion = false,
+                      const WakeClearance* wakeClearance = nullptr);
 
     /// Lays a centipede's body out behind its head, each segment linked to the
     /// one in front. Driven from spawnMobAt so that every path to a head --
@@ -1052,6 +1092,16 @@ private:
     /// not carry.
     std::optional<Query<PlayerTag, Transform>> playerBodies_;
 
+    void refillStarvedPrestigeBand(World&, const Terrain&, const ContentRegistry&, double nowMillis);
+    struct LowTierGap {
+        Vec2 anchor;
+        Realm realm;
+        double since;
+        double lastSeen;
+    };
+    std::unordered_map<Entity, LowTierGap> lowTierGaps_;
+    std::array<double, kMaxRealms> nextSparseRefill_{};
+    Rng sparseRefillRng_{0xc0f11325};
     void stockGhosts(World&, const Terrain&, const ContentRegistry&, double nowMillis);
     std::array<double, kMaxRealms> nextGhostSpawnMillis_{};
     Census census_;
@@ -1061,6 +1111,8 @@ private:
     /// once. Bands from EVERY staged map, each tagged with its realm, each
     /// holding its own share of the world's latent population.
     std::vector<SpawnZone> zones_;
+    struct RefillGate { double untilMillis=0.0; int admitted=0; };
+    std::map<std::tuple<Realm,int,int>,RefillGate> refillAdmissions_;
     struct ManagedVacancy {
         std::uint16_t zone = kInvalidIndex;
         std::uint16_t mobIndex = kInvalidIndex;
@@ -1130,6 +1182,7 @@ private:
     /// arena or maze mob alive: those realms are populated whole, so "near a
     /// player" there means "someone is in here".
     std::array<bool, kMaxRealms> realmOccupied_{};
+    std::array<bool, kMaxRealms> livePlacementRealms_{};
     Realm prestigeJungleRealm_ = Realm::Arena; // No world-map candidate can match until loaded.
     Realm ordinaryJungleRealm_ = Realm::Arena;
     Realm prestigeSewersRealm_ = Realm::Arena;
@@ -1142,7 +1195,16 @@ private:
     std::array<bool, kMaxRealms> inactiveLayoutRealms_{};
     struct MobPlacement { Vec2 position; double radius; };
     std::vector<MobPlacement> mobPlacements_;
+    struct TrainingExclusion { Realm realm; Vec2 at; double radius; };
+    std::vector<TrainingExclusion> trainingExclusions_;
+    bool crowdedWakingBody(const Terrain&,const ContentRegistry&,const LatentMob&,const SpawnZone&,
+                           std::uint16_t,std::size_t,std::optional<double>);
+    double naturalSpawnGap(const SpawnZone& zone, const Viewer& viewer, double radius) const;
+    bool clearNaturalSpawn(const SpawnZone& zone,const std::vector<Viewer>& viewers,Vec2 at,double radius,double tail,double tailRadius,std::optional<double> facing) const;
+    bool nearTrainingDummy(Realm realm, Vec2 at, double radius, double tail=0.0,
+                           double tailRadius=0.0, std::optional<double> facing=std::nullopt) const;
     SpatialGrid placementGrid_;
+    SpatialGrid roomLivingGrid_{1200.0};
     std::vector<Entity> nearbyPlacements_;
     SpatialGrid latentPlacementGrid_;
     std::vector<bool> indexedLatentZones_;
@@ -1184,6 +1246,7 @@ private:
         std::uint32_t index = 0;
         double distanceSq = 0.0;
         std::optional<double> facing;
+        bool sparseRescue = false;
     };
     std::vector<WakeCandidate> wakeList_;
     std::vector<Entity> doomed_;
@@ -1202,6 +1265,7 @@ void spawnMobRingSeeds(World& world, const ContentRegistry& content, Entity mob,
 } // namespace flix
 
 FLIX_COMPONENT(flix::AmbientMob);
+FLIX_COMPONENT(flix::SilverfishHome);
 FLIX_COMPONENT(flix::NewLeechContactGrace);
 FLIX_COMPONENT(flix::SuperFarmMob);
 FLIX_COMPONENT(flix::NestWaves);

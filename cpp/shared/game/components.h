@@ -275,11 +275,14 @@ struct BurnStack {
     Entity owner = NULL_ENTITY;
     double perSecond = 0;
     double untilMillis = 0;
+    double budgetWeight = 1.0;
 };
 
 struct Afflictions {
     double blindUntilMillis = 0;
     bool toiletArmed = false;
+    bool toiletBoostActive = false;
+    // The combat timer also gates rearming after a rescue or an equipment change.
     double toiletBoostUntilMillis = 0;
     double cancer = 0.0;
     double burnPerSecond = 0.0;
@@ -583,6 +586,7 @@ struct PlayerAccount {
     std::string username;
     net::ConnectionId connection = 0;
     bool admin = false;
+    bool hidePetalTypes = false;
 };
 
 /// The talent tree as the simulation sees it.
@@ -1691,7 +1695,10 @@ struct LightningTarget {
 struct BurrowState {
     double untilMillis = 0;
     bool active = false;
-    std::uint16_t wormIndex=UINT16_MAX,desertCentipedeIndex=UINT16_MAX;
+    std::array<std::uint16_t, 8> predatorIndices{
+        UINT16_MAX, UINT16_MAX, UINT16_MAX, UINT16_MAX,
+        UINT16_MAX, UINT16_MAX, UINT16_MAX, UINT16_MAX
+    };
 };
 
 struct AttachedSilk { Entity owner = NULL_ENTITY; Entity target = NULL_ENTITY; };
@@ -1914,7 +1921,12 @@ inline bool canNoticeBurrowed(const World& world,Entity observer,Entity target){
     const auto* burrow=world.tryGet<BurrowState>(target);
     if(!burrow||!burrow->active)return true;
     for(int n=0;n<4&&world.isAlive(observer);++n){
-        if(const auto* mob=world.tryGet<MobType>(observer))return mob->configIndex==burrow->wormIndex||mob->configIndex==burrow->desertCentipedeIndex;
+        if (const auto* mob = world.tryGet<MobType>(observer)) {
+            if (mob->configIndex == UINT16_MAX) return false;
+            for (const auto predator : burrow->predatorIndices)
+                if (mob->configIndex == predator) return true;
+            return false;
+        }
         if(const auto* shot=world.tryGet<Projectile>(observer)){observer=shot->owner;continue;}
         if(const auto* field=world.tryGet<GroundEffect>(observer)){observer=field->owner;continue;}
         break;
@@ -1922,4 +1934,9 @@ inline bool canNoticeBurrowed(const World& world,Entity observer,Entity target){
     return false;
 }
 
+/// Ephemeral training protection, recomputed from live map furniture. Never persisted.
+struct TrainingProtection { Entity dummy = NULL_ENTITY; };
+
 } // namespace flix
+
+FLIX_COMPONENT(flix::TrainingProtection);

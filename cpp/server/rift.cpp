@@ -13,6 +13,12 @@ namespace {
 constexpr double kRiftMinute = 60000.0;
 constexpr double kRiftCooldownMin = 60.0;
 constexpr double kRiftCooldownMax = 120.0;
+constexpr char kRiftSchedule[] = "riftSchedule";
+constexpr char kRiftNextOpenAt[] = "nextOpenAtMillis";
+// Old saves predate this field. Require an integer millisecond timestamp
+// in the modern Unix range, not a Unix-seconds value or a damaged counter.
+constexpr double kRiftMinEpochMillis = 1e12;
+constexpr double kRiftMaxExactEpochMillis = 9007199254740991.0;
 constexpr double kRiftAdmission = 3 * kRiftMinute;
 constexpr double kRiftMatch = 60 * kRiftMinute;
 constexpr double kRiftResults = 3 * kRiftMinute;
@@ -145,12 +151,36 @@ void GameServer::leaveRift(Session& session) {
 }
 
 void GameServer::serviceRift(bool settle) {
+    const auto saveNextOpenAt = [&](double epochMillis) {
+        database_.rawTable(kRiftSchedule)[kRiftNextOpenAt] = epochMillis;
+        database_.markDirty();
+    };
+    const auto beginCooldown = [&] {
+        const double delay = rng_.range(kRiftCooldownMin, kRiftCooldownMax) * kRiftMinute;
+        riftPhase_ = RiftPhase::Cooldown;
+        riftDeadline_ = wallClockMillis_ + delay;
+        saveNextOpenAt(static_cast<double>(database_.nowMillis()) + std::ceil(delay));
+    };
     if (riftDeadline_ == 0) {
         bool found = false;
         worldMaps_.realmOfId("rift_main", found);
         spawning_->setRiftSpawning(0.0, {});
-        riftDeadline_ = found ? wallClockMillis_ + rng_.range(kRiftCooldownMin, kRiftCooldownMax) * kRiftMinute
-                              : std::numeric_limits<double>::infinity();
+        const double saved = database_.storedTable(kRiftSchedule)[kRiftNextOpenAt].asDouble();
+        if (!found) {
+            riftDeadline_ = std::numeric_limits<double>::infinity();
+        } else if (saved >= kRiftMinEpochMillis && saved <= kRiftMaxExactEpochMillis &&
+                   std::floor(saved) == saved) {
+            // The persisted timestamp is Unix time. Runtime ticks use a
+            // monotonic clock, whose origin can differ after a restart.
+            const double now = static_cast<double>(database_.nowMillis());
+            const double latest = now + kRiftCooldownMax * kRiftMinute;
+            const double nextOpenAt = std::min(saved, latest);
+            riftDeadline_ = wallClockMillis_ + std::max(0.0, nextOpenAt - now);
+            // Keep the clamped deadline across another restart after a clock rollback.
+            if (nextOpenAt != saved) saveNextOpenAt(nextOpenAt);
+        } else {
+            beginCooldown();
+        }
     }
     if (!settle) {
         if (riftPhase_ == RiftPhase::Running)
@@ -168,9 +198,11 @@ void GameServer::serviceRift(bool settle) {
             commands_.flush();
             spawning_->clearRiftPopulation();
             spawning_->setRiftSpawning(0.0, {});
-            riftPhase_ = RiftPhase::Cooldown;
-            riftDeadline_ = wallClockMillis_ + rng_.range(kRiftCooldownMin, kRiftCooldownMax) * kRiftMinute;
+            beginCooldown();
         } else if (riftPhase_ == RiftPhase::Cooldown) {
+            // This opening has been consumed. A match itself is not resumed.
+            database_.rawTable(kRiftSchedule).erase(kRiftNextOpenAt);
+            database_.markDirty();
             static constexpr const char* layouts[] = {
                 "rift_pyramid", "rift_pyramid_alt", "rift_pyramid_west", "rift_pyramid_east"
             };

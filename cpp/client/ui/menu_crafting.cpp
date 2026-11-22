@@ -37,6 +37,7 @@
 #include <cstdint>
 #include <cstdio>
 
+#include "client/ui/craft_bulk_confirmation.h"
 #include "client/ui/item_tile.h"
 #include "client/ui/menu_theme.h"
 #include "client/ui/menus.h"
@@ -196,6 +197,7 @@ void CraftingPanel::reopen() {
     // Keep the staged stack, scroll position and any server result on the ring.
     bulkArmed_ = false;
     editingBlacklist_ = false;
+    mythicUltraMaterials_.reset();
     grid_.endDrag();
     searchField_.blur();
     tooltip_.reset();
@@ -348,6 +350,7 @@ bool CraftingPanel::render(MenuContext& ctx) {
     if (inRift) {
         bulkArmed_ = false;
         editingBlacklist_ = false;
+        mythicUltraMaterials_.reset();
         fillAllMode_ = false;
         heldPetal_ = kNoPetal;
     }
@@ -382,6 +385,42 @@ bool CraftingPanel::render(MenuContext& ctx) {
         drawSlotCard(canvas, ctx.bounds, kCraftingSkin, menuTitle(MenuId::Crafting),
                      tr(Msg::Craft), mouse);
     const Rect panel = card.panel;
+    if (mythicUltraMaterials_) {
+        const auto ticket = ctx.net.mythicUltraTicket(mythicUltraRequest_);
+        const auto state = mythicUltraRequest_ == 0 || (ticket && *ticket == 0)
+            ? MythicUltraCraftState::Refresh
+            : (ticket ? MythicUltraCraftState::Ready : MythicUltraCraftState::Preparing);
+        const auto buttons = drawMythicUltraConfirmation(ctx, card, *mythicUltraMaterials_,
+                                                         mythicUltraRefreshed_, state);
+        if (ctx.pressed()) {
+            if (card.close.contains(mouse) || buttons.cancel.contains(mouse)) {
+                mythicUltraMaterials_.reset();
+            } else if (state != MythicUltraCraftState::Preparing && buttons.confirm.contains(mouse)) {
+                // Pickups leave the approved counts intact. A shortage needs a fresh
+                // preview and another click before the server can spend anything.
+                const bool shortOnMaterials = std::any_of(
+                    mythicUltraMaterials_->begin(), mythicUltraMaterials_->end(), [&](const auto& stack) {
+                        return profile.stackCount(stack.petalIndex, stack.rarity) < stack.count;
+                    });
+                if (state == MythicUltraCraftState::Refresh || shortOnMaterials) {
+                    *mythicUltraMaterials_ = mythicUltraCraftMaterials(profile, ctx.settings.craftBlacklist);
+                    mythicUltraRefreshed_ = true;
+                    mythicUltraRequest_ = ctx.net.prepareMythicUltraCraft(*mythicUltraMaterials_);
+                } else {
+                    ctx.net.confirmMythicUltraCraft(*ticket);
+                    mythicUltraMaterials_.reset();
+                }
+            }
+        }
+        return true;
+    }
+    if (drawPanelExpand(ctx, card.close.y + card.close.h * 0.5, kCraftingSkin.fill, expanded_)) {
+        expanded_ = !expanded_;
+        searchField_.blur();
+        grid_.endDrag();
+        heldPetal_ = kNoPetal;
+        return true;
+    }
     // florr's old client turns this window over to Absorb with a button in
     // Absorb's purple beside the close button.
     const Rect switchRect = drawSlotSwitch(canvas, card, kAbsorbSkin.fill, mouse,
@@ -581,25 +620,35 @@ bool CraftingPanel::render(MenuContext& ctx) {
     const auto bulkRunTint = inRift ? std::nullopt
         : std::optional<std::uint32_t>{bulkArmed_ ? 0xCC6644u : 0x5A9FDBu};
     drawSlotButton(canvas, bulkRun, bulkRunLabel, bulkRunTint, !inRift && bulkRun.contains(mouse), false);
-    const Rect blacklistButton{bulkPrev.x, bulkPrev.y + 36, panel.w - 24 - (editingBlacklist_ ? 100 : 0), 30};
+    const Rect mythicUltraEntry = mythicUltraCraftEntry(panel, card.listView);
+    const Rect blacklistButton{bulkPrev.x, bulkPrev.y + 36,
+                               panel.w - 24 - (editingBlacklist_ ? 100.0 : mythicUltraEntry.w + 6.0), 30};
     const Rect clearBlacklist{blacklistButton.right() + 5, blacklistButton.y, 95, 30};
     const std::string blacklistLabel = (bulkChinese ? "合成黑名单（" : "Excluded types (") +
         std::to_string(ctx.settings.craftBlacklist.size()) + (bulkChinese ? "）：" : "): ") +
         (editingBlacklist_ ? (bulkChinese ? "点击花瓣切换，点此完成 · 自动保存" : "Click petals to toggle · Done")
-                           : (bulkChinese ? "点击设置 · 批量合成跳过这些种类" : "Edit · bulk crafting skips these types"));
+                           : (bulkChinese ? "点击设置" : "Edit"));
     const auto blacklistTint = inRift ? std::nullopt
         : std::optional<std::uint32_t>{editingBlacklist_ ? 0xCC6644u : 0x5A9FDBu};
     drawSlotButton(canvas, blacklistButton, blacklistLabel.c_str(), blacklistTint,
                    !inRift && blacklistButton.contains(mouse), false);
     if (editingBlacklist_) drawSlotButton(canvas, clearBlacklist, bulkChinese ? "清空名单" : "Clear list",
                                           0xCC6644u, clearBlacklist.contains(mouse), false);
+    const bool canOpenMythicUltra = !inRift && !waiting && !editingBlacklist_ && ctx.net.haveSession();
+    if (!editingBlacklist_) {
+        const auto tint = canOpenMythicUltra ? std::optional<std::uint32_t>{0x5A9FDBu} : std::nullopt;
+        drawSlotButton(canvas, mythicUltraEntry, trEnZh("Craft Mythic & Ultra", "仅合成神话、究极"),
+                       tint, canOpenMythicUltra && mythicUltraEntry.contains(mouse), false);
+    }
     const auto isExcluded = [&](std::uint16_t index) {
         const auto& ids = ctx.settings.craftBlacklist;
         return std::find(ids.begin(), ids.end(), content().petal(index).id) != ids.end();
     };
     const Rect searchRect{panel.x + 12.0, bulkCard.listView.y - kSearchBandHeight,
                           panel.w - 24.0, 28.0};
-    if (editSlotSearch(ctx, searchRect, search_, searchField_)) grid_.reset();
+    if (editSlotSearch(ctx, searchRect, search_, searchField_,
+                       trEnZh("Petal name or rarity", "查找花瓣名称或品质"))) grid_.reset();
+    const CraftSearchQuery query = parseCraftSearch(search_);
     SlotGrid::Pick inspected;
     const std::optional<SlotGrid::Pick> hovered = grid_.render(
         ctx, bulkCard, kCraftingSkin, SlotGridTiers::PermanentHyper,
@@ -620,7 +669,7 @@ bool CraftingPanel::render(MenuContext& ctx) {
             if (cell.count > 1) cell.badge = "x" + stackCountText(cell.count);
             if (isExcluded(petalIndex)) cell.badge = bulkChinese ? "排除" : "Skip";
             return cell;
-        }, true, &inspected, search_);
+        }, true, &inspected, {}, &query, expanded_);
 
     // Craft + Craft All toggle side by side, centred on the card's button
     // anchor. Craft All is a mode, not a one-shot: while on, a click on a
@@ -715,6 +764,16 @@ bool CraftingPanel::render(MenuContext& ctx) {
     }
     // Rift materials remain inspectable, but no crafting input can change the panel.
     if (inRift) return true;
+    if (ctx.pressed() && canOpenMythicUltra && mythicUltraEntry.contains(mouse)) {
+        mythicUltraMaterials_ = mythicUltraCraftMaterials(profile, ctx.settings.craftBlacklist);
+        mythicUltraRequest_ = ctx.net.prepareMythicUltraCraft(*mythicUltraMaterials_);
+        mythicUltraRefreshed_ = false;
+        bulkArmed_ = false;
+        heldPetal_ = kNoPetal;
+        grid_.endDrag();
+        searchField_.blur();
+        return true;
+    }
 
     const auto stageAmount = [&]() -> std::uint32_t {
         return (fillAllMode_ || ctx.window.shiftHeld()) ? UINT32_MAX : 1u;

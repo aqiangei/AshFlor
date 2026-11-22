@@ -44,6 +44,7 @@ enum EquipFlag : std::uint16_t {
     /// (user, 2026-10-22) -- not only while it holds the flower Undead.
     EquipBandage = 1 << 8,
     EquipPharaohCrown = 1 << 9,
+    EquipApexPharaohCrown = 1 << 13,
     EquipMagicEye = 1 << 10,
     EquipCatEars = 1 << 11,
     EquipHalo = 1 << 12,

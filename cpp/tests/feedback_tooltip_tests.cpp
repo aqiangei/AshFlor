@@ -16,7 +16,7 @@ TEST(laser_and_void_tooltips_explain_the_available_effects) {
         for (const auto& line : lines) if (line.text.find(text) != std::string::npos) return true;
         return false;
     };
-    CHECK(hasLine(Rarity::Unique, "This tier deals contact damage only."));
+    CHECK(hasLine(Rarity::Unique, "fires a continuous lightning beam."));
     CHECK(!hasLine(Rarity::Unique, "390 units"));
     CHECK(hasLine(Rarity::PermanentHyper, "390 units"));
     CHECK(std::string(ui::petalDescTr("void_singularity", "")).find("33%") != std::string::npos);
@@ -34,8 +34,8 @@ TEST(fang_and_tooth_tooltips_report_their_mana_refunds) {
         for (const auto& line : lines) if (line.text == expected) return true;
         return false;
     };
-    CHECK(hasLine("magic_fang", Rarity::Common, "Mana per damaging bite on a wild mob: 1.2"));
-    CHECK(hasLine("magic_fang", Rarity::Rare, "Mana per damaging bite on a wild mob: 4.8"));
+    CHECK(hasLine("magic_fang", Rarity::Common, "Mana per damaging wild mob / dummy bite: 1.2"));
+    CHECK(hasLine("magic_fang", Rarity::Rare, "Mana per damaging wild mob / dummy bite: 4.8"));
     CHECK(hasLine("magic_tooth", Rarity::Common, "Mana restored at most once per reload: 0.3"));
     CHECK(hasLine("jurassic_fossil_egg", Rarity::Common, "Summon contact damage: 0"));
 }
@@ -137,6 +137,35 @@ TEST(goggles_reduce_visible_width_by_twenty_percent_without_stacking){
     p.loadout[0]={};p.loadout[1]={};CHECK_NEAR(loadoutCameraZoom(p,content()),normal,1e-9);
 }
 
+TEST(goggles_tooltip_explains_ghost_tiers_and_actual_view_penalty) {
+    std::string error;
+    CHECK(loadContent(testsupport::dataDir(), error));
+    const auto goggles = content().petalIndex("paranormal_goggles");
+    const auto oldLanguage = ui::language();
+    Profile profile;
+    profile.loadout.resize(kLoadoutSlots);
+    for (const auto language : {ui::Language::En, ui::Language::Zh}) {
+        ui::setLanguage(language);
+        for (const auto rarity : {Rarity::Common, Rarity::PermanentHyper, Rarity::Ascendant}) {
+            profile.loadout[0] = {goggles, rarity};
+            const double zoom = loadoutCameraZoom(profile, content());
+            CHECK_NEAR(zoom, rarity == Rarity::Common ? 1.25 : 1.3, 1e-9);
+            const auto text = ui::petalTooltipLines(goggles, rarity, {}, 1);
+            const std::string loss = rarity == Rarity::Common ? "20%" : "23%";
+            bool explainsGhosts = false;
+            for (const auto& line : text) {
+                const auto tierExplanation = language == ui::Language::Zh ? "同品质或更低品质" : "rarity or below";
+                explainsGhosts |= line.text.find(tierExplanation) != std::string::npos &&
+                                  line.text.find(loss) != std::string::npos;
+                CHECK(line.text.find("Mysterious hint") == std::string::npos);
+                CHECK(line.text.find("神秘提示") == std::string::npos);
+            }
+            CHECK(explainsGhosts);
+        }
+    }
+    ui::setLanguage(oldLanguage);
+}
+
 TEST(mimic_wraps_within_its_row_and_all_mimic_rows_terminate) {
     std::string error; CHECK(loadContent(testsupport::dataDir(),error));
     Loadout row; const auto mimic=content().petalIndex("mimic");
@@ -208,4 +237,32 @@ TEST(mimic_ram_shows_mimic_identity_and_effective_sawblade) {
     CHECK_EQ(zh.front().text, "拟态");
     CHECK_EQ(zh.back().text, "实际复制效果：锯片");
     ui::setLanguage(oldLanguage);
+}
+
+
+TEST(a_long_unspaced_tooltip_description_stays_within_its_wrap_width) {
+    std::string text;
+    for (int i = 0; i < 16; ++i) text += u8"这行花瓣说明需要正确换行";
+    flix::ui::TooltipLine line{text, 14.0};
+    line.maxWidth = 180.0;
+    const auto size = flix::ui::measureTooltip({line});
+    CHECK(size.x < 205.0);
+    CHECK(size.y > 30.0);
+}
+
+TEST(fission_tooltips_split_the_real_chinese_description_into_bounded_rows) {
+    std::string error;
+    if (!loadContent(testsupport::dataDir(), error)) { CHECK(false); return; }
+    ui::setLanguage(ui::Language::Zh);
+    for (const char* id : {"fission", "arctic_fission"}) {
+        const auto index = content().petalIndex(id);
+        const auto lines = ui::petalTooltipLines(index, Rarity::Unique, {}, 1.0);
+        CHECK(lines.size() >= 3u);
+        if (lines.size() < 3) continue;
+        CHECK(lines[2].text.find('\n') != std::string::npos);
+        const auto size = ui::measureTooltip({lines[2]});
+        CHECK(size.x < 255.0);
+        CHECK(size.y > 60.0);
+    }
+    ui::setLanguage(ui::Language::En);
 }

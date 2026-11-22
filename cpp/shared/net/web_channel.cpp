@@ -8,6 +8,10 @@ void setCouncilHandler(CouncilHandler handler) { councilHandler=std::move(handle
 #ifdef __EMSCRIPTEN__
 
 #include <emscripten.h>
+extern "C" EMSCRIPTEN_KEEPALIVE char* flix_transfer_buffer() {
+    static char buffer[1024 + 1048577];
+    return buffer;
+}
 extern "C" EMSCRIPTEN_KEEPALIVE char* flix_council_buffer() { static char buffer[8192]; return buffer; }
 extern "C" EMSCRIPTEN_KEEPALIVE const char* flix_council_request(const char* token,const char* body) {
  static std::string result;
@@ -518,9 +522,245 @@ EM_JS(int, flix_ch_listen,
     }
   };
 
+  const transferConfig = (() => {
+    try {
+      const realm = process.env.FLIX_TRANSFER_REALM;
+      const origin = new URL(process.env.FLIX_TRANSFER_ORIGIN);
+      const peers = JSON.parse(process.env.FLIX_TRANSFER_PEERS || "{}");
+      const entries = JSON.parse(process.env.FLIX_TRANSFER_ENTRIES || "{}");
+      const key = process.env.FLIX_TRANSFER_KEY || "";
+      if (!/^[123]$/.test(realm) || !/^[a-f0-9]{64}$/.test(key) ||
+          !(origin.protocol === "https:" || origin.hostname === "127.0.0.1")) return null;
+      for (const [id, address] of Object.entries(peers)) {
+        if (!/^[123]$/.test(id) || id === realm) return null;
+        const peer = new URL(address);
+        if (!(peer.protocol === "https:" || peer.hostname === "127.0.0.1") ||
+            peer.username || peer.password) return null;
+        peers[id] = peer.origin;
+        const entry = new URL(entries[id]);
+        if (!(entry.protocol === "https:" || entry.hostname === "127.0.0.1") ||
+            entry.username || entry.password) return null;
+        if (entry.pathname !== "/" && entry.pathname !== "/transfer/" + id + "/") return null;
+        if (entry.search || entry.hash) return null;
+        entries[id] = entry.pathname === "/" ? entry.origin : entry.href;
+      }
+      return {realm, origin:origin.origin, peers, entries, key};
+    } catch (_) { return null; }
+  })();
+  const transferJobs = new Set();
+  const transferReply = (response, status, value) => {
+    if (response.destroyed) return;
+    response.writeHead(status, {"Content-Type":"application/json; charset=utf-8",
+      "Cache-Control":"no-store", "Referrer-Policy":"no-referrer"});
+    response.end(JSON.stringify(value));
+  };
+  const transferLoopback = request => ["127.0.0.1", "::1", "::ffff:127.0.0.1"]
+    .includes(request.socket.remoteAddress);
+  const transferSecure = request => request.socket.encrypted ||
+    (transferLoopback(request) && request.headers["x-forwarded-proto"] === "https");
+  const transferInput = async (request, max) => {
+    if (request.method !== "POST" || request.headers["content-type"] !== "application/json")
+      throw Error("invalid_request");
+    let size = 0;
+    const chunks = [];
+    for await (const chunk of request) {
+      size += chunk.length;
+      if (size > max) throw Error("invalid_request");
+      chunks.push(chunk);
+    }
+    const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") throw Error("invalid_request");
+    return parsed;
+  };
+  const transferLocal = (token, action, input) => {
+    const payload = JSON.stringify({...input, action:"account-transfer-" + action});
+    if (Buffer.byteLength(payload) > 1048576 || token.length > 512) return {error:"invalid_request"};
+    const ptr = _flix_transfer_buffer();
+    stringToUTF8(token,ptr,1024);
+    stringToUTF8(payload,ptr+1024,1048577);
+    return JSON.parse(UTF8ToString(_flix_council_request(ptr,ptr+1024)));
+  };
+  const finishTransferredSource = operation => {
+    const snapshot = transferLocal("","source-archive",operation);
+    if (!snapshot.ok || snapshot.alreadyDeleted) return snapshot;
+    if (snapshot.operation !== operation.operation || !snapshot.account?.id) return {error:"save_pending"};
+    const fs = require("node:fs");
+    const files = require("node:path");
+    const crypto = require("node:crypto");
+    const dbOption = process.argv.lastIndexOf("--db");
+    const database = files.resolve(dbOption >= 0 ? process.argv[dbOption+1] : "inventory.json");
+    const parent = files.dirname(database);
+    const archiveDir = files.join(parent,"transfer-archives");
+    const archivePath = files.join(archiveDir,operation.operation+".json");
+    const syncDirectory = directory => {
+      const fd = fs.openSync(directory,"r");
+      try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+    };
+    try {
+      try {fs.mkdirSync(archiveDir,{mode:0o700});}
+      catch (error) {if (error.code !== "EEXIST") throw error;}
+      const dirStat = fs.lstatSync(archiveDir);
+      if (!dirStat.isDirectory() || (dirStat.mode & 0o077)) return {error:"save_pending"};
+      if (!fs.existsSync(archivePath)) {
+        const temp = archivePath+"."+crypto.randomBytes(12).toString("hex")+".tmp";
+        try {
+          const fd = fs.openSync(temp,"wx",0o600);
+          try {fs.writeFileSync(fd,JSON.stringify(snapshot));fs.fsyncSync(fd);}
+          finally {fs.closeSync(fd);}
+          try {fs.linkSync(temp,archivePath);}
+          catch (error) {if(error.code !== "EEXIST") throw error;}
+        } finally {
+          try {fs.unlinkSync(temp);} catch (error) {if(error.code !== "ENOENT") throw error;}
+        }
+      }
+      const fd = fs.openSync(archivePath,fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+      let bytes;
+      try {
+        const file = fs.fstatSync(fd);
+        if (!file.isFile() || (file.mode & 0o077)) return {error:"save_pending"};
+        bytes = fs.readFileSync(fd);
+        fs.fsyncSync(fd);
+      } finally {fs.closeSync(fd);}
+      const saved = JSON.parse(bytes);
+      if (saved.operation !== operation.operation || saved.account?.id !== snapshot.account.id ||
+          !saved.progress || !saved.migration) return {error:"save_pending"};
+      syncDirectory(archiveDir);
+      syncDirectory(parent);
+      const archiveSha256 = crypto.createHash("sha256").update(bytes).digest("hex");
+      return transferLocal("","erase-source",{...operation,archiveSha256});
+    } catch (_) {
+      return {error:"save_pending"};
+    }
+  };
+  const transferRemote = async (origin, action, input) => {
+    const response = await fetch(origin + "/internal/account-transfer", {
+      method:"POST", headers:{"Content-Type":"application/json",
+        "X-Flix-Transfer-Key":transferConfig.key},
+      body:JSON.stringify({...input, action}), signal:AbortSignal.timeout(12000), redirect:"error"
+    });
+    if (!response.ok) throw Error("save_pending");
+    return response.json();
+  };
+  const serveTransfer = async (request, response, internal) => {
+    const reply = (status,value) => transferReply(response,status,value);
+    if (!transferConfig) return reply(404,{error:"unavailable"});
+    if (internal) {
+      const supplied = request.headers["x-flix-transfer-key"];
+      if (!(transferSecure(request) || transferLoopback(request)) ||
+          typeof supplied !== "string" || !/^[a-f0-9]{64}$/.test(supplied) ||
+          !require("node:crypto").timingSafeEqual(Buffer.from(supplied), Buffer.from(transferConfig.key)))
+        return reply(403,{error:"forbidden"});
+      const input = await transferInput(request,1048576);
+      if (!["stage","activate","status"].includes(input.action) ||
+          typeof input.operation !== "string" || !/^[a-f0-9]{64}$/.test(input.operation))
+        return reply(400,{error:"invalid_request"});
+      return reply(200,transferLocal("",input.action,input));
+    }
+    if (!(transferSecure(request) || transferConfig.origin.startsWith("http://127.0.0.1:") && transferLoopback(request)))
+      return reply(403,{error:"secure_connection_required"});
+    if (request.method === "GET") {
+      return reply(200,{realm:transferConfig.realm,
+        targets:Object.fromEntries(Object.keys(transferConfig.peers).map(id => [id,transferConfig.entries[id]]))});
+    }
+    if (request.headers.origin !== transferConfig.origin) return reply(403,{error:"forbidden"});
+    const input = await transferInput(request,4096);
+    const {receipt, realm, username, password} = input;
+    const remote = typeof realm === "string" && /^[123]$/.test(realm) && transferConfig.peers[realm];
+    if (!remote || typeof receipt !== "string" || !/^[a-f0-9]{64}$/.test(receipt) ||
+        typeof username !== "string" || Buffer.byteLength(username)>64 ||
+        typeof password !== "string" || !password || Buffer.byteLength(password)>72)
+      return reply(400,{error:"invalid_request"});
+    const operationId = require("node:crypto").createHash("sha256").update(receipt).digest("hex");
+    if (transferJobs.has(operationId) || transferJobs.size >= 4) return reply(409,{error:"busy"});
+    transferJobs.add(operationId);
+    try {
+      const token = String(request.headers.authorization || "").replace(/^Bearer /,"");
+      const operation = {operation:operationId,realm,username};
+      const prepared = transferLocal(token,"prepare",operation);
+      if (prepared.error) return reply(200,prepared);
+      if (prepared.delivered) {
+        const finished = finishTransferredSource(operation);
+        return reply(200,finished.ok ? {ok:true} : finished);
+      }
+      if (prepared.state === "frozen") {
+        const staged = await transferRemote(remote,"stage",{
+          operation:operationId,username,password,expiresAt:prepared.expiresAt,
+          progress:prepared.progress,codes:prepared.codes
+        });
+        if (["username_taken","invalid_username","invalid_password"].includes(staged.error)) {
+          const cancelled = transferLocal("","cancel",operation);
+          return reply(200,cancelled.ok ? staged : cancelled);
+        }
+        if (!staged.ok) return reply(200,{error:staged.error === "password_mismatch" ?
+          "password_mismatch" : "save_pending"});
+        const final = transferLocal("","finalize",operation);
+        if (!final.ok) return reply(200,final);
+      } else if (prepared.state !== "transferred") {
+        return reply(200,{error:"save_pending"});
+      }
+      const active = await transferRemote(remote,"activate",operation);
+      if (!active.ok) return reply(200,{error:"save_pending"});
+      const delivered = transferLocal("","delivered",operation);
+      if (!delivered.ok) return reply(200,delivered);
+      const finished = finishTransferredSource(operation);
+      return reply(200,finished.ok ? {ok:true} : finished);
+    } catch (_) {
+      return reply(503,{error:"save_pending"});
+    } finally {
+      transferJobs.delete(operationId);
+    }
+  };
+
+  let transferCursor = "";
+  let transferRecoveryRunning = false;
+  const recoverTransfers = async () => {
+    if (transferRecoveryRunning) return;
+    transferRecoveryRunning = true;
+    try {
+      const result = transferLocal("","pending",{after:transferCursor});
+      if (!Array.isArray(result.jobs)) return;
+      const jobs = result.jobs;
+      transferCursor = jobs.length === 4 ? jobs.at(-1).operation : "";
+      await Promise.all(jobs.map(async job => {
+        const remote = transferConfig.peers[job.realm];
+        if (!remote || transferJobs.size >= 8 || transferJobs.has(job.operation)) return;
+        transferJobs.add(job.operation);
+        try {
+          if (job.delivered) {
+            finishTransferredSource(job);
+            return;
+          }
+          if (job.state === "frozen") {
+            const status = await transferRemote(remote,"status",job);
+            if (!status.ok || typeof status.present !== "boolean") return;
+            if (!status.present) {
+              transferLocal("","cancel",job);
+              return;
+            }
+            if (!transferLocal("","finalize",job).ok) return;
+          }
+          const active = await transferRemote(remote,"activate",job);
+          if (active.ok && transferLocal("","delivered",job).ok)
+            finishTransferredSource(job);
+        } catch (_) {
+          // A missing reply is inconclusive. Keep the saved state for a
+          // later bounded pass, and let other jobs proceed independently.
+        } finally {
+          transferJobs.delete(job.operation);
+        }
+      }));
+    } finally { transferRecoveryRunning = false; }
+  };
+
   const councilLimits = new Map();
   const onRequest = (request, response) => {
     const url = (request.url || "/").split("?")[0];
+    if (url === "/api/account-transfer" || url === "/internal/account-transfer") {
+      request.setTimeout(18000,() => request.destroy());
+      serveTransfer(request,response,url.startsWith("/internal/")).catch(() =>
+        transferReply(response,400,{error:"invalid_request"}));
+      return;
+    }
     if (url === "/api/council" || url === "/api/workshop-access") {
       // Production Nginx connects from loopback and overwrites X-Real-IP.
       // Rate-limit the visitor, not the shared proxy; never trust this header
@@ -557,6 +797,9 @@ EM_JS(int, flix_ch_listen,
           }
           if(!parsed || Array.isArray(parsed) || typeof parsed!=="object" ||
              Object.keys(parsed).some(key=>!["action","title","id","choice"].includes(key) || typeof parsed[key]!=="string")) {
+            response.writeHead(400);response.end();return;
+          }
+          if (parsed.action?.startsWith("account-transfer-")) {
             response.writeHead(400);response.end();return;
           }
           if(Module.flixAuthority && !parsed.action?.startsWith("skin-review-")) {
@@ -645,6 +888,11 @@ EM_JS(int, flix_ch_listen,
 
   const http = credentials ? require("https") : require("http");
   const server = credentials ? http.createServer(credentials, onRequest) : http.createServer(onRequest);
+  if (transferConfig) {
+    const recoveryTimer = setInterval(() => recoverTransfers().catch(() => {}),15000);
+    recoveryTimer.unref();
+    server.once("close",() => clearInterval(recoveryTimer));
+  }
 
   // --- the WebSocket server --------------------------------------------------
   // Written out rather than required from npm, because a dependency here is a
@@ -657,9 +905,9 @@ EM_JS(int, flix_ch_listen,
   // smaller than living with that failure mode. dist/ now needs nothing
   // installed beside it at all.
   //
-  // Deliberately absent: permessage-deflate, which is never negotiated because
-  // no extension is ever echoed -- these payloads are already-packed binary and
-  // compressing them again would cost CPU per tick to save nothing.
+  // Optional transport compression keeps the game protocol and old clients intact.
+  const wsDeflate = process.env.FLIX_WS_DEFLATE === "1" ? require("zlib") : null;
+  const deflateTail = Buffer.from([0, 0, 255, 255]);
 
   // The RFC`s constant. Hashed with the client`s key, it is the whole of the
   // handshake`s proof that a WebSocket server -- rather than something that
@@ -674,11 +922,11 @@ EM_JS(int, flix_ch_listen,
   // A frame this side sends: FIN always set, never masked (the RFC forbids a
   // server masking), and header and payload in one allocation so they leave as
   // one write -- two would be two segments on a NODELAY socket.
-  const encode = (opcode, payload) => {
+  const encode = (opcode, payload, compressed = false) => {
     const length = payload.length;
     const headerBytes = length < 126 ? 2 : length < 65536 ? 4 : 10;
     const out = Buffer.allocUnsafe(headerBytes + length);
-    out[0] = 0x80 | opcode;
+    out[0] = 0x80 | (compressed ? 0x40 : 0) | opcode;
     if (length < 126) {
       out[1] = length;
     } else if (length < 65536) {
@@ -698,6 +946,10 @@ EM_JS(int, flix_ch_listen,
   // Every upgraded socket, so that closing the listener closes them too rather
   // than leaving a process alive on sockets nobody will read again.
   const open = new Set();
+  let compressionWindow = 0, compressionSpent = 0;
+  const wsDeflateOptions = wsDeflate && {
+    level: 1, finishFlush: wsDeflate.constants.Z_SYNC_FLUSH
+  };
 
   server.on("upgrade", (request, socket, head) => {
     const refuse = (status, reason, extra) => {
@@ -730,6 +982,13 @@ EM_JS(int, flix_ch_listen,
     const offered = String(headers["sec-websocket-protocol"] || "")
                         .split(",").map((name) => name.trim());
     if (offered.indexOf("binary") >= 0) response.push("Sec-WebSocket-Protocol: binary");
+    const compress = wsDeflate && String(headers["sec-websocket-extensions"] || "")
+      .split(",").some(offer => {
+        const params = offer.split(";").map(part => part.trim());
+        return params[0] === "permessage-deflate" &&
+          (params.length === 1 || (params.length === 2 && params[1] === "client_max_window_bits"));
+      });
+    if (compress) response.push("Sec-WebSocket-Extensions: permessage-deflate; server_no_context_takeover; client_no_context_takeover");
     socket.write(response.join("\r\n") + "\r\n\r\n");
     // A tick`s worth of state is a few hundred bytes; waiting 40ms for a
     // fuller segment is the whole latency budget.
@@ -782,7 +1041,22 @@ EM_JS(int, flix_ch_listen,
     }, 20_000);
     keepAliveTimer.unref();
     channel.sender = (bytes) => {
-      const frame = encode(0x2, bytes);
+      let packed = null;
+      // Compression runs inline, so skip small packets and keep a shared
+      // time budget across connections. Uncompressed messages remain legal.
+      if (compress && bytes.length >= 512) {
+        const now = performance.now();
+        if (now - compressionWindow >= 50) {
+          compressionWindow = now;
+          compressionSpent = 0;
+        }
+        if (compressionSpent < 3) {
+          const result = wsDeflate.deflateRawSync(bytes, wsDeflateOptions);
+          compressionSpent += performance.now() - now;
+          if (result.length - 4 + 32 < bytes.length) packed = result.subarray(0, -4);
+        }
+      }
+      const frame = encode(0x2, packed || bytes, packed !== null);
       socket.write(frame);
       sent += frame.length;
       mark();
@@ -812,6 +1086,20 @@ EM_JS(int, flix_ch_listen,
     let held = head && head.length ? Buffer.from(head) : Buffer.alloc(0);
     let fragments = null;
     let fragmentBytes = 0;
+    let fragmentCompressed = false;
+    const deliver = (payload, compressed) => {
+      if (!compressed) { net.deliver(channel, payload); return; }
+      let plain;
+      try {
+        plain = wsDeflate.inflateRawSync(Buffer.concat([payload, deflateTail]), {
+          finishFlush: wsDeflate.constants.Z_SYNC_FLUSH, maxOutputLength: kMaxMessageBytes
+        });
+      } catch (error) {
+        drop("invalid compressed message", error.code === "ERR_BUFFER_TOO_LARGE" ? 1009 : 1002);
+        return;
+      }
+      net.deliver(channel, plain);
+    };
 
     const consume = (chunk) => {
       if (channel.state === 2) return;
@@ -822,12 +1110,12 @@ EM_JS(int, flix_ch_listen,
         if (held.length < 2) return;
         const first = held[0];
         const second = held[1];
-        // No extension was negotiated, so a reserved bit means the peer is
-        // speaking something this cannot read.
-        if ((first & 0x70) !== 0) return drop("reserved bits set", 1002);
         const fin = (first & 0x80) !== 0;
         const opcode = first & 0x0f;
         const control = opcode >= 0x8;
+        const compressed = (first & 0x40) !== 0;
+        if ((first & 0x30) || (compressed && (!compress || control || opcode === 0)))
+          return drop("reserved bits set", 1002);
         let length = second & 0x7f;
         let at = 2;
         if (length === 126) {
@@ -883,7 +1171,8 @@ EM_JS(int, flix_ch_listen,
           if (fragmentBytes > kMaxMessageBytes) return drop("message too large", 1009);
           fragments.push(payload);
           if (fin) {
-            net.deliver(channel, Buffer.concat(fragments, fragmentBytes));
+            deliver(Buffer.concat(fragments, fragmentBytes), fragmentCompressed);
+            if (channel.state === 2) return;
             fragments = null;
             fragmentBytes = 0;
           }
@@ -893,7 +1182,8 @@ EM_JS(int, flix_ch_listen,
         if (fragments) return drop("message inside a message", 1002);
         // Text and binary arrive the same way: transport.cpp`s own length
         // prefix is what finds message boundaries, not the opcode.
-        if (fin) { net.deliver(channel, payload); continue; }
+        if (fin) { deliver(payload, compressed); if (channel.state === 2) return; continue; }
+        fragmentCompressed = compressed;
         fragments = [payload];
         fragmentBytes = length;
       }
@@ -1042,7 +1332,8 @@ EM_JS(int, flix_ch_send, (int id, const char* data, int size), {
   try {
     // Copied out of the heap, not a view into it: the transport keeps the
     // bytes past this call and the heap can move under it when memory grows.
-    channel.sender(HEAPU8.slice(data, data + size));
+    const start = data >>> 0;
+    channel.sender(HEAPU8.slice(start, start + size));
     return 1;
   } catch (e) {
     Module.flixNet.fail(channel, e);

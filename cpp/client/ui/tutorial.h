@@ -47,8 +47,6 @@ struct TutorialStep {
     /// The description, `<strong>`, `<em>` and `<br>` included -- the
     /// browser's markup, kept as it was written there.
     const char* description;
-    /// False on the steps whose `skipButton: false` hides the Skip button.
-    bool skipButton;
     /// A step that waits for a gesture shows no Next button at all -- the
     /// browser gates that button on `!step.condition`.
     TutorialGesture gesture;

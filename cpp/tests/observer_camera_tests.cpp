@@ -40,7 +40,7 @@ TEST(observer_black_screen_loadout_swap_and_saved_zoom) {
  const char* file="/tmp/flix-observer-zoom-settings.txt";
  {std::ofstream out(file);out<<"zoom 0.25\n";}
  ClientSettings settings; CHECK(settings.load(file));
- CHECK_NEAR(settings.zoom,1.0,1e-9);
- CHECK_NEAR(kMinZoom,1.0,1e-9);
+ CHECK_NEAR(settings.zoom,0.25,1e-9);
+ CHECK_NEAR(kMinZoom,0.25,1e-9);
  std::remove(file);
 }

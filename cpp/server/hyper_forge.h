@@ -28,11 +28,40 @@ inline HyperForgeState hyperForgeState(const Database& db,const std::string& pet
 struct HyperForgeResult {
     bool ok=false;int consumed=0;std::string reason;std::vector<std::string> affected;
 };
+inline int physicalApexCount(const PlayerRecord& record,const std::string& petal){
+    int n=static_cast<int>(std::max<std::int64_t>(0,record.itemCount(Rarity::Apex,"petal_"+petal)));
+    for(const auto& slot:record.loadout)if(slot&&slot->rarity==Rarity::Apex&&slot->petalType==petal)++n;
+    return n;
+}
+inline int hyperClaimCount(const Database& db, const std::string& userId,
+                           const std::string& petal, Rarity rarity) {
+    if (rarity != Rarity::Apex && rarity != Rarity::Ascendant) return 0;
+
+    int count = 0;
+    for (const auto& [key, row] : db.storedTable("hyperForges").members()) {
+        if (row["owner"].asString() != userId) continue;
+        if (key.rfind("apex-hammer:", 0) == 0) {
+            if (rarity == Rarity::Ascendant && petal == "mjolnir") ++count;
+            continue;
+        }
+        const auto colon = key.find(':');
+        if (rarity == Rarity::Apex &&
+            (colon == std::string::npos ? key : key.substr(colon + 1)) == petal) ++count;
+    }
+    return count;
+}
 inline int hyperHoldingCount(const Database& db,const std::string& userId){
     std::map<std::string,std::int64_t> physical,claims;
     if(const auto* record=db.findProgress(userId)){
-        for(const auto& [key,value]:record->inventory["apex"].members())if(key.rfind("petal_",0)==0)physical[key.substr(6)]+=std::max(0,value.asInt());
-        for(const auto& slot:record->loadout)if(slot&&slot->rarity==Rarity::Apex)++physical[slot->petalType];
+        // A coin paid out by the trader is not a forge holding, whether
+        // it is in the bag or equipped.
+        const std::string coinKey = std::string("petal_") + kTraderCoinPetal;
+        for (const auto& [key, value] : record->inventory["apex"].members())
+            if (key.rfind("petal_", 0) == 0 && key != coinKey)
+                physical[key.substr(6)] += std::max(0, value.asInt());
+        for (const auto& slot : record->loadout)
+            if (slot && slot->rarity == Rarity::Apex && slot->petalType != kTraderCoinPetal)
+                ++physical[slot->petalType];
     }
     int apexHammers = 0;
     for(const auto& [key,row]:db.storedTable("hyperForges").members())if(row["owner"].asString()==userId){
@@ -48,6 +77,8 @@ inline int hyperHoldingCount(const Database& db,const std::string& userId){
 }
 // Relinquish exactly one registered claim, with no material refund. Keep
 // claim history and let another account claim the released copy first.
+// A missing physical copy (for example after an older trade for a coin) still
+// clears the claim so the holding slot is not stuck forever.
 inline HyperForgeResult abandonHyper(Database& db,const std::string& userId,const std::string& forgeKey) {
     HyperForgeResult out;
     if(db.deferredCommits()){out.reason="跨服超凡事务暂未就绪，请稍后重试。";return out;}
@@ -63,11 +94,10 @@ inline HyperForgeResult abandonHyper(Database& db,const std::string& userId,cons
     const auto before=*original;
     auto& record=db.progress(userId);
     rememberHyperHoldings(record,static_cast<double>(db.nowMillis()));
-    if(record.itemCount(outputTier,key)>0)record.addItem(outputTier,key,-1);
+    bool destroyed=false;
+    if(record.itemCount(outputTier,key)>0){record.addItem(outputTier,key,-1);destroyed=true;}
     else {
-        bool removed=false;
-        for(auto& slot:record.loadout)if(slot&&slot->rarity==outputTier&&slot->petalType==petal){slot.reset();removed=true;break;}
-        if(!removed){out.reason="持有记录与库存不一致，请联系管理员。";return out;}
+        for(auto& slot:record.loadout)if(slot&&slot->rarity==outputTier&&slot->petalType==petal){slot.reset();destroyed=true;break;}
     }
     bool remaining=record.itemCount(outputTier,key)>0;
     for(const auto& slot:record.loadout)remaining=remaining||(slot&&slot->rarity==outputTier&&slot->petalType==petal);
@@ -82,7 +112,9 @@ inline HyperForgeResult abandonHyper(Database& db,const std::string& userId,cons
         out.reason="存档失败，未放弃超凡。";return out;
     }
     out.ok=true;out.affected.push_back(userId);
-    out.reason="已放弃所选1份超凡，持有名额已释放。其他玩家接手后，你才能再次争夺。";
+    out.reason=destroyed
+        ?"已放弃所选1份超凡，持有名额已释放。其他玩家接手后，你才能再次争夺。"
+        :"超凡花瓣已不在库存（例如已换成硬币），已释放持有名额。其他玩家接手后，你才能再次争夺。";
     return out;
 }
 inline HyperForgeResult grantTemporaryHyperHammer(Database& db,const std::string& userId,

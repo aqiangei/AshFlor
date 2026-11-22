@@ -767,9 +767,12 @@ if(EMSCRIPTEN)
   # loads is @fails-components/webtransport, by dynamic import and only for
   # WebTransport, and without it the server still serves WebSocket -- so what
   # dist/ needs beside it to run is nothing at all.
+  set(FLIX_SERVER_WASM_MAXIMUM_MEMORY 2147483648 CACHE STRING
+    "Maximum Node server WASM linear memory in bytes")
   target_link_options(flowrix_server PRIVATE
     ${FLIX_WEB_LINK_OPTIONS}
     "-sENVIRONMENT=node"
+    "-sMAXIMUM_MEMORY=${FLIX_SERVER_WASM_MAXIMUM_MEMORY}"
     # Emscripten's default stack is 64KB, against the 8MB a native thread gets,
     # and the JSON parser and the Json destructor both recurse once per level
     # of the document. The account database nests deeply enough that the

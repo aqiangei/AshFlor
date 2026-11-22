@@ -1054,8 +1054,8 @@ TEST(only_underground_mobs_bump_a_burrowed_flower) {
         const Entity mob = a.mob({980, 1000}, 100.0);
         a.world.add<ContactDamage>(mob, ContactDamage{10.0, 500.0});
         a.world.add<MobType>(mob, MobType{0, Rarity::Common, 1.0});
-        a.world.add<BurrowState>(player, BurrowState{1000.0, true,
-                            static_cast<std::uint16_t>(underground ? 0 : 1)});
+        auto& burrow = a.world.add<BurrowState>(player, BurrowState{1000.0, true});
+        burrow.predatorIndices.front() = static_cast<std::uint16_t>(underground ? 0 : 1);
         a.step(0.0);
         CHECK_NEAR(a.health(player), underground ? 90.0 : 100.0, 1e-9);
         CHECK_NEAR(a.world.get<Motion>(player).velocity.x,
@@ -1275,6 +1275,19 @@ TEST(each_ranked_contributor_receives_the_mobs_full_xp) {
 
     CHECK_NEAR(a.world.get<PlayerProgress>(first).totalXp, 120.0, 1e-9);
     CHECK_NEAR(a.world.get<PlayerProgress>(second).totalXp, 120.0, 1e-9);
+}
+
+TEST(high_tier_hunt_kill_xp_uses_new_multipliers) {
+    for (const auto rarity : {Rarity::Unique, Rarity::Apex, Rarity::Ascendant}) {
+        Arena a;
+        const Entity player = a.player({1000, 1000});
+        const Entity mob = a.mob({1040, 1000}, 100.0, 1000.0);
+        a.world.add<MobType>(mob, MobType{0, rarity});
+        CHECK(a.combat.applyDamage(a.world, mob, player, 100.0, 1000.0).killed);
+        const double expected = rarity == Rarity::Apex ? 2600.0
+            : rarity == Rarity::Ascendant ? 3000.0 : 1000.0;
+        CHECK_NEAR(a.world.get<PlayerProgress>(player).totalXp, expected, 1e-9);
+    }
 }
 
 TEST(monster_xp_uses_each_recipients_absorption_talent) {
@@ -4777,4 +4790,118 @@ TEST(heal_cancels_poison_dps_before_restoring_health) {
     const double cancelled = 10.0 * kPlayerHealMultiplier;
     CHECK_NEAR(aff.poisonPerSecond, 100.0 - cancelled, 1e-9);
     CHECK_NEAR(health.current, beforeHp, 1e-9);
+}
+
+TEST(laser_beam_deals_lightning_dps_along_outward_ray_and_ignores_armor) {
+    // Wiki Laser: beam DPS = 10× contact, lightning (armor ignored), narrow ray.
+    ContentRegistry registry;
+    std::string error;
+    CHECK(test::loadFixtureContent(
+        registry, testsupport::tempDir("flix_laser_beam"),
+        R"({"grunt":{"name":"Grunt","health":10,"damage":5,"size":1,"speed":0.2,"section":[0],
+                     "armor":100}})",
+        R"({"laser":{"name":"Laser","damage":5,"health":10,"size":1,"cooldown":5000}})", error));
+    if (!error.empty()) return;
+
+    Arena a;
+    const Entity player = a.player({0, 0});
+    const Entity mob = a.mob({120, 0}, 1000.0, 0.0, 15.0);
+    a.world.add<MobType>(mob, MobType{registry.mobIndex("grunt"), Rarity::Common, 1.0});
+    a.world.add<Armor>(mob, Armor{100.0}); // would blank a 2.5 Direct hit
+
+    const std::uint16_t laserIndex = registry.petalIndex("laser");
+    CHECK(laserIndex != kInvalidIndex);
+    CHECK_NEAR(laserBeamDamagePerSecond(registry.petalStats(laserIndex, Rarity::Common)), 50.0, 1e-9);
+
+    const Entity laser = a.world.create();
+    a.world.add<PetalTag>(laser);
+    PetalInstance instance;
+    instance.owner = player;
+    instance.configIndex = laserIndex;
+    instance.rarity = Rarity::Common;
+    instance.facingAngle = 0.0; // +X
+    a.world.add<PetalInstance>(laser, instance);
+    a.world.add<Transform>(laser, Transform{{0, 0}, 0.0});
+    a.world.add<Health>(laser, Health{10.0, 10.0, 0.0, 0.0});
+    a.world.add<Faction>(laser, Faction{Team::Players, false});
+    if (!a.world.has<Loadout>(player)) a.world.add<Loadout>(player);
+    a.world.get<Loadout>(player).spawned.push_back(laser);
+
+    a.step(1000.0, registry);
+    // One 50 ms contact window: 50 DPS × 0.05 s = 2.5, through 100 armor.
+    CHECK_NEAR(a.health(mob), 1000.0 - 2.5, 1e-6);
+
+    // Same window: no second tick until the per-victim cooldown elapses.
+    a.step(1020.0, registry);
+    CHECK_NEAR(a.health(mob), 1000.0 - 2.5, 1e-6);
+
+    a.step(1050.0, registry);
+    CHECK_NEAR(a.health(mob), 1000.0 - 5.0, 1e-6);
+
+    // Off-axis: outside the narrow half-width + radius.
+    a.world.get<Transform>(mob).position = {120, 80};
+    a.step(1100.0, registry);
+    CHECK_NEAR(a.health(mob), 1000.0 - 5.0, 1e-6);
+
+    const auto chain = sharedChain(a, 2, 1000.0);
+    for (std::size_t i = 0; i < chain.size(); ++i) {
+        a.world.get<Transform>(chain[i]).position = {80.0 + 40.0 * i, 0.0};
+    }
+    a.step(1150.0, registry);
+    CHECK_NEAR(a.health(chain.front()), 1000.0 - 2.5, 1e-6);
+
+    // A different segment is now the only one on the ray. The cooldown
+    // still belongs to the chain, and the unlinked mob has its own ledger.
+    a.world.get<Transform>(chain[0]).position.y = 100.0;
+    a.world.get<Transform>(chain[1]).position.y = 100.0;
+    a.world.get<Transform>(mob).position = {220.0, 0.0};
+    a.step(1170.0, registry);
+    CHECK_NEAR(a.health(chain.front()), 1000.0 - 2.5, 1e-6);
+    CHECK_NEAR(a.health(mob), 1000.0 - 7.5, 1e-6);
+    a.step(1200.0, registry);
+    CHECK_NEAR(a.health(chain.front()), 1000.0 - 5.0, 1e-6);
+}
+
+
+TEST(feedback4087_bone_damage_on_training_dummy_matches_wild_mobs) {
+    std::string error;
+    CHECK(loadContent(testsupport::dataDir(), error));
+    const auto& registry = content();
+    const auto bone = registry.petalIndex("magic_bone");
+    const auto dummy = registry.mobIndex("target_dummy");
+    CHECK(bone != kInvalidIndex);
+    CHECK(dummy != kInvalidIndex);
+
+    double oneBone = 0.0;
+    for (const int count : {1, 7}) {
+        for (const bool practice : {false, true}) {
+            Arena arena;
+            const auto player = arena.player({1000, 1000});
+            arena.world.add<PlayerModifiers>(player);
+            arena.world.add<PetalRing>(player);
+            auto& loadout = arena.world.add<Loadout>(player);
+            for (int slot = 0; slot < count; ++slot) {
+                loadout.slots[slot].configIndex = bone;
+                loadout.slots[slot].rarity = Rarity::Apex;
+            }
+            PetalSystem petals;
+            petals.foldModifiers(arena.world, registry, 1000);
+            const auto target = arena.mob({1040, 1000}, 1e9);
+            if (practice) {
+                arena.world.remove<MobTag>(target);
+                arena.world.add<NpcTag>(target);
+                arena.world.add<Npc>(target).configIndex = dummy;
+            }
+            equipPetal(arena, player, bone, Rarity::Apex, {1025, 1000});
+            arena.step(1000, registry);
+            const auto hits = arena.combat.practiceDamage(player, 1000, target);
+            if (practice) CHECK_EQ(arena.health(target), 1e9);
+            const double damage = practice ? (hits.empty() ? 0.0 : hits.front().amount)
+                                           : 1e9 - arena.health(target);
+            std::printf("bones=%d training=%d damage=%.3f\n", count, practice, damage);
+            CHECK(damage > 0);
+            if (!practice && count == 1) oneBone = damage;
+            CHECK_NEAR(damage, oneBone * (1.0 + 0.5 * (count - 1)), 1e-5);
+        }
+    }
 }

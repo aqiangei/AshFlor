@@ -174,6 +174,16 @@
         #server-notice-countdown {display:block;font-size:12px;font-weight:normal;-webkit-text-stroke:0;color:#122c48;}
         .server-notice-body {padding:0 14px 14px;}
         #serverNotice p {margin:8px 0;}
+        #serverNotice .transfer-guide-trigger {
+            box-sizing:border-box;width:100%;min-height:44px;margin:5px 0;
+            padding:10px 12px;border:2px solid #205036;border-radius:5px;
+            background:#285c3e;color:#fff;font:inherit;font-weight:700;
+            cursor:pointer;text-align:left;
+        }
+        #open-account-transfer:not([hidden]) {display:block;}
+        #serverNotice a[hidden] {display:none;}
+        #serverNotice #transfer-current-entry {background:#285c3e;border-color:#205036;}
+
         #serverNotice a {display:flex;align-items:center;min-height:44px;margin:5px 0;padding:3px 9px;
             color:#fff;background:#345d87;border:2px solid #2a4c6f;border-radius:4px;overflow-wrap:anywhere;}
         .server-official-site {
@@ -192,6 +202,10 @@
         }
         #serverNotice .server-topup-tips li {
             margin:0;color:#122c48;font-size:13px;line-height:1.4;
+        }
+        #serverNotice .server-topup-tips a {
+            display:inline;min-height:0;margin:0;padding:0;background:none;border:0;
+            color:inherit;text-decoration:underline;
         }
         #closeServerNotice {flex:none;display:grid;place-items:center;width:44px;height:44px;
             border:3px solid #8d4a47;border-radius:4px;background:#ae5b58;color:#fff;
@@ -285,28 +299,49 @@
       </div>
       <div class="server-notice-body">
         <div class="server-official-site">
-          <strong>氪金联系QQ</strong>
-          <a href="https://wpa.qq.com/msgrd?v=3&amp;uin=3028753757&amp;site=qq&amp;menu=yes" target="_blank" rel="noopener noreferrer">3028753757</a>
+          <strong>AshFlor 官方入口</strong>
+          <a href="https://ashflor.com/">https://ashflor.com/</a>
         </div>
+        <a href="/workshop.html">地图工坊</a>
+        <details id="secure-transfer-entries" hidden>
+          <summary class="transfer-guide-trigger">自助转服安全入口</summary>
+          <p><strong>仅支持一服、二服、三服互迁。</strong></p>
+          <p id="transfer-source-help">请先登录角色所在服的安全入口，再提交转服。</p>
+          <a id="transfer-current-entry" hidden>办理本服转出</a>
+          <div aria-label="其他服务器的安全入口">
+            <a data-secure-realm="1" href="https://154.8.157.208/transfer/1/">一服</a>
+            <a data-secure-realm="2" href="https://154.8.157.208/transfer/2/">二服</a>
+            <a data-secure-realm="3" href="https://154.8.157.208/transfer/3/">三服</a>
+          </div>
+        </details>
+        <button type="button" id="open-account-transfer" class="transfer-guide-trigger" hidden>自助转服</button>
+        <form id="account-transfer" hidden>
+          <p><strong>仅支持一服、二服、三服互迁。</strong></p>
+          <p>每次转服都要在目标服创建新账号，返回旧服时也一样。同一角色同时只能办理一笔。角色等级、普通库存、配装、天赋、星星和共用兑换记录随迁。Apex 等已拥有的普通花瓣实物随迁。持有独占锻造名额时，请联系管理员核对后转服。原服账号将在迁入成功后归档注销。QQ 绑定、公会、议会记录和皮肤不随迁。</p>
+          <p><label>目标服 <select name="realm" required></select></label></p>
+          <p><label>新账号 <input name="username" autocomplete="off" maxlength="32" required></label></p>
+          <p><label>新密码 <input name="password" type="password" autocomplete="new-password" maxlength="72" required></label></p>
+          <p><label><input type="checkbox" required> 我确认转服并注销原服账号</label></p>
+          <button type="submit">确认转服</button>
+          <p role="status" aria-live="polite"></p>
+          <a id="transfer-destination" hidden>前往目标服登录</a>
+        </form>
+        <p>各服务器直连地址</p>
+        <a data-server data-live-status data-transfer-realm="1" href="http://202.189.8.109:67/">一服 · 202.189.8.109:67</a>
+        <a data-server data-live-status data-transfer-realm="2" href="http://202.189.23.253:67/">二服 · 202.189.23.253:67</a>
+        <a data-server data-live-status data-transfer-realm="3" href="http://103.91.210.16:67/">三服 · 103.91.210.16:67</a>
+        <a data-server href="http://1.14.76.55/">四服 · 1.14.76.55</a>
+        <a data-server href="http://154.219.105.164:3000/">五服 · 154.219.105.164:3000</a>
+        <p>各服存档独立。</p>
+        <p>请在「账户」里设置用户名和密码，建议填写 QQ 号作为找回凭据。未填写 QQ 号而丢失账号，恕不负责找回。</p>
+        <p>QQ群 <strong>227990150</strong></p>
         <ul class="server-topup-tips" data-server-topup-tips>
+          <li>氪金联系 QQ <a href="https://wpa.qq.com/msgrd?v=3&amp;uin=3028753757&amp;site=qq&amp;menu=yes" target="_blank" rel="noopener noreferrer">3028753757</a></li>
           <li>25 元一个随机 Apex</li>
           <li>10 元一个永久超凡拟态（Mimic）</li>
           <li>10 元迁移服务器</li>
           <li>三个服务器已续租半年，共 2892 元</li>
         </ul>
-        <a href="/workshop.html">地图工坊</a>
-        <p>各服务器直连地址</p>
-        <a data-server data-live-status href="http://202.189.8.109:67/">一服 · 202.189.8.109:67</a>
-        <a data-server data-live-status href="http://202.189.23.253:67/">二服 · 202.189.23.253:67</a>
-        <a data-server data-live-status href="http://154.219.105.164:10000/">三服 · 154.219.105.164:10000</a>
-        <a data-server href="http://1.14.76.55/">四服 · 1.14.76.55</a>
-        <a data-server href="http://154.219.105.164:3000/">五服 · 154.219.105.164:3000</a>
-        <p>旧账号可直接登录原服。游客请用原浏览器打开旧入口，自动迁移后进入新站。也可以在「账户」里先设置用户名和密码。</p>
-        <a href="http://154.219.105.158:8088/migrate">一服 · 从旧入口迁移游客</a>
-        <a href="http://154.219.105.161:10000/migrate">二服 · 从旧入口迁移游客</a>
-        <p><strong>各服存档独立，互不相通。</strong>等级、花瓣和装备只保存在获得它们的服务器。</p>
-        <p>请在「账户」里设置用户名和密码，建议填写 QQ 号作为找回凭据。未填写 QQ 号而丢失账号，恕不负责找回。</p>
-        <p>QQ群 <strong>227990150</strong></p>
       </div>
     </dialog>
     <button id="landscape-btn" type="button" hidden>横屏游戏 · 全屏</button>
@@ -460,8 +495,10 @@
     serverNotice.showModal();
     stopServerStatus();
     refreshServerStatus();
-    updateNoticeCountdown();
-    noticeTimer = setInterval(updateNoticeCountdown, 1000);
+    if (document.getElementById('account-transfer').hidden && !secureTransferEntries.open) {
+      updateNoticeCountdown();
+      noticeTimer = setInterval(updateNoticeCountdown, 1000);
+    } else noticeCountdown.textContent = '';
   };
   const outsideNotice = event => {
     const rect = serverNotice.getBoundingClientRect();
@@ -486,8 +523,198 @@
     noticeDismissed = true;
     try { sessionStorage.setItem(noticeKey, '1'); } catch (_) {}
   });
+  let openedAtStartup = false;
+  const openNoticeAtStartup = () => {
+    if (!openedAtStartup) {
+      openedAtStartup = true;
+      openNotice();
+    }
+  };
+  const secureTransferEntries = document.getElementById('secure-transfer-entries');
+  secureTransferEntries.addEventListener('toggle', () => {
+    if (secureTransferEntries.open) {
+      clearInterval(noticeTimer);
+      noticeCountdown.textContent = '';
+    }
+  });
+  const setupAccountTransfer = async () => {
+    if (!window.isSecureContext || location.protocol === 'file:') {
+      if (location.protocol === 'http:') {
+        const source = Array.from(serverNotice.querySelectorAll('[data-transfer-realm]'))
+          .find(link => link.host === location.host);
+        const ownEntry = source && secureTransferEntries.querySelector(
+          '[data-secure-realm="' + source.dataset.transferRealm + '"]');
+        if (ownEntry) {
+          ownEntry.hidden = true;
+          const currentEntry = document.getElementById('transfer-current-entry');
+          currentEntry.href = ownEntry.href;
+          currentEntry.hidden = false;
+          currentEntry.addEventListener('click', event => {
+            if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+            const readToken = () => {
+              try {return localStorage.getItem('florrCouncilToken') || '';}
+              catch (_) {return '';}
+            };
+            if (!/^[a-f0-9]{64}$/.test(readToken())) return;
+            const portalUrl = new URL(currentEntry.href);
+            const portalWindow = window.open(portalUrl.href,'_blank');
+            if (!portalWindow) return;
+            event.preventDefault();
+            const sendSession = message => {
+              if (message.source !== portalWindow || message.origin !== portalUrl.origin ||
+                  message.data?.type !== 'ashflor-transfer-ready' ||
+                  message.data.realm !== source.dataset.transferRealm ||
+                  typeof message.data.challenge !== 'string' || !/^[a-f0-9]{32}$/.test(message.data.challenge)) return;
+              cleanup();
+              const token = readToken();
+              if (/^[a-f0-9]{64}$/.test(token)) portalWindow.postMessage({
+                type:'ashflor-transfer-session',realm:source.dataset.transferRealm,
+                challenge:message.data.challenge,token
+              },portalUrl.origin);
+            };
+            const cleanup = () => {
+              window.removeEventListener('message',sendSession);
+              clearTimeout(timer);
+            };
+            window.addEventListener('message',sendSession);
+            const timer = setTimeout(cleanup,15000);
+          });
+          document.getElementById('transfer-source-help').textContent = '从本服转出时，请先登录本服安全入口。';
+        }
+        secureTransferEntries.hidden = false;
+      }
+      return;
+    }
+    const endpoint = '/api/account-transfer';
+    const key = 'florr-account-transfer-pending';
+    const opening = document.getElementById('open-account-transfer');
+    const form = document.getElementById('account-transfer');
+    const status = form.querySelector('[role=status]');
+    const submit = form.querySelector('[type=submit]');
+    const destination = document.getElementById('transfer-destination');
+    const {realm, username, password} = form.elements;
+    const token = () => localStorage.getItem('florrCouncilToken') || '';
+    const errors = {
+      login_required:'请先登录原服账号，再打开服务器指引。',
+      ineligible_account:'这个账号无法自助转服。',
+      transfer_unavailable:'这个角色当前不可发起新转服，请继续原申请。',
+      transfer_forge_review:'原服仍持有锻造名额，请联系管理员核对后转服。',
+      no_character:'这个账号还没有可转服的角色。',
+      character_too_large:'该角色的存档过大，请联系管理员。',
+      transfer_capacity:'转服服务当前已达容量上限，请稍后再试。',
+      username_taken:'目标服已有这个账号，请换一个新账号名。',
+      invalid_username:'新账号名不符合目标服要求。',
+      invalid_password:'新密码不符合目标服要求。',
+      cancelled:'这笔申请已经撤销，原角色可重新登录。',
+      invalid_request:'请检查目标服、账号名和密码。',
+    };
+    let pending, targets;
+    try {
+      const response = await fetch(endpoint, {cache:'no-store'});
+      if (!response.ok) return;
+      targets = (await response.json()).targets;
+      pending = JSON.parse(localStorage.getItem(key) || 'null');
+    } catch (_) { return; }
+    if (!targets || !Object.keys(targets).length) return;
+    if (pending && (!Object.hasOwn(targets,pending.realm) || !/^[a-f0-9]{64}$/.test(pending.receipt))) return;
+    for (const id of Object.keys(targets)) {
+      const option = document.createElement('option');
+      option.value = id;
+      option.textContent = {'1':'一服','2':'二服','3':'三服'}[id];
+      realm.append(option);
+    }
+    const lockInputs = locked => {
+      realm.disabled = locked;
+      username.readOnly = locked;
+    };
+    opening.hidden = false;
+    openNoticeAtStartup();
+    opening.onclick = async () => {
+      clearInterval(noticeTimer);
+      noticeCountdown.textContent = '';
+      form.hidden = false;
+      opening.hidden = true;
+      if (pending) {
+        realm.value = pending.realm;
+        username.value = pending.username;
+        lockInputs(true);
+        status.textContent = '有一笔转服待确认。请填写第一次提交时设置的新密码。';
+      } else if (!token()) status.textContent = errors.login_required;
+      else if (!username.value) {
+        try {
+          const response = await fetch('/api/council',{method:'POST',cache:'no-store',
+            headers:{'Content-Type':'application/json',Authorization:'Bearer '+token()},
+            body:JSON.stringify({action:'identity'})});
+          const data = await response.json();
+          if (!username.value && !pending && data.accountName) username.value = data.accountName;
+        } catch (_) {}
+      }
+    };
+    const sendTransfer = async () => {
+      if (submit.disabled) return;
+      let stored;
+      try {stored = JSON.parse(localStorage.getItem(key) || 'null');}
+      catch (_) {status.textContent = '浏览器无法读取转服凭据。';return;}
+      if (stored && stored.receipt !== pending?.receipt) {
+        pending = stored;
+        password.value = '';
+        opening.onclick();
+        return;
+      }
+      if (!pending && !token()) {status.textContent = errors.login_required;return;}
+      const firstSubmission = !pending;
+      if (firstSubmission) {
+        const bytes = crypto.getRandomValues(new Uint8Array(32));
+        pending = {realm:realm.value,username:username.value.trim(),
+          receipt:Array.from(bytes,n => n.toString(16).padStart(2,'0')).join('')};
+        try {localStorage.setItem(key,JSON.stringify(pending));}
+        catch (_) {
+          pending = null;
+          status.textContent = '请允许本站保存浏览器数据后再转服。';
+          return;
+        }
+      }
+      lockInputs(true);
+      submit.disabled = true;
+      status.textContent = '正在办理转服。';
+      try {
+        const response = await fetch(endpoint, {method:'POST',cache:'no-store',
+          headers:{'Content-Type':'application/json',Authorization:'Bearer '+token()},
+          body:JSON.stringify({...pending,password:password.value})});
+        const result = await response.json();
+        if (result.ok) {
+          destination.href = targets[pending.realm];
+          destination.hidden = false;
+          status.textContent = '已转服。请使用新账号和最初设置的密码登录目标服。';
+          password.value = '';
+          localStorage.removeItem(key);
+          return;
+        }
+        if (Object.hasOwn(errors,result.error) &&
+            (result.error !== 'invalid_request' || firstSubmission)) {
+          localStorage.removeItem(key);
+          pending = null;
+          lockInputs(false);
+        }
+        status.textContent = errors[result.error] || (result.error === 'password_mismatch' ?
+          '请填写第一次提交时设置的新密码。' : '尚未确认结果，请按原申请重试。');
+      } catch (_) {
+        status.textContent = '连接中断。请按原申请重试，系统会继续同一笔转服。';
+      }
+      submit.disabled = false;
+    };
+    form.addEventListener('submit', async event => {
+      event.preventDefault();
+      if (!navigator.locks) return sendTransfer();
+      await navigator.locks.request(key,{ifAvailable:true}, async lock => {
+        if (lock) await sendTransfer();
+        else status.textContent = '另一个标签页正在办理转服，请稍后重试。';
+      });
+    });
+  };
+  setupAccountTransfer();
   const officialEntry = Array.from(serverNotice.querySelectorAll('[data-server]'), link => link.hostname);
-  if (officialEntry.includes(location.hostname) && !noticeDismissed) openNotice();
+  if (officialEntry.includes(location.hostname)) openNoticeAtStartup();
   const began = performance.now();
   let failed = false, queued = false, bytes = 0, total = 0, lastProgress = began;
   let stallGuideOpened = false;

@@ -121,6 +121,8 @@ const char* const kPetalsJson = R"JSON({
 const char* const kMobsJson = R"JSON({
   "jurassic_meteor": {"name":"Meteor","health":500,"speed":0,"size":1.43,"ai_type":"stationary"},
   "critter": {"name":"Critter","health":10,"damage":1,"size":1,"speed":0.2,"range":300,"cooldown":500,"color":"#FF0000","section":[0],"ai_type":"hostile"},
+  "desert_centipede": {"name":"Desert Centipede","health":10,"damage":1,"size":1,"section":[0],"ai_type":"hostile"},
+  "worm": {"name":"Worm","health":10,"damage":1,"size":1,"section":[0],"ai_type":"hostile"},
   "brute":   {"name":"Brute","health":500,"damage":5,"size":6,"speed":0.2,"range":300,"cooldown":500,"color":"#AA3300","section":[0],"ai_type":"hostile"},
   "puffball": {"name":"Puffball","health":10,"damage":1,"size":1,"speed":0,"range":300,"cooldown":500,"color":"#FFFFFF","section":[0],"ai_type":"passive","petal_ring":{"petalType":"pearl","count":4,"spin":false,"shootOnHit":true}},
   "centipede": {"name":"Centipede","health":10,"damage":1,"size":1,"speed":0.2,"range":300,"cooldown":500,"color":"#88AA00","section":[0],"ai_type":"passive"},
@@ -3929,6 +3931,25 @@ TEST(a_sandstorm_pet_is_never_retired_for_distance) {
     CHECK(!rig.slot(0).broken);
 }
 
+TEST(a_sandstorm_pet_follows_its_owner_across_realms) {
+    if (!contentLoaded()) return;
+    Rig rig;
+    rig.equip(0, "summoner");
+    CHECK(rig.tickUntil([&] { return rig.petCount() == 2; }));
+    const auto pets = Query<Pet>{rig.world}.collect();
+    for (Entity pet : pets) rig.world.get<MobAi>(pet).kind = AiKind::Sandstorm;
+
+    rig.world.get<Transform>(rig.player).realm = Realm::Arena;
+    rig.tick();
+
+    for (Entity pet : pets) {
+        CHECK(rig.world.isAlive(pet));
+        CHECK(rig.world.get<Transform>(pet).realm == Realm::Arena);
+        CHECK(distance(rig.position(pet), rig.position(rig.player)) < kPetHomeDistance);
+    }
+    CHECK_EQ(rig.petCount(), std::size_t(2));
+}
+
 TEST(pet_recovery_preserves_the_same_far_summon_and_egg_cooldown) {
     if (!contentLoaded()) return;
     Rig rig;
@@ -6357,6 +6378,7 @@ TEST(a_hyper_crown_lends_two_basics_that_reload_independently) {
         }
         rig.settleRing();
         CHECK(distance(rig.position(pair[0]), rig.position(pair[1])) > 10.0);
+        rig.system.refreshCrownLoanCounters(rig.world, rig.registry);
         CHECK_NEAR(rig.slotCounter(0), 4.0, 1e-9);
         rig.damage(pair[0], rig.healthOf(pair[0]));
         rig.tick();
@@ -6455,26 +6477,32 @@ TEST(a_crowns_slot_counts_its_basics_out_on_the_field) {
     Rig rig;
     rig.equip(0, "champion_crown", Rarity::Unique);
     const Entity other = addFlower(rig, {1300.0, 1000.0});
+    const auto counter = [&](int slot) {
+        rig.system.refreshCrownLoanCounters(rig.world, rig.registry);
+        return rig.slotCounter(slot);
+    };
     rig.tick();
-    // A gauge: it reads 0 while the loans reload, rather than nothing.
-    CHECK_NEAR(rig.slotCounter(0), 0.0, 1e-9);
+    CHECK_NEAR(counter(0), 0.0, 1e-9);
     CHECK(rig.tickUntil([&] { return !lentTo(rig, other).empty(); }));
-    rig.tick();
-    CHECK_NEAR(rig.slotCounter(0), 2.0, 1e-9);
-    // A mimic of it prints the same figure.
+    CHECK_NEAR(counter(0), 2.0, 1e-9);
+
     rig.equip(1, "mimic", Rarity::Unique);
     rig.tick();
-    CHECK_NEAR(rig.slotCounter(1), 2.0, 1e-9);
-
-    // One broken is one fewer out.
-    rig.world.add<Dead>(lentTo(rig, other).front());
+    CHECK_NEAR(counter(1), 2.0, 1e-9);
+    const auto lent = lentTo(rig, other);
+    if (lent.empty()) return;
+    rig.world.add<Dead>(lent.front());
+    CHECK_NEAR(counter(0), 1.0, 1e-9);
     rig.reap();
-    rig.tick(2);
-    CHECK_NEAR(rig.slotCounter(0), 1.0, 1e-9);
-    // Any other petal has none.
+    CHECK(rig.tickUntil([&] { return !lentTo(rig, other).empty(); }));
+    CHECK_NEAR(counter(0), 2.0, 1e-9);
+
+    rig.world.get<Transform>(other).position = {4000.0, 1000.0};
     rig.equip(2, "basic");
     rig.tick();
-    CHECK_NEAR(rig.slotCounter(2), -1.0, 1e-9);
+    CHECK(lentTo(rig, other).empty());
+    CHECK_NEAR(counter(0), 1.0, 1e-9);
+    CHECK_NEAR(counter(2), -1.0, 1e-9);
 }
 
 TEST(a_lent_petal_goes_when_its_flower_leaves_reach_and_a_new_loan_reloads_again) {
@@ -6820,15 +6848,52 @@ TEST(wiki_mechanism_shovel_charges_spends_reload_and_expires_without_permanent_i
     CHECK(contentLoaded());Rig rig;rig.equip(0,"shovel");rig.settleEquips();
     CHECK(!rig.world.has<BurrowState>(rig.player));rig.tick(65);rig.setFlags(net::InputDefend);rig.tick();
     const auto* state=rig.world.tryGet<BurrowState>(rig.player);CHECK(state&&state->active);if(!state)return;
-    CHECK(rig.slot(0).broken);const auto target=addMob(rig,rig.position(rig.player)+Vec2{60,0});CombatSystem combat;
+    CHECK(rig.slot(0).broken);
+    const Vec2 nearby = rig.position(rig.player) + Vec2{60, 0};
+    const Entity critter = addMob(rig, nearby);
+    const Entity worm = addMob(rig, nearby, "worm");
+    const Entity centipede = addMob(rig, nearby, "desert_centipede");
+    CombatSystem combat;
     const auto hp=rig.world.get<Health>(rig.player).current;
-    CHECK(combat.applyDamage(rig.world,rig.player,target,10,rig.now).refused);
+    CHECK(combat.applyDamage(rig.world, rig.player, critter, 10, rig.now).refused);
+    CHECK(!canNoticeBurrowed(rig.world, worm, rig.player));
+    CHECK(combat.applyDamage(rig.world, rig.player, worm, 10, rig.now).refused);
     CHECK_NEAR(rig.world.get<Health>(rig.player).current,hp,1e-8);
-    // The explicit underground predator exception remains hittable.
-    rig.world.get<BurrowState>(rig.player).wormIndex=fixture().registry.mobIndex("critter");
-    CHECK(combat.applyDamage(rig.world,rig.player,target,1,rig.now).applied>0);
+    CHECK(canNoticeBurrowed(rig.world, centipede, rig.player));
+    CHECK(combat.applyDamage(rig.world, rig.player, centipede, 1, rig.now).applied > 0);
     rig.setFlags(0);rig.tick(65);CHECK(!rig.world.get<BurrowState>(rig.player).active);
-    CHECK(combat.applyDamage(rig.world,rig.player,target,1,rig.now).applied>0);
+    CHECK(canNoticeBurrowed(rig.world, worm, rig.player));
+    CHECK(combat.applyDamage(rig.world, rig.player, worm, 1, rig.now).applied > 0);
+}
+
+TEST(shovel_burrow_allows_shipped_desert_centipedes_to_hit) {
+    const auto& registry = testsupport::shippedContent();
+    Rig rig(registry);
+    rig.equip(0, "shovel", Rarity::Common);
+    rig.settleEquips();
+    rig.setFlags(net::InputDefend);
+    CHECK(rig.tickUntil([&] {
+        const auto* state = rig.world.tryGet<BurrowState>(rig.player);
+        return state && state->active;
+    }, 140));
+
+    CombatSystem combat;
+    for (const char* id : {"desert_centipede", "desert_centipede_body"}) {
+        CHECK(registry.mobIndex(id) != kInvalidIndex);
+        const auto enemy = addMob(rig, rig.position(rig.player) + Vec2{60, 0}, id);
+        CHECK(canNoticeBurrowed(rig.world, enemy, rig.player));
+        rig.world.get<Health>(rig.player).hitCooldownUntilMillis = 0.0;
+        CHECK(combat.applyDamage(rig.world, rig.player, enemy, 1.0, rig.now).applied > 0.0);
+    }
+
+    for (const char* id : {"worm", "digger", "void_alien_digger", "void_grave_digger",
+                           "arctic_frost_digger", "arctic_spider_digger", "ladybug"}) {
+        CHECK(registry.mobIndex(id) != kInvalidIndex);
+        const auto enemy = addMob(rig, rig.position(rig.player) + Vec2{60, 0}, id);
+        CHECK(!canNoticeBurrowed(rig.world, enemy, rig.player));
+        rig.world.get<Health>(rig.player).hitCooldownUntilMillis = 0.0;
+        CHECK(combat.applyDamage(rig.world, rig.player, enemy, 1.0, rig.now).refused);
+    }
 }
 
 TEST(shovel_blocks_only_equipped_corruption_and_has_no_shared_surface_delay) {
@@ -7166,7 +7231,7 @@ TEST(pharaoh_crown_summons_in_a_crowd_without_stacking_or_extending_duration) {
     Rig rig(registry);
     const auto blocker = addMob(rig, rig.position(rig.player), "ladybug");
     rig.world.get<Body>(blocker).radius = 5000.0;
-    rig.equip(0, "pharaoh_s_crown", Rarity::Unique);
+    rig.equip(0, "pharaoh_s_crown", Rarity::PermanentHyper);
     rig.equip(1, "pharaoh_s_crown", Rarity::Apex);
 
     CHECK(rig.tickUntil([&] { return rig.petCount() == 1; }, 140));
@@ -7174,14 +7239,14 @@ TEST(pharaoh_crown_summons_in_a_crowd_without_stacking_or_extending_duration) {
     const auto first = Query<Pet>{rig.world}.collect().front();
     const auto& type = rig.world.get<MobType>(first);
     CHECK_EQ(rig.world.get<Pet>(first).slot, 1u);
-    // Apex crown is preferred over Eternal and now summons Hyper-tier beetles.
+    // Prefer the stronger crown when both can summon Hyper beetles.
     CHECK(type.rarity == Rarity::Apex);
     const auto& mummy = registry.mob(type.configIndex);
-    const double apexScale = petalStatScale(Rarity::Apex);
+    const double scale = petalStatScale(Rarity::Unique) * 1.1;
     CHECK_NEAR(rig.world.get<Health>(first).max,
-               7.5 * mummy.health * mummy.petHealthScale * apexScale, 1e-6);
+               kSummonedMobHealthScale * mummy.health * mummy.petHealthScale * scale, 1e-6);
     CHECK_NEAR(rig.world.get<ContactDamage>(first).amount,
-               3.0 * mummy.damage * mummy.petDamageScale * apexScale, 1e-6);
+               mummy.damage * mummy.petDamageScale * scale, 1e-6);
     rig.tick(19);
     CHECK_EQ(rig.petCount(), 1u);
     rig.tick();
@@ -7191,13 +7256,36 @@ TEST(pharaoh_crown_summons_in_a_crowd_without_stacking_or_extending_duration) {
     CHECK(!rig.world.isAlive(first));
 }
 
-TEST(pharaoh_crown_permanent_hyper_uses_the_hyper_summon_tier) {
-    Rig rig(testsupport::shippedContent());
+TEST(pharaoh_crown_permanent_hyper_promotes_tier_without_increasing_combat_budget) {
+    const auto& registry = testsupport::shippedContent();
+    Rig rig(registry);
     rig.equip(0, "pharaoh_s_crown", Rarity::PermanentHyper);
     CHECK(rig.tickUntil([&] { return rig.petCount() == 1; }, 140));
-    for (Entity pet : Query<Pet>{rig.world}.collect()) {
-        CHECK(rig.world.get<MobType>(pet).rarity == Rarity::Unique);
-    }
+    const auto pets = Query<Pet>{rig.world}.collect();
+    if (pets.empty()) return;
+    const Entity pet = pets.front();
+    const auto& type = rig.world.get<MobType>(pet);
+    CHECK_EQ(type.configIndex, registry.mobIndex("mummy_beetle"));
+    CHECK(type.rarity == Rarity::Apex);
+    CHECK(rig.world.get<Replicated>(pet).rarity == Rarity::Apex);
+    const auto& mummy = registry.mob(type.configIndex);
+    const double scale = petalStatScale(Rarity::Unique);
+    CHECK_NEAR(rig.world.get<Health>(pet).max,
+               kSummonedMobHealthScale * mummy.health * mummy.petHealthScale * scale, 1e-6);
+    CHECK_NEAR(rig.world.get<ContactDamage>(pet).amount,
+               mummy.damage * mummy.petDamageScale * scale, 1e-6);
+    CHECK_NEAR(rig.world.get<RisesUndead>(pet).millis, mobUndeadMillis(mummy, Rarity::Unique), 1e-6);
+    CHECK_NEAR(rig.world.get<Pet>(pet).expiresAtMillis, rig.now + 6000.0, 1e-6);
+
+    CombatSystem combat;
+    const Entity enemy = addMob(rig, rig.position(rig.player), "ladybug");
+    const double lethal = 2.0 * rig.world.get<Health>(pet).max;
+    combat.applyDamage(rig.world, pet, enemy, lethal, rig.now);
+    CHECK(rig.world.has<Undead>(pet));
+    rig.tick(119);
+    CHECK(rig.world.isAlive(pet));
+    rig.tick();
+    CHECK(!rig.world.isAlive(pet));
 }
 
 TEST(pharaoh_crown_apex_summons_hyper_tier_beetles) {
@@ -7280,10 +7368,10 @@ TEST(egg_specific_health_scales_remain_separate_from_the_shared_summon_scale){
     PetalConfig generated;
     generated.id = "matriarch_egg";
     CHECK_NEAR(eggSummonCombatScale(generated),2.0,1e-9);
-    CHECK_NEAR(eggSummonHealthScale(generated),2.5,1e-9);
+    CHECK_NEAR(eggSummonHealthScale(generated),3.0,1e-9);
     PetalConfig zatan;
     zatan.id = "void_zatan_egg";
-    CHECK_NEAR(eggSummonHealthScale(zatan),1.10,1e-9);
+    CHECK_NEAR(eggSummonHealthScale(zatan),1.32,1e-9);
     CHECK_NEAR(kSummonedMobHealthScale,2.5,1e-9);
     PetalConfig ordinary;
     ordinary.id = "basic";

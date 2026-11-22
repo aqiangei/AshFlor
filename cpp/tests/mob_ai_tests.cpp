@@ -1144,6 +1144,165 @@ TEST(sandstorm_ignores_a_player_standing_in_it) {
     CHECK_NEAR(sim.angleOf(mob), 0.0, 1e-12);
 }
 
+TEST(an_underground_predator_acquires_a_burrowed_player) {
+    CHECK(contentReady());
+    Sim sim;
+    const Entity flower = sim.spawnPlayer(kOrigin);
+    auto& burrow = sim.world.add<BurrowState>(flower, BurrowState{sim.now + 1000.0, true});
+    burrow.predatorIndices.front() = content().mobIndex("desert_centipede");
+    const Entity centipede = sim.spawnMob("desert_centipede", kOrigin + Vec2{80, 0});
+    sim.hurt(centipede, flower);
+    const Entity worm = sim.spawnMob("worm", kOrigin + Vec2{60, 0});
+    const Entity digger = sim.spawnMob("arctic_frost_digger", kOrigin + Vec2{0, 100});
+    const Entity ant = sim.spawnMob("soldier_ant", kOrigin + Vec2{-100, 0});
+    sim.tickIntent();
+    CHECK_EQ(sim.brainOf(worm).target, NULL_ENTITY);
+    CHECK_EQ(sim.brainOf(centipede).target, flower);
+    CHECK_EQ(sim.brainOf(digger).target, NULL_ENTITY);
+    CHECK_EQ(sim.brainOf(ant).target, NULL_ENTITY);
+}
+
+TEST(silverfish_do_not_all_follow_one_garbage_bag) {
+    CHECK(contentReady());
+    Sim sim;
+    sim.spawnPlayer(kOrigin + Vec2{0, 650});
+    const Entity bag = sim.spawnMob("garbage", kOrigin + Vec2{350, 0});
+    sim.world.add<NetId>(bag, NetId{1});
+    const Entity first = sim.spawnMob("silverfish", kOrigin + Vec2{0, -50});
+    const Entity second = sim.spawnMob("silverfish", kOrigin + Vec2{0, 50});
+    sim.tickIntent();
+    const int approaching = (sim.velocityOf(first).x > 0.0) + (sim.velocityOf(second).x > 0.0);
+    CHECK_EQ(approaching, 1);
+}
+
+TEST(an_idle_silverfish_returns_to_its_spawn_after_fleeing) {
+    CHECK(contentReady());
+    Sim sim;
+    sim.spawnPlayer(kOrigin + Vec2{0, 650});
+    const Entity fish = sim.spawnMob("silverfish", kOrigin);
+    sim.world.add<SilverfishHome>(fish, SilverfishHome{kOrigin + Vec2{350, 0}});
+    sim.tickIntent();
+    CHECK(sim.velocityOf(fish).x > 0.0);
+    CHECK_EQ(sim.brainOf(fish).target, NULL_ENTITY);
+}
+
+TEST(a_silverfish_without_garbage_uses_bulb_aggro) {
+    CHECK(contentReady());
+    Sim sim;
+    const Entity fish = sim.spawnMob("silverfish", kOrigin);
+    const Entity flower = sim.spawnPlayer(kOrigin + Vec2{300.0, 0.0});
+    sim.world.get<Transform>(fish).angle = kPi;
+    sim.tickIntent();
+    CHECK_EQ(sim.brainOf(fish).target, NULL_ENTITY);
+    CHECK(sim.velocityOf(fish).x < 0.0);
+
+    const auto bulb = content().petalIndex("bulb");
+    auto& mods = sim.world.get<PlayerModifiers>(flower);
+    mods.aggroRangeScale = content().petalStats(bulb, Rarity::Apex).modifiers.aggroRange;
+    mods.litAggroBulb = true;
+    sim.world.get<Transform>(fish).angle = 0.0;
+    sim.tickIntent();
+    CHECK_EQ(sim.brainOf(fish).target, flower);
+    CHECK(sim.velocityOf(fish).x > 0.0);
+
+    sim.world.get<PlayerModifiers>(flower).aggroRangeScale = 1.0;
+    sim.world.get<PlayerModifiers>(flower).litAggroBulb = false;
+    sim.tickIntent();
+    CHECK_EQ(sim.brainOf(fish).target, NULL_ENTITY);
+}
+
+TEST(a_silverfish_carrying_garbage_uses_bulb_aggro) {
+    CHECK(contentReady());
+    Sim sim;
+    const Entity fish = sim.spawnMob("silverfish", kOrigin);
+    const Entity bag = sim.spawnMob("garbage", kOrigin + Vec2{20.0, 0.0});
+    sim.world.add<NetId>(bag, NetId{1});
+    const auto bulb = content().petalIndex("bulb");
+    const double bulbScale = content().petalStats(bulb, Rarity::Apex).modifiers.aggroRange;
+    CHECK(bulbScale > 1.0);
+    const double gap = 900.0 * (1.0 + std::min(bulbScale, 1.2)) * 0.5;
+    const Entity flower = sim.spawnPlayer(kOrigin + Vec2{gap, 0.0});
+    sim.tickIntent();
+    CHECK_EQ(sim.brainOf(fish).target, NULL_ENTITY);
+
+    sim.world.get<PlayerModifiers>(flower).aggroRangeScale = bulbScale;
+    sim.world.get<PlayerModifiers>(flower).litAggroBulb = true;
+    sim.tickIntent();
+    CHECK_EQ(sim.brainOf(fish).target, flower);
+    CHECK(sim.velocityOf(fish).x > 0.0);
+
+    sim.world.get<PlayerModifiers>(flower).aggroRangeScale = 1.0;
+    sim.world.get<PlayerModifiers>(flower).litAggroBulb = false;
+    sim.tickIntent();
+    CHECK_EQ(sim.brainOf(fish).target, NULL_ENTITY);
+    const Vec2 oldBag = sim.positionOf(bag);
+    sim.world.get<Transform>(fish).position.x += 10.0;
+    sim.ai.placeChains(sim.world, sim.terrain, sim.active);
+    CHECK(sim.positionOf(bag).x > oldBag.x);
+}
+
+TEST(a_carried_garbage_bag_stops_at_a_live_meteor_in_its_realm) {
+    CHECK(contentReady());
+    for (const std::string mode : {"live", "swept", "dead", "other-realm"}) {
+        Sim sim;
+        const Entity fish = sim.spawnMob("silverfish", kOrigin);
+        const Entity bag = sim.spawnMob("garbage", kOrigin + Vec2{20.0, 0.0});
+        sim.world.add<NetId>(bag, NetId{1});
+        const Entity player = sim.spawnPlayer(kOrigin + Vec2{775.0, 0.0});
+        sim.tickIntent();
+        CHECK_EQ(sim.brainOf(fish).target, player);
+        const Vec2 bagStart = sim.positionOf(bag);
+        CHECK(bagStart.x > kOrigin.x + 20.0);
+
+        const bool swept = mode == "swept";
+        const bool live = mode == "live" || swept;
+        const Realm realm = mode == "other-realm" ? Realm::Maze : Realm::Overworld;
+        constexpr double meteorRadius = 198.0;
+        const double bagRadius = sim.world.get<Body>(bag).radius;
+        const Entity meteor = sim.world.create();
+        const double reach = meteorRadius + bagRadius;
+        // The second blocker clips only the middle of the bag's step. Both
+        // endpoints are clear, so an endpoint-only check would let it through.
+        const Vec2 barrier = bagStart + (swept ? Vec2{4.65, reach - 0.02}
+                                               : Vec2{reach + 4.0, 0.0});
+        sim.world.add<Transform>(meteor, Transform{barrier, 0.0, realm});
+        sim.world.add<Body>(meteor, Body{meteorRadius, 1000000.0});
+        sim.world.add<PlantedMeteor>(meteor, PlantedMeteor{player});
+        if (mode == "dead") sim.world.add<Dead>(meteor);
+
+        MovementSystem movement;
+        sim.world.get<Motion>(fish).velocity = {200.0, 0.0};
+        movement.runWorldPhase(sim.world, sim.terrain, sim.now, sim.dt);
+        CHECK(sim.positionOf(fish).x > kOrigin.x);
+        if (swept) {
+            const Vec2 bagEnd = bagStart + (sim.positionOf(fish) - kOrigin);
+            CHECK(distanceSq(bagStart, barrier) > reach * reach);
+            CHECK(distanceSq(bagEnd, barrier) > reach * reach);
+        }
+        sim.ai.placeChains(sim.world, sim.terrain, sim.active);
+        const Vec2 bagAfter = sim.positionOf(bag);
+        std::printf("    %s meteor: fish moved %.2f, bag moved %.2f, barrier clearance %.2f\n",
+                    mode.c_str(), sim.positionOf(fish).x - kOrigin.x, bagAfter.x - bagStart.x,
+                    distance(barrier, bagAfter) - meteorRadius - bagRadius);
+        CHECK_EQ(sim.velocityOf(bag).lengthSq(), 0.0);
+        if (live) {
+            CHECK_NEAR(distance(bagStart, bagAfter), 0.0, 1e-9);
+            // The bag stays dropped when the carrier turns away.
+            sim.world.get<Transform>(fish).angle = kPi;
+            sim.ai.placeChains(sim.world, sim.terrain, sim.active);
+            CHECK_NEAR(distance(bagStart, sim.positionOf(bag)), 0.0, 1e-9);
+            // Once the meteor has expired, a new claim can carry the same bag.
+            sim.world.add<Dead>(meteor);
+            sim.world.get<Transform>(fish).angle = 0.0;
+            sim.tickIntent();
+            CHECK_EQ(sim.brainOf(fish).target, player);
+            CHECK(sim.positionOf(bag).x > bagStart.x);
+        } else {
+            CHECK(bagAfter.x > bagStart.x + 4.0);
+        }
+    }
+}
+
 TEST(a_wild_sandstorm_follows_bulb_glow_and_resumes_wandering_when_it_goes_out) {
     CHECK(contentReady());
     Sim sim;

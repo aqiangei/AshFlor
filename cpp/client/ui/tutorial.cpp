@@ -6,6 +6,7 @@
 
 #include "client/net_client.h"
 #include "client/ui/draw.h"
+#include "client/ui/i18n.h"
 #include "client/ui/menus.h"
 #include "client/ui/text.h"
 #include "client/ui/theme.h"
@@ -30,57 +31,57 @@ constexpr TutorialStep kSteps[Tutorial::kStepCount] = {
     {"Welcome to flowrix.pro!",
      "Let's learn the basics! You'll learn how to move, use petals, equip items, and craft "
      "upgrades.",
-     true, TutorialGesture::None},
+     TutorialGesture::None},
     {"Movement",
      "Use <strong>W/A/S/D</strong> or <strong>Arrow Keys</strong> to move your flower around the "
      "world. Try moving now!",
-     true, TutorialGesture::Movement},
+     TutorialGesture::Movement},
     {"Extending Petals",
      "Hold <strong>SPACE</strong> to extend your petals outward for maximum reach and damage. Try "
      "it now!<br><br>Your petals protect you and damage enemies that touch them.",
-     true, TutorialGesture::ExtendPetals},
+     TutorialGesture::ExtendPetals},
     {"Loadout Bar",
      "This is your <strong>Loadout Bar</strong> at the bottom of the screen. Here you can equip "
      "petals and items to use in battle.<br><br>Each slot can be accessed using keys "
      "<strong>1-9 and 0</strong>.",
-     false, TutorialGesture::None},
+     TutorialGesture::None},
     {"Inventory",
      "Press <strong>Z</strong> to open your inventory. This is where all your collected petals and "
      "items are stored.<br><br>You can <strong>drag and drop</strong> items from your inventory to "
      "your loadout bar to equip them.",
-     true, TutorialGesture::OpenInventory},
+     TutorialGesture::OpenInventory},
     {"Equipping Petals",
      "Try dragging a petal from your inventory to any slot in the loadout bar!<br><br><em>Tip: "
      "Different petals have different abilities. Experiment to find your favorite "
      "combination!</em>",
-     true, TutorialGesture::EquipPetal},
+     TutorialGesture::EquipPetal},
     {"Crafting",
      "Press <strong>C</strong> to open the crafting menu. Crafting allows you to combine 5 items "
      "of the same type and rarity to create 1 item of higher rarity!",
-     true, TutorialGesture::OpenCrafting},
+     TutorialGesture::OpenCrafting},
     {"How to Craft",
      "To craft:<br>1. Click on an item in the crafting menu (that you have at least 5 of) to add 5 "
      "to the crafting circle<br>2. Click the <strong>Craft</strong> button<br>3. If successful, "
      "you'll get a higher rarity item!<br><br><em>Note: Success chance decreases with higher "
      "rarities. You can close this menu with C.</em>",
-     false, TutorialGesture::None},
+     TutorialGesture::None},
     {"Combat Tips",
      "Your petals automatically damage enemies that touch them. More petals = more "
      "protection!<br><br>\xE2\x80\xA2 <strong>Health</strong>: Each petal has health and will break "
      "when damaged<br>\xE2\x80\xA2 <strong>Damage</strong>: Higher rarity petals deal more "
      "damage<br>\xE2\x80\xA2 <strong>Strategy</strong>: Mix defensive and offensive petals for best "
      "results",
-     false, TutorialGesture::None},
+     TutorialGesture::None},
     {"Additional Controls",
-     "<strong>K</strong> - Toggle mouse/keyboard controls<br><strong>H</strong> - Toggle "
+     "<strong>T</strong> - Toggle mouse/keyboard controls<br><strong>H</strong> - Toggle "
      "hitboxes<br><strong>+/-</strong> - Zoom in/out<br><strong>Enter</strong> - Open "
      "chat<br><strong>ESC</strong> - Open settings<br><br>You can customize controls in the "
      "Settings menu!",
-     false, TutorialGesture::None},
+     TutorialGesture::None},
     {"Tutorial Complete!",
      "You're ready to explore! Defeat enemies, collect petals, craft upgrades, and become the "
      "strongest flower in the garden!<br><br>Good luck!",
-     false, TutorialGesture::None},
+     TutorialGesture::None},
 };
 
 /// The one step whose `highlightElement` can ever be seen -- see the note on
@@ -95,6 +96,15 @@ constexpr int kCraftingHighlightStep = 7;
 
 constexpr double kCardTop = 60.0;
 constexpr double kCardMaxWidth = 500.0;
+constexpr double kCardSideMargin = 10.0;
+
+const char* skipLabel(bool armed) {
+    return armed ? trEnZh("Confirm skip", "确认跳过") : trEnZh("Skip Tutorial", "跳过教程");
+}
+
+const char* nextLabel() {
+    return trEnZh("Next", "下一步");
+}
 constexpr double kPadX = 25.0;
 constexpr double kPadY = 20.0;
 constexpr double kCardRadius = 12.0;
@@ -412,6 +422,7 @@ void Tutorial::finish(ClientSettings& settings) {
     pending_ = false;
     skipArmed_ = false;
     settings.tutorialCompleted = true;
+    settings.settingsDirty = true;
 }
 
 bool Tutorial::conditionMet() const {
@@ -444,7 +455,6 @@ Rect Tutorial::transformed(const Layout& l, Rect r) {
 Tutorial::Layout Tutorial::layout(int viewWidth, double nowSeconds) const {
     Layout out;
     const TutorialStep& step = kSteps[step_];
-    const bool showSkip = step.skipButton;
     const bool showNext = step.gesture == TutorialGesture::None;
 
     const std::vector<Word> words = parseDescription(step.description);
@@ -500,20 +510,19 @@ Tutorial::Layout Tutorial::layout(int viewWidth, double nowSeconds) const {
     };
 
     const double titleWidth = measure(step.title, kHeadSize);
-    const double skipWidth = measure("Skip Tutorial", kLabelSize) + kButtonPadX * 2.0;
-    const double armedWidth = measure("Are you sure?", kLabelSize) + kButtonPadX * 2.0;
-    const double nextWidth = measure("Next", kLabelSize) + kButtonPadX * 2.0;
+    const double skipWidth = std::max(measure(skipLabel(false), kLabelSize),
+                                      measure(skipLabel(true), kLabelSize)) + kButtonPadX * 2.0;
+    const double nextWidth = measure(nextLabel(), kLabelSize) + kButtonPadX * 2.0;
     const double counterWidth =
         measure(std::to_string(step_ + 1) + " / " + std::to_string(kStepCount), kCounterSize);
 
-    double buttonsWidth = 0;
-    if (showSkip) buttonsWidth += (skipArmed_ ? armedWidth : skipWidth) + kButtonMargin * 2.0;
-    if (showNext) buttonsWidth += nextWidth + kButtonMargin * 2.0;
-    if (showSkip && showNext) buttonsWidth += kButtonGap;
+    double buttonsWidth = skipWidth + kButtonMargin * 2.0;
+    if (showNext) buttonsWidth += nextWidth + kButtonMargin * 2.0 + kButtonGap;
 
     const double maxContent =
         std::max({titleWidth, widest(wrap(1e9)), buttonsWidth + counterWidth});
-    const double cardW = std::min(kCardMaxWidth, maxContent + kPadX * 2.0);
+    const double viewportLimit = std::max(2.0 * kPadX + 1.0, viewWidth - 2.0 * kCardSideMargin);
+    const double cardW = std::min({kCardMaxWidth, maxContent + kPadX * 2.0, viewportLimit});
     out.contentW = cardW - kPadX * 2.0;
     out.lines = wrap(out.contentW);
 
@@ -530,14 +539,11 @@ Tutorial::Layout Tutorial::layout(int viewWidth, double nowSeconds) const {
     y += bodyLine * static_cast<double>(out.lines.size()) + kBodyGap;
 
     const double buttonH = normalLineHeight(kLabelSize) + kButtonPadY * 2.0;
-    const double rowH = buttonsWidth > 0 ? buttonH + kButtonMargin * 2.0
-                                         : normalLineHeight(kCounterSize);
+    const double rowH = buttonH + kButtonMargin * 2.0;
     double bx = out.contentX + kButtonMargin;
     const double by = y + kButtonMargin;
-    if (showSkip) {
-        out.skip = Rect{bx, by, skipArmed_ ? armedWidth : skipWidth, buttonH};
-        bx += out.skip.w + kButtonMargin * 2.0 + kButtonGap;
-    }
+    out.skip = Rect{bx, by, skipWidth, buttonH};
+    bx += skipWidth + kButtonMargin * 2.0 + kButtonGap;
     if (showNext) out.next = Rect{bx, by, nextWidth, buttonH};
     // The counter is the flex row's second child, centred against a row the
     // buttons' own margins made taller than it is.
@@ -794,9 +800,9 @@ void Tutorial::draw(Canvas& canvas, Rect highlightCard) {
         canvas.restore();
     };
 
-    paintButton(l.skip, skipArmed_ ? "Are you sure?" : "Skip Tutorial", skipHover_, kSkipFillAlpha,
+    paintButton(l.skip, skipLabel(skipArmed_), skipHover_, kSkipFillAlpha,
                 kSkipHoverAlpha, kPaper, kSkipLabelAlpha);
-    paintButton(l.next, "Next", nextHover_, kNextFillAlpha, kNextHoverAlpha, kNextLabel, 1.0);
+    paintButton(l.next, nextLabel(), nextHover_, kNextFillAlpha, kNextHoverAlpha, kNextLabel, 1.0);
 
     canvas.setGlobalAlpha(static_cast<float>(l.alpha * kCounterAlpha));
     text(canvas, std::to_string(step_ + 1) + " / " + std::to_string(kStepCount),

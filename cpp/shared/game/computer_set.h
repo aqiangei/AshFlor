@@ -25,6 +25,11 @@ inline void applyComputerSet(const PetalConfig& config, unsigned mask, PetalStat
  if(n>=4&&std::isfinite(stats.health)&&stats.health>1)stats.health*=1.15;
  if(n>=5)stats.reloadMillis*=.9;
 }
+inline double deadLeafDurabilityBonus(Rarity rarity) {
+    constexpr double byTier[] = {.04, .05, .06, .08, .10, .13, .17, .22, .28, .35};
+    return byTier[ladderIndex(rarity)];
+}
+
 inline PetalStats computerSetStats(const ContentRegistry& registry, World& world, Entity owner,
  std::uint16_t index, Rarity rarity, PetalStats stats){
  if(const auto* mods=world.tryGet<PlayerModifiers>(owner))
@@ -34,14 +39,13 @@ inline PetalStats computerSetStats(const ContentRegistry& registry, World& world
  double bonus=0.0;
  if(const auto* loadout=world.tryGet<Loadout>(owner)) {
   static constexpr double cactus[]={.01,.02,.03,.05,.08,.13,.21,.34,.55,.825};
-  static constexpr double leaf[]={.04,.05,.06,.08,.10,.13,.17,.22,.28,.35};
   for(int slot=0;slot<std::min(loadout->activeSlots,kLoadoutActiveSlots);++slot) {
    const auto& item=loadout->slots[slot];
    if(item.empty()) continue;
    const auto& id=registry.petal(item.configIndex).id;
    const int tier=ladderIndex(item.rarity);
    if(id=="golden_cactus") bonus=std::max(bonus,cactus[tier]);
-   else if(id=="dead_leaf") bonus=std::max(bonus,leaf[tier]);
+   else if(id=="dead_leaf") bonus=std::max(bonus,deadLeafDurabilityBonus(item.rarity));
   }
  }
  if(stats.health>0.0&&stats.breakable)stats.health*=1.0+bonus;

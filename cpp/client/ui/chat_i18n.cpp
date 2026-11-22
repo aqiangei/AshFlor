@@ -474,6 +474,11 @@ std::string localizePlain(std::string text) {
         if (text == e.en) return e.zh;
     }
 
+    const std::string_view savedLoadout = "Saved loadout ";
+    if (text.rfind(savedLoadout, 0) == 0 && endsWith(text, ".")) {
+        return "已保存配装 " + text.substr(savedLoadout.size(), text.size() - savedLoadout.size() - 1) + "。";
+    }
+
     const std::string_view loaded = "Loaded loadout ";
     const std::string_view kept = ". Current talents kept: the saved talents cost too many points.";
     if (text.rfind(loaded, 0) == 0 && endsWith(text, kept.data())) {
@@ -487,6 +492,20 @@ std::string localizePlain(std::string text) {
         swap(" petals not found", " 枚花瓣缺失");
         swap(" petal not found", " 枚花瓣缺失");
         return "已切换配装 " + detail + "。保存的天赋点数超出当前预算，已保留当前天赋。";
+    }
+    if (text.rfind(loaded, 0) == 0 && endsWith(text, ".")) {
+        std::string detail = text.substr(loaded.size(), text.size() - loaded.size() - 1);
+        const auto swap = [&](std::string_view en, std::string_view zh) {
+            const auto at = detail.find(en);
+            if (at != std::string::npos) detail.replace(at, en.size(), zh);
+        };
+        swap(" petals at a lower rarity", " 枚花瓣使用较低品质");
+        swap(" petal at a lower rarity", " 枚花瓣使用较低品质");
+        swap(" petals not found", " 枚花瓣缺失");
+        swap(" petal not found", " 枚花瓣缺失");
+        swap(" (", "（");
+        swap(")", "）");
+        return "已切换配装 " + detail + "。";
     }
 
     // "{name} has joined the squad."
