@@ -1,12 +1,8 @@
 #pragma once
 // Whether two skins LOOK the same.
 //
-// The catalog is one shared list, and left to itself it fills with copies: one
-// payload published fourteen times in half a minute, the studio's starter
-// flower published untouched, somebody else's skin with its nose a unit wider.
-// None of those is a different skin to anybody browsing for one. So the server
-// refuses a publish that looks like something already there -- or like the
-// starter -- and folds the copies an older catalog holds into their originals.
+// This comparison estimates visual similarity. Skin submissions and publication
+// are governed by moderator decisions, independent of this comparison.
 //
 // "Looks like" is judged on the picture, never the shape list. Two lists can
 // differ everywhere -- reordered, a shape hidden under another, a colour one
