@@ -415,7 +415,7 @@ private:
     void drawTeleporters(Canvas&, const Camera&, Realm realm, double timeSeconds) const;
     bool riftOpen_ = false;
     void drawEntity(Canvas&, const RemoteEntity&, const Camera&, Vec2 at, double timeSeconds,
-                    double distantMobMarkerLimit = 0.0) const;
+                    double distantMobMarkerLimit = 0.0, bool simplifyRingArt = false) const;
     void drawFlower(Canvas&, const RemoteEntity&, const Camera&, Vec2 at, double timeSeconds) const;
     void drawDefaultFlower(Canvas&, const RemoteEntity&, double timeSeconds) const;
     bool drawMagicEyes(Canvas&, std::uint16_t equipFlags, double spacing, double y,
@@ -584,7 +584,7 @@ private:
     /// behind a mob that happens to be standing in front of them.
     void drawChatBubbles(Canvas&, const EntityMap&, const Camera&, Vec2 selfDrawn) const;
     void drawPetalSprite(Canvas&, const RemoteEntity&, const Camera&, Vec2 at,
-                         double timeSeconds) const;
+                         double timeSeconds, bool simplifyRingArt = false) const;
     /// The soft disc under an emissive petal. cpp_canvas has no radial
     /// gradient, so this is the same three-stop ramp painted as nested discs.
     /// `bands` buys smoothness with one filled disc each, which is why a glow

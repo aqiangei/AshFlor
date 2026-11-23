@@ -76,10 +76,31 @@ inline bool validGuildDisplayName(const std::string& name) {
     return !name.empty() && name.size() <= kMaxGuildDisplayName && printableAscii(name);
 }
 
-/// Up to kMaxGuildDescription printable characters. Empty is allowed: it is
-/// how a leader clears one.
+/// One line of UTF-8, with the same byte limit as the editor. Empty clears it.
 inline bool validGuildDescription(const std::string& description) {
-    return description.size() <= kMaxGuildDescription && printableAscii(description);
+    if (description.size() > kMaxGuildDescription) return false;
+
+    for (std::size_t at = 0; at < description.size();) {
+        const auto lead = static_cast<unsigned char>(description[at++]);
+        if (lead < 0x20 || lead == 0x7F) return false;
+        if (lead < 0x80) continue;
+        if (lead < 0xC2 || lead > 0xF4) return false;
+
+        const int tails = lead < 0xE0 ? 1 : lead < 0xF0 ? 2 : 3;
+        constexpr std::uint32_t minimum[] = {0, 0x80, 0x800, 0x10000};
+        std::uint32_t codePoint = lead & (0x7F >> (tails + 1));
+        for (int i = 0; i < tails; ++i) {
+            if (at == description.size()) return false;
+            const auto tail = static_cast<unsigned char>(description[at++]);
+            if ((tail & 0xC0) != 0x80) return false;
+            codePoint = (codePoint << 6) | (tail & 0x3F);
+        }
+        if (codePoint < minimum[tails] || codePoint > 0x10FFFF ||
+            (codePoint >= 0xD800 && codePoint <= 0xDFFF) ||
+            (codePoint >= 0x80 && codePoint <= 0x9F) ||
+            codePoint == 0x2028 || codePoint == 0x2029) return false;
+    }
+    return true;
 }
 
 /// What the card is headed with: the display name, or the tag for a guild that

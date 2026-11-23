@@ -22,7 +22,11 @@ function readString(b, at) {
 }
 async function connect(c, WebSocketClass = globalThis.WebSocket) {
   assert(WebSocketClass, 'Deployment notices require Node with WebSocket support');
-  const ws = new WebSocketClass(c.url, 'binary'); ws.binaryType='arraybuffer';
+  const url = new URL(c.url);
+  const loopback = ['127.0.0.1', '[::1]', 'localhost'].includes(url.hostname);
+  assert(url.protocol === 'wss:' || (url.protocol === 'ws:' && loopback),
+    'Deployment administrator login requires WSS or a loopback WebSocket through SSH');
+  const ws = new WebSocketClass(url.href, 'binary'); ws.binaryType='arraybuffer';
   let pending=null, closed=false, buffer=Buffer.alloc(0);
   const rejectPending=()=>{closed=true;if(pending){clearTimeout(pending.timer);pending.reject(Error('Announcement connection closed'));pending=null;}};
   ws.addEventListener('close',rejectPending);ws.addEventListener('error',rejectPending);

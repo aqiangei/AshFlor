@@ -904,16 +904,16 @@ TEST(enums_and_colours_are_parsed_not_stored_as_text) {
     CHECK(r.petalIndex(kCrownLentPetalId) != kInvalidIndex);
 }
 
-TEST(magic_petals_craft_to_apex_while_own_source_petals_do_not) {
+TEST(permanent_hyper_apex_crafting_includes_every_petal_except_hammer_forms) {
     const ContentRegistry& r = shipped().registry;
-    for (const char* id : {"wing", "magic_wing", "magic_poo", "magic_fire", "magic_bubble_bomb", "magic_leaf"}) {
-        CHECK(r.petalIndex(id) != kInvalidIndex);
-        CHECK(petalCraftsToApex(r, r.petalIndex(id)));
+    CHECK(r.petalCount() > 0);
+    CHECK(r.petalIndex("mjolnir") != kInvalidIndex);
+    CHECK(r.petalIndex("timed_mjolnir") != kInvalidIndex);
+    for (std::uint16_t i = 0; i < r.petalCount(); ++i) {
+        const auto& id = r.petal(i).id;
+        CHECK_EQ(petalCraftsToApex(r, i), id != "mjolnir" && id != "timed_mjolnir");
     }
-    for (const char* id : {"fire", "mjolnir", "void_soap", kChampionCrownPetalId}) {
-        CHECK(r.petalIndex(id) != kInvalidIndex);
-        CHECK(!petalCraftsToApex(r, r.petalIndex(id)));
-    }
+    CHECK(!petalCraftsToApex(r, kInvalidIndex));
 }
 
 // ---------------------------------------------------------------------------

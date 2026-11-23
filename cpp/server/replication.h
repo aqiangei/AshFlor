@@ -77,6 +77,7 @@ public:
         std::uint8_t petalVariant = 255;
         bool rollingDice = false;
         bool petalTypeHidden = false;
+        bool beamOnly = false;
         bool foreignLoan = false;
         /// A hash of the equipped skin id, not the id itself.
         ///
@@ -411,6 +412,7 @@ private:
         Entity entity;
         std::uint32_t netId;
         double selectionKey;
+        bool beamOnly = false;
     };
 
     std::vector<Candidate> candidates_;

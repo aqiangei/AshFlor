@@ -784,8 +784,7 @@ inline constexpr double kPetProgressStep = 25.0;
 /// attention tick by tick.
 inline constexpr double kPetRetargetMargin = 50.0;
 
-/// A sandstorm pet shadows its owner's velocity slightly faster than the owner
-/// moves, so it steadily pulls ahead until the leash below brings it back.
+/// Maximum normal follow speed relative to the owner's current or base pace.
 inline constexpr double kSandstormPetSpeedFactor = 1.2;
 
 /// How far a sandstorm pet may get from its owner before it turns for home.

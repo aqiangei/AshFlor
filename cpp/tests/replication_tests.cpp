@@ -2421,3 +2421,13 @@ TEST(wild_lightning_visible_endpoint_survives_offscreen_source) {
     CHECK_EQ(client.events()[0].flag & net::LightningForeign, 0);
     CHECK_EQ(client.events()[0].flag & net::LightningFromPet, 0);
 }
+
+TEST(fluid_motion_bodyless_radius_delta_updates_same_network_entity) {
+ Fixture f;WorldView client;
+ const Entity e=f.world.create();f.world.add<Transform>(e,Transform{{1050,1000},0});
+ GroundEffect field{GroundEffectKind::AcidSpill,f.viewer,24,10};f.world.add<GroundEffect>(e,field);
+ f.world.add<NetId>(e,NetId{f.ids.next()});Replicated rep;rep.kind=net::EntityKind::Effect;rep.typeIndex=static_cast<std::uint16_t>(GroundEffectKind::AcidSpill);f.world.add<Replicated>(e,rep);
+ const auto id=netIdOf(f.world,e);f.tick(client,1,1000);CHECK_NEAR(client.entities().at(id).radius,24,.05);
+ for(int tick=2;tick<=6;++tick){const double radius=24+16*(tick-1);f.world.get<GroundEffect>(e).radius=radius;f.tick(client,tick,1000+tick*50);CHECK_NEAR(client.entities().at(id).radius,radius,.05);}
+ CHECK_EQ(client.entities().count(id),1);
+}

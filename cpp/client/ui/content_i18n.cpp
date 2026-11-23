@@ -634,14 +634,14 @@ constexpr Pair kMobs[] = {
     {"void_zatan", "撒旦"},
 };
 constexpr Pair kPetalDescs[] = {
-    {"arctic_snowball", "攻击时发射雪球，命中会减速。"},
-    {"arctic_snowflake", "攻击时向六个方向发射雪花，命中会减速。"},
+    {"arctic_snowball", "攻击时发射雪球，命中会减速。神话起2枚、超级3枚、永恒及以上5枚。"},
+    {"arctic_snowflake", "雪花破碎时向六个方向射出碎晶，命中会减速。"},
     {"arctic_blueberries", "四颗蓝莓可发射冰冻弹，短暂减缓目标。"},
     {"arctic_frozen_mark", "靠近倒下的花朵时附着到遗体上。读条结束后将其复活并送到极地。"},
     {"arctic_ears", "极地花瓣。"},
     {"arctic_amethyst", "重装时间较长，命中时造成高额伤害。"},
     {"arctic_sapphire", "极地花瓣。"},
-    {"arctic_icicle", "发射冰锥，命中后短暂减速。"},
+    {"arctic_icicle", "发射冰锥，命中后短暂冻结敌怪；冻结时长随稀有度增长。"},
     {"arctic_nitrogen", "接触敌人时使其减速。"},
     {"arctic_ice", "装备后降低受到的灼烧伤害。"},
     {"arctic_frost", "接触敌人时使其减速。"},
@@ -687,7 +687,7 @@ constexpr Pair kPetalDescs[] = {
     {"cancer", "命中同阶或低阶野怪时标记。幽灵和挑战怪免疫。目标死亡后分裂一次，分裂体不提供额外奖励。在花环上停留十秒会被自身吸收，降低最大生命值，药片可治疗。"},
     {"chloroplast", "提高护盾花瓣和溢出治疗补充的护盾量。多个叶绿体取最高效果。"},
     {"chromosome", "修复自己在同一地图上已经展开的花瓣。"},
-    {"coordinate", "让同稀有度或更低稀有度的宠物跟随指针，同时降低自身移速。"},
+    {"coordinate", "用方向键或摇杆指挥同阶及以下的宠物。未输入方向时，宠物跟随可用的指针。装备会降低自身移速。"},
     {"diamond", "破裂时向六个方向射出碎片。"},
     {"dna", "装备后，同阶或更低阶的蛋孵化时有 0.5% 基础概率让召唤物升一阶，最高超凡。幸运可提高概率。"},
     {"electron_missile", "导弹击中敌人后，会向附近目标释放连锁闪电。"},
@@ -733,7 +733,7 @@ constexpr Pair kPetalDescs[] = {
     {"beetle_egg", "孵化一个甲虫宠物"},
     {"blood_leaf", "爆炸并对玩家造成伤害"},
     {"blue_iris", "比普通鸢尾生效更快"},
-    {"bone", "坚固又耐用。每次攻击都会损失一半的护甲。"},
+    {"bone", "坚固耐用，受到攻击后仍保留护甲。"},
     {"bubble", "弱者才会遵守物理定律。"},
     {"bubble_egg", "孵化一个泡泡宠物"},
     {"bulb", "闪亮的灯泡，吸引生物的攻击。"},
@@ -751,7 +751,7 @@ constexpr Pair kPetalDescs[] = {
     {"claw", "在目标的生命值高于80%时造成额外伤害。\n对其他花朵造成的伤害减少50%。"},
     {"clover", "提高花朵的幸运，让附近生成的怪物更有可能达到较高品质。\n装备多片三叶草时，只取最高的幸运加成。"},
     {"coin", "是乃金钱所迫！"},
-    {"compass", "这个玩意也许可以找到一些有趣的东西……"},
+    {"compass", "指向同一地图最近的超凡或 Apex 野怪，不受磁铁影响。没有目标时指向瞄准反方向。"},
     {"coral", "撞击后分裂。\n每一片的属性为分裂前的50%。"},
     {"corn", "冷却时间很长，但耐久很高。"},
     {"cotton", "吸收花朵收到的伤害。"},
@@ -948,7 +948,7 @@ constexpr Pair kPetalDescs[] = {
     {"magic_poo", "装备后持续消耗法力，扩大普通召唤物的追击范围。同类只取最高效果。"},
     {"magic_rock", "高耐久，带护甲。生成时消耗法力。"},
     {"magic_soil", "提高生命和法力上限，增大花朵体积，持续恢复法力，同时降低移动速度。"},
-    {"magic_tomato", "会随时间变强。"},
+    {"magic_tomato", "法力足够时自动支付一次催熟消耗，提升接触伤害直至该花瓣破碎。"},
     {"magic_tooth", "咬中后回复生命和少量法力。"},
     {"magic_torch", "点燃野怪，并消耗法力清除我方召唤物的寒霜。"},
     {"magic_wing", "攻击时向外挥击，生成时消耗法力。"},
@@ -1071,7 +1071,7 @@ constexpr Pair kMobDescs[] = {
     {"jurassic_raptor", "先绕着目标移动，再冲上去造成接触伤害。"},
     {"jurassic_pteranodon", "行动迅捷的飞行猎手。"},
     {"jurassic_tyrannosaurus", "会追击目标的强力猎手。"},
-    {"jurassic_fossil", "旋转的骨头保护着这块化石。"},
+    {"jurassic_fossil", "三根骨头绕着化石旋转。化石本身有护甲。"},
     {"jurassic_acid_bubble", "脆弱的气泡，含有强毒。"},
     {"jurassic_ankylosaurus", "行动缓慢，护甲厚重。"},
     {"jurassic_bush", "扎根于林地的灌木。"},
@@ -1189,6 +1189,13 @@ constexpr Pair kMobDescs[] = {
 };
 
 const char* petalDescTr(const std::string& id, const char* fallback) {
+    if (!zh() && id == "coordinate")
+        return "Directs pets of its rarity or lower with movement keys or the touch stick. With no directional input, they follow an available pointer. Reduces your movement speed.";
+    if (id == "meteor")
+        return zh() ? "攻击或防御时沿当前位置向外放置。阻挡半径 198，基础持续 20 秒。每朵花最多放置三块。"
+                    : "Attack or defend to place it outward from its ring position. Blocks within a radius of 198 for 20 seconds at base. Up to three per flower.";
+    if (!zh() && id == "bone")
+        return "Sturdy armor that holds its value after taking a hit.";
     static constexpr Pair importedRecipeDescriptions[] = {
         {"gas", "接触敌人时施加持续 2 秒的毒伤。"},
         {"blood_rose", "吸收时回复生命并补充护盾，同时短暂限制视野。"},
@@ -1206,7 +1213,7 @@ const char* petalDescTr(const std::string& id, const char* fallback) {
         {"golden_cactus", "增加装备花瓣的最大生命，多枚取最强。"},
         {"hel_honey", "使你的蜂蜜诱饵灼烧附近敌人。"},
         {"irey", "使你的蜂蜜诱饵对附近敌人施毒。"},
-        {"toilet_paper", "生命曾高于 90%，受伤后自然存活且血量在 1% 至不足 10% 时，卫生纸伤害变为 3 倍。仅在这个血量范围内生效，窗口最长 9 秒。卸下卫生纸、第二次机会或绷带会结束强化，下次仍须等到上次触发后 9 秒。对同一目标每 0.5 秒最多命中一次。"},
+        {"toilet_paper", "基础伤害 75。装备时生命曾达到 90% 后，若一次受伤使生命降至 10% 或以下且自然存活，卫生纸自身伤害变为 10 倍，持续 8 秒。治疗、卸下或之后的救护不会中断爆发。再次达到 90% 生命可重新武装。单件即可生效。"},
         {"fractal", "爆裂时释放分叉闪电，同次闪电不会重复选择目标。"},
         {"marble", "攻击时放出弹珠。弹珠撞墙反弹，对同一目标最多每秒命中一次。"},
         {"magic_marble", "消耗法力形成，遇墙反弹，破碎时放出三枚玻璃碎片。"},
@@ -1295,16 +1302,19 @@ const char* petalDescTr(const std::string& id, const char* fallback) {
         }
     }
     static constexpr Pair kArcticEnglish[] = {
+        {"magic_tomato", "Spends mana once to ripen, increasing contact damage until this petal breaks."},
+        {"opal", "Gives petals of its rarity or lower a chance to critically hit with direct attacks. Their rarity sets the chance and multiplier."},
+        {"electron_missile", "Fires a missile that releases chain lightning on impact."},
         {"arctic_stick", "An Arctic petal that does not summon. Snow Stick summons snowstorms and Mysterious Stick summons sandstorms."},
         {"arctic_spider_cave_egg", "Hatches ten Arctic Spiders."},
         {"arctic_igloo_egg", "Hatches ten Snowmen."},
         {"arctic_nuke_egg", "Hatches two Nukes. When defeated, each explodes for one contact hit of damage to nearby hostile wild mobs. An Apex egg hatches Hyper Nukes."},
-        {"arctic_snowball", "Fires snowballs that slow enemies on hit."},
-        {"arctic_snowflake", "Fires six snowflakes that slow enemies on hit."},
+        {"arctic_snowball", "Fires slowing snowballs: 2 at Mythic, 3 at Super, 5 at Eternal and above."},
+        {"arctic_snowflake", "When broken, fires six crystal fragments that slow enemies on hit."},
         {"arctic_blueberries", "Four frozen berries that can fire briefly slowing shots."},
         {"arctic_frozen_mark", "Attaches to a fallen flower. When charged, it revives the flower in the Arctic."},
         {"arctic_amethyst", "Deals heavy contact damage and takes a long time to reload."},
-        {"arctic_icicle", "Fires an icicle that briefly slows enemies on hit."},
+        {"arctic_icicle", "Fires an icicle that briefly freezes enemy mobs on hit. Freeze duration grows with rarity."},
         {"arctic_nitrogen", "Slows enemies on contact."},
         {"arctic_ice", "Reduces incoming burn damage while equipped."},
         {"arctic_frost", "Slows enemies on contact."},
@@ -1330,6 +1340,8 @@ const char* petalDescTr(const std::string& id, const char* fallback) {
     return lookup(kPetalDescs, sizeof(kPetalDescs) / sizeof(kPetalDescs[0]), id, fallback);
 }
 const char* mobDescTr(const std::string& id, const char* fallback) {
+    if (!zh() && id == "jurassic_fossil")
+        return "Three bones orbit the fossil. The fossil itself has armor.";
     if (id == "void_black_hole")
         return zh() ? "虚空生物。吸引附近目标，并发射伽马射线。"
                     : "A Void creature that pulls nearby targets in and fires gamma rays.";

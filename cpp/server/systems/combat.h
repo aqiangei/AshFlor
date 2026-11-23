@@ -43,6 +43,9 @@ class ServerWorkers;
 
 class Terrain;
 
+enum class PoisonOrigin { Ordinary, UraniumSelf };
+inline constexpr double kUraniumSelfPoisonHealthFraction = 0.04;
+
 /// How long a hit keeps the client's white flash lit. Short: it reads as an
 /// impact rather than a status, and it is refreshed by every landed hit, so a
 /// sustained beating stays lit without anything having to track that.
@@ -221,7 +224,7 @@ public:
     std::function<std::uint32_t()> allocateNetId;
     static void createSpill(World& world, Entity owner, Vec2 at, Rarity rarity,
                             const SpillSpec& spill, double scale, std::uint32_t netId,
-                            double durabilityScale = 1.0);
+                            double durabilityScale = 1.0, Rng* rng = nullptr);
     ~CombatSystem();
     CombatSystem(const CombatSystem&) = delete;
     CombatSystem& operator=(const CombatSystem&) = delete;
@@ -340,7 +343,8 @@ public:
     /// A flower is different on purpose: it carries exactly one bite, replaced
     /// outright by the next one even when that shortens it.
     void applyPoison(World& world, Entity victim, Entity source, double perSecond,
-                     double durationMillis, double nowMillis, bool stackByEmitter = false);
+                     double durationMillis, double nowMillis, bool stackByEmitter = false,
+                     PoisonOrigin origin = PoisonOrigin::Ordinary);
 
     /// A slow never weakens while it is live: the deeper factor wins and the
     /// expiry never comes closer, so a common petal grazing a mob cannot wipe
@@ -352,7 +356,7 @@ public:
     /// petal or pincer has ever taken a flower's speed away. A MOB's web is the
     /// exception, and reaches a flower through slowFlower() below instead.
     void applySlow(World& world, Entity victim, double factor, double durationMillis,
-                   Rarity sourceRarity, double nowMillis, bool frost = false);
+                   Rarity sourceRarity, double nowMillis, bool frost = false, bool freeze = false);
 
     /// The one slow a FLOWER takes: a mob's web (GroundEffect::slowsFlowers).
     /// Same deepest-wins, never-shortened rule as applySlow(), written to
@@ -500,6 +504,7 @@ private:
         double slowFactor = 1.0;
         double slowDurationMillis = 0;
         bool inflictsFrost = false;
+        bool inflictsFreeze = false;
         bool poisonStacksByEmitter = false;
         /// How long a hit from this body stops the victim healing. Dandelion,
         /// and nothing else.

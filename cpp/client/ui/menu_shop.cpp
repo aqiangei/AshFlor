@@ -26,6 +26,10 @@
 #include <unordered_map>
 #include <vector>
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
+
 #include "svg.h"
 
 #include "client/interpolation.h"
@@ -632,6 +636,27 @@ bool ShopPanel::render(MenuContext& ctx) {
     struct RestoreCanvas { Canvas& canvas; ~RestoreCanvas() { canvas.restore(); } } restore{canvas};
     canvas.translate(static_cast<float>(offset.x), static_cast<float>(offset.y));
     canvas.scale(static_cast<float>(fit), static_cast<float>(fit));
+    const auto placeLink = [&](const char* id, Rect rect, int visibleBit) {
+#ifdef __EMSCRIPTEN__
+        EM_ASM(({
+            const link = document.getElementById(UTF8ToString($0));
+            const canvas = Module.canvas;
+            if (!link || !canvas) return;
+            const box = canvas.getBoundingClientRect();
+            const scale = box.width / $5;
+            const geometry = [box.left + $1 * scale, box.top + $2 * scale, $3 * scale, $4 * scale];
+            const key = geometry.join(',');
+            if (link.ashflorPlacement !== key) {
+                link.ashflorPlacement = key;
+                [link.style.left, link.style.top, link.style.width, link.style.height] =
+                    geometry.map(value => value + 'px');
+            }
+            link.hidden = false;
+            Module.ashflorShopVisible |= $6;
+        }), id, offset.x + rect.x * fit, offset.y + rect.y * fit,
+           rect.w * fit, rect.h * fit, ctx.window.width(), visibleBit);
+#endif
+    };
     const auto trackShopText = [&](Window& window, TextFieldState& field, Rect box,
                                    TextRun run, const std::string& value, double seconds) {
         box = {offset.x + box.x * fit, offset.y + box.y * fit, box.w * fit, box.h * fit};
@@ -666,6 +691,11 @@ bool ShopPanel::render(MenuContext& ctx) {
                 (answer.redeem ? trEnZh("Code redemption failed: ", "兑换失败：")
                                : trEnZh("Purchase failed: ", "购买失败：")) +
                     answer.message,
+                kDialogLineSize, 260.0);
+        } else if (answer.redeem && !answer.message.empty()) {
+            state.modal = ShopState::Modal::Alert;
+            state.lines = wrapMessage(
+                trEnZh("Petal delivered. Check your inventory.", "花瓣已到账，可在背包查看。"),
                 kDialogLineSize, 260.0);
         } else if (answer.redeem) {
             // The field was already cleared when the code was sent; the stars
@@ -744,6 +774,7 @@ bool ShopPanel::render(MenuContext& ctx) {
              rect.y + rect.h * 0.5, shopText(kTabSize));
     }
 
+    Rect ldxpButton{};
     // --- the footer, on every tab -------------------------------------------
     // The balance is shared by every tab, so it is the
     // window's footer rather than the store's.
@@ -759,15 +790,16 @@ bool ShopPanel::render(MenuContext& ctx) {
         text(canvas, balance, plate.x + kBalanceInset + kBalanceStar + textPad(kBalanceSize) * 0.5,
              plate.y + plate.h * 0.5, shopText(kBalanceSize, Align::Left));
 
-        const double right = plate.x - 10.0;
-        const double line = kFooterSize * kLineHeight;
-        text(canvas,
-             trEnZh("You gain stars by completing challenges, or by",
-                    "通过完成挑战，或在「奖励」页"),
-             right, panel.y + kFooterTop + line * 0.5, shopText(kFooterSize, Align::Right));
-        text(canvas,
-             trEnZh("redeeming a code on the Bonus tab.", "兑换兑换码获得星星。"),
-             right, panel.y + kFooterTop + line * 1.5, shopText(kFooterSize, Align::Right));
+        const char* label = trEnZh("Get Petals on LDXP", "前往链动小铺获取花瓣");
+        const double buttonWidth = measure(label, kFooterSize) + 24.0;
+        ldxpButton = {plate.x - 10.0 - buttonWidth, plate.y, buttonWidth, plate.h};
+        if (live && !modalUp) placeLink("ashflor-shop-link", ldxpButton, 1);
+        const bool hovered = ldxpButton.contains(under);
+        if (hovered) cursor = CursorShape::Hand;
+        drawFlorrButton(canvas, ldxpButton, kWindowRim, kButtonBorder, kButtonRadius,
+                        hovered, !modalUp && pressing(ldxpButton));
+        text(canvas, label, ldxpButton.x + ldxpButton.w * 0.5, plate.y + plate.h * 0.5,
+             shopText(kFooterSize));
     }
 
     // --- tab contents -------------------------------------------------------
@@ -777,6 +809,7 @@ bool ShopPanel::render(MenuContext& ctx) {
     std::array<Rect, kShopOfferCount> priceButtons{};
     Rect codeField{};
     Rect redeemButton{};
+    Rect petalRedeemButton{};
     Rect bonusButton{};
     Rect bonusToggle{};
     std::array<Rect, 3> lockButtons{};
@@ -874,10 +907,10 @@ bool ShopPanel::render(MenuContext& ctx) {
             else drawStarRow(canvas, price, formatPrice(offer.price), kPriceIconBox, kPriceStar, kPriceSize);
         }
     } else if (tab_ == Tab::Bonus) {
-        text(canvas, trEnZh("Redeem a Code", "兑换兑换码"), panel.x + panel.w * 0.5,
+        text(canvas, trEnZh("Redeem a Star Code", "星星兑换码"), panel.x + panel.w * 0.5,
              panel.y + kHeadingMiddle, shopText(kOffersHeadingSize));
         text(canvas,
-             trEnZh("Codes are shared on Discord and in QQ group 227990150. Each code can be redeemed once.",
+             trEnZh("Star codes are shared on Discord and in QQ group 227990150. Each code can be redeemed once.",
                     "兑换码在 Discord 和 QQ 群 227990150 发放，每个只能兑换一次星星。"),
              panel.x + panel.w * 0.5, panel.y + kSubMiddle, shopText(kSubSize));
 
@@ -895,7 +928,7 @@ bool ShopPanel::render(MenuContext& ctx) {
         redeemButton = Rect{codeField.right() + 10.0, codeField.y, kRedeemWidth, kCodeFieldHeight};
 
         if (codeField.contains(under)) cursor = CursorShape::Text;
-        inputField(canvas, codeField, state.code, trEnZh("Enter code...", "输入兑换码…"),
+        inputField(canvas, codeField, state.code, trEnZh("Enter star code...", "输入星星兑换码…"),
                    state.field.focused, ctx.timeSeconds, &state.field);
 
         const bool usable = !trimmed(state.code).empty();
@@ -925,12 +958,24 @@ bool ShopPanel::render(MenuContext& ctx) {
         const auto elapsed = ctx.net.dropBonusPaused ? 0 :
             std::max<std::int64_t>(0, now - ctx.net.dropBonusUpdatedAt) *
             ctx.net.dropBonusCountdownRate / net::kTicksPerSecond;
-        const auto left = std::max<std::int64_t>(0, std::min(
-            ctx.net.dropBonusNextClaim - now,
-            reportedRemaining - elapsed));
+        const auto untilReset = ctx.net.dropBonusNextClaim - now;
+        // A paused balance stays fixed until midnight clears it.
+        const auto left = untilReset <= 0 ? 0 : ctx.net.dropBonusPaused ? reportedRemaining :
+            std::clamp<std::int64_t>(reportedRemaining - elapsed, 0, untilReset);
         bonusCanClaim = live && canClaim;
         bonusCanToggle = live && hasBonusTime;
-        const double y=box.bottom()+28;
+        const char* petalLinkLabel = trEnZh("Petal Redemption Website", "花瓣兑换网站");
+        const double petalLinkWidth = measure(petalLinkLabel, kTabSize) + 32.0;
+        petalRedeemButton = {panel.x + (panel.w - petalLinkWidth) * 0.5,
+                             box.bottom() + 10.0, petalLinkWidth, 36.0};
+        if (live && !modalUp) placeLink("ashflor-petal-redeem-link", petalRedeemButton, 2);
+        const bool petalLinkHover = petalRedeemButton.contains(under);
+        if (petalLinkHover) cursor = CursorShape::Hand;
+        drawFlorrButton(canvas, petalRedeemButton, kWindowRim, kButtonBorder, kButtonRadius,
+                        petalLinkHover, !modalUp && pressing(petalRedeemButton));
+        text(canvas, petalLinkLabel, petalRedeemButton.x + petalRedeemButton.w * 0.5,
+             petalRedeemButton.y + petalRedeemButton.h * 0.5, shopText(kTabSize));
+        const double y = petalRedeemButton.bottom() + 20.0;
         text(canvas,trEnZh("Daily Drop Bonus","每日掉落加成"),panel.x+panel.w*.5,y,shopText(20));
         text(canvas,trEnZh("Days 1–3: 2x for 3 hours. Day 4: 3x for 4 hours. Ultra and below.",
                     "第 1–3 天 2 倍（3 小时），第 4 天 3 倍（4 小时），究极及以下怪物。"),
@@ -1275,6 +1320,10 @@ bool ShopPanel::render(MenuContext& ctx) {
     }
 
     if (clicked(closeRect)) return false;
+    if (clicked(ldxpButton)) {
+        openExternalLink("https://wzyp.cn/shop/FZ7ZPILX");
+        return true;
+    }
 
     for (int i = 0; i < static_cast<int>(kTabLabels.size()); ++i) {
         if (!clicked(tabRects[static_cast<std::size_t>(i)])) continue;
@@ -1293,6 +1342,10 @@ bool ShopPanel::render(MenuContext& ctx) {
     }
     if (bonusCanToggle && clicked(bonusToggle)) {
         ctx.net.setDropBonusEnabled(ctx.net.dropBonusPaused);
+        return true;
+    }
+    if (clicked(petalRedeemButton)) {
+        openExternalLink("https://154.8.157.208/redeem/");
         return true;
     }
     if (!trimmed(state.code).empty() && clicked(redeemButton)) {

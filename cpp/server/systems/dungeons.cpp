@@ -560,10 +560,28 @@ void DungeonSystem::runWave(WaveRoom& room, World& world, const Terrain& terrain
         return;
     }
 
+    const bool atMobCap = spawning.census().mobs >= spawning.mobCap;
+    const bool timerExpired = nowMillis >= room.readyAtMillis;
+    if (room.round == 0 && timerExpired && atMobCap) {
+        // A full world can spare a slot on the next population pass.
+        // Allow one batch interval before returning the group to the entrance.
+        if (nowMillis - room.readyAtMillis >= kWaveBatchMillis)
+            closeWave(room, world, commands, "服务器怪物容量已满，本次试炼未开始，请稍后重新开房。");
+        return;
+    }
+    const bool timedOut = room.round != 0 && timerExpired;
+    if (!clearedCurrent && timedOut && !room.rounds.empty() &&
+        room.rounds.back().number == room.round && room.rounds.back().queued == 0) {
+        // A round that never got a single enemy must not advance to a higher tier.
+        closeWave(room, world, commands, atMobCap
+            ? "服务器怪物容量已满，当前波未刷出，请稍后重试。"
+            : "当前波没有可用的刷怪位置，请重新开房。");
+        return;
+    }
+
     const int players = static_cast<int>(room.members.size());
     const Vec2 extent = terrain.realmExtent(room.realm);
     const Vec2 centre = extent * 0.5;
-    const bool timedOut = room.round != 0 && nowMillis >= room.readyAtMillis;
     if (!clearedCurrent && timedOut && liveEnemies > kWaveCleanupThreshold) {
         if (room.cleanupUntilMillis == 0.0) {
             room.cleanupUntilMillis = nowMillis + kWaveCleanupMillis;

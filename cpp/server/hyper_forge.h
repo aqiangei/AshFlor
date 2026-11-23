@@ -75,6 +75,38 @@ inline int hyperHoldingCount(const Database& db,const std::string& userId){
     std::int64_t total=apexHammers;for(const auto& [petal,count]:physical)total+=count;
     return static_cast<int>(std::min<std::int64_t>(kMaxStackCount,total));
 }
+inline bool discardForgeCopy(PlayerRecord& record, const std::string& forgeKey,
+                             bool preserveTemporaryHammer = false) {
+    const auto colon=forgeKey.find(':');
+    const bool apexHammer = forgeKey.rfind("apex-hammer:",0)==0;
+    const auto petal = apexHammer ? std::string("mjolnir")
+        : colon==std::string::npos ? forgeKey : forgeKey.substr(colon+1);
+    const auto outputTier = apexHammer ? Rarity::Ascendant : Rarity::Apex;
+    const auto key="petal_"+petal;
+    const auto& lease = std::as_const(record.extra)["temporaryHyperHammer"];
+    const bool leased = preserveTemporaryHammer && !apexHammer && petal == "mjolnir" &&
+                        lease["active"].asBool();
+    const int leasedSlot = leased ? lease["slot"].asInt(-1) : -1;
+    bool destroyed=false;
+    const int reservedInBag = leased && leasedSlot < 0 ? 1 : 0;
+    if(record.itemCount(outputTier,key)>reservedInBag){record.addItem(outputTier,key,-1);destroyed=true;}
+    else {
+        for (int i = 0; i < static_cast<int>(record.loadout.size()); ++i) {
+            auto& slot = record.loadout[i];
+            if (i != leasedSlot && slot && slot->rarity == outputTier && slot->petalType == petal) {
+                slot.reset();
+                destroyed = true;
+                break;
+            }
+        }
+    }
+    bool remaining=record.itemCount(outputTier,key)>0;
+    for(const auto& slot:record.loadout)remaining=remaining||(slot&&slot->rarity==outputTier&&slot->petalType==petal);
+    if(!remaining)for(auto& [name,slots]:record.loadoutPresets)
+        for(auto& slot:slots)if(slot&&slot->rarity==outputTier&&slot->petalType==petal)slot.reset();
+    return destroyed;
+}
+
 // Relinquish exactly one registered claim, with no material refund. Keep
 // claim history and let another account claim the released copy first.
 // A missing physical copy (for example after an older trade for a coin) still
@@ -85,24 +117,10 @@ inline HyperForgeResult abandonHyper(Database& db,const std::string& userId,cons
     const auto oldTable=db.storedTable("hyperForges");
     const auto* original=db.findProgress(userId);
     if(!original || oldTable[forgeKey]["owner"].asString()!=userId){out.reason="你未持有这份超凡。";return out;}
-    const auto colon=forgeKey.find(':');
-    const bool apexHammer = forgeKey.rfind("apex-hammer:",0)==0;
-    const auto petal = apexHammer ? std::string("mjolnir")
-        : colon==std::string::npos ? forgeKey : forgeKey.substr(colon+1);
-    const auto outputTier = apexHammer ? Rarity::Ascendant : Rarity::Apex;
-    const auto key="petal_"+petal;
     const auto before=*original;
     auto& record=db.progress(userId);
     rememberHyperHoldings(record,static_cast<double>(db.nowMillis()));
-    bool destroyed=false;
-    if(record.itemCount(outputTier,key)>0){record.addItem(outputTier,key,-1);destroyed=true;}
-    else {
-        for(auto& slot:record.loadout)if(slot&&slot->rarity==outputTier&&slot->petalType==petal){slot.reset();destroyed=true;break;}
-    }
-    bool remaining=record.itemCount(outputTier,key)>0;
-    for(const auto& slot:record.loadout)remaining=remaining||(slot&&slot->rarity==outputTier&&slot->petalType==petal);
-    if(!remaining)for(auto& [name,slots]:record.loadoutPresets)
-        for(auto& slot:slots)if(slot&&slot->rarity==outputTier&&slot->petalType==petal)slot.reset();
+    const bool destroyed = discardForgeCopy(record, forgeKey);
     auto& entry=db.rawTable("hyperForges")[forgeKey];
     entry["owner"]="";entry["protectedUntil"]=0;
     entry["abandonedBy"] = userId;
@@ -181,6 +199,15 @@ inline HyperForgePlan planHyperForge(const Database& db,const std::string& userI
     }
     // Only this titan's registered owner loses ONE copy. Another titan's
     // copy (including one held by the same account) is independent.
+    if (!state.owner.empty()) {
+        const auto& lock = db.storedTable("accountTransferUsers")[state.owner];
+        const auto& transfer = db.storedTable("accountTransferOutgoing")[lock["operation"].asString()];
+        for (const auto& slot : transfer["forgeClaimsToRelease"].items()) {
+            if (slot.asString() != forgeKey) continue;
+            out.reason = "当前持有者正在转服，请稍后再争夺。";
+            return plan;
+        }
+    }
     const auto* previous=state.owner.empty()?nullptr:db.findProgress(state.owner);
     const Json& oldTable=db.storedTable("hyperForges");
     const auto previousInput=oldTable[forgeKey]["input"].asString(

@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "server/guilds.h"
 #include "server_harness.h"
 
 using namespace flix;
@@ -466,6 +467,18 @@ TEST(a_guild_carries_a_display_name_and_only_its_leader_edits_it) {
     // Trimmed, as every other name the server stores is.
     CHECK_EQ(member.guild().name, std::string("Alpha Company"));
 
+    const std::string announcement = "本周六晚八点组队，欢迎参加！";
+    boss.requestGuildEdit("", announcement);
+    CHECK(h.stepUntil({&boss, &member},
+                      [&] { return member.guild().description == announcement; }, 200));
+
+    // Invalid UTF-8, controls and overlong text leave the announcement intact.
+    CHECK(!validGuildDescription("\xED\xA0\x80"));
+    CHECK(!validGuildDescription("\xE4\xB8"));
+    CHECK(!validGuildDescription("First\nSecond"));
+    CHECK(!validGuildDescription(std::string(119, 'x') + "花"));
+    CHECK(validGuildDescription(std::string(117, 'x') + "花"));
+
     // Over the limits: refused whole, so the stored pair survives.
     boss.requestGuildEdit("Alpha Company", std::string(121, 'x'));
     boss.requestGuildEdit(std::string(21, 'n'), "short");
@@ -481,7 +494,7 @@ TEST(a_guild_carries_a_display_name_and_only_its_leader_edits_it) {
     const Json& guild = db.storedTable("guilds")["ALPHA"];
     CHECK_EQ(guild["name"].asString(), std::string("ALPHA"));
     CHECK_EQ(guild["displayName"].asString(), std::string("Alpha Company"));
-    CHECK_EQ(guild["description"].asString(), std::string("Weekly raids, all welcome"));
+    CHECK_EQ(guild["description"].asString(), announcement);
 }
 
 TEST(the_guild_roster_places_members_in_their_biome_and_drops_them_on_disconnect) {

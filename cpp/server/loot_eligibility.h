@@ -55,6 +55,21 @@ inline Entity liveContributorBody(World& world, const Bounty::Share& share) {
         const auto* health = world.tryGet<Health>(body);
         return !health || health->alive();
     };
+    if (!share.accountId.empty()) {
+        const auto matches = [&](const PlayerAccount& account) {
+            return account.connection != 0 && account.userId == share.accountId;
+        };
+        const auto* credited = world.tryGet<PlayerAccount>(share.player);
+        if (credited && matches(*credited) && living(share.player)) return share.player;
+
+        Entity found = NULL_ENTITY;
+        Query<PlayerTag, PlayerAccount> flowers{world};
+        flowers.each([&](Entity flower, PlayerTag&, PlayerAccount& account) {
+            if (found == NULL_ENTITY && matches(account) && living(flower)) found = flower;
+        });
+        return found;
+    }
+
     if (living(share.player)) {
         const auto* account = world.tryGet<PlayerAccount>(share.player);
         if (share.owner == 0 || (account && account->connection == share.owner))
@@ -78,6 +93,7 @@ inline Entity liveContributorBody(World& world, const Bounty::Share& share) {
 inline Bounty::Share refreshedShare(World& world, Bounty::Share share) {
     if (const Entity live = liveContributorBody(world, share); live != NULL_ENTITY) {
         share.player = live;
+        if (!share.accountId.empty()) share.owner = world.get<PlayerAccount>(live).connection;
     }
     return share;
 }
@@ -116,12 +132,15 @@ inline constexpr int kHyperLowRewardTenths = 5;
 /// The kill announcement names the first highest contributor. Use the
 /// original ledger so a leader who left cannot promote somebody else.
 inline int hyperRewardTenths(const Bounty& bounty, Entity recipient,
-                             net::ConnectionId owner, double mobMaxHealth) {
+                             net::ConnectionId owner, double mobMaxHealth, std::string_view accountId = {}) {
     const auto& shares = bounty.contributors;
     const auto top = std::max_element(shares.begin(), shares.end(),
         [](const auto& a, const auto& b) { return a.damage < b.damage; });
     for (auto it = shares.begin(); it != shares.end(); ++it) {
-        if (it->owner != 0 ? it->owner != owner : it->player != recipient) continue;
+        const bool same = !it->accountId.empty()
+            ? owner != 0 && it->accountId == accountId
+            : it->owner != 0 ? it->owner == owner : it->player == recipient;
+        if (!same) continue;
         if (it == top && it->damage > 0.0) return 13;
         return it->damage < lootDamageFloor(mobMaxHealth) ? kHyperLowRewardTenths : 10;
     }

@@ -172,3 +172,79 @@ TEST(mythic_ultra_confirm_panel_handles_cancel_refresh_and_stale_requests_over_l
     std::printf("SDL preview showed %s / %s; cancel sent zero, stale commit sent 14 bytes and refreshed, "
                 "new confirmation applied exactly three bag stacks\n", startLabels[0].c_str(), startLabels[1].c_str());
 }
+
+TEST(craftable_filter_skips_understocked_rows_and_crafts_an_eligible_batch) {
+    Harness server("craft-filter-ui", [](const std::string& path) {
+        seedUser(path, "craftfilter", "Fixture42!");
+        seedStack(path, "craftfilter", "petal_basic", Rarity::Common, 4);
+        seedStack(path, "craftfilter", "petal_fragment", Rarity::PermanentHyper, 5);
+    }, dataDir(), 0);
+    CHECK(server.ready);
+    if (!server.ready) return;
+    NetClient client;
+    const bool loggedIn = loginAs(server, client, "craftfilter", "Fixture42!");
+    CHECK(loggedIn);
+    if (!loggedIn) return;
+    const auto fragment = content().petalIndex("fragment");
+    CHECK_EQ(client.profile().stackCount(fragment, Rarity::PermanentHyper), 5u);
+
+    Window window;
+    std::string error;
+    const bool opened = window.open(1000, 760, "Craft filter", error, false);
+    CHECK(opened);
+    if (!opened) return;
+    CHECK(ui::Fonts::init(dataDir(), error));
+    ui::setLanguage(ui::Language::En);
+    SpriteCache sprites;
+    WorldRenderer renderer;
+    DragState drag;
+    ClientSettings settings;
+    CraftingPanel panel;
+    const Rect bounds{28, 20, CraftingPanel::size(client.profile()).x, 680};
+    MenuContext ctx{window.canvas(), window, client, sprites, renderer, settings, drag, 1.0, .016, bounds};
+    const auto layout = drawSlotCard(ctx.canvas, bounds, ui::kCraftingSkin, "Crafting", "Craft", {});
+    const auto render = [&] {
+        CHECK(window.pump());
+        ctx.timeSeconds += .016;
+        CHECK(panel.render(ctx));
+    };
+    const auto click = [&](double x, double y) {
+        SDL_Event move{};
+        move.type = SDL_MOUSEMOTION;
+        const double scale = window.uiScaleMultiplier();
+        move.motion.x = static_cast<int>(std::lround(x * scale));
+        move.motion.y = static_cast<int>(std::lround(y * scale));
+        CHECK(SDL_PushEvent(&move) == 1);
+        SDL_Event button{};
+        button.button.button = SDL_BUTTON_LEFT;
+        button.button.x = move.motion.x;
+        button.button.y = move.motion.y;
+        for (const auto type : {SDL_MOUSEBUTTONDOWN, SDL_MOUSEBUTTONUP}) {
+            button.type = type;
+            CHECK(SDL_PushEvent(&button) == 1);
+            render();
+        }
+    };
+    const double gridY = layout.listView.y + 82 + 34 + 40;
+    const double filterX = bounds.right() - 12 - 66;
+    const double filterY = layout.listView.y + 82 + 14;
+    const int column = rarityIndex(Rarity::Unique) + 1;
+    const double gridWidth = (column + 1) * 70.0 + 16;
+    const double fragmentX = bounds.x + (bounds.w - gridWidth) * .5 + 35 + 70 * column;
+    const double craftWidth = ui::measure("Craft", 16) + 26;
+    const double pairWidth = craftWidth + 8 + ui::measure("Craft All", 16) + 26;
+    const double craftX = layout.button.x + layout.button.w * .5 - pairWidth * .5 + craftWidth * .5;
+    const double craftY = layout.button.y + layout.button.h * .5;
+    render();
+    click(fragmentX, gridY);
+    click(craftX, craftY);
+    server.step(10, {&client});
+    CHECK(!client.craftOutcome().pending);
+    CHECK_EQ(client.profile().stackCount(fragment, Rarity::PermanentHyper), 5u);
+
+    click(filterX, filterY);
+    click(fragmentX, gridY);
+    click(craftX, craftY);
+    CHECK(server.stepUntil({&client}, [&]{ return client.craftOutcome().pending; }, 250));
+    CHECK(client.profile().stackCount(fragment, Rarity::PermanentHyper) < 5u);
+}

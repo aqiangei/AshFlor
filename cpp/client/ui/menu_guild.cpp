@@ -319,7 +319,8 @@ std::vector<std::string> wrapAbout(const std::string& s, double width, double si
         // Alone on a line and still too wide: cut it into line-sized pieces.
         while (!fits(word)) {
             std::size_t cut = word.size();
-            while (cut > 1 && !fits(word.substr(0, cut))) --cut;
+            const std::size_t first = utf8Next(word, 0);
+            while (cut > first && !fits(word.substr(0, cut))) cut = utf8Prev(word, cut);
             lines.push_back(word.substr(0, cut));
             word.erase(0, cut);
         }
@@ -394,6 +395,15 @@ bool GuildPanel::render(MenuContext& ctx) {
     };
     const bool canInvite = guild.joined && (leaderIsMe || isGuildDeputy(me));
     const bool zh = language() == Language::Zh;
+    const auto beginEdit = [&](Field Form::* field) {
+        f.view();
+        f.mode = Mode::Edit;
+        f.editName.value = guild.name;
+        f.editAbout.value = guild.description;
+        auto& target = f.*field;
+        target.state.focusAtEnd(target.value, ctx.timeSeconds);
+        ctx.wantsText = true;
+    };
     const double centreX = panel.x + panel.w * 0.5;
 
     // A mode can outlive what it was about: kicked mid-edit, or the leader
@@ -480,12 +490,14 @@ bool GuildPanel::render(MenuContext& ctx) {
     } else if (editing) {
         const Rect aboutField{aboutBox.x + kBoxFieldInset, boxFieldY,
                               aboutBox.w - kBoxFieldInset * 2, kFieldHeight};
-        inputField(canvas, aboutField, f.editAbout.value, "Description (optional)",
+        inputField(canvas, aboutField, f.editAbout.value,
+                   trEnZh("Guild announcement", "公会公告"),
                    f.editAbout.state.focused, ctx.timeSeconds, &f.editAbout.state);
         fields.push_back({&f.editAbout, aboutField, kDescriptionLimit, false});
     } else if (aboutLines.empty()) {
         textAtAlpha(canvas,
-                    leaderIsMe ? "No description yet. Edit to add one." : "No description.",
+                    leaderIsMe ? trEnZh("Click to write an announcement", "点击填写公会公告")
+                               : trEnZh("No announcement.", "暂无公会公告。"),
                     aboutBox.x + kAboutInset,
                     aboutBox.y + kAboutPad + kAboutLine * 0.5 + kMiddleNudge,
                     cardText(kAboutTextSize), 0.6);
@@ -495,6 +507,15 @@ bool GuildPanel::render(MenuContext& ctx) {
                  aboutBox.y + kAboutPad + kAboutLine * (static_cast<double>(i) + 0.5) +
                      kMiddleNudge,
                  cardText(kAboutTextSize));
+        }
+    }
+
+    if (leaderIsMe && f.mode == Mode::View) {
+        // Mobile browsers require a text region at touch time to open the keyboard.
+        TextFieldRegions::instance().record(aboutBox);
+        if (aboutBox.contains(mouse)) {
+            ctx.window.setCursorShape(CursorShape::Text);
+            if (ctx.pressed()) beginEdit(&Form::editAbout);
         }
     }
 
@@ -767,7 +788,7 @@ bool GuildPanel::render(MenuContext& ctx) {
                         kButtonGap;
                 }
                 if (leaderIsMe) {
-                    footerButton(x, "Edit", kGuildFrame, kGuildThumb, GuildAction::Edit);
+                    footerButton(x, trEnZh("Edit", "编辑"), kGuildFrame, kGuildThumb, GuildAction::Edit);
                 }
                 break;
             }
@@ -839,7 +860,8 @@ bool GuildPanel::render(MenuContext& ctx) {
             f.editName.state.focusAtEnd(f.editName.value, ctx.timeSeconds);
             return;
         }
-        ctx.net.requestGuildEdit(name, trimmed(f.editAbout.value));
+        const bool nameChanged = f.editName.value != guild.name;
+        ctx.net.requestGuildEdit(nameChanged ? name : std::string(), trimmed(f.editAbout.value));
         f.view();
     };
     const auto sendInvite = [&] {
@@ -881,12 +903,9 @@ bool GuildPanel::render(MenuContext& ctx) {
         const LiveField& live = fields[i];
         if (!live.field->state.focused) continue;
         ctx.wantsText = true;
-        // Printable ASCII only, which is what keeps the caret's byte index and
-        // its character index the same thing. Guild names, tags, descriptions
-        // and usernames are all ASCII by the server's own rules.
         TextEditOptions typing;
         typing.maxBytes = live.limit;
-        typing.asciiOnly = true;
+        typing.asciiOnly = live.field != &f.editAbout;
         editText(ctx.window, live.field->value, live.field->state, ctx.timeSeconds, typing);
         // The server upper-cases a tag anyway; showing it that way as it is
         // typed is what tells the player case does not matter. Same length,
@@ -928,11 +947,7 @@ bool GuildPanel::render(MenuContext& ctx) {
                 submitCreate();
                 break;
             case GuildAction::Edit:
-                f.view();
-                f.mode = Mode::Edit;
-                f.editName.value = guild.name.substr(0, kNameLimit);
-                f.editAbout.value = guild.description.substr(0, kDescriptionLimit);
-                f.editName.state.focusAtEnd(f.editName.value, ctx.timeSeconds);
+                beginEdit(&Form::editName);
                 break;
             case GuildAction::Save:
                 saveEdit();

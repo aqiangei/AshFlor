@@ -1726,6 +1726,7 @@ void NetClient::handleProfile(ByteReader& reader) {
     // applied inventory is how duplication bugs start.
     if (!reader.ok()) return;
     profile_ = std::move(next);
+    ++runStatsRevision_;
     if (presetRotationStep >= 1 && presetRotationStep <= 4)
         pendingPresetRotationStep_ = presetRotationStep;
     oracleReadyAtMillis_ = renderClockMillis() + static_cast<double>(profile_.oracleCooldownMillis);
@@ -1765,6 +1766,9 @@ void NetClient::handleProfileDelta(ByteReader& reader) {
     // Whole or not at all, as a Profile is.
     if (!reader.ok()) return;
 
+    // A run-only kill can invalidate the run overview without changing
+    // any account inventory or lifetime kill cells.
+    ++runStatsRevision_;
     profile_.revision = revision;
     profile_.totalXp = totalXp;
     profile_.level = level;
@@ -2258,6 +2262,7 @@ void NetClient::handleJoinAccepted(ByteReader& reader) {
     status_ = Status::Playing;
     dead_ = false;
     runLoot_.clear();
+    ++runStatsRevision_;
     runLootOverview_.reset();
     runKillsOverview_.reset();
     revived = false;
@@ -2297,10 +2302,16 @@ void NetClient::handleRealmChange(ByteReader& reader) {
     pyramidMapRevealed = false;
     // Switching split halves in the same map must not render an empty world
     // between RealmChange and the server's following full snapshot.
+    const bool wasInRift = inRiftMap();
     clearViewOnSnapshot_ = realm == view_.realm();
     if (!clearViewOnSnapshot_) view_.clear();
     chatBubbles_.clear();
     view_.setRealm(realm);
+    if (wasInRift != inRiftMap()) {
+        runLootOverview_.reset();
+        runKillsOverview_.reset();
+        ++runStatsRevision_;
+    }
     // The camera must not ease across two worlds. The App snaps it to the
     // arrival on the frame it sees the realm change, which is what this flag
     // is for -- the snapshot stream restates the body a moment later, and

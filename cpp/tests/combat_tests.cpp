@@ -4905,3 +4905,39 @@ TEST(feedback4087_bone_damage_on_training_dummy_matches_wild_mobs) {
         }
     }
 }
+
+TEST(breakable_liquid_fields_receive_enemy_projectiles_in_both_execution_modes) {
+    const auto& config = testsupport::shippedContent();
+    for (unsigned workers : {0u, 2u}) {
+        Arena a;
+        ServerWorkers pool(workers);
+        a.combat.workers = workers ? &pool : nullptr;
+        a.combat.workerLimit = workers;
+        const Entity player = a.player({3000, 3000});
+        const Entity enemy = a.mob({4500, 3000}, 100);
+        const Vec2 iceAt{3500, 3500};
+        const Vec2 poisonAt{3900, 3500};
+        for (const auto& item : {std::pair{"arctic_nitrogen", iceAt}, std::pair{"latrine", poisonAt}}) {
+            const auto& spec = config.petal(config.petalIndex(item.first)).spill;
+            CombatSystem::createSpill(a.world, player, item.second, Rarity::Common, spec, 1.0, 0);
+        }
+        a.stepWithServerGrid(1000);
+        std::vector<Entity> fields;
+        Query<GroundEffectTag, Health>{a.world}.without<Dead>().collect(fields);
+        CHECK_EQ(fields.size(), std::size_t(2));
+        for (Entity field : fields)
+            CHECK_EQ(a.health(field), 5.0);
+        spawnShot(a, iceAt, {100, 0}, 6.0, 300.0, enemy, enemy);
+        spawnShot(a, poisonAt, {100, 0}, 6.0, 300.0, enemy, enemy);
+        for (int i = 0; i < 126; ++i)
+            spawnShot(a, {5000.0 + (i % 12) * 250.0, 5000.0 + (i / 12) * 250.0},
+                      {100, 0}, 6.0, 300.0, enemy, enemy);
+        a.stepWithServerGrid(1050);
+        for (Entity field : fields) {
+            std::printf("workers=%u field=%u hp=%.1f destroyed=%d\n", workers,
+                        static_cast<unsigned>(a.world.get<GroundEffect>(field).kind),
+                        a.health(field), a.world.has<Dead>(field));
+            CHECK(a.world.has<Dead>(field));
+        }
+    }
+}

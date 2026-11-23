@@ -2072,6 +2072,7 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
         boost(stats.critDamage, kAscendantPetalDamageScale);
         boost(stats.poisonPerSecond, kAscendantPetalDamageScale);
         boost(stats.lightningDamagePerHit, kAscendantPetalDamageScale);
+        if (c.id == "mjolnir") stats.wildLightningScale *= 1.05;
         boost(stats.armorReduction, 1.25);
         boost(stats.armorPerStack, 1.25);
         boost(stats.health, kAscendantPetalHealthScale);
@@ -2088,6 +2089,9 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
         boost(stats.maxMana, 1.15);
         boost(stats.mana, 1.15);
         boost(stats.passiveManaPerSecond, 1.15);
+        if (c.id == "magnet" || c.id == "ring_magnet") {
+            boost(stats.modifiers.magnetism, 1.10);
+        }
         return stats;
     }
     const Rarity graded = petalGameplayRarity(clampRarity(rarityIndex(r)));
@@ -2102,7 +2106,7 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
     s.damage = c.damage * strength;
     if (c.id == "magic_peas") {
         // Eternal and above can stack several volleys against the same boss.
-        const double baseDamage = tier >= Rarity::Unique ? 81.0 : 120.0;
+        const double baseDamage = tier >= Rarity::Unique ? 60.75 : 90.0;
         s.lightningDamagePerHit = baseDamage * strength;
         s.lightningBounces = 0;
     }
@@ -2228,6 +2232,12 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
     // making it deeper, so the factor and its duration are flat.
     s.slowFactor = c.slowFactor;
     s.slowDurationMillis = c.slowDurationMillis;
+    // Icicle is a brief freeze, rather than the ordinary Arctic chill.
+    // Keep the existing rarity-resistance gate in CombatSystem::applySlow.
+    if (c.id == "arctic_icicle") {
+        s.slowFactor = 0.0;
+        s.slowDurationMillis = 200.0 + 100.0 * ladderIndex(tier);
+    }
     if (c.id == "pincer" || c.id == "honey") {
         s.slowDurationMillis = c.slowDurationMillis * (1.0 + rarityIndex(tier) * 0.375);
     }

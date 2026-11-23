@@ -536,6 +536,21 @@ std::optional<SlotGrid::Pick> SlotGrid::render(
         if (count == 0) count = stack.count;
     }
 
+    const auto minimumCraftMaterials = craftSearch ? craftSearch->minimumCraftMaterials : 0u;
+    const auto craftable = [&](const SlotCell& cell) {
+        return !cell.greyed && cell.count >= minimumCraftMaterials;
+    };
+    if (minimumCraftMaterials > 0) {
+        types.erase(std::remove_if(types.begin(), types.end(), [&](std::uint16_t petalIndex) {
+            for (std::size_t column = 0; column < columns; ++column) {
+                const Rarity rarity = searchRarity.value_or(slotGridRarity(tiers, column));
+                const auto owned = counts[petalIndex][rarityIndex(rarity)];
+                if (owned >= minimumCraftMaterials && craftable(look(petalIndex, rarity, owned))) return false;
+            }
+            return true;
+        }), types.end());
+    }
+
     Rect clip = listClip(layout, columns);
     const double scale = fitWidth ? clamp((layout.panel.w - 2.0 * kScrollbarHitWidth) / clip.w, 0.0, 1.0) : 1.0;
     clip.x += (1.0 - scale) * clip.w * 0.5;
@@ -591,7 +606,8 @@ std::optional<SlotGrid::Pick> SlotGrid::render(
                 static_cast<float>(clip.h));
     canvas.clip();
 
-    if (types.empty() && craftSearch && (!craftSearch->name.empty() || searchRarity)) {
+    if (types.empty() && craftSearch &&
+        (!craftSearch->name.empty() || searchRarity || minimumCraftMaterials > 0)) {
         TextStyle hint;
         hint.size = 14.0;
         hint.align = Align::Centre;
@@ -614,7 +630,7 @@ std::optional<SlotGrid::Pick> SlotGrid::render(
             const Rect rect{clip.x + (kCellInsetX + static_cast<double>(column) * kGridPitch) * scale,
                             y, kGridCell * scale, kGridCell * scale};
             const SlotCell cell = look(petalIndex, rarity, counts[petalIndex][rarityIndex(rarity)]);
-            if (cell.count == 0) {
+            if (cell.count == 0 || (minimumCraftMaterials > 0 && !craftable(cell))) {
                 // A tier the account holds none of: a flat square in the
                 // shade. Not hoverable and not clickable.
                 drawSlotPlate(canvas, ctx.sprites, rect, skin);

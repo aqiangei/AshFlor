@@ -1,4 +1,5 @@
 #include "test.h"
+#include "shared/game/terrain.h"
 #include <set>
 #include "test_data.h"
 #include "client/ui/chat_i18n.h"
@@ -565,18 +566,26 @@ TEST(arctic_permanent_hyper_egg_incubation_respects_reload_talent) {
 TEST(zorr_soap_expands_liquid_fields_without_scaling_damage) {
     ArcticBlast rig("basic");
     const auto sample = [&](double now, double expectedRadius) {
+        now = 4050.0 + (now - 4050.0) * 8.0;
         rig.tickPetals(now);
         SpillSpec acid;
         acid.kind = SpillKind::Acid;
         acid.radius = 50.0;
         acid.strength = 14.0;
         acid.durationMillis = 2100.0;
-        CombatSystem::createSpill(rig.world, rig.player, {5000, 5000}, Rarity::Common, acid, 1.0, 0);
+        CombatSystem::createSpill(rig.world, rig.player, {5000, 5000}, Rarity::Common, acid, 1.0, now);
+        const double fullRadius = expectedRadius * kFluidRadiusScale * 1.10;
+        Query<GroundEffect>{rig.world}.each([&](Entity, const GroundEffect& field) {
+            if (field.kind == GroundEffectKind::AcidSpill)
+                CHECK_NEAR(field.radius, fullRadius * 0.24, 1e-6);
+        });
+        for (int tick = 1; tick <= 7; ++tick)
+            rig.combatTick(now + tick * net::kTickMillis);
         int acidFields = 0;
         Query<GroundEffect>{rig.world}.each([&](Entity, GroundEffect& field) {
             if (field.kind != GroundEffectKind::AcidSpill) return;
             ++acidFields;
-            CHECK_NEAR(field.radius, expectedRadius * kFluidRadiusScale, 1e-6);
+            CHECK_NEAR(field.radius, fullRadius, 1e-6);
             CHECK_NEAR(field.damagePerSecond, 14.0 * kFluidDamageScale, 1e-6);
         });
         CHECK(acidFields == 1);
@@ -590,7 +599,7 @@ TEST(zorr_soap_expands_liquid_fields_without_scaling_damage) {
     rig.equip(2, "void_soap", Rarity::Rare);
     sample(4150, 76.0);
     rig.equip(3, "void_soap", Rarity::Super);
-    sample(4200, 100.0);
+    sample(4200, 107.0);  // +20%, +32%, +62%; the combined +114% remains below the cap.
     auto& slots = rig.world.get<Loadout>(rig.player).slots;
     slots[1] = slots[2] = slots[3] = {};
     sample(4250, 50.0);
@@ -784,7 +793,7 @@ TEST(zorr_mechanic_cryo_freezes_near_and_not_far) {
     CHECK(!rig.world.has<Afflictions>(far));
 }
 
-TEST(zorr_mechanic_fire_bomb_keeps_blast_and_burn_budget) {
+TEST(zorr_mechanic_fire_bomb_keeps_blast_and_burns_per_bomb) {
     ArcticBlast rig("void_fire_bomb");
     const Vec2 at = rig.armBomb();
     const auto near = rig.mob(at + Vec2{30,0});
@@ -794,9 +803,236 @@ TEST(zorr_mechanic_fire_bomb_keeps_blast_and_burn_budget) {
     const auto* status = rig.world.tryGet<Afflictions>(near);
     CHECK(status);
     if (!status) return;
-    CHECK_NEAR(status->burnPerSecond, 6, 1e-6);
+    CHECK_EQ(status->burns.size(), 1u);
+    if (!status->burns.empty()) CHECK_NEAR(status->burns.front().perSecond, 7.5, 1e-6);
     CHECK_NEAR(rig.world.get<Health>(far).current, 1000, 1e-6);
     CHECK(!rig.world.has<Afflictions>(far));
+}
+
+TEST(fire_bombs_stack_independently_up_to_three_and_expire) {
+    std::string error;
+    if (!loadContent(testsupport::dataDir(), error)) { CHECK(false); return; }
+    ArcticBlast rig("void_fire_bomb");
+    for (int slot = 1; slot < 4; ++slot) rig.equip(slot, "void_fire_bomb");
+    rig.tickPetals(4100);
+    rig.tickPetals(8000);
+    const Vec2 at{5300, 5300};
+    std::vector<Entity> shells;
+    const auto config = rig.registry.petalIndex("void_fire_bomb");
+    Query<PetalInstance>{rig.world}.each([&](Entity petal, PetalInstance& instance) {
+        if (instance.configIndex == config) shells.push_back(petal);
+    });
+    CHECK_EQ(shells.size(), 4u);
+    for (const Entity shell : shells) {
+        rig.world.get<Transform>(shell).position = at;
+        rig.world.get<Health>(shell).current = 0.0;
+        rig.world.add<Dead>(shell);
+    }
+    rig.tickPetals(8050);
+    const Entity target = rig.mob(at + Vec2{30.0, 0.0});
+    const Entity dummy = rig.dummy(at + Vec2{-30.0, 0.0});
+    rig.combatTick(8050);
+    CHECK_NEAR(rig.world.get<Health>(target).current, 952.0, 1e-8);
+    const auto* status = rig.world.tryGet<Afflictions>(target);
+    CHECK(status && status->burns.size() == 3);
+    if (!status) return;
+    for (const auto& burn : status->burns) {
+        CHECK_NEAR(burn.perSecond, 7.5, 1e-8);
+        CHECK_NEAR(burn.untilMillis, 11050.0, 1e-8);
+    }
+    std::vector<Entity> fields;
+    Query<GroundEffect>{rig.world}.collect(fields);
+    for (const Entity field : fields) rig.world.destroy(field);
+    rig.combatTick(8100);
+    CHECK_NEAR(rig.world.get<Health>(target).current, 952.0 - 22.5 * net::kTickSeconds, 1e-8);
+    const auto* dummyStatus = rig.world.tryGet<Afflictions>(dummy);
+    CHECK(dummyStatus && dummyStatus->burns.size() == 3u);
+    const auto recorded = rig.combat.practiceDamage(rig.player, 8100, dummy);
+    const auto burnRecorded = std::find_if(recorded.begin(), recorded.end(), [](const auto& row) {
+        return row.source == CombatSystem::PracticeSource::Burn;
+    });
+    CHECK(burnRecorded != recorded.end());
+    if (burnRecorded != recorded.end())
+        CHECK_NEAR(burnRecorded->amount, 22.5 * net::kTickSeconds, 1e-8);
+    CHECK_NEAR(rig.world.get<Health>(dummy).current, 1000.0, 1e-8);
+    rig.combatTick(11050);
+    CHECK(rig.world.get<Afflictions>(target).burns.empty());
+}
+
+TEST(offensive_fluid_buffs_reach_the_new_edge_and_raise_actual_damage) {
+    ArcticBlast rig("basic");
+    const auto& acid = rig.registry.petal(rig.registry.petalIndex("acid")).spill;
+    const Vec2 centre{5300, 5300};
+    CombatSystem::createSpill(rig.world, rig.player, centre, Rarity::Common, acid, 1.0, 0);
+    // Range assertions below describe the fully spread pool, not its birth frame.
+    for(int spread=1;spread<=7;++spread)rig.combatTick(4000+spread*50);
+    const Entity tested = rig.mob(centre + Vec2{78, 0});
+    const Entity outside = rig.mob(centre + Vec2{0, 100});
+    rig.combatTick(4050);
+    CHECK_NEAR(rig.world.get<Health>(tested).current, 1000.0 - 24.5 * net::kTickSeconds, 1e-8);
+    CHECK_NEAR(rig.world.get<Health>(outside).current, 1000.0, 1e-8);
+}
+
+TEST(fire_bomb_tooltip_matches_the_common_burn_and_cap_in_both_languages) {
+    std::string error;
+    if (!loadContent(testsupport::dataDir(), error)) { CHECK(false); return; }
+    ArcticBlast rig("basic");
+    const auto previous = ui::language();
+    for (const char* id : {"fire_bomb", "void_fire_bomb"}) {
+        const auto index = rig.registry.petalIndex(id);
+        for (const auto language : {ui::Language::En, ui::Language::Zh}) {
+            ui::setLanguage(language);
+            const auto lines = ui::petalTooltipLines(index, Rarity::Common, SkillSet{}, 1.0);
+            const auto hasText = [&](const std::string& text) {
+                return std::any_of(lines.begin(), lines.end(), [&](const auto& line) {
+                    return line.text.find(text) != std::string::npos;
+                });
+            };
+            const bool zh = language == ui::Language::Zh;
+            const std::string burnRate = std::string(id) == "void_fire_bomb" ? "7.5" : "8.75";
+            CHECK(hasText((zh ? "每层基础燃烧伤害/秒：" : "Base burn damage per second per stack: ") + burnRate));
+            CHECK(hasText(zh ? "燃烧持续时间：3s" : "Burn duration: 3s"));
+            CHECK(hasText(zh ? "燃烧半径：" : "Burn radius: "));
+            CHECK(hasText(zh ? "叠火上限：3" : "Max stacks per player on one target: 3"));
+        }
+    }
+    ui::setLanguage(previous);
+}
+
+TEST(spill_build_modifiers_apply_to_real_pools_and_their_damage) {
+    for (const char* id : {"acid", "lava", "oil", "latrine"}) {
+        const auto measure = [&](std::initializer_list<const char*> support) {
+            ArcticBlast rig(id);
+            int slot = 1;
+            for (const char* buff : support) rig.equip(slot++, buff, Rarity::Super);
+            rig.world.get<PlayerInput>(rig.player).current.flags = net::InputAttack;
+            for (double t = 4050; t < 21000; t += 50) {
+                rig.tickPetals(t);
+                const auto fields = Query<GroundEffect>{rig.world}.without<Dead>().collect();
+                for (Entity e : fields) {
+                    const auto& field = rig.world.get<GroundEffect>(e);
+                    if (field.kind != GroundEffectKind::AcidSpill &&
+                        field.kind != GroundEffectKind::LavaSpill &&
+                        field.kind != GroundEffectKind::OilSpill &&
+                        field.kind != GroundEffectKind::LatrineSpill) continue;
+                    const double rate = field.damagePerSecond;
+                    const auto kind = field.kind;
+                    for(int spread=1;spread<=7;++spread)rig.combatTick(t - 400 + spread*50); // Settle the new authoritative spread before measuring one damage tick.
+                    const auto centre = rig.world.get<Transform>(e).position;
+                    const Entity target = rig.mob(centre + Vec2{0, 20});
+                    const double before = rig.world.get<Health>(target).current;
+                    rig.combatTick(t);
+                    if (kind == GroundEffectKind::LavaSpill || kind == GroundEffectKind::LatrineSpill) {
+                        rig.world.destroy(e);
+                        rig.combatTick(t + 50);
+                    }
+                    CHECK_NEAR(before - rig.world.get<Health>(target).current,
+                               rate * net::kTickSeconds, 1e-8);
+                    return rate;
+                }
+            }
+            CHECK(false);
+            return 0.0;
+        };
+        const double base = measure({});
+        CHECK(base > 0.0);
+        CHECK_NEAR(measure({"void_elemental"}), base * 1.07, 1e-8);
+        CHECK_NEAR(measure({"void_dizzy"}), base * 1.18, 1e-8);
+        CHECK_NEAR(measure({"void_horn", "void_horn"}), base * 1.124, 1e-8);
+        CHECK_NEAR(measure({"void_elemental", "void_dizzy", "void_horn"}),
+                   base * 1.07 * 1.18 * 1.124, 1e-8);
+    }
+}
+
+TEST(spill_build_collision_bombs_inherit_damage_modifiers) {
+    for (const char* id : {"acid_bomb", "lava_bomb"}) {
+        ArcticBlast rig(id);
+        rig.equip(1, "void_dizzy");
+        rig.petals.foldModifiers(rig.world, rig.registry);
+        const auto bombs = rig.liveIn(0);
+        CHECK(!bombs.empty());
+        if (bombs.empty()) continue;
+        const auto at = rig.world.get<Transform>(bombs.front()).position;
+        const auto& spill = rig.registry.petal(rig.registry.petalIndex(id)).spill;
+        CHECK(spill.onHit);
+        rig.mob(at);
+        rig.combatTick(4050);
+        int pools = 0;
+        Query<GroundEffect>{rig.world}.each([&](Entity, GroundEffect& field) {
+            if (field.kind != GroundEffectKind::AcidSpill &&
+                field.kind != GroundEffectKind::LavaSpill) return;
+            ++pools;
+            CHECK_NEAR(field.damagePerSecond, spill.strength * 1.5625 * 1.04, 1e-8);
+        });
+        CHECK_EQ(pools, 1);
+    }
+}
+
+TEST(spill_build_opal_rolls_once_per_pool_at_an_eligible_tier) {
+    ArcticBlast rig("basic");
+    const auto& acid = rig.registry.petal(rig.registry.petalIndex("acid")).spill;
+    const auto countCritical = [&](Rarity opalRarity, Rarity poolRarity) {
+        rig.equip(1, "void_opal", opalRarity);
+        rig.petals.foldModifiers(rig.world, rig.registry);
+        Rng rng{16};
+        const double base = acid.strength * fluidDamageScale(acid.kind);
+        const int tier = petalTier(poolRarity);
+        const double critical = base * (1.5 + tier * (1.5 / 8.0));
+        int count = 0;
+        for (int i = 0; i < 160; ++i) {
+            CombatSystem::createSpill(rig.world, rig.player, {5300, 5300},
+                                      poolRarity, acid, 1.0, 0, 1.0, &rng);
+            const auto pool = Query<GroundEffect>{rig.world}.collect().front();
+            const double actual = rig.world.get<GroundEffect>(pool).damagePerSecond;
+            CHECK(std::abs(actual - base) < 1e-8 || std::abs(actual - critical) < 1e-8);
+            if (actual > base) ++count;
+            rig.world.destroy(pool);
+        }
+        return count;
+    };
+    CHECK_EQ(countCritical(Rarity::Common, Rarity::Rare), 0);
+    const int critical = countCritical(Rarity::Common, Rarity::Common);
+    CHECK(critical > 0 && critical < 160);
+}
+
+TEST(spill_build_extra_golden_leaves_shorten_pool_cadence) {
+    const auto interval = [](int leaves) {
+        ArcticBlast rig("acid");
+        for (int i = 1; i <= leaves; ++i) rig.equip(i, "golden_leaf", Rarity::Apex);
+        rig.world.get<PlayerInput>(rig.player).current.flags = net::InputAttack;
+        double first = -1;
+        for (double now = 4050; now < 28000; now += 50) {
+            rig.tickPetals(now);
+            const auto fields = Query<GroundEffect>{rig.world}.without<Dead>().collect();
+            if (fields.empty()) continue;
+            for (Entity e : fields) rig.world.destroy(e);
+            if (first >= 0) return now - first;
+            first = now;
+        }
+        CHECK(false);
+        return 0.0;
+    };
+    const double zero = interval(0);
+    const double one = interval(1);
+    const double two = interval(2);
+    std::printf("Acid intervals for zero, one and two Apex Golden Leaves: %.0f, %.0f, %.0f ms\n",
+                zero, one, two);
+    CHECK(zero > one && one > two && two > 0);
+}
+
+TEST(spill_build_multiple_soaps_extend_radius_past_the_old_cap) {
+    ArcticBlast rig("basic");
+    const auto& acid = rig.registry.petal(rig.registry.petalIndex("acid")).spill;
+    for (int i = 1; i <= 5; ++i) rig.equip(i, "void_soap", Rarity::Apex);
+    rig.petals.foldModifiers(rig.world, rig.registry);
+    const Vec2 at{5300, 5300};
+    CombatSystem::createSpill(rig.world, rig.player, at, Rarity::Common, acid, 1.0, 0);
+    for(int spread=1;spread<=7;++spread)rig.combatTick(4000+spread*50);
+    const Entity target = rig.mob(at + Vec2{190, 0});
+    const Entity outside = rig.mob(at + Vec2{250, 0});
+    rig.combatTick(4050);
+    CHECK_NEAR(rig.world.get<Health>(target).current, 1000.0 - 24.5 * net::kTickSeconds, 1e-8);
+    CHECK_NEAR(rig.world.get<Health>(outside).current, 1000.0, 1e-8);
 }
 
 TEST(zorr_mechanic_soap_widens_a_single_lava_pool) {
@@ -806,8 +1042,10 @@ TEST(zorr_mechanic_soap_widens_a_single_lava_pool) {
         rig.petals.foldModifiers(rig.world,rig.registry);
         const auto& lava=rig.registry.petal(rig.registry.petalIndex("lava")).spill;
         CombatSystem::createSpill(rig.world,rig.player,{5400,5400},Rarity::Common,lava,1,0);
-        const Entity edge=rig.mob({5480,5400});
-        const Entity outside=rig.mob({5520,5400});
+    // Range assertions below describe the fully spread pool, not its birth frame.
+    for(int spread=1;spread<=7;++spread)rig.combatTick(4000+spread*50);
+        const Entity edge=rig.mob({5495,5400});
+        const Entity outside=rig.mob({5540,5400});
         rig.combatTick(5000);
         const auto burned=[&](Entity e) {
             const auto* status=rig.world.tryGet<Afflictions>(e);
@@ -826,6 +1064,7 @@ TEST(zorr_mechanic_soap_expands_blood_without_changing_shred) {
         rig.world.get<PlayerInput>(rig.player).current.flags = net::InputAttack;
         rig.tickPetals(5000);
         rig.tickPetals(6000);
+        for (int tick = 1; tick <= 7; ++tick) rig.combatTick(6000 + tick * 50);
         int patches = 0;
         Query<GroundEffect>{rig.world}.each([&](Entity, GroundEffect& field) {
             if (field.kind != GroundEffectKind::Blood) return;
@@ -846,8 +1085,10 @@ TEST(acid_spill_hits_the_new_radius_with_the_tuned_damage) {
     CHECK_NEAR(acid.strength, 15.68, 1e-6);
     const Vec2 center{5500, 5500};
     CombatSystem::createSpill(rig.world, rig.player, center, Rarity::Common, acid, 1.0, 0);
+    // Range assertions below describe the fully spread pool, not its birth frame.
+    for(int spread=1;spread<=7;++spread)rig.combatTick(4000+spread*50);
     const auto near = rig.mob(center + Vec2{58, 0});
-    const auto far = rig.mob(center + Vec2{80, 0});
+    const auto far = rig.mob(center + Vec2{90, 0});
     rig.combatTick(4050);
     CHECK(rig.world.get<Health>(near).current < 1000.0);
     CHECK_EQ(rig.world.get<Health>(far).current, 1000.0);
@@ -864,12 +1105,14 @@ TEST(zorr_mechanic_soap_applies_to_all_configured_liquid_fields) {
             else rig.world.get<Loadout>(rig.player).slots[1] = {};
             rig.petals.foldModifiers(rig.world, rig.registry);
             CombatSystem::createSpill(rig.world, rig.player, {5000,5000}, Rarity::Common, spill, 1.0, 0);
+    // Range assertions below describe the fully spread pool, not its birth frame.
+    for(int spread=1;spread<=7;++spread)rig.combatTick(4000+spread*50);
             std::vector<Entity> fields;
             Query<GroundEffect>{rig.world}.collect(fields);
             CHECK(fields.size() == 1);
             for (const auto field : fields) {
                 const auto& effect = rig.world.get<GroundEffect>(field);
-                CHECK_NEAR(effect.radius, spill.radius * 1.20 * (soap ? 1.2 : 1.0), 1e-6);
+                CHECK_NEAR(effect.radius, spill.radius * 1.20 * (isOffensiveSpill(spill.kind) ? 1.10 : 1.0) * (soap ? 1.2 : 1.0), 1e-6);
                 CHECK_NEAR(effect.damagePerSecond, spill.strength * fluidDamageScale(spill.kind), 1e-6);
                 rig.world.destroy(field);
             }
@@ -1108,19 +1351,23 @@ TEST(zorr_reference_eyeball_homes_same_or_lower_tiers_and_gunpowder_speeds_missi
 
 TEST(zorr_reference_gunpowder_fivefold_contact_damage_requires_live_burn) {
     double plain=0;
-    for (int burn : {0,1,2}) {
+    for (int burn : {0,1,2,3,4}) {
         ArcticBlast rig("void_gunpowder");
         const auto petals = rig.liveIn(0);
         CHECK(!petals.empty());
         if (petals.empty()) continue;
         const auto victim=rig.mob(rig.world.get<Transform>(petals.front()).position);
-        if (burn) rig.world.ensure<Afflictions>(victim).burns.push_back(
-            {rig.player,rig.player,0.001,burn==1 ? 9000.0 : 3999.0});
+        if (burn == 1 || burn == 2)
+            rig.world.ensure<Afflictions>(victim).burns.push_back(
+                {rig.player, rig.player, 0.001, burn == 1 ? 9000.0 : 3999.0});
+        if (burn == 3 || burn == 4)
+            rig.world.add<Burn>(victim, Burn{rig.player, 0.001, 3900.0,
+                                              burn == 3 ? 6900.0 : 3999.0});
         rig.combatTick(4050);
         const double hit=1000.0-rig.world.get<Health>(victim).current;
         if (!burn) plain=hit;
         CHECK(plain>0);
-        CHECK_NEAR(hit,plain*(burn==1 ? 5 : 1),0.002);
+        CHECK_NEAR(hit,plain * (burn == 1 || burn == 3 ? 5 : 1),0.002);
     }
 }
 
@@ -1220,8 +1467,9 @@ TEST(fluid_spills_reach_buffed_range_and_record_training_damage) {
     });
     CHECK(field != NULL_ENTITY);
     if (field == NULL_ENTITY) return;
+    for(int spread=1;spread<=7;++spread)rig.combatTick(5700+spread*50);
     const auto radius = rig.world.get<GroundEffect>(field).radius;
-    CHECK_NEAR(radius, 57.5 * 1.62 * 1.30 * 1.20, 1e-6);
+    CHECK_NEAR(radius, 57.5 * 1.62 * 1.30 * 1.20 * 1.10, 1e-6);
     const auto centre = rig.world.get<Transform>(field).position;
     const auto wild = rig.mob(centre + Vec2{100, 0});
     const auto outside = rig.mob(centre + Vec2{0, 500});
@@ -1256,10 +1504,11 @@ TEST(fluid_spills_quality_grows_and_soap_stacks_with_talent) {
     });
     CHECK(zone != NULL_ENTITY);
     if (zone == NULL_ENTITY) return;
-    CHECK_NEAR(rig.world.get<GroundEffect>(zone).radius, 92.5 * 2.0 * 1.30 * 1.20, 1e-6);
+    for(int spread=1;spread<=7;++spread)rig.combatTick(5700+spread*50);
+    CHECK_NEAR(rig.world.get<GroundEffect>(zone).radius, 92.5 * 2.24 * 1.30 * 1.20 * 1.10, 1e-6);
     const Vec2 at = rig.world.get<Transform>(zone).position;
     const auto near = rig.mob(at + Vec2{0, 200});
-    const auto far = rig.mob(at + Vec2{0, 350});
+    const auto far = rig.mob(at + Vec2{0, 375});
     rig.world.get<Health>(near) = {1e9, 1e9};
     rig.combatTick(6150);
     CHECK(rig.world.get<Health>(near).current < 1e9);
@@ -1282,9 +1531,9 @@ TEST(fluid_spills_oil_doubles_for_both_burn_implementations) {
         }
         CombatSystem::createSpill(rig.world, rig.player, at, Rarity::Common, oil, 1.0, 0);
         rig.combatTick(4050);
-        CHECK_NEAR(1000.0 - rig.world.get<Health>(cold).current, oil.strength * 1.25 * net::kTickSeconds, 1e-6);
+        CHECK_NEAR(1000.0 - rig.world.get<Health>(cold).current, oil.strength * 1.5625 * net::kTickSeconds, 1e-6);
         CHECK_NEAR(1000.0 - rig.world.get<Health>(burning).current,
-                   (2.0 * oil.strength * 1.25 + 5.0) * net::kTickSeconds, 1e-6);
+                   (2.0 * oil.strength * 1.5625 + 5.0) * net::kTickSeconds, 1e-6);
     }
 }
 
@@ -1438,13 +1687,16 @@ TEST(reference_radiation_and_fluids_receive_the_authorized_buff) {
         spec.kind=kind;spec.radius=50;spec.strength=10;spec.durationMillis=2000;
         CombatSystem::createSpill(rig.world,rig.player,{5400,5400},Rarity::Common,spec,1,0);
     }
+    for (int tick = 1; tick <= 7; ++tick) rig.combatTick(4000 + tick * 50);
     int fields=0;
     Query<GroundEffect>{rig.world}.each([&](Entity,GroundEffect& field){
         ++fields;
-        CHECK_NEAR(field.radius,60,1e-6);
-        bool offensive=field.kind==GroundEffectKind::AcidSpill ||
-            field.kind==GroundEffectKind::LavaSpill || field.kind==GroundEffectKind::OilSpill;
-        CHECK_NEAR(field.damagePerSecond,offensive?12.5:10,1e-6);
+        const bool offensive = field.kind == GroundEffectKind::AcidSpill ||
+            field.kind == GroundEffectKind::LavaSpill || field.kind == GroundEffectKind::OilSpill;
+        const bool blood = field.kind == GroundEffectKind::Blood;
+        CHECK_NEAR(field.radius, blood ? 44.16 : (offensive ? 66.0 : 60.0), 1e-6);
+        CHECK_NEAR(field.damagePerSecond, blood ? 0.0 : (offensive ? 15.625 : 10.0), 1e-6);
+        if (blood) CHECK_NEAR(field.armorReduction, 10.0, 1e-6);
     });
     CHECK_EQ(fields,5);
     const auto& pyro=rig.registry.petal(rig.registry.petalIndex("pyrite"));
@@ -1472,7 +1724,7 @@ TEST(reference_radiation_offense_scales_at_common_and_hyper_without_extra_self_h
             int fields=0;
             Query<GroundEffect>{rig.world}.each([&](Entity,GroundEffect& effect){
                 ++fields;
-                CHECK_NEAR(effect.radius,oldRadius*1.20*(uranium && rarity==Rarity::Apex?1.10:1.0),1e-5);
+                CHECK_NEAR(effect.radius,oldRadius*1.20*(uranium && rarity==Rarity::Apex?1.25:1.0),1e-5);
                 CHECK_NEAR(effect.damagePerSecond,expectedDamage,std::max(1e-6,expectedDamage*1e-12));
                 CHECK_NEAR(effect.damagePerHit,spec.pulseDamage*strength*scale*1.25*offenseRatio,std::max(1e-6,effect.damagePerHit*1e-12));
                 CHECK_NEAR(effect.burnDamage,spec.burnDamage*strength*scale*1.25*offenseRatio,std::max(1e-6,effect.burnDamage*1e-12));
@@ -1612,111 +1864,148 @@ TEST(reference_vampire_fang_heals_landed_body_damage_and_respects_no_heal) {
  r.combat.applyDamage(r.world,r.player,enemy,10,6000);
  CHECK_NEAR(r.world.get<Health>(r.player).current,35.4,1e-6);
 }
-TEST(toilet_paper_requires_an_active_loadout_slot_with_sponge) {
+TEST(toilet_paper_single_item_uses_inclusive_thresholds_and_a_fixed_window) {
     std::string error;
     if (!loadContent(testsupport::dataDir(), error)) { CHECK(false); return; }
-    for (const bool storedSponge : {false, true}) {
+    for (const double remaining : {100.0, 90.0, 4.0}) {
         ArcticBlast rig("toilet_paper");
-        if (storedSponge) rig.equip(kLoadoutActiveSlots, "sponge");
-        rig.tickPetals(4500);
         const auto paper = rig.liveIn(0);
         CHECK_EQ(paper.size(), 1u);
         if (paper.empty()) return;
         const auto enemy = rig.mob({5500, 5000});
-        const double maxHealth = rig.world.get<Health>(rig.player).max;
-        rig.combat.applyDamage(rig.world, rig.player, enemy, maxHealth * .95, 5000);
-        const auto& status = rig.world.get<Afflictions>(rig.player);
-        CHECK(!status.toiletArmed);
-        CHECK(!status.toiletBoostActive);
-        CHECK_EQ(status.toiletBoostUntilMillis, 0.0);
-        CHECK_NEAR(rig.combat.applyDamage(rig.world, enemy, paper.front(), 6.0, 5050).applied, 6.0, 1e-6);
+        const auto target = rig.dummy({5700, 5000});
+        const auto& stats = rig.registry.petalStats(rig.registry.petalIndex("toilet_paper"), Rarity::Common);
+        CHECK_EQ(stats.damage, 75.0);
+        CHECK_EQ(stats.damageIntervalMillis, kPetalHitIntervalMillis);
+        const auto damage = [&](double now) {
+            return rig.combat.applyDamage(rig.world, target, paper.front(), stats.damage, now).applied;
+        };
+        CHECK_EQ(damage(4500), 75.0);
+        rig.world.get<Health>(rig.player) = Health{900.0, 1000.0};
+        rig.combat.applyDamage(rig.world, rig.player, enemy, 900.0 - remaining, 5000);
+        CHECK_EQ(rig.world.get<Health>(rig.player).current, remaining);
+        CHECK(!rig.world.get<Afflictions>(rig.player).toiletArmed);
+        CHECK_EQ(rig.world.get<Afflictions>(rig.player).toiletBoostUntilMillis, 13000.0);
+        CHECK_EQ(damage(5050), 750.0);
+        CHECK_EQ(rig.combat.applyDamage(rig.world, target, rig.player, 90.0, 5100).applied, 90.0);
+        rig.world.get<Health>(rig.player) = Health{500.0, 1000.0};
+        CHECK_EQ(damage(5150), 750.0);
+        rig.world.get<Health>(rig.player) = Health{950.0, 1000.0};
+        rig.tickPetals(5200);
+        CHECK(rig.world.get<Afflictions>(rig.player).toiletArmed);
+        CHECK_EQ(damage(12999), 750.0);
+        CHECK_EQ(damage(13000), 75.0);
     }
 }
 
-TEST(toilet_paper_boosts_after_sponge_repayment_and_expires) {
+TEST(toilet_paper_keeps_the_window_through_unequip_but_clears_arming) {
     std::string error;
     if (!loadContent(testsupport::dataDir(), error)) { CHECK(false); return; }
-    ArcticBlast rig("toilet_paper", Rarity::Common, "sponge");
-    const auto paper = rig.liveIn(0);
-    CHECK_EQ(paper.size(), 1u);
-    if (paper.empty()) return;
+    ArcticBlast rig("toilet_paper");
     const auto enemy = rig.mob({5500, 5000});
-    const double maxHealth = rig.world.get<Health>(rig.player).max;
+    const auto target = rig.dummy({5700, 5000});
+    rig.world.get<Health>(rig.player) = Health{1000.0, 1000.0};
+    rig.combat.applyDamage(rig.world, rig.player, enemy, 910.0, 5000);
+    rig.world.get<Health>(rig.player) = Health{1000.0, 1000.0};
+    rig.tickPetals(5050);
     CHECK(rig.world.get<Afflictions>(rig.player).toiletArmed);
-    rig.combat.applyDamage(rig.world, rig.player, enemy, maxHealth * .95, 5000);
-    CHECK(rig.world.has<SpongeDamageState>(rig.player));
-    CHECK_NEAR(rig.world.get<Health>(rig.player).current, maxHealth, 1e-6);
-    for (int time = 5050; time <= 7000; time += 50) rig.combatTick(time);
-    const auto& status = rig.world.get<Afflictions>(rig.player);
-    const double deadline = status.toiletBoostUntilMillis;
-    CHECK(status.toiletBoostActive);
-    CHECK_NEAR(rig.world.get<Health>(rig.player).current, maxHealth * .05, 1e-6);
-    CHECK_NEAR(rig.combat.applyDamage(rig.world, enemy, paper.front(), 6.0, deadline - 1).applied, 18.0, 1e-6);
-    CHECK_NEAR(rig.combat.applyDamage(rig.world, enemy, paper.front(), 6.0, deadline).applied, 6.0, 1e-6);
-}
-
-TEST(toilet_paper_cancels_on_sponge_removal_and_keeps_the_original_cooldown) {
-    std::string error;
-    if (!loadContent(testsupport::dataDir(), error)) { CHECK(false); return; }
-    ArcticBlast rig("toilet_paper", Rarity::Common, "sponge");
+    rig.world.get<Loadout>(rig.player).slots[0] = {};
+    rig.tickPetals(5100);
+    CHECK(!rig.world.get<Afflictions>(rig.player).toiletArmed);
+    rig.world.get<Health>(rig.player) = Health{120.0, 1000.0};
+    rig.equip(0, "toilet_paper");
+    rig.tickPetals(5150);
+    rig.tickPetals(10000);
     const auto paper = rig.liveIn(0);
     CHECK_EQ(paper.size(), 1u);
     if (paper.empty()) return;
-    const auto enemy = rig.mob({5500, 5000});
-    const double maxHealth = rig.world.get<Health>(rig.player).max;
-    rig.combat.applyDamage(rig.world, rig.player, enemy, maxHealth * .95, 5000, DamageKind::Sponge);
-    CHECK_NEAR(rig.combat.applyDamage(rig.world, enemy, paper.front(), 6.0, 5050).applied, 18.0, 1e-6);
-
-    rig.world.get<Loadout>(rig.player).slots[1] = {};
-    // An already spawned paper must stop getting the boost before the next fold.
-    CHECK_NEAR(rig.combat.applyDamage(rig.world, enemy, paper.front(), 6.0, 5100).applied, 6.0, 1e-6);
-    rig.tickPetals(5150);
-    CHECK(!rig.world.get<Afflictions>(rig.player).toiletBoostActive);
-    CHECK_EQ(rig.world.get<Afflictions>(rig.player).toiletBoostUntilMillis, 14000.0);
-
-    rig.equip(1, "sponge");
-    rig.world.get<Health>(rig.player).current = maxHealth;
-    rig.tickPetals(5200);
-    rig.combat.applyDamage(rig.world, rig.player, enemy, maxHealth * .95, 5300, DamageKind::Sponge);
-    CHECK(!rig.world.get<Afflictions>(rig.player).toiletBoostActive);
-    CHECK_NEAR(rig.combat.applyDamage(rig.world, enemy, paper.front(), 6.0, 5350).applied, 6.0, 1e-6);
-
-    rig.world.get<Health>(rig.player).current = maxHealth;
-    rig.tickPetals(14000);
-    rig.combat.applyDamage(rig.world, rig.player, enemy, maxHealth * .95, 14100, DamageKind::Sponge);
-    CHECK(rig.world.get<Afflictions>(rig.player).toiletBoostActive);
-    CHECK_NEAR(rig.combat.applyDamage(rig.world, enemy, paper.front(), 6.0, 14150).applied, 18.0, 1e-6);
+    CHECK(!rig.world.get<Afflictions>(rig.player).toiletArmed);
+    CHECK_EQ(rig.combat.applyDamage(rig.world, target, paper.front(), 90.0, 10050).applied, 900.0);
+    rig.world.get<Health>(rig.player) = Health{120.0, 1000.0};
+    rig.combat.applyDamage(rig.world, rig.player, enemy, 30.0, 13050);
+    CHECK_EQ(rig.world.get<Afflictions>(rig.player).toiletBoostUntilMillis, 13000.0);
+    CHECK_EQ(rig.combat.applyDamage(rig.world, target, paper.front(), 90.0, 13100).applied, 90.0);
 }
 
-TEST(toilet_paper_with_sponge_still_excludes_second_chance_and_bandage) {
+TEST(toilet_paper_needs_real_hp_loss_and_must_rearm_after_each_trigger) {
     std::string error;
     if (!loadContent(testsupport::dataDir(), error)) { CHECK(false); return; }
-    for (const bool secondChance : {false, true}) {
-        ArcticBlast rig("toilet_paper", Rarity::PermanentHyper, "sponge");
-        if (secondChance) {
-            rig.world.ensure<PlayerSkillTree>(rig.player).skills.set(SkillId::SecondChance, 0);
-        } else {
-            rig.equip(2, "bandage", Rarity::Ultra);
+    ArcticBlast rig("basic");
+    const auto enemy = rig.mob({5500, 5000});
+    rig.world.get<Health>(rig.player) = Health{600.0, 1000.0};
+    rig.equip(0, "toilet_paper");
+    rig.tickPetals(4500);
+    rig.world.get<Health>(rig.player) = Health{600.0, 1000.0};
+    rig.combat.applyDamage(rig.world, rig.player, enemy, 510.0, 5000);
+    CHECK_EQ(rig.world.get<Afflictions>(rig.player).toiletBoostUntilMillis, 0.0);
+    rig.world.get<Health>(rig.player) = Health{900.0, 1000.0};
+    rig.tickPetals(5500);
+    rig.world.get<Health>(rig.player) = Health{90.0, 1000.0};
+    rig.combat.applyDamage(rig.world, rig.player, enemy, 0.0, 5800);
+    CHECK(rig.world.get<Afflictions>(rig.player).toiletArmed);
+    CHECK_EQ(rig.world.get<Afflictions>(rig.player).toiletBoostUntilMillis, 0.0);
+    rig.combat.applyDamage(rig.world, rig.player, enemy, 10.0, 6000);
+    CHECK_EQ(rig.world.get<Afflictions>(rig.player).toiletBoostUntilMillis, 14000.0);
+    rig.tickPetals(14000);
+    rig.world.get<Health>(rig.player) = Health{80.0, 1000.0};
+    rig.combat.applyDamage(rig.world, rig.player, enemy, 10.0, 14100);
+    CHECK_EQ(rig.world.get<Afflictions>(rig.player).toiletBoostUntilMillis, 14000.0);
+    rig.world.get<Health>(rig.player) = Health{900.0, 1000.0};
+    rig.combat.applyDamage(rig.world, rig.player, enemy, 810.0, 14700);
+    CHECK_EQ(rig.world.get<Afflictions>(rig.player).toiletBoostUntilMillis, 22700.0);
+}
+
+TEST(toilet_paper_lethal_hits_do_not_start_or_cancel_the_window) {
+    std::string error;
+    if (!loadContent(testsupport::dataDir(), error)) { CHECK(false); return; }
+    for (int rescue = 0; rescue <= 2; ++rescue) {
+        for (const bool activeWindow : {false, true}) {
+            ArcticBlast rig("toilet_paper");
+            if (rescue == 1) {
+                rig.world.ensure<PlayerSkillTree>(rig.player).skills.set(SkillId::SecondChance, 0);
+            } else if (rescue == 2) {
+                rig.equip(2, "bandage", Rarity::Ultra);
+            }
+            rig.tickPetals(4500);
+            rig.tickPetals(7500);
+            const auto enemy = rig.mob({5500, 5000});
+            rig.world.get<Health>(rig.player) = Health{1000.0, 1000.0};
+            if (activeWindow) rig.combat.applyDamage(rig.world, rig.player, enemy, 910.0, 8000);
+            rig.world.get<Health>(rig.player) = Health{120.0, 1000.0};
+            rig.combat.applyDamage(rig.world, rig.player, enemy, 200.0, 9000);
+            CHECK_EQ(rig.world.get<Health>(rig.player).current, rescue == 0 ? 0.0 : 1.0);
+            CHECK_EQ(rig.world.has<SecondChance>(rig.player), rescue == 1);
+            CHECK_EQ(rig.world.has<Undead>(rig.player), rescue == 2);
+            CHECK_EQ(rig.world.get<Afflictions>(rig.player).toiletBoostUntilMillis,
+                     activeWindow ? 16000.0 : 0.0);
+            const auto paper = rig.liveIn(0);
+            if (rescue != 0 && activeWindow && !paper.empty()) {
+                const auto target = rig.dummy({5700, 5000});
+                CHECK_EQ(rig.combat.applyDamage(rig.world, target, paper.front(), 90.0, 9050).applied, 900.0);
+            }
         }
-        rig.tickPetals(4500);
-        rig.tickPetals(7500);
-        const auto paper = rig.liveIn(0);
-        CHECK_EQ(paper.size(), 1u);
-        if (paper.empty()) return;
-        const auto enemy = rig.mob({5500, 5000});
-        auto& health = rig.world.get<Health>(rig.player);
-        health.max = health.current = 100.0;
-        rig.combat.applyDamage(rig.world, rig.player, enemy, 95.0, 8000, DamageKind::Sponge);
-        CHECK(rig.world.get<Afflictions>(rig.player).toiletBoostActive);
-        CHECK_EQ(rig.world.get<Afflictions>(rig.player).toiletBoostUntilMillis, 17000.0);
-        rig.combat.applyDamage(rig.world, rig.player, enemy, 200.0, 8050, DamageKind::Sponge);
-        CHECK_EQ(rig.world.get<Health>(rig.player).current, 1.0);
-        CHECK_EQ(rig.world.has<SecondChance>(rig.player), secondChance);
-        CHECK_EQ(rig.world.has<Undead>(rig.player), !secondChance);
-        CHECK(!rig.world.get<Afflictions>(rig.player).toiletBoostActive);
-        CHECK_EQ(rig.world.get<Afflictions>(rig.player).toiletBoostUntilMillis, 17000.0);
-        CHECK_NEAR(rig.combat.applyDamage(rig.world, enemy, paper.front(), 6.0, 8100).applied, 6.0, 1e-6);
     }
+}
+
+TEST(toilet_paper_consecutive_contacts_use_the_normal_game_hit_interval) {
+    std::string error;
+    if (!loadContent(testsupport::dataDir(), error)) { CHECK(false); return; }
+    ArcticBlast rig("toilet_paper");
+    const auto paper = rig.liveIn(0);
+    CHECK_EQ(paper.size(), 1u);
+    if (paper.empty()) return;
+    const Vec2 at{5300, 5300};
+    const auto target = rig.dummy(at);
+    const auto enemy = rig.mob({5500, 5000});
+    rig.world.get<Health>(rig.player) = Health{1000.0, 1000.0};
+    rig.combat.applyDamage(rig.world, rig.player, enemy, 910.0, 5000);
+    rig.world.get<Transform>(paper.front()).position = at;
+    rig.combatTick(5050);
+    rig.world.get<Transform>(paper.front()).position = at;
+    rig.combatTick(5100);
+    const auto totals = rig.combat.practiceDamage(rig.player, 5100, target);
+    CHECK_EQ(totals.size(), 1u);
+    if (!totals.empty()) CHECK_EQ(totals.front().amount, 1500.0);
 }
 
 TEST(reference_fractal_strikes_seven_unique_targets_without_duplicate_damage) {
@@ -1752,14 +2041,18 @@ TEST(reference_latrine_creates_breakable_stacking_poison_and_soap_applies) {
  ArcticBlast r("basic");r.equip(1,"void_soap");r.petals.foldModifiers(r.world,r.registry);
  const auto& spec=r.registry.petal(r.registry.petalIndex("latrine")).spill;
  CombatSystem::createSpill(r.world,r.player,{5400,5400},Rarity::Common,spec,1,0);
+    // Range assertions below describe the fully spread pool, not its birth frame.
+    for(int spread=1;spread<=7;++spread)r.combatTick(4000+spread*50);
  CombatSystem::createSpill(r.world,r.player,{5400,5400},Rarity::Common,spec,1,0);
+    // Range assertions below describe the fully spread pool, not its birth frame.
+    for(int spread=1;spread<=7;++spread)r.combatTick(4000+spread*50);
  Entity mob=r.mob({5400,5400});r.combatTick(5000);
  CHECK(r.world.has<Afflictions>(mob));if(r.world.has<Afflictions>(mob)) {
   CHECK_EQ(r.world.get<Afflictions>(mob).poisonStacks.size(),2);
-  CHECK_NEAR(r.world.get<Afflictions>(mob).poisonPerSecond,12.5,1e-6);
+  CHECK_NEAR(r.world.get<Afflictions>(mob).poisonPerSecond,15.625,1e-6);
  }
  int fields=0;Query<GroundEffect,Health>{r.world}.each([&](Entity,GroundEffect& f,Health& hp){
-  if(f.kind!=GroundEffectKind::LatrineSpill)return;++fields;CHECK_NEAR(hp.max,5,1e-6);CHECK_NEAR(f.radius,28.8,1e-6);
+  if(f.kind!=GroundEffectKind::LatrineSpill)return;++fields;CHECK_NEAR(hp.max,5,1e-6);CHECK_NEAR(f.radius,31.68,1e-6);
  });CHECK_EQ(fields,2);
 }
 TEST(reference_silk_detaches_from_ring_tracks_one_target_and_frees_reload) {
@@ -1918,11 +2211,14 @@ TEST(reference_plasma_chain_can_hit_the_same_target_multiple_times_and_applies_b
 TEST(reference_nitrogen_places_breakable_non_damaging_fluid_and_freezes_only_hostiles) {
  ArcticBlast r("arctic_nitrogen");r.tickPetals(5000);
  Entity pool=NULL_ENTITY;Query<GroundEffect,Health>{r.world}.each([&](Entity e,GroundEffect& f,Health& h){
-  if(f.kind==GroundEffectKind::NitrogenSpill){pool=e;CHECK_NEAR(h.max,5,1e-6);CHECK_NEAR(f.damagePerSecond,0,1e-6);CHECK(f.radius>=24);}
+  if(f.kind==GroundEffectKind::NitrogenSpill){pool=e;CHECK_NEAR(h.max,5,1e-6);CHECK_NEAR(f.damagePerSecond,0,1e-6);CHECK_NEAR(f.spreadTargetRadius,24.0,1e-6);CHECK(f.radius<f.spreadTargetRadius);}
  });CHECK(pool!=NULL_ENTITY);if(pool==NULL_ENTITY)return;
  Entity mob=r.mob(r.world.get<Transform>(pool).position);r.combatTick(5000);
  auto* status=r.world.tryGet<Afflictions>(mob);CHECK(status!=nullptr);if(status)CHECK_NEAR(status->frostSpeed(5000),.6,1e-6);
  CHECK_NEAR(r.world.get<Health>(mob).current,1000,1e-6);CHECK(!r.world.has<Afflictions>(r.player) || r.world.get<Afflictions>(r.player).frostSpeed(5000)==1);
+ for(int tick=1;tick<=7;++tick)r.combatTick(5000+tick*50);
+ CHECK_NEAR(r.world.get<GroundEffect>(pool).radius,24.0,1e-6);
+ CHECK_NEAR(r.world.get<Body>(pool).radius,24.0,1e-6);
 }
 TEST(reference_banana_sticks_to_one_target_without_releasing_its_ring_slot) {
  ArcticBlast r("arctic_banana");auto live=r.liveIn(0);CHECK(!live.empty());if(live.empty())return;Entity petal=live.front();
@@ -2367,7 +2663,7 @@ TEST(reference_long_imported_projectile_types_reload_and_deal_damage) {
                            "magic_marble", "marble", "void_gamma_ray", "void_plasma",
                            "void_stardust", "void_thorn"}) {
         const std::string_view name(id);
-        const bool diamond = name == "diamond";
+        const bool breakTriggered = name == "diamond" || name == "arctic_snowflake";
         const bool magic = name.rfind("magic_", 0) == 0;
         ArcticBlast rig(id, Rarity::Common, magic ? "mana_orb" : nullptr);
         MovementSystem movement;
@@ -2383,12 +2679,12 @@ TEST(reference_long_imported_projectile_types_reload_and_deal_damage) {
         for (int tick = 1; tick <= kLongFightTicks; ++tick) {
             const double now = 4000.0 + tick * net::kTickMillis;
             rig.world.get<PlayerInput>(rig.player).current.flags =
-                !diamond && tick % 180 < 120 ? net::InputAttack : net::InputDefend;
+                !breakTriggered && tick % 180 < 120 ? net::InputAttack : net::InputDefend;
             if (magic) {
                 if (auto* mana = rig.world.tryGet<ManaPool>(rig.player))
                     mana->current = mana->max;
             }
-            if (diamond && tick % 100 == 1) {
+            if (breakTriggered && tick % 100 == 1) {
                 for (Entity petal : rig.liveIn(0)) rig.world.add<Dead>(petal);
             }
             rig.tickPetals(now);
@@ -2598,3 +2894,569 @@ TEST(reference_long_all_imported_petals_run_with_combat_and_repeated_input) {
 }
 
 
+
+TEST(fluid_motion_grows_authoritative_radius_and_delays_outer_hits) {
+ ArcticBlast r("basic");
+ SpillSpec spill;spill.kind=SpillKind::Acid;spill.radius=100;spill.strength=10;spill.durationMillis=2000;
+ r.world.get<Motion>(r.player).velocity={100,0};
+ CombatSystem::createSpill(r.world,r.player,{5400,5000},Rarity::Common,spill,1,0);
+ Entity pool=NULL_ENTITY;Query<GroundEffect>{r.world}.each([&](Entity e,GroundEffect&){pool=e;});CHECK(pool!=NULL_ENTITY);if(pool==NULL_ENTITY)return;
+ const double finalRadius=r.world.get<GroundEffect>(pool).spreadTargetRadius;
+ Entity outer=r.mob({5400+finalRadius*.95,5000});r.world.get<Health>(outer)={1e9,1e9};
+ double previous=0;
+ for(int tick=1;tick<=8;++tick){r.combatTick(5000+tick*50);const auto& f=r.world.get<GroundEffect>(pool);const auto& at=r.world.get<Transform>(pool);
+  std::printf("fluid_tick,%d,%.4f,%.4f,%.4f,%.4f\n",tick,at.position.x,at.position.y,f.radius,r.world.get<Health>(outer).current);
+  CHECK(f.radius>=previous);CHECK(f.radius<=finalRadius+1e-8);previous=f.radius;
+  if(tick==1)CHECK_NEAR(r.world.get<Health>(outer).current,1e9,1e-6);
+ }
+ CHECK_NEAR(previous,finalRadius,1e-6);CHECK(r.world.get<Health>(outer).current<1e9);
+ CHECK_NEAR(r.world.get<Transform>(pool).position.x,5400+35*.34,1e-6);
+}
+TEST(fluid_motion_bomb_collision_pools_expand_without_repeated_birth) {
+ for(const char* id:{"acid_bomb","lava_bomb"}) {
+  ArcticBlast r(id);r.world.get<Motion>(r.player).velocity={0,200};
+  auto bombs=r.liveIn(0);CHECK(!bombs.empty());if(bombs.empty())continue;
+  const Vec2 origin=r.world.get<Transform>(bombs.front()).position;r.mob(origin);
+  r.combatTick(4050);Entity pool=NULL_ENTITY;Query<GroundEffect>{r.world}.each([&](Entity e,GroundEffect& f){if(isFluidField(f.kind))pool=e;});
+  CHECK(pool!=NULL_ENTITY);if(pool==NULL_ENTITY)continue;
+  const double target=r.world.get<GroundEffect>(pool).spreadTargetRadius;
+  CHECK(r.world.get<GroundEffect>(pool).radius<target);
+  for(int tick=1;tick<=8;++tick)r.combatTick(4050+tick*50);
+  CHECK_NEAR(r.world.get<GroundEffect>(pool).radius,target,1e-6);
+  CHECK(r.world.get<Transform>(pool).position.y>origin.y);
+  int count=0;Query<GroundEffect>{r.world}.without<Dead>().each([&](Entity,GroundEffect& f){if(isFluidField(f.kind))++count;});CHECK_EQ(count,1);
+  r.world.get<Transform>(r.player).realm=Realm::Arena;r.combatTick(4500);CHECK(r.world.has<Dead>(pool)||!r.world.isAlive(pool));
+ }
+}
+TEST(fluid_motion_walls_block_drift_and_damage_across_the_wall) {
+ ArcticBlast r("basic");Terrain terrain;
+ CHECK(terrain.setTiles(std::vector<std::uint8_t>(32*32,0),32,32));
+ for(int y=0;y<32;++y)terrain.setTile(20,y,Tile::Solid);
+ r.combat.terrain=&terrain;r.world.get<Motion>(r.player).velocity={1000,0};
+ SpillSpec spill;spill.kind=SpillKind::Acid;spill.radius=160;spill.strength=10;spill.durationMillis=2000;
+ CombatSystem::createSpill(r.world,r.player,{5100,5000},Rarity::Common,spill,1,0);
+ Entity beyond=r.mob({5160,5000});r.world.get<Health>(beyond)={10000,10000};
+ for(int i=0;i<12;++i)r.combatTick(5000+i*50);
+ CHECK_NEAR(r.world.get<Health>(beyond).current,10000,1e-6);
+ Query<GroundEffect,Transform>{r.world}.each([&](Entity,GroundEffect& f,Transform& at){CHECK(at.position.x<5120);CHECK_NEAR(f.spillDrift.length(),0,1e-6);});
+}
+TEST(fluid_motion_repeated_release_budget_and_expiration_stay_bounded) {
+ ArcticBlast r("basic");Entity target=r.mob({5400,5000});r.world.get<Health>(target)={1e9,1e9};
+ SpillSpec spill;spill.kind=SpillKind::Acid;spill.radius=100;spill.strength=10;spill.durationMillis=1000;
+ double expected=0;
+ for(int tick=0;tick<2400;++tick){
+  if(tick%4==0)CombatSystem::createSpill(r.world,r.player,{5400,5000},Rarity::Common,spill,1,0);
+  Query<GroundEffect,Lifetime>{r.world}.without<Dead>().each([&](Entity,GroundEffect& f,Lifetime& life){if(life.remainingSeconds>net::kTickSeconds)expected+=f.damagePerSecond*net::kTickSeconds;});
+  r.combatTick(5000+tick*50);
+  int live=0;Query<GroundEffect>{r.world}.without<Dead>().each([&](Entity,GroundEffect&){++live;});CHECK(live<=12);
+ }
+ CHECK_NEAR(1e9-r.world.get<Health>(target).current,expected,.01);
+ for(int tick=0;tick<30;++tick)r.combatTick(125000+tick*50);
+ int live=0;Query<GroundEffect>{r.world}.without<Dead>().each([&](Entity,GroundEffect&){++live;});CHECK_EQ(live,0);
+}
+TEST(fluid_motion_direct_attack_release_captures_moving_flow) {
+ for(const char* id:{"acid","lava"}) {
+  ArcticBlast r(id);r.world.get<PlayerInput>(r.player).current.flags=net::InputAttack;
+  r.world.get<Motion>(r.player).velocity={120,60};
+  Entity pool=NULL_ENTITY;
+  for(int tick=0;tick<100&&pool==NULL_ENTITY;++tick){r.tickPetals(4500+tick*50);Query<GroundEffect>{r.world}.without<Dead>().each([&](Entity e,GroundEffect& f){if(isFluidField(f.kind))pool=e;});}
+  CHECK(pool!=NULL_ENTITY);if(pool==NULL_ENTITY)continue;
+  const auto start=r.world.get<Transform>(pool).position;const auto radius=r.world.get<GroundEffect>(pool).radius;
+  for(int tick=0;tick<8;++tick)r.combatTick(10000+tick*50);
+  const auto end=r.world.get<Transform>(pool).position;CHECK(end.x>start.x);CHECK(end.y>start.y);
+  CHECK(r.world.get<GroundEffect>(pool).radius>radius);
+ }
+}
+TEST(void_fire_burn_uses_the_owners_live_petal_damage_bonus) {
+    ArcticBlast rig("void_fire");
+    const auto petals = rig.liveIn(0);
+    CHECK_EQ(petals.size(), std::size_t(1));
+    if (petals.size() != 1) return;
+    rig.world.get<PlayerModifiers>(rig.player).petalDamageScale = 1.5;
+    const Entity mob = rig.mob(rig.world.get<Transform>(petals.front()).position);
+    rig.combatTick(4050);
+    const auto* status = rig.world.tryGet<Afflictions>(mob);
+    CHECK(status && status->burns.size() == 1);
+    if (!status || status->burns.size() != 1) return;
+    CHECK_NEAR(status->burns.front().perSecond, 15.0, 1e-6);
+    CHECK_NEAR(status->burns.front().untilMillis, 7050.0, 1e-6);
+    CHECK_NEAR(rig.world.get<Health>(mob).current, 1000.0, 1e-6);
+}
+
+TEST(bio_147_opal_crits_at_matching_or_lower_tiers) {
+    const auto sample = [](Rarity tier) {
+        ArcticBlast rig("opal", Rarity::Rare);
+        rig.equip(1, "basic", tier);
+        rig.tickPetals(4100);
+        rig.tickPetals(10000);
+        const auto equipped = rig.liveIn(1);
+        CHECK_EQ(equipped.size(), 1u);
+        if (equipped.empty()) return 0;
+        const Entity petal = equipped[0];
+        const Vec2 at{5400, 5400};
+        rig.world.get<Transform>(petal).position = at;
+        const double direct = rig.registry.petalStats(rig.registry.petalIndex("basic"), tier).damage;
+        const Entity target = rig.mob(at);
+        int crits = 0;
+        for (int i = 0; i < 600; ++i) {
+            rig.world.get<Transform>(petal).position = at;
+            rig.world.get<Health>(petal).current = rig.world.get<Health>(petal).max;
+            rig.world.get<Health>(target) = Health{1000, 1000};
+            rig.combatTick(10100.0 + i * 1000.0);
+            const double dealt = 1000.0 - rig.world.get<Health>(target).current;
+            if (std::abs(dealt - direct) > 1e-7) {
+                ++crits;
+                CHECK_NEAR(dealt, direct * (1.5 + ladderIndex(tier) * (1.5 / 8.0)), 1e-7);
+            }
+        }
+        std::printf("Bio Opal Rare, attack=%s: %d/600 crits, base=%.2f\n",
+                    rarityName(tier), crits, direct);
+        return crits;
+    };
+    const int lower = sample(Rarity::Common);
+    CHECK(lower >= 25 && lower <= 80);
+    const int matched = sample(Rarity::Rare);
+    CHECK(matched >= 35 && matched <= 90);
+    CHECK_EQ(sample(Rarity::Epic), 0);
+
+    const auto saved = ui::language();
+    ui::setLanguage(ui::Language::En);
+    CHECK(std::string_view(ui::petalDescTr("opal", "")).find("its rarity or lower") != std::string_view::npos);
+    CHECK(std::string_view(ui::petalDescTr("electron_missile", "")).find("chain lightning") != std::string_view::npos);
+    ui::setLanguage(ui::Language::Zh);
+    CHECK(std::string_view(ui::petalDescTr("opal", "")).find("及以下") != std::string_view::npos);
+    ui::setLanguage(saved);
+}
+
+TEST(bio_147_electron_missile_hits_a_second_target_with_lightning) {
+    ArcticBlast rig("electron_missile");
+    rig.world.get<PlayerInput>(rig.player).current.flags = net::InputAttack;
+    rig.tickPetals(4500);
+    // The ready attack starts the 500 ms preparation.
+    rig.tickPetals(4950);
+    CHECK(Query<Projectile>{rig.world}.without<Dead>().collect().empty());
+    rig.tickPetals(5000);
+    const auto shots = Query<Projectile>{rig.world}.without<Dead>().collect();
+    CHECK_EQ(shots.size(), 1u);
+    if (shots.empty()) return;
+    const Vec2 at = rig.world.get<Transform>(shots[0]).position;
+    const Entity first = rig.mob(at);
+    const Entity second = rig.mob(at + Vec2{80, 0});
+    rig.combatTick(5000);
+    CHECK(!rig.combat.shotLandings().empty());
+    rig.petals.landShots(rig.world, rig.registry, rig.combat.shotLandings(), nullptr, 5000, &rig.events);
+    rig.combatTick(5050);
+    const double firstHit = 1000.0 - rig.world.get<Health>(first).current;
+    const double secondHit = 1000.0 - rig.world.get<Health>(second).current;
+    std::printf("Bio Electron Missile Common impact=%.2f chain=%.2f\n", firstHit, secondHit);
+    CHECK(firstHit > 0);
+    CHECK_NEAR(secondHit, 3.0, 1e-8);
+}
+
+TEST(fluid_radiation_pyrite_burn_doubles_oil_only_until_expiry) {
+    ArcticBlast rig("pyrite");
+    rig.tickPetals(12000);
+    Vec2 centre;
+    int found = 0;
+    Query<GroundEffect, Transform>{rig.world}.without<Dead>().each(
+        [&](Entity, GroundEffect& effect, Transform& at) {
+            if (effect.burnDamage > 0.0) {
+                centre = at.position;
+                ++found;
+            }
+        });
+    CHECK(found > 0);
+    if (!found) return;
+    const Entity doubled = rig.mob(centre);
+    const Entity burnOnly = rig.mob(centre);
+    rig.world.get<Health>(doubled) = {10000.0, 10000.0};
+    rig.world.get<Health>(burnOnly) = {10000.0, 10000.0};
+    rig.combatTick(12000);
+    const auto* burn = rig.world.tryGet<Burn>(doubled);
+    CHECK(burn && burn->untilMillis == 15000);
+    if (!burn) return;
+
+    const Vec2 poolAt = centre + Vec2{0, 520};
+    rig.world.get<Transform>(doubled).position = poolAt + Vec2{10, 0};
+    rig.world.get<Transform>(burnOnly).position = poolAt + Vec2{175, 0};
+    const Entity cold = rig.mob(poolAt + Vec2{-10, 0});
+    rig.world.get<Health>(cold) = {10000.0, 10000.0};
+    const auto& oil = rig.registry.petal(rig.registry.petalIndex("oil")).spill;
+    const auto hp = [&](Entity target) { return rig.world.get<Health>(target).current; };
+    CombatSystem::createSpill(rig.world, rig.player, poolAt, Rarity::Common, oil, 1.0, 0);
+    const double oldA = hp(doubled), oldB = hp(burnOnly), oldCold = hp(cold);
+    rig.combatTick(12050);
+    const double coldOil = oldCold - hp(cold);
+    const double hotOil = (oldA - hp(doubled)) - (oldB - hp(burnOnly));
+    std::printf("Pyrite ignition oil damage per tick cold=%.6f hot=%.6f\n", coldOil, hotOil);
+    CHECK(coldOil > 0.0);
+    CHECK_NEAR(hotOil, 2.0 * coldOil, 1e-6);
+
+    for (int now = 12100; now <= 15000; now += 50) rig.combatTick(now);
+    CombatSystem::createSpill(rig.world, rig.player, poolAt, Rarity::Common, oil, 1.0, 0);
+    const double noLongerBurning = hp(doubled);
+    rig.combatTick(15050);
+    CHECK_NEAR(noLongerBurning - hp(doubled), coldOil, 1e-6);
+}
+
+TEST(fluid_motion_blood_spreads_before_shred_and_prunes_after_crossing) {
+    ArcticBlast rig("blood");
+    rig.world.get<Motion>(rig.player).velocity = {100.0, 0.0};
+    rig.world.get<PlayerInput>(rig.player).current.flags = net::InputAttack;
+    rig.tickPetals(5000);
+    rig.tickPetals(6000);
+    Entity pool = NULL_ENTITY;
+    Query<GroundEffect>{rig.world}.without<Dead>().each([&](Entity e, GroundEffect& effect) {
+        if (effect.kind == GroundEffectKind::Blood) pool = e;
+    });
+    CHECK(pool != NULL_ENTITY);
+    if (pool == NULL_ENTITY) return;
+    const Vec2 at = rig.world.get<Transform>(pool).position;
+    const double radius = bloodPoolRadius(Rarity::Common);
+    const Entity mob = rig.mob(at + Vec2{0, radius - 2.0});
+    rig.world.add<Armor>(mob, Armor{100.0});
+    rig.combatTick(6050);
+    CHECK_NEAR(CombatSystem::effectiveArmor(rig.world, mob, 6050), 100.0, 1e-8);
+    for (int now = 6100; now <= 6350; now += 50) rig.combatTick(now);
+    CHECK_NEAR(rig.world.get<GroundEffect>(pool).radius, radius, 1e-8);
+    CHECK(rig.world.get<Transform>(pool).position.x > at.x);
+    const double shred = rig.registry.petalStats(rig.registry.petalIndex("blood"),
+                                                 Rarity::Common).armorReduction;
+    CHECK_NEAR(CombatSystem::effectiveArmor(rig.world, mob, 6350), 100.0 - shred, 1e-8);
+    CHECK_NEAR(rig.world.get<Health>(mob).current, 1000.0, 1e-8);
+    rig.world.get<Transform>(rig.player).realm = Realm::Arena;
+    rig.combatTick(6400);
+    CHECK(rig.world.has<Dead>(pool));
+    CHECK_NEAR(rig.world.get<Afflictions>(mob).armorShredUntilMillis,
+               6350 + kArmorShredMillis, 1e-8);
+    rig.combatTick(6350 + kArmorShredMillis);
+    CHECK_NEAR(CombatSystem::effectiveArmor(rig.world, mob, 6350 + kArmorShredMillis),
+               100.0, 1e-8);
+}
+
+TEST(fluid_radiation_hot_water_stacks_burns_and_thaws_after_leaving) {
+    ArcticBlast rig("basic");
+    const auto& hot = rig.registry.petal(rig.registry.petalIndex("hot_water")).spill;
+    const Vec2 at{5500, 5500};
+    const Entity target = rig.mob(at);
+    CombatSystem::createSpill(rig.world, rig.player, at, Rarity::Common, hot, 1.0, 0);
+    CombatSystem::createSpill(rig.world, rig.player, at, Rarity::Common, hot, 1.0, 0);
+    rig.combatTick(4100);
+    const auto* status = rig.world.tryGet<Afflictions>(target);
+    CHECK(status && status->burns.size() == 2);
+    if (!status || status->burns.size() != 2) return;
+    CHECK_NEAR(status->frostSpeed(4100), 0.5, 1e-8);
+    CHECK_NEAR(status->burns[0].perSecond, 8.96 * 1.5625, 1e-8);
+    CHECK_NEAR(status->burns[1].perSecond, 8.96 * 1.5625, 1e-8);
+    CHECK_NEAR(status->burns[0].untilMillis, 5500.0, 1e-8);
+    rig.world.get<Transform>(target).position = at + Vec2{0, 500};
+    rig.combatTick(4150);
+    CHECK_NEAR(rig.world.get<Health>(target).current, 1000.0 - 2.0 * 14.0 * net::kTickSeconds, 1e-8);
+    rig.combatTick(4650);
+    CHECK_NEAR(rig.world.get<Afflictions>(target).frostSpeed(4650), 1.0, 1e-8);
+    const double beforeExpiry = rig.world.get<Health>(target).current;
+    rig.combatTick(5550);
+    CHECK_NEAR(rig.world.get<Health>(target).current, beforeExpiry, 1e-8);
+}
+
+TEST(fluid_radiation_elixir_heals_only_available_same_realm_squadmates) {
+    ArcticBlast rig("basic");
+    SquadEntityIndex squad;
+    rig.combat.squads = &squad;
+    const Vec2 at{5500, 5500};
+    const auto makeFlower = [&](Vec2 position, Realm realm = Realm::Overworld) {
+        const Entity e = rig.world.create();
+        rig.world.add<PlayerTag>(e);
+        rig.world.add<Transform>(e, Transform{position, 0.0, realm});
+        rig.world.add<Body>(e, Body{5.0, 1.0});
+        rig.world.add<Health>(e, Health{100, 1000});
+        rig.world.add<PlayerModifiers>(e);
+        return e;
+    };
+    const Entity teammate = makeFlower(at + Vec2{10, 0});
+    const Entity stranger = makeFlower(at + Vec2{-10, 0});
+    const Entity elsewhere = makeFlower(at + Vec2{0, 10}, Realm::Arena);
+    const Entity blocked = makeFlower(at + Vec2{0, -10});
+    rig.world.add<Afflictions>(blocked).noHealUntilMillis = 5000;
+    squad.groups.push_back({{rig.player, 1}, {teammate, 2}, {elsewhere, 3}, {blocked, 4}});
+    for (Entity e : {rig.player, teammate, elsewhere, blocked}) squad.group.emplace(e, 0);
+    const auto& elixir = rig.registry.petal(rig.registry.petalIndex("elixir")).spill;
+    CombatSystem::createSpill(rig.world, rig.player, at, Rarity::Common, elixir, 1.0, 0);
+    rig.combatTick(4050);
+    const auto hp = [&](Entity e) { return rig.world.get<Health>(e).current; };
+    CHECK_NEAR(hp(teammate), 100.0 + 2.25 * kPlayerHealMultiplier * net::kTickSeconds, 1e-8);
+    CHECK_NEAR(hp(stranger), 100.0, 1e-8);
+    CHECK_NEAR(hp(elsewhere), 100.0, 1e-8);
+    CHECK_NEAR(hp(blocked), 100.0, 1e-8);
+    rig.world.get<Transform>(teammate).position = at + Vec2{0, 500};
+    rig.combatTick(4100);
+    CHECK_NEAR(hp(teammate), 100.0 + 2.25 * kPlayerHealMultiplier * net::kTickSeconds, 1e-8);
+}
+
+TEST(magic_tomato_ripens_once_per_body_when_mana_is_available) {
+    ArcticBlast rig("basic", Rarity::Common, "magic_soil");
+    rig.equip(0, "magic_tomato");
+    const auto mana = [&]() -> ManaPool& { return rig.world.get<ManaPool>(rig.player); };
+    const auto allocate = [&](int from, int to) {
+        for (int now = from; now <= to; now += 50) {
+            mana().current = 0.5;
+            rig.tickPetals(now);
+        }
+    };
+    allocate(4050, 7000);
+    const auto petals = rig.liveIn(0);
+    CHECK_EQ(petals.size(), 1u);
+    if (petals.empty()) return;
+    const Entity petal = petals.front();
+    const auto hit = [&](Entity piece, double tick) {
+        const auto at = rig.world.get<Transform>(piece).position;
+        const Entity victim = rig.mob(at);
+        rig.combatTick(tick);
+        const double dealt = 1000.0 - rig.world.get<Health>(victim).current;
+        rig.world.destroy(victim);
+        return dealt;
+    };
+    const double greenHit = hit(petal, 7000);
+    allocate(7050, 12000);
+    CHECK_NEAR(hit(petal, 12000), greenHit, 1e-7);
+    mana().current = 9.0;
+    rig.tickPetals(12050);
+    const double paidRemainder = mana().current;
+    CHECK(paidRemainder < 1.0);
+    const double ripeHit = hit(petal, 12050);
+    std::printf("magic tomato green=%.6f ripe=%.6f remaining_mana=%.6f\n",
+                greenHit, ripeHit, paidRemainder);
+    CHECK(greenHit > 0.0);
+    CHECK_NEAR(ripeHit, greenHit * 10.0, 1e-7);
+    mana().current = 9.0;
+    rig.tickPetals(12100);
+    CHECK(mana().current >= 9.0);
+    rig.world.get<Health>(petal).current = 0.0;
+    rig.world.add<Dead>(petal);
+    allocate(12150, 17000);
+    const auto respawned = rig.liveIn(0);
+    CHECK_EQ(respawned.size(), 1u);
+    if (respawned.empty()) return;
+    CHECK(respawned.front() != petal);
+    CHECK_NEAR(hit(respawned.front(), 17000), greenHit, 1e-7);
+}
+
+TEST(content_icicle_freezes_a_real_projectile_target_and_recovers) {
+ for (auto rarity : {Rarity::Common,Rarity::Super,Rarity::Unique,Rarity::Apex}) {
+ for (bool slowFirst : {true,false}) for (auto targetTier : {Rarity::Common,rarity,Rarity::Apex}) {
+  ArcticBlast r("arctic_icicle",rarity);
+  r.world.get<PlayerInput>(r.player).current.flags=net::InputAttack;
+  r.tickPetals(4500);
+  std::vector<Entity> shots;Query<Projectile>{r.world}.without<Dead>().collect(shots);
+  CHECK(!shots.empty());if(shots.empty())continue;
+  Entity shot=shots.front();const auto at=r.world.get<Transform>(shot).position;
+  Entity target=r.mob(at);r.world.add<MobType>(target,MobType{r.registry.mobIndex("ladybug"),targetTier});
+  r.world.get<Health>(target)={1e12,1e12};
+  if(slowFirst) r.combat.applySlow(r.world,target,.6,4500,targetTier,4500);
+  r.combatTick(4500);
+  auto* status=r.world.tryGet<Afflictions>(target);CHECK(status!=nullptr);if(!status)continue;
+  CHECK_NEAR(status->freezeFactor,1.0-stallPower(rarity,targetTier),1e-9);
+  if(!slowFirst) r.combat.applySlow(r.world,target,.6,4500,targetTier,4500);
+  CHECK_NEAR(r.world.get<Afflictions>(target).slowFactor,.6,1e-9);
+  CHECK_NEAR(r.world.get<Afflictions>(target).slowUntilMillis,9000,1e-9);
+  const double duration=200+100*ladderIndex(rarity);
+  CHECK_NEAR(status->freezeUntilMillis,4500+duration,1e-6);
+  CHECK(status->freezeSpeed(4500+duration-1)<1);CHECK_NEAR(status->freezeSpeed(4500+duration),1,1e-9);
+ }
+}
+}
+
+TEST(content_snowflake_waits_for_break_then_fires_one_six_fragment_volley) {
+ for(auto tier:{Rarity::Common,Rarity::Super,Rarity::Unique,Rarity::Apex}) {
+ ArcticBlast r("arctic_snowflake",tier);r.world.get<PlayerInput>(r.player).current.flags=net::InputAttack;
+ r.tickPetals(4500);CHECK_EQ(Query<Projectile>{r.world}.without<Dead>().collect().size(),0);
+ auto petals=r.liveIn(0);CHECK_EQ(petals.size(),1);if(petals.empty())return;
+ auto target=r.mob(r.world.get<Transform>(petals.front()).position);r.world.get<Health>(target)={1e12,1e12};r.world.add<ContactDamage>(target,ContactDamage{1e9,0});
+ const double before=r.world.get<Health>(target).current;r.combatTick(4500);CHECK(r.world.get<Health>(target).current<before);
+ r.tickPetals(4550);auto shots=Query<Projectile>{r.world}.without<Dead>().collect();CHECK_EQ(shots.size(),6);
+ const double expected=6*r.registry.petalStats(r.registry.petalIndex("arctic_snowflake"),tier).damage;
+ double budget=0;for(Entity e:shots)budget+=r.world.get<Projectile>(e).damage;CHECK_NEAR(budget,expected,1e-6);
+ r.tickPetals(4600);CHECK_EQ(Query<Projectile>{r.world}.without<Dead>().collect().size(),6);
+}
+}
+TEST(content_snowball_tier_count_and_total_shot_damage_and_health_budgets) {
+ for(auto tier:{Rarity::Common,Rarity::Mythic,Rarity::Ultra,Rarity::Super,Rarity::Unique,Rarity::Apex,Rarity::PermanentHyper,Rarity::Ascendant}) {
+  ArcticBlast r("arctic_snowball",tier);const auto index=r.registry.petalIndex("arctic_snowball");const auto stats=r.registry.petalStats(index,tier);
+  const int count=ladderIndex(tier)>=8?5:ladderIndex(tier)>=7?3:ladderIndex(tier)>=5?2:1;
+  CHECK_EQ(stats.count,count);CHECK_EQ(r.liveIn(0).size(),count);
+  r.world.get<PlayerInput>(r.player).current.flags=net::InputAttack;r.tickPetals(4500);
+  const auto shots=Query<Projectile>{r.world}.without<Dead>().collect();CHECK_EQ(shots.size(),count);
+  double damage=0,health=0;for(Entity e:shots){damage+=r.world.get<Projectile>(e).damage;health+=r.world.get<Health>(e).max;}
+  CHECK_NEAR(damage,stats.damage*count,1e-5);CHECK_NEAR(health,stats.health*count,1e-5);
+  std::printf("snowball,%s,%d,%.5f,%.5f\n",kRarityNames[rarityIndex(tier)],count,damage,health);
+ }
+}
+
+TEST(radiation_talents_change_real_hits_and_keep_wearer_poison) {
+    struct Result {
+        double innerDamage = 0.0;
+        double outerDamage = 0.0;
+        double ownerPoison = 0.0;
+        double radius = 0.0;
+    };
+    auto run = [&](int reach, int power, bool refund) {
+        ArcticBlast rig("uranium", Rarity::Apex);
+        auto& tree = rig.world.add<PlayerSkillTree>(rig.player).skills;
+        tree.set(SkillId::RadiationReach, reach);
+        tree.set(SkillId::RadiationPower, power);
+        if (refund) {
+            rig.tickPetals(15000);
+            skillRefundTo(tree, SkillId::RadiationReach, -1);
+            skillRefundTo(tree, SkillId::RadiationPower, -1);
+        }
+        for (Entity previous : Query<GroundEffect>{rig.world}.collect()) rig.world.destroy(previous);
+        rig.tickPetals(60000);
+        Result result;
+        const auto clouds = Query<GroundEffect, Transform>{rig.world}.collect();
+        CHECK_EQ(clouds.size(), std::size_t(1));
+        if (clouds.size() != 1) return result;
+        const auto& field = rig.world.get<GroundEffect>(clouds.front());
+        const Vec2 at = rig.world.get<Transform>(clouds.front()).position;
+        result.radius = field.radius;
+        const auto kind = rig.registry.petalIndex("uranium");
+        const double base = baseRadiationRadius(rig.registry.petal(kind), Rarity::Apex) * 1.25;
+        const auto inner = rig.mob(at + Vec2{base * .5, 0});
+        const auto outer = rig.mob(at + Vec2{base * 1.125, 0});
+        for (Entity target : {inner, outer}) rig.world.get<Health>(target) = {1e9, 1e9};
+        rig.combatTick(60000);
+        rig.combatTick(60050);
+        result.innerDamage = 1e9 - rig.world.get<Health>(inner).current;
+        result.outerDamage = 1e9 - rig.world.get<Health>(outer).current;
+        if (const auto* aff = rig.world.tryGet<Afflictions>(rig.player))
+            result.ownerPoison = aff->poisonPerSecond;
+        return result;
+    };
+    const auto plain = run(-1, -1, false);
+    const auto reach = run(4, -1, false);
+    const auto power = run(-1, 2, false);
+    const auto combined = run(4, 2, false);
+    const auto refunded = run(4, 2, true);
+    CHECK(plain.innerDamage > 0.0);
+    CHECK_EQ(plain.outerDamage, 0.0);
+    CHECK_EQ(power.outerDamage, 0.0);
+    CHECK_NEAR(reach.radius, plain.radius * 1.25, 1e-6);
+    CHECK_NEAR(reach.innerDamage, plain.innerDamage, 1e-6);
+    CHECK_NEAR(reach.outerDamage, plain.innerDamage, 1e-6);
+    CHECK_NEAR(power.innerDamage, plain.innerDamage * 1.15, 1e-5);
+    CHECK_NEAR(combined.outerDamage, power.innerDamage, 1e-5);
+    CHECK(plain.ownerPoison > 0.0);
+    CHECK_NEAR(combined.ownerPoison, plain.ownerPoison, 1e-6);
+    CHECK_NEAR(refunded.radius, plain.radius, 1e-6);
+    CHECK_NEAR(refunded.innerDamage, plain.innerDamage, 1e-6);
+    CHECK_EQ(refunded.outerDamage, 0.0);
+    std::printf("RADIATION actual inner %.6f -> %.6f, outer %.6f -> %.6f, radius %.6f -> %.6f, self %.6f -> %.6f, refund %.6f\n",
+        plain.innerDamage, power.innerDamage, plain.outerDamage, combined.outerDamage, plain.radius,
+        combined.radius, plain.ownerPoison, combined.ownerPoison, refunded.innerDamage);
+}
+
+TEST(imported_talents_fire_applies_to_real_burn_without_changing_self_or_direct_hits) {
+    const auto fire = [](bool bought, bool gated, bool refund) {
+        ArcticBlast rig("void_dvd");
+        auto& skills = rig.world.add<PlayerSkillTree>(rig.player).skills;
+        skills.set(SkillId::Damage, gated ? 4 : 3);
+        if (bought) skills.set(SkillId::FirePower, 1);
+        if (refund) skillRefundTo(skills, SkillId::FirePower, -1);
+        rig.tickPetals(8000);
+        const auto pets = rig.liveIn(0);
+        CHECK(!pets.empty());
+        if (pets.empty()) return std::array<double, 3>{};
+        const Entity petal = pets.front();
+        const Entity target = rig.mob(rig.world.get<Transform>(petal).position);
+        rig.combatTick(8000);
+        const auto* status = rig.world.tryGet<Afflictions>(target);
+        CHECK(status && !status->burns.empty());
+        const double hp = rig.world.get<Health>(target).current;
+        rig.world.get<Transform>(target).position = {5700, 5700};
+        rig.combatTick(8050);
+        const double burn = hp - rig.world.get<Health>(target).current;
+        const Entity selfEmitter = rig.world.create();
+        CombatSystem::ignite(rig.world, rig.player, selfEmitter, rig.player, 10.0, 1000.0, 8100);
+        const auto& selfBurn = rig.world.get<Afflictions>(rig.player).burns.front();
+        return std::array<double, 3>{1000.0 - hp, burn, selfBurn.perSecond};
+    };
+    const auto base = fire(false, true, false);
+    const auto upgraded = fire(true, true, false);
+    const auto refunded = fire(true, true, true);
+    const auto locked = fire(true, false, false);
+    const auto lockedBase = fire(false, false, false);
+    CHECK(base[1] > 0);
+    CHECK_NEAR(upgraded[0], base[0], 1e-6);
+    CHECK_NEAR(upgraded[1], base[1] * 1.15, 1e-6);
+    CHECK_NEAR(upgraded[2], base[2], 1e-6);
+    CHECK_NEAR(refunded[1], base[1], 1e-6);
+    CHECK_NEAR(locked[1], lockedBase[1], 1e-6);
+    std::printf("FIRE actual tick %.6f -> %.6f self %.6f -> %.6f\n",
+                base[1], upgraded[1], base[2], upgraded[2]);
+}
+
+TEST(imported_talents_corrupt_only_while_actually_corrupted) {
+    const auto sample = [](bool corrupted, bool aura, bool buys) {
+        ArcticBlast rig("cactus");
+        rig.world.add<PlayerVisuals>(rig.player).corrupted = corrupted;
+        auto& skills = rig.world.add<PlayerSkillTree>(rig.player).skills;
+        if (aura) rig.equip(1, "corruption", Rarity::Ultra);
+        if (buys) {
+            skills.set(SkillId::CorruptDamage, 6);
+            skills.set(SkillId::CorruptReload, 2);
+            skills.set(SkillId::CorruptReach, 2);
+        }
+        rig.world.get<PlayerInput>(rig.player).current.flags = net::InputAttack;
+        rig.tickPetals(6000);
+        CHECK_EQ(rig.world.get<PlayerVisuals>(rig.player).equippedCorruption, aura);
+        const auto petals = rig.liveIn(0);
+        CHECK(!petals.empty());
+        if (petals.empty()) return std::array<double, 3>{};
+        const auto petal = petals.front();
+        const double reach = rig.world.get<PetalRing>(rig.player).radius;
+        const auto target = rig.mob(rig.world.get<Transform>(petal).position);
+        rig.combatTick(6000);
+        const double damage = 1000.0 - rig.world.get<Health>(target).current;
+        if (rig.world.isAlive(petal)) rig.world.ensure<Dead>(petal);
+        rig.tickPetals(6050);
+        const auto& slot = rig.world.get<Loadout>(rig.player).slots[0];
+        return std::array<double, 3>{damage, reach, slot.reloadReadyAtMillis - 6050.0};
+    };
+    const auto baseline = sample(false, false, false);
+    const auto plain = sample(false, false, true);
+    const auto aura = sample(false, true, true);
+    const auto corrupt = sample(true, false, true);
+    CHECK(baseline[0] > 0.0);
+    CHECK(baseline[2] > 0.0);
+    for (std::size_t i = 0; i < baseline.size(); ++i) {
+        CHECK_NEAR(plain[i], baseline[i], 1e-6);
+        CHECK_NEAR(aura[i], baseline[i], 1e-6);
+    }
+    CHECK_NEAR(corrupt[0], baseline[0] * 1.175, 1e-6);
+    CHECK_NEAR(corrupt[1], baseline[1] + 60.0, 1e-6);
+    CHECK_NEAR(corrupt[2], baseline[2] / 1.12, 1e-6);
+    std::printf("CORRUPT hit %.6f -> %.6f, radius %.6f -> %.6f, reload %.6f -> %.6f\n",
+        baseline[0], corrupt[0], baseline[1], corrupt[1], baseline[2], corrupt[2]);
+}
+
+TEST(imported_talents_poison_boosts_direct_acid_and_oil_ticks) {
+    const auto hit = [](SpillKind kind, bool learned) {
+        ArcticBlast rig("basic");
+        if (learned) rig.world.add<PlayerSkillTree>(rig.player).skills.set(SkillId::Poison, 8);
+        const Entity target = rig.mob({5400,5400});
+        SpillSpec spec;
+        spec.kind = kind;
+        spec.radius = 70.0;
+        spec.strength = 16.0;
+        spec.durationMillis = 2100.0;
+        CombatSystem::createSpill(rig.world, rig.player, {5400,5400}, Rarity::Common, spec, 1.0, 4500);
+        rig.combatTick(4550);
+        return 1000.0 - rig.world.get<Health>(target).current;
+    };
+    for (auto kind : {SpillKind::Acid, SpillKind::Oil}) {
+        const double base = hit(kind, false);
+        const double upgraded = hit(kind, true);
+        CHECK(base > 0.0);
+        CHECK_NEAR(upgraded, base * 1.5625, 1e-7);
+        std::printf("FLUID_POISON %d %.6f -> %.6f\n", static_cast<int>(kind), base, upgraded);
+    }
+}

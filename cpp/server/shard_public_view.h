@@ -49,7 +49,7 @@ inline Json publicShardView(const Database& db,const Json& input) {
         }
         result["rows"]=Json::array();result["users"]=double(db.userCount());result["active"]=double(input["admin"].asBool()?active:0);
         for(std::size_t i=0;i<shown;++i){Json row=Json::object();row["name"]=rows[i].first;row["xp"]=rows[i].second;row["level"]=levelFromTotalXp(rows[i].second).level;result["rows"].push(row);}
-        const auto holdings=hyperHoldingBoard(db,db.nowMillis());const auto total=static_cast<unsigned>(holdings.size());
+        const auto holdings=apexHoldingBoard(db);const auto total=static_cast<unsigned>(holdings.size());
         if (self) result["hyperRank"] = double(hyperHoldingOwnerRank(holdings, self->username));
         const auto requested=static_cast<unsigned>(std::max(0.,input["offset"].asDouble()));
         const auto offset=total?std::min(requested/kHyperBoardPageSize,(total-1)/kHyperBoardPageSize)*kHyperBoardPageSize:0;

@@ -187,6 +187,75 @@ TEST(zorr_bio_and_jurassic_spawn_announcements_use_the_client_language) {
     ui::setLanguage(saved);
 }
 
+TEST(coordinate_routes_a_connected_clients_directional_frame_to_a_hatched_pet) {
+    Harness h("coordinate-wire", [](const std::string& path) {
+        seedUser(path, "coordinateqa", "password7");
+        seedStack(path, "coordinateqa", "petal_coordinate", Rarity::Common, 1);
+        seedStack(path, "coordinateqa", "petal_bio_bacteria_egg", Rarity::Common, 1);
+    }, twoMapDataDir("coordinate-wire"), 0);
+    NetClient client;
+    if (!h.ready || !logIn(h, client, "coordinateqa") || !join(h, client, "coordinateqa", false, "meadow")) {
+        CHECK(false);
+        return;
+    }
+    World& world = h.server.world();
+    const Entity owner = bodyNamed(world, "coordinateqa");
+    CHECK(owner != NULL_ENTITY);
+    if (owner == NULL_ENTITY) return;
+
+    const auto& registry = shippedContent();
+    const auto coordinate = registry.petalIndex("coordinate");
+    const auto egg = registry.petalIndex("bio_bacteria_egg");
+    client.setLoadoutSlot(0, coordinate, Rarity::Common);
+    client.setLoadoutSlot(1, egg, Rarity::Common);
+
+    Entity pet = NULL_ENTITY;
+    const bool hatched = h.stepUntil({&client}, [&] {
+        Query<Pet, MobType>{world}.each([&](Entity entity, const Pet& summoned, const MobType& type) {
+            if (summoned.owner == owner && type.configIndex == registry.mobIndex("bio_bacteria")) pet = entity;
+        });
+        return pet != NULL_ENTITY && world.get<Loadout>(owner).slots[0].configIndex == coordinate;
+    });
+    CHECK(world.get<Health>(owner).alive());
+    CHECK(hatched);
+    if (!hatched) return;
+
+    const auto original = world.get<Transform>(owner);
+    Vec2 center;
+    bool found = false;
+    for (int y = -600; y <= 600 && !found; y += 100) {
+        for (int x = -600; x <= 600 && !found; x += 100) {
+            center = original.position + Vec2{double(x), double(y)};
+            found = !h.server.terrain().resolveWall(center, 250, original.realm).collided;
+        }
+    }
+    CHECK(found);
+    if (!found) return;
+    world.get<Transform>(owner).position = center;
+    world.get<Health>(owner).invulnerableUntilMillis = h.clock + 20000.0;
+    const auto start = center + Vec2{100, 0};
+    world.get<Transform>(pet).position = start;
+    world.get<Motion>(pet).velocity = {};
+
+    net::InputFrame direction;
+    direction.moveAngle = kPi / 2;
+    direction.moveStrength = 0.5;
+    direction.aimDistance = 500;
+    direction.flags = net::InputPetMoveDirection | net::InputHideOutsideSquad;
+    for (int tick = 0; tick < 8; ++tick) {
+        ++direction.sequence;
+        CHECK(client.sendInput(direction));
+        h.step(1, {&client});
+    }
+    const auto received = world.get<PlayerInput>(owner).current.flags;
+    CHECK(received & net::InputPetMoveDirection);
+    CHECK((received & net::InputHideOutsideSquad) == 0);
+    CHECK_EQ(world.get<Transform>(pet).realm, original.realm);
+    const Vec2 end = world.get<Transform>(pet).position;
+    CHECK(end.y > start.y + 2.0);
+    CHECK_NEAR(end.x, start.x, 2.0);
+}
+
 TEST(zorr_bio_rna_stacks_and_dna_checks_the_hatchling_tier) {
     const auto& content = shippedContent();
     World world;
@@ -443,6 +512,91 @@ TEST(zorr_bio_blood_patches_strip_wild_mob_armor_and_chloroplast_scales_shields)
     combat.runWorldPhase(world, grid, content, 4110.0, net::kTickSeconds);
     CHECK(CombatSystem::effectiveArmor(world, mob, 4110.0) < 10.0);
     CHECK_EQ(world.get<Health>(mob).current, 100.0);
+}
+
+TEST(zorr_bio_job_application_suppresses_the_chasing_head_on_first_tail_contact) {
+    std::string error;
+    CHECK(loadContent(dataDir(), error));
+    if (!error.empty()) return;
+    const auto& registry = shippedContent();
+    for (auto [chain, headRarity] : {std::pair{false, Rarity::Common},
+                                    std::pair{false, Rarity::Rare},
+                                    std::pair{true, Rarity::Common},
+                                    std::pair{true, Rarity::Rare}}) {
+        World world;
+        CombatSystem combat;
+        EventQueue events;
+        CommandBuffer commands{world};
+        SpatialGrid grid;
+        const Vec2 at{5100, 5000};
+        const Entity player = world.create();
+        world.add<PlayerTag>(player);
+        world.add<Transform>(player, Transform{{4900, 5000}, 0});
+        world.add<Faction>(player, Faction{Team::Players, false});
+        world.add<Health>(player, Health{100, 100});
+        world.add<Body>(player, Body{25, 1});
+        grid.insert(player, Realm::Overworld, {4900, 5000}, 25);
+        const auto mob = [&](Vec2 position, Rarity rarity) {
+            const Entity e = world.create();
+            world.add<MobTag>(e);
+            world.add<MobType>(e, MobType{registry.mobIndex("centipede"), rarity});
+            world.add<Transform>(e, Transform{position, 0});
+            world.add<Health>(e, Health{100, 100});
+            world.add<Body>(e, Body{24, 1});
+            world.add<Faction>(e, Faction{Team::Hostiles, false});
+            world.add<Bounty>(e);
+            grid.insert(e, Realm::Overworld, position, 24);
+            return e;
+        };
+        const Vec2 headPosition = chain ? Vec2{5200, 5000} : at;
+        const Entity head = mob(headPosition, headRarity);
+        const Entity tail = chain ? mob(at, Rarity::Common) : head;
+        MobAi ai;
+        ai.kind = AiKind::Hostile;
+        ai.aggroRange = 800.0;
+        ai.target = player;
+        ai.unseenTarget = player;
+        world.add<MobAi>(head, ai);
+        BodySegment link;
+        link.ahead = head;
+        link.chainHead = head;
+        if (chain) world.add<BodySegment>(tail, link);
+        world.add<Motion>(head);
+
+        const Entity petal = world.create();
+        PetalInstance instance;
+        instance.owner = player;
+        instance.configIndex = registry.petalIndex("job_application");
+        world.add<PetalInstance>(petal, instance);
+        world.add<Transform>(petal, Transform{at + Vec2{10, 0}, 0});
+        world.add<Body>(petal, Body{10, 1});
+        world.add<Health>(petal, Health{100, 100});
+        world.add<Faction>(petal, Faction{Team::Players, false});
+
+        combat.run(world, grid, registry, 1000.0, net::kTickSeconds, commands, events);
+        commands.flush();
+        const bool eligible = headRarity == Rarity::Common;
+        const auto& brain = world.get<MobAi>(head);
+        CHECK_EQ(brain.aggroSuppressedUntilMillis, eligible ? 6000.0 : 0.0);
+        CHECK_EQ(brain.target, eligible ? NULL_ENTITY : player);
+        CHECK_EQ(brain.unseenTarget, eligible ? NULL_ENTITY : player);
+        CHECK_EQ(world.get<Health>(tail).current, 100.0);
+        if (!eligible) continue;
+
+        combat.run(world, grid, registry, 2000.0, net::kTickSeconds, commands, events);
+        commands.flush();
+        CHECK_EQ(world.get<MobAi>(head).aggroSuppressedUntilMillis, 7000.0);
+        world.destroy(petal);
+        Terrain terrain;
+        MobAiSystem aiSystem(world);
+        const std::vector<RealmPoint> players{{{4900, 5000}, Realm::Overworld}};
+        aiSystem.run(world, terrain, grid, players, 6999.0, net::kTickSeconds, commands);
+        commands.flush();
+        CHECK_EQ(world.get<MobAi>(head).target, NULL_ENTITY);
+        aiSystem.run(world, terrain, grid, players, 7000.0, net::kTickSeconds, commands);
+        commands.flush();
+        CHECK_EQ(world.get<MobAi>(head).target, player);
+    }
 }
 
 TEST(zorr_bio_oxygen_extends_burning_without_creating_a_second_damage_source) {

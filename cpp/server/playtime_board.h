@@ -5,17 +5,26 @@
 #include <vector>
 
 namespace flix {
+inline double accountPlaytimeSeconds(const Database& db, const std::string& userId,
+                                     const PlayerRecord& record) {
+    const auto seconds = [](const Json& value) {
+        const double number = value.asDouble();
+        return std::isfinite(number) && number > 0 ? number : 0.0;
+    };
+    return seconds(db.storedTable("councilActivity")[userId]) +
+        seconds(record.extra["councilActiveSeconds"]) +
+        seconds(record.extra["inheritedPlaytimeSeconds"]);
+}
+
 struct PlaytimeRow { std::string name; double seconds; };
 inline std::vector<PlaytimeRow> playtimeBoard(const Database& db, bool includeAdmins, std::size_t limit = 50) {
     std::vector<PlaytimeRow> rows;
-    const auto& activity = db.storedTable("councilActivity");
     for (const auto& name : db.usernames()) {
         const auto* user = db.findUser(name);
         if (!user || user->guest || (user->admin && !includeAdmins)) continue;
         const auto* record = db.findProgress(user->id);
         if (!record) continue;
-        const double seconds = std::max(0.0, activity[user->id].asDouble()) +
-            std::max(0.0, record->extra["councilActiveSeconds"].asDouble());
+        const double seconds = accountPlaytimeSeconds(db, user->id, *record);
         if (std::isfinite(seconds)) rows.push_back({name, seconds});
     }
     const auto shown = std::min(limit, rows.size());

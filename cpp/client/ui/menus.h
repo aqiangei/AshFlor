@@ -167,7 +167,7 @@ inline constexpr int kLoadoutBarSlots = kLoadoutBarPrimary + kLoadoutBarSecondar
 inline constexpr int kLoadoutTrashSlot = kLoadoutBarSlots;
 
 /// The link the Discord button opens.
-inline constexpr const char* kDiscordInvite = "https://discord.gg/mDQRVWeEq5";
+inline constexpr const char* kDiscordInvite = "https://discord.gg/Whdbm9qQZp";
 
 /// AshFlor QQ group (same as ashflor title-screen badge).
 inline constexpr const char* kAshflorQqGroupId = "227990150";
@@ -240,6 +240,7 @@ struct ClientSettings {
     std::vector<std::string> craftBlacklist; // Stable content IDs, all rarities.
     bool craftBlacklistDirty = false;
     WorldRenderer::Options render;
+    bool hideOutsideSquad = false;
     /// Player-chosen camera zoom, multiplied into whatever the loadout asks
     /// for. Persisted, because it is a comfort setting, not a game state.
     double zoom = 1.0;
@@ -500,7 +501,7 @@ bool drawPanelExpand(MenuContext&, double titleY, std::uint32_t tint, bool expan
 /// The petal inventory: every stack the account owns, grouped by tier.
 class InventoryPanel {
 public:
-    void openRunLoot(NetClient&, DragState&);
+    void openRunLoot(DragState&);
     /// Returns false when the panel asked to be closed.
     bool render(MenuContext&);
     void reset();
@@ -523,6 +524,8 @@ private:
     std::size_t dropMap_ = 0;
     bool showRunLoot_ = false;
     bool showRunKills_ = false;
+    std::optional<std::uint32_t> requestedRunStatsRevision_;
+    double nextRunStatsRefreshAt_ = 0.0;
     ui::Scroller runLootScroll_;
     bool renderRunLoot(MenuContext&);
     std::unordered_map<std::string, std::vector<bool>> mapDrops_;
@@ -675,6 +678,7 @@ bool editSlotSearch(MenuContext&, Rect, std::string&, ui::TextFieldState&,
 struct CraftSearchQuery {
     std::string name;
     std::optional<Rarity> rarity;
+    std::uint32_t minimumCraftMaterials = 0;
 };
 CraftSearchQuery parseCraftSearch(const std::string&);
 void filterSlotTypes(std::vector<std::uint16_t>&, const std::string&, bool bilingual = false);
@@ -909,6 +913,7 @@ private:
     /// "Craft All" toggle: when on, a click on a craftable petal stages the
     /// entire stack (Shift-click's behaviour). Survives close/reopen.
     bool fillAllMode_ = false;
+    bool onlyCraftable_ = false;
     int bulkTarget_ = 2;
     bool bulkArmed_ = false;
     bool editingBlacklist_ = false;
@@ -1800,6 +1805,7 @@ public:
     double stripRight() const;
     Rect rotationDialBounds() const { return rotationDial_; }
     Rect feedbackButton() const;
+    Rect loadoutTooltipRect() const { return loadoutTooltipRect_; }
 
     /// True while the strip's changelog button should shake: while the
     /// changelog holds more releases than the player had seen the last time
@@ -2041,6 +2047,7 @@ private:
     /// that barely moved can still be told from a drag. See drawLoadoutBar.
     Vec2 loadoutGrabAt_{};
     ui::TouchInspectDelay loadoutTouchInspect_;
+    Rect loadoutTooltipRect_{};
     /// Which slots a press would actually lift a petal out of, as of the last
     /// paint. The bar swallows a click for those and for nothing else -- an
     /// empty slot, the trash and the gaps all fall through and fire an attack.

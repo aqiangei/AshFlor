@@ -34,16 +34,12 @@ class EventQueue;
 struct SquadEntityIndex;
 struct ShotLanding;
 
-inline bool hasToiletPaperCombo(const ContentRegistry& registry, const Loadout& loadout) {
-    bool paper = false;
-    bool sponge = false;
+inline constexpr double kToiletPaperBurstMillis = 8000.0;
+
+inline bool hasActiveToiletPaper(const ContentRegistry& registry, const Loadout& loadout) {
     for (int i = 0; i < std::min(loadout.activeSlots, kLoadoutActiveSlots); ++i) {
         const auto item = equippedPetal(registry, loadout, i);
-        if (item.empty()) continue;
-        const auto& id = registry.petal(item.configIndex).id;
-        paper |= id == "toilet_paper";
-        sponge |= id == "sponge";
-        if (paper && sponge) return true;
+        if (!item.empty() && registry.petal(item.configIndex).id == "toilet_paper") return true;
     }
     return false;
 }
@@ -130,6 +126,9 @@ struct PetalSlotState {
         /// When cluster member i comes back, or 0 when it is already out.
         /// Sized to the petal's count; meaningful only while `independent`.
         std::vector<double> instanceReadyAtMillis;
+        // Saved fractions of one tick, earned only by a successful shot.
+        double projectilePreparationRate = 1.0;
+        std::vector<double> projectilePreparationCreditMillis;
 
         /// Mobs this slot has summoned. Handles are generation-checked, so a
         /// pet killed in the field simply stops being alive and is re-summoned.
@@ -559,7 +558,7 @@ private:
     /// or else the highest-tier wild mob in its realm (the nearest of those),
     /// with florr's needle wobble on top. `fallback`, its place on the ring,
     /// when there is nothing to point at.
-    double compassBearing(World& world, const ContentRegistry& registry, PetalInstance& compass,
+    double compassBearing(World& world, PetalInstance& compass,
                           Vec2 at, Entity player, Realm realm, double fallback,
                           double nowMillis);
     /// Wild mobs in `realm` whose CENTRE is inside `radius`, which is the

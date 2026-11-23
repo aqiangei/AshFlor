@@ -645,10 +645,26 @@ bool CraftingPanel::render(MenuContext& ctx) {
         return std::find(ids.begin(), ids.end(), content().petal(index).id) != ids.end();
     };
     const Rect searchRect{panel.x + 12.0, bulkCard.listView.y - kSearchBandHeight,
-                          panel.w - 24.0, 28.0};
+                          panel.w - 162.0, 28.0};
+    const Rect craftableRect{searchRect.right() + 6.0, searchRect.y, 132.0, searchRect.h};
+    const bool canFilter = !inRift && !editingBlacklist_;
     if (editSlotSearch(ctx, searchRect, search_, searchField_,
                        trEnZh("Petal name or rarity", "查找花瓣名称或品质"))) grid_.reset();
-    const CraftSearchQuery query = parseCraftSearch(search_);
+    const bool craftableHover = canFilter && craftableRect.contains(mouse);
+    const bool craftablePressed = craftableHover && (ctx.window.pointerIsTouch()
+        ? ctx.released() && !ctx.window.touchScrolling() && !touchInspect_.downBefore
+        : ctx.pressed());
+    if (craftablePressed) {
+        onlyCraftable_ = !onlyCraftable_;
+        grid_.reset();
+        searchField_.blur();
+    }
+    CraftSearchQuery query = parseCraftSearch(search_);
+    if (canFilter && onlyCraftable_) query.minimumCraftMaterials = kBatch;
+    const auto craftableTint = query.minimumCraftMaterials > 0
+        ? std::optional<std::uint32_t>{kFillAllOnTint} : std::nullopt;
+    drawSlotButton(canvas, craftableRect, trEnZh("Craftable only", "仅显示可合成"),
+                   craftableTint, craftableHover, craftablePressed);
     SlotGrid::Pick inspected;
     const std::optional<SlotGrid::Pick> hovered = grid_.render(
         ctx, bulkCard, kCraftingSkin, SlotGridTiers::PermanentHyper,
@@ -728,6 +744,10 @@ bool CraftingPanel::render(MenuContext& ctx) {
     }
 
     // --- input -------------------------------------------------------------
+    if (craftablePressed) {
+        heldPetal_ = kNoPetal;
+        return true;
+    }
     // Hold-repeat staging: same cadence as Absorb, in batches of five.
     if (heldPetal_ != kNoPetal) {
         const bool still = mouseDown && phase_ == Phase::Idle && hovered &&

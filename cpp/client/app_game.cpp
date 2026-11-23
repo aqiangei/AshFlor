@@ -221,6 +221,7 @@ void App::sendInputFrame(double dt, bool periodic) {
     input.rotationStep = static_cast<std::uint8_t>(std::clamp(settings.rotationStep, 1, 4));
     if (settings.render.hideOtherPetals) input.flags |= net::InputHideForeignPetals;
     if (settings.render.hideOtherPets) input.flags |= net::InputHideForeignPets;
+    if (settings.hideOutsideSquad) input.flags |= net::InputHideOutsideSquad;
     Vec2 keyboard{0, 0};
     // A typed key is a character, not a direction. The reference's key handler
     // returns before it records anything once an <input> has focus, so while
@@ -265,11 +266,13 @@ void App::sendInputFrame(double dt, bool periodic) {
         const Vec2 direction = keyboard.normalized();
         input.moveAngle = direction.angle();
         input.moveStrength = 1.0;
+        input.flags |= net::InputPetMoveDirection;
     } else if (stickPushed) {
         // Deflection straight to speed, no floor: the same law the cursor
         // follows, measured against the base radius instead of a distance.
         input.moveAngle = stick.direction.angle();
         input.moveStrength = stick.magnitude;
+        input.flags |= net::InputPetMoveDirection;
     } else if (settings.useMouseControls && window_.pointerInside() && !touchControls && !menuOpen) {
         const double distance = toCursor.length();
         input.moveAngle = distance > 1e-6 ? toCursor.angle() : 0.0;

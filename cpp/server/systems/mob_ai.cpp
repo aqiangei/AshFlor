@@ -25,9 +25,6 @@ namespace {
 constexpr double kDirectionEpsilonSq = 1e-9;
 
 /// A pet's owner counts as standing still below this, in units per second.
-/// Friction leaves a residual after the keys are released, and a sandstorm pet
-/// shadowing that residual would creep away from a motionless flower.
-constexpr double kOwnerMovingSpeed = 1.0;
 
 /// A pet orders its prey by tier first, distance second. One tier is worth
 /// more than every unit of range a pet can have, so the sum stays an exact
@@ -52,6 +49,10 @@ double holeTargetLimit(const World& world, Entity shooter) {
     return std::numeric_limits<double>::infinity();
 }
 
+bool isBabyAnt(const MobConfig& config) {
+    return config.id == "baby_ant" || config.id == "baby_fire_ant";
+}
+
 /// Whether a flower is wearing something that makes it MORE conspicuous -- a
 /// bulb's glow -- rather than less (poo) or neither. Only such a flower is
 /// noticed by a neutral mob; see steerAggressive.
@@ -67,17 +68,23 @@ bool aggroRaised(const PlayerModifiers& mods) {
 /// point past that box, and the pointer is wherever they can see. The claim is
 /// also what keeps a client from naming a point across the map.
 bool petPointer(World& world, Entity owner, Rarity petRarity, Vec2 ownerPosition,
-                Vec2& pointer) {
-    const PlayerModifiers* mods = world.tryGet<PlayerModifiers>(owner);
-    if (mods == nullptr || !mods->controlsPets || !(petRarity < mods->petControlRarity)) {
-        return false;
-    }
-    const PlayerInput* input = world.tryGet<PlayerInput>(owner);
-    if (input == nullptr || (input->current.flags & net::InputNoPetPointer)) return false;
-    const PlayerLocation* location = world.tryGet<PlayerLocation>(owner);
-    const Vec2 half = (location != nullptr ? location->viewport
-                                           : Vec2{kViewportWidth, kViewportHeight}) * 0.5;
-    const Vec2 offset = Vec2::fromAngle(input->current.aimAngle, input->current.aimDistance);
+                Vec2 petPosition, Vec2& pointer) {
+    const auto* mods = world.tryGet<PlayerModifiers>(owner);
+    const auto* input = world.tryGet<PlayerInput>(owner);
+    if (!mods || !mods->controlsPets || !input) return false;
+    const auto& frame = input->current;
+    const bool coordinate = petalTier(petRarity) <= mods->coordinateControlTier;
+    const bool directional = coordinate && (frame.flags & net::InputPetMoveDirection) &&
+                             frame.moveStrength > 0.0;
+    if (!directional && ((!coordinate && !(petRarity < mods->petControlRarity)) ||
+                         (frame.flags & net::InputNoPetPointer))) return false;
+
+    const auto* location = world.tryGet<PlayerLocation>(owner);
+    const Vec2 half = (location ? location->viewport : Vec2{kViewportWidth, kViewportHeight}) * 0.5;
+    const Vec2 offset = directional
+        ? petPosition - ownerPosition + Vec2::fromAngle(frame.moveAngle,
+              kPetPointerSlowDistance * std::min(1.0, frame.moveStrength))
+        : Vec2::fromAngle(frame.aimAngle, frame.aimDistance);
     pointer = ownerPosition + Vec2{clamp(offset.x, -half.x, half.x), clamp(offset.y, -half.y, half.y)};
     return true;
 }
@@ -98,7 +105,8 @@ double slowFactorOf(World& world, Entity self, double nowMillis) {
     const Afflictions* afflictions = world.tryGet<Afflictions>(self);
     if (!afflictions) return 1.0;
     const double slow = afflictions->slowed(nowMillis) ? afflictions->slowFactor : 1.0;
-    return std::min(clamp(slow, 0.0, 1.0), afflictions->frostSpeed(nowMillis));
+    return std::min({clamp(slow, 0.0, 1.0), afflictions->frostSpeed(nowMillis),
+                     afflictions->freezeSpeed(nowMillis)});
 }
 
 /// Whether a mob's last decision left it drifting rather than doing something.
@@ -968,6 +976,13 @@ void MobAiSystem::fireVolley(World& world, Entity shooter, const MobType& type, 
         type.rarity == Rarity::Ascendant ? Rarity::Apex : type.rarity);
     if (spec.mobBaseDamage)
         ammo.damage = *spec.mobBaseDamage * petalStrengthScale(type.rarity);
+    // Keep the imported hornet's existing raw hit budget when restoring icicle ammunition.
+    if (registry.mob(type.configIndex).id == "arctic_ice_hornet")
+        ammo.damage = registry.petalStats(registry.petalIndex("arctic_electron_missile"),
+            type.rarity == Rarity::Ascendant ? Rarity::Apex : type.rarity).damage;
+    // Three visible snowballs share the former single-shot budget.
+    if (registry.mob(type.configIndex).id == "arctic_snowman")
+        ammo.damage /= std::max(1, spec.count);
     if (type.rarity == Rarity::Ascendant) ammo.damage *= 1.10;
 
     const double speed = spec.speed > 0.0 ? spec.speed : kDefaultProjectileSpeed;
@@ -1995,14 +2010,32 @@ void MobAiSystem::steerMob(World& world, const Terrain& terrain, const SpatialGr
         driven = true;
         break;
 
-    case AiKind::Passive:
-        // Nothing to hunt, and nothing to run from either: the reference has no
-        // mob flee state at all, so a passive mob being hit keeps hopping about
-        // on the idle machine and stays where the player's petals can reach it
-        // rather than bolting. The target is cleared because only something
-        // else writing one could have put it there.
+    case AiKind::Passive: {
+        // Baby ants follow a flower carrying an active aggro lure. They stay
+        // passive, so losing the lure returns them to their normal idle path.
+        if (isBabyAnt(content().mob(type.configIndex)) &&
+            realmAggro_[realmIndex(transform.realm)].raised &&
+            nowMillis >= ai.aggroSuppressedUntilMillis) {
+            const double range = (ai.aggroRange > 0.0 ? ai.aggroRange : kEnemyChaseRange) * 1.30;
+            const auto* mods = world.tryGet<PlayerModifiers>(ai.target);
+            if (!mods || !aggroRaised(*mods) || !canNoticeBurrowed(world, self, ai.target) ||
+                !holdTarget(world, terrain, self, transform.position, transform.realm, ai, range, nowMillis)) {
+                ++stats_.targetScans;
+                ai.target = acquireTarget(world, terrain, grid, self, transform.position, transform.realm,
+                                          range, true, targetScratch_);
+                ai.unseenTarget = NULL_ENTITY;
+            }
+            if (const auto* target = world.tryGet<Transform>(ai.target)) {
+                const Vec2 toward = target->position - transform.position;
+                desired = toward.normalized() * (chaseSpeed > 0.0 ? chaseSpeed : speed);
+                driven = true;
+                break;
+            }
+        }
         ai.target = NULL_ENTITY;
+        ai.unseenTarget = NULL_ENTITY;
         break;
+    }
 
     case AiKind::Neutral:
     case AiKind::Hostile:
@@ -2269,12 +2302,23 @@ Vec2 MobAiSystem::steerSandstormPet(World& world, const Terrain& terrain, Transf
                 std::max(ownerSpeed, kPlayerMaxSpeed) * kSandstormPetReturnSpeedFactor * slow;
             return toOwner * (homing / gap);
         }
-    } else if (speed > 0.0 && ownerSpeed > kOwnerMovingSpeed) {
-        // Shadows the owner's heading slightly faster than the owner moves, so
-        // it steadily pulls ahead until the leash turns it.
-        return ownerMotion->velocity * kSandstormPetSpeedFactor;
+        return {};
     }
-    return Vec2{0, 0};
+    if (speed <= 0.0) return {};
+
+    // Match the owner's movement, and correct any offset outside the home
+    // radius. Copying and amplifying the heading alone lets a storm lap its
+    // owner on straight runs and freeze far away when the owner stops.
+    Vec2 desired = ownerMotion ? ownerMotion->velocity : Vec2{};
+    if (gap > kSandstormPetHomeDistance) {
+        constexpr double kFollowCorrectionPerSecond = 5.0;
+        desired += toOwner * ((gap - kSandstormPetHomeDistance) / gap *
+                              kFollowCorrectionPerSecond * slow);
+    }
+    const double followCap = std::max(ownerSpeed, kPlayerMaxSpeed) * kSandstormPetSpeedFactor;
+    const double followSpeed = desired.length();
+    if (followSpeed > followCap) desired *= followCap / followSpeed;
+    return desired;
 }
 
 Vec2 MobAiSystem::volleyInPlace(World& world, Entity self, const MobType& type, MobAi& ai,
@@ -2412,7 +2456,7 @@ void MobAiSystem::steerPet(World& world, const Terrain& terrain, const SpatialGr
     // what it is walked into, as any pet does on contact; a shooter still
     // fires at what is in reach of where it stands, as an ownerless one does.
     Vec2 pointer;
-    if (petPointer(world, owner, type.rarity, ownerPosition, pointer)) {
+    if (petPointer(world, owner, type.rarity, ownerPosition, transform.position, pointer)) {
         ai.petReturning = false;
         ai.crabPhase = CrabPhase::None;
         ai.target = NULL_ENTITY;
@@ -3361,11 +3405,15 @@ void MobAiSystem::run(World& world, const Terrain& terrain, const SpatialGrid& g
         const bool prefersHoney = ai->kind == AiKind::Passive || ai->kind == AiKind::Neutral;
         const double baitChaseSpeed = prefersHoney && drive.chaseSpeed <= 0.0
             ? drive.speed : drive.chaseSpeed;
+        // Large baby ants can be standing beside the bait with their centre
+        // outside its radius. Measure their reach from the edge of the body.
+        const double baitReach = 600.0 + (hasBaits && ai->kind == AiKind::Passive &&
+            isBabyAnt(content().mob(kind->configIndex)) ? body->radius : 0.0);
         nearbyBaits_.clear();
         if (hasBaits && ai->kind != AiKind::Stationary && ai->kind != AiKind::Sandstorm &&
             !world.has<Pet>(self) && baitChaseSpeed > 0.0)
-            baitGrid_.query(transform->realm, transform->position, 600.0, nearbyBaits_);
-        Entity lure = NULL_ENTITY; double nearest = 600.0 * 600.0;
+            baitGrid_.query(transform->realm, transform->position, baitReach, nearbyBaits_);
+        Entity lure = NULL_ENTITY; double nearest = baitReach * baitReach;
         for (Entity candidate : nearbyBaits_) {
             const auto& baitAt = world.get<Transform>(candidate);
             const double d = distanceSq(transform->position, baitAt.position);

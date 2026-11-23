@@ -266,3 +266,25 @@ TEST(fission_tooltips_split_the_real_chinese_description_into_bounded_rows) {
     }
     ui::setLanguage(ui::Language::En);
 }
+
+TEST(palm_leaf_tooltip_matches_the_live_shield_rate_and_cap) {
+    std::string error;
+    CHECK(loadContent(testsupport::dataDir(), error));
+    const auto saved = ui::language();
+    for (const char* id : {"palm_leaf", "magic_palm_leaf"}) {
+        for (const auto lang : {ui::Language::En, ui::Language::Zh}) {
+            ui::setLanguage(lang);
+            bool rate = false, cap = false;
+            const auto index = content().petalIndex(id);
+            for (const auto& line : ui::petalTooltipLines(index, Rarity::Common, {}, 1.0)) {
+                rate |= line.text == (lang == ui::Language::En
+                    ? "Shield restored per second: 1.25" : "回盾/秒：1.25");
+                cap |= line.text == (lang == ui::Language::En
+                    ? "Shield recovery cap (% of max health): 30%" : "回盾上限（最大生命）：30%");
+            }
+            CHECK(rate);
+            CHECK(cap);
+        }
+    }
+    ui::setLanguage(saved);
+}

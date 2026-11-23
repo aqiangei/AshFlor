@@ -6057,6 +6057,54 @@ TEST(a_compass_faces_opposite_the_pointer_and_steers_the_ring) {
     CHECK(std::abs(angleDelta(wrapAngle(rig.ring().spin), expected)) < 0.15);
 }
 
+TEST(compass_points_to_nearest_hyper_or_apex_without_magnet_interference) {
+    if (!contentLoaded()) return;
+    Rig rig;
+    rig.freezeRing();
+    rig.equip(0, "compass");
+    rig.settleEquips();
+    const auto petals = rig.petals(0);
+    CHECK_EQ(petals.size(), std::size_t(1));
+    if (petals.empty()) return;
+    const Entity compass = petals.front();
+    const auto checkTarget = [&](Entity expected) {
+        const auto& instance = rig.world.get<PetalInstance>(compass);
+        CHECK_EQ(instance.compassTarget, expected);
+        if (expected != NULL_ENTITY) {
+            const Vec2 at = rig.world.get<Transform>(compass).position;
+            const Vec2 goal = rig.world.get<Transform>(expected).position;
+            CHECK(offBearing(instance.facingAngle, at, goal) < 0.15);
+        }
+    };
+    const Vec2 owner = rig.world.get<Transform>(rig.player).position;
+    wildMob(rig, owner + Vec2{0, 120}, Rarity::Unique);
+    const Entity otherMap = wildMob(rig, owner + Vec2{200, 0}, Rarity::Ascendant);
+    rig.world.get<Transform>(otherMap).realm = Realm::Arena;
+    const Entity friendly = wildMob(rig, owner + Vec2{0, 250}, Rarity::Ascendant);
+    rig.world.get<Faction>(friendly).team = Team::Players;
+    const Entity hyper = wildMob(rig, owner + Vec2{850, 0}, Rarity::Apex);
+    const Entity apex = wildMob(rig, owner + Vec2{0, 1400}, Rarity::Ascendant);
+    rig.tick(15);
+    checkTarget(hyper);
+
+    rig.equip(1, "magnet");
+    rig.equip(2, "magnetic_ring");
+    rig.settleEquips();
+    rig.tick(15);
+    checkTarget(hyper);
+
+    // A newly closer Apex wins at the next scan despite both pull effects.
+    rig.world.get<Transform>(apex).position = owner + Vec2{0, 650};
+    rig.tick(15);
+    checkTarget(apex);
+    rig.world.get<Transform>(apex).realm = Realm::Arena;
+    rig.tick();
+    checkTarget(hyper);
+    rig.world.add<Dead>(hyper);
+    rig.tick();
+    checkTarget(NULL_ENTITY);
+}
+
 TEST(a_relic_raises_max_health_by_a_tenth_a_tier_and_marks_the_flower_a_sharer) {
     if (!contentLoaded()) return;
     Rig rig;
@@ -7135,7 +7183,7 @@ TEST(large_black_hole_egg_still_needs_room_away_from_a_fixed_summon) {
     CHECK_NEAR(distance(rig.position(whiteHole), owner + Vec2{90, 0}), 0.0, 1e-9);
 }
 
-TEST(hyper_sticks_can_summon_a_sandstorm_inside_a_wall_bounded_pocket) {
+TEST(mobile_summons_use_a_safe_fallback_inside_a_wall_bounded_pocket) {
     const auto& registry = testsupport::shippedContent();
     const auto dir = testsupport::tempDir("flix-sandstorm-pocket");
     const auto path = dir + "/pocket.tmj";
@@ -7197,6 +7245,42 @@ TEST(hyper_sticks_can_summon_a_sandstorm_inside_a_wall_bounded_pocket) {
             CHECK(!rig.terrain.resolveWall(at.position, kMobWallRadius, at.realm).collided);
         });
     }
+    Rig crowded(registry);
+    CHECK(crowded.terrain.loadTiledMap(path, error));
+    crowded.useHatchTerrain = true;
+    const Vec2 owner{4.5 * kTileSize, 4.5 * kTileSize};
+    crowded.world.get<Transform>(crowded.player).position = owner;
+    const Entity fixed = addMob(crowded, owner, "void_white_hole");
+    crowded.world.add<Pet>(fixed);
+    crowded.world.add<Motion>(fixed);
+    crowded.world.get<Body>(fixed).radius = 145.0;
+    crowded.equip(0, "beetle_egg", Rarity::PermanentHyper);
+    crowded.tick(100);
+    CHECK_EQ(crowded.petCount(), std::size_t(1));
+
+    crowded.world.destroy(fixed);
+    const Entity mobile = addMob(crowded, owner, "crab");
+    crowded.world.add<Motion>(mobile);
+    crowded.world.get<Body>(mobile).radius = 130.0;
+    const int expected = configuredSummonCount(registry.petal(registry.petalIndex("beetle_egg")),
+                                               Rarity::PermanentHyper, nullptr, 0);
+    CHECK(expected > 1);
+    CHECK(crowded.tickUntil([&] { return crowded.petCount() == static_cast<std::size_t>(expected); }, 40));
+    CHECK_NEAR(distance(crowded.position(crowded.player), owner), 0.0, 1e-9);
+    Query<Pet, Transform, MobType>{crowded.world}.each([&](Entity, Pet& pet, Transform& at, MobType& type) {
+        CHECK_EQ(pet.owner, crowded.player);
+        CHECK_EQ(type.configIndex, registry.mobIndex("beetle"));
+        CHECK_NEAR(distance(owner, at.position), 0.0, 1e-9);
+        CHECK(!crowded.terrain.resolveWall(at.position, kMobWallRadius, at.realm).collided);
+    });
+    crowded.movement.runWorldPhase(crowded.world, crowded.terrain, crowded.now, net::kTickSeconds);
+    bool movedApart = false;
+    Query<Pet, Transform>{crowded.world}.each([&](Entity, Pet&, Transform& at) {
+        movedApart |= distance(at.position, crowded.position(mobile)) > 0.01;
+        CHECK(!crowded.terrain.resolveWall(at.position, kMobWallRadius, at.realm).unresolved);
+    });
+    CHECK(movedApart);
+
 }
 
 TEST(pharaoh_crown_summons_in_a_room_narrower_than_a_beetle) {
@@ -8984,4 +9068,80 @@ TEST(feedback_3746_recall_keeps_a_safe_left_bearing_beside_a_right_wall) {
         CHECK(!rig.terrain.resolveWall(at.position, rig.world.get<Body>(pet).radius, at.realm).collided);
         CHECK_NEAR(rig.healthOf(pet), health, 1e-8);
     }
+}
+
+namespace {
+
+struct PalmTrial {
+    World world;
+    CommandBuffer commands{world};
+    EventQueue events;
+    SpatialGrid grid;
+    PetalSystem petals;
+    CombatSystem combat;
+    const ContentRegistry& content = testsupport::shippedContent();
+    Entity flower = world.create();
+    double now = 1000;
+
+    PalmTrial(const char* id, Rarity rarity) {
+        world.add<PlayerTag>(flower);
+        world.add<Transform>(flower, Transform{{5000, 5000}, 0});
+        world.add<Body>(flower, Body{25, 1});
+        world.add<Health>(flower, Health{0.5 * maxHealthForLevel(1), maxHealthForLevel(1)});
+        world.add<Loadout>(flower).slots[0] = {content.petalIndex(id), rarity};
+        world.add<PlayerModifiers>(flower);
+        world.add<PetalRing>(flower);
+        world.add<ShieldState>(flower);
+    }
+
+    void step(int ticks) {
+        for (int i = 0; i < ticks; ++i) {
+            now += net::kTickSeconds * 1000;
+            petals.run(world, content, now, net::kTickSeconds, commands);
+            commands.flush();
+            combat.run(world, grid, content, now, net::kTickSeconds, commands, events);
+            commands.flush();
+        }
+    }
+
+    double shield() { return world.get<ShieldState>(flower).amount; }
+};
+
+} // namespace
+
+TEST(palm_leaf_recovers_low_tier_shield_across_real_combat_ticks) {
+    for (const char* id : {"palm_leaf", "magic_palm_leaf"}) {
+        for (Rarity rarity : {Rarity::Common, Rarity::Uncommon, Rarity::Rare}) {
+            PalmTrial one(id, rarity);
+            PalmTrial two(id, rarity);
+            two.world.get<Loadout>(two.flower).slots[1] =
+                {two.content.petalIndex(id), rarity};
+            one.step(70);
+            two.step(70);
+            one.world.get<ShieldState>(one.flower).amount = 0;
+            two.world.get<ShieldState>(two.flower).amount = 0;
+            one.step(20);
+            two.step(20);
+            CHECK(one.shield() > 1.0);
+            CHECK_NEAR(two.shield(), 2 * one.shield(), 1e-9);
+            CHECK(one.world.get<Health>(one.flower).current > maxHealthForLevel(1) * 0.5 + 4.5);
+            one.world.get<Loadout>(one.flower).slots[0] = {};
+            one.world.get<ShieldState>(one.flower).amount = 0.51;
+            one.step(30);
+            CHECK_NEAR(one.shield(), 0.0, 1e-12);
+        }
+    }
+}
+
+TEST(palm_leaf_retains_shield_cap_and_magic_mana) {
+    PalmTrial trial("magic_palm_leaf", Rarity::Super);
+    trial.step(5);
+    auto& mana = trial.world.get<ManaPool>(trial.flower);
+    CHECK(mana.max > 0.0);
+    mana.current = 0;
+    trial.step(400);
+    const double cap = trial.world.get<Health>(trial.flower).max * 0.30;
+    CHECK(trial.shield() > cap * 0.99);
+    CHECK(trial.shield() <= cap);
+    CHECK(mana.current > 0.0);
 }

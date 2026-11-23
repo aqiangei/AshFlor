@@ -737,7 +737,7 @@ double GameServer::botPetalReach(const Bot& bot, double ringGap) const {
         // A clumped petal's grains fan out around their shared ring place, and
         // one of them points outward on every revolution.
         // The copies the ring actually fields, Duplicator's included.
-        const int copies = petalCopies(stats.count, skills);
+        const int copies = orbitPetalCopies(stats.count, skills);
         if (config.clumped && copies > 1) {
             const double spacing = stats.radius * config.clumpSpacing;
             if (config.clumpOutsideRing) {

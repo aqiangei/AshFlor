@@ -748,8 +748,11 @@ double App::drawBossBars(Canvas& canvas, bool altHeld) {
 
         bottom = barY + kBarHeight + kTierDrop - descent(kTierSize);
         barY += kRowSpacing;
-        const auto* ranks = net_.view().bossDamage(boss.netId);
-        if (!ranks || ranks->empty()) continue;
+        const auto* ranking = net_.view().bossDamage(boss.netId);
+        if (!ranking || ranking->rows.empty()) continue;
+        const auto& ranks = ranking->rows;
+        const bool showOwnLine = ranking->ownRank != net::kBossDamageOwnUnavailable &&
+            (ranking->ownRank == 0 || ranking->ownRank > ranks.size());
 
         // Keep this readout legible in a small landscape window.
         const double pointsPerUnit = std::max(
@@ -757,7 +760,7 @@ double App::drawBossBars(Canvas& canvas, bool altHeld) {
         const double rankSize = clamp(10.0 / pointsPerUnit, 16.0, 30.0);
         const double rankWidth = clamp(205.0 / pointsPerUnit, kBarWidth,
                                        std::max(kBarWidth, window_.width() * .55));
-        const double rankHeight = 3.8 * rankSize;
+        const double rankHeight = (showOwnLine ? 5.0 : 3.8) * rankSize;
         const double y = bottom + 4.0;
         const double x = centreX - rankWidth * .5;
         setFill(canvas, kBossTrack);
@@ -768,15 +771,26 @@ double App::drawBossBars(Canvas& canvas, bool altHeld) {
         label.size = rankSize;
         label.align = Align::Centre;
         text(canvas, trEnZh("Current damage", "当前伤害"), centreX, y + .8 * rankSize, label);
-        const double cellWidth = rankWidth / ranks->size();
-        for (std::size_t rank = 0; rank < ranks->size(); ++rank) {
-            const auto& row = (*ranks)[rank];
+        const double cellWidth = rankWidth / ranks.size();
+        for (std::size_t rank = 0; rank < ranks.size(); ++rank) {
+            const auto& row = ranks[rank];
             const double middle = x + (static_cast<double>(rank) + .5) * cellWidth;
-            const std::string who = row.name.empty() ? trEnZh("Left", "已离场") : row.name;
-            label.fill = rank == 0 ? 0xffda72u : kPaper;
+            const bool own = rank + 1 == ranking->ownRank;
+            const std::string who = own ? trEnZh("You", "我")
+                : row.name.empty() ? trEnZh("Left", "已离场") : row.name;
+            label.fill = own ? 0xa9e4bbU : rank == 0 ? 0xffda72U : kPaper;
             text(canvas, ellipsize(std::to_string(rank + 1) + ". " + who,
                                   label.size, cellWidth - 10.0), middle, y + 2.0 * rankSize, label);
             text(canvas, formatNumber(row.damage, false), middle, y + 3.2 * rankSize, label);
+        }
+        if (showOwnLine) {
+            label.fill = ranking->ownRank == 0 ? kPaper : 0xa9e4bbU;
+            const std::string own = ranking->ownRank == 0
+                ? trEnZh("You · 0 damage · Unranked", "我 · 0 伤害 · 未上榜")
+                : std::string(trEnZh("You · #", "我 · 第 ")) + std::to_string(ranking->ownRank) +
+                    trEnZh(" · ", " 名 · ") + formatNumber(ranking->ownDamage, altHeld);
+            text(canvas, ellipsize(own, label.size, rankWidth - 10.0),
+                 centreX, y + 4.4 * rankSize, label);
         }
         bottom = y + rankHeight;
         barY += rankHeight;

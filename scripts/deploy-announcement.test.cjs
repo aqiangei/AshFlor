@@ -26,3 +26,18 @@ test('failed broadcast aborts before countdown or shutdown',async()=>{
  FakeSocket.allow=false;const c=await connect({url:'ws://localhost/ws',username:'operator',password:'test',protocolVersion:92,contentHash:123},FakeSocket);
  let waited=false;await assert.rejects(countdown(t=>c.broadcast(t),{sleep:async()=>{waited=true;},log:()=>{}}));assert.equal(waited,false);c.close();FakeSocket.allow=true;
 });
+test('public plaintext endpoints are rejected before opening a connection', async () => {
+  let attempted = false;
+  class UnencryptedSocket {
+    constructor() { attempted = true; }
+  }
+  await assert.rejects(connect({url: 'ws://example.invalid/ws'}, UnencryptedSocket), /requires WSS or a loopback/);
+  assert.equal(attempted, false);
+});
+test('encrypted public endpoints and IPv6 loopback support the admin handshake', async () => {
+  for (const url of ['wss://example.invalid/ws', 'ws://[::1]:8788/ws']) {
+    const connection = await connect({url, username: 'Operator', password: 'test',
+      protocolVersion: 92, contentHash: 123}, FakeSocket);
+    connection.close();
+  }
+});

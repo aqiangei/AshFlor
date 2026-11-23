@@ -74,7 +74,7 @@ constexpr double kBadgeTipSize = 16.0;
 /// florrclone talent-wheel stage is an 880×880 viewBox. Nodes are projected
 /// with Nv(tier, phase, camera); only |phase−camera|<3 are shown.
 constexpr double kWheelSize = 880.0;
-constexpr double kCameraMax = 31.5;
+constexpr double kCameraMax = 47.0;
 constexpr double kPhaseVisible = 3.0;
 constexpr double kFlowerX = 440.0;
 constexpr double kFlowerY = 777.0;
@@ -218,6 +218,18 @@ const std::vector<Branch>& branches() {
         {SkillId::ManaCap,
          {{4, 29.75}, {5, 29.25}, {6, 29.75}, {7, 29.25}, {8, 29.75},
           {9, 29.25}, {9, 30.25}, {8, 30.75}, {7, 30.75}}},
+        {SkillId::RadiationReach, {{4, 32}, {5, 31.75}, {6, 32}, {7, 31.75}, {8, 32}}},
+        {SkillId::RadiationPower, {{4, 33.75}, {5.5, 34}, {7, 33.75}}},
+        {SkillId::SpillRate, {{4, 35.5}, {5, 35.25}, {6, 35.5}, {7, 35.25}, {8, 35.5}}},
+        {SkillId::ExplosionReach, {{4, 37.25}, {5.5, 37}, {7, 37.25}, {8.5, 37}}},
+        {SkillId::SecondaryReload, {{4, 38.75}, {5, 39}}},
+        {SkillId::FirePower, {{6, 38.75}, {7, 39}}},
+        {SkillId::LightningPower, {{8, 38.75}, {9, 39}}},
+        {SkillId::CorruptDamage,
+         {{4, 40.25}, {5, 40.75}, {6, 40.25}, {7, 40.75}, {8, 40.25}, {9, 40.75}, {10, 40.25}}},
+        {SkillId::CorruptReload, {{4, 42.25}, {5.5, 42.5}, {7, 42.25}}},
+        {SkillId::CorruptReach, {{4, 44}, {5.5, 44.25}, {7, 44}}},
+        {SkillId::Particle, {{4, 45.75}, {5.5, 46}, {7, 45.75}, {8.5, 46}}},
     };
     return kBranches;
 }
@@ -354,6 +366,15 @@ std::vector<TipRow> description(SkillId skill, int tier) {
     const bool cn = language() == Language::Zh;
     char buffer[128];
     switch (skill) {
+        case SkillId::Particle:
+            row({{cn ? "自身粒数大于 " : "Adds 1 particle when the petal has over "},
+                 {std::to_string(5 - tier), kStatDamage},
+                 {cn ? " 时，额外增加 1 粒。" : " particles."}});
+            row({{cn ? "按拟态解析后的自身粒数判断；重瓣和裂变增加的粒数不计入门槛。"
+                     : "Checks the resolved petal's own count; Duplicator and Fission do not qualify it."}});
+            row({{cn ? "先加到重瓣后的粒数，再计算裂变；不增加召唤兽数量。"
+                     : "Adds after Duplicator, before Fission. Does not increase summoned broods."}});
+            break;
         case SkillId::ManaRegen:
             row({{cn ? "魔力回复：" : "Mana regeneration: "},
                  {fromTo(kManaRegenTalentScale, tier), kStatDamage}});
@@ -363,6 +384,54 @@ std::vector<TipRow> description(SkillId skill, int tier) {
             row({{cn ? "魔力上限：" : "Mana capacity: "},
                  {fromTo(kManaCapTalentScale, tier), kStatDamage}});
             row({{cn ? "提高花瓣提供的魔力池上限，方便魔眼、魔刺等耗蓝花瓣持续作战。" : "Raises the mana pool granted by petals, so magic petals stay usable longer."}});
+            break;
+        case SkillId::CorruptDamage:
+            row({{cn ? "腐化时的花瓣伤害：" : "Petal damage while corrupted: "},
+                 {fromTo(kCorruptDamageScale, tier), kStatDamage}});
+            break;
+        case SkillId::CorruptReload:
+            row({{cn ? "腐化时的装填速度：" : "Petal reload speed while corrupted: "},
+                 {fromTo(kCorruptReloadScale, tier), kStatDamage}});
+            break;
+        case SkillId::CorruptReach: {
+            const auto i = static_cast<std::size_t>(tier);
+            row({{cn ? "腐化时的攻击伸展：" : "Attack reach while corrupted: "},
+                 {"+" + std::to_string(static_cast<int>(kCorruptReachBonus[i])), kStatDamage}});
+            break;
+        }
+        case SkillId::SpillRate:
+            row({{cn ? "流体释放频率：" : "Spill frequency: "},
+                 {fromTo(kSpillRateTalentScale, tier), kStatDamage}});
+            break;
+        case SkillId::SecondaryReload:
+            row({{cn ? "二次装填与孵化速度：" : "Secondary reload and hatching speed: "},
+                 {fromTo(kSecondaryReloadTalentScale, tier), kStatDamage}});
+            break;
+        case SkillId::FirePower:
+            row({{cn ? "花瓣燃烧伤害：" : "Petal burn damage: "},
+                 {fromTo(kElementalPowerTalentScale, tier), kStatDamage}});
+            break;
+        case SkillId::LightningPower:
+            row({{cn ? "雷击伤害：" : "Lightning damage: "},
+                 {fromTo(kElementalPowerTalentScale, tier), kStatDamage}});
+            break;
+        case SkillId::ExplosionReach: {
+            const auto i = static_cast<std::size_t>(tier);
+            row({{cn ? "爆炸半径：" : "Explosion radius: "},
+                 {"+" + std::to_string(static_cast<int>(kExplosionReachTalentBonus[i])), kStatDamage}});
+            break;
+        }
+        case SkillId::RadiationReach:
+            row({{cn ? "辐射半径：" : "Radiation radius: "},
+                 {fromTo(kRadiationReachTalentScale, tier), kStatDamage}});
+            row({{cn ? "扩大辐射场和辐射闪电的范围，与花瓣专属扩圈相乘。"
+                     : "Expands radiation fields and radiation lightning. Multiplies with petal techniques."}});
+            break;
+        case SkillId::RadiationPower:
+            row({{cn ? "对目标辐射伤害：" : "Outgoing radiation damage: "},
+                 {fromTo(kRadiationPowerTalentScale, tier), kStatDamage}});
+            row({{cn ? "增加辐射脉冲、毒伤、灼烧和闪电的伤害，自伤沿用原值。"
+                     : "Boosts radiation pulses, poison, burn and lightning. Self-damage follows its normal rules."}});
             break;
         case SkillId::FluidReach:
             row({{cn ? "溢液与血池半径：" : "Spill and blood pool radius: "},
@@ -383,6 +452,8 @@ std::vector<TipRow> description(SkillId skill, int tier) {
                 row({{cn ? "永恒怪另有独立刷新判定。"
                          : "Eternal spawns have a separate roll."}});
             }
+            row({{cn ? "返回标题画面，点出生点旁的金色箭头，再进入地图。"
+                     : "Return to the title screen, click the gold arrow by the map picker, then enter."}});
             row({{cn ? "不提高经验档位；重置天赋会退出声望地图。" : "XP tiers stay unchanged; resetting talents returns you to ordinary worlds."}});
             break;
         case SkillId::Damage:
@@ -537,10 +608,32 @@ void drawIcon(Canvas& canvas, SkillId id, int /*tier*/, Vec2 at, double size) {
     const char* svg = talentSvg(id == SkillId::MovementSpeed ? SkillId::Rotation : id);
     if (id == SkillId::PetDamage) svg = talentSvg(SkillId::Summoner);
     if (id == SkillId::ManaRegen) svg = talentSvg(SkillId::Medic);
+    if (id == SkillId::RadiationReach || id == SkillId::RadiationPower) {
+        svg = id == SkillId::RadiationReach
+            ? "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'><g fill='none' stroke='#fff' stroke-width='4'><circle cx='40' cy='40' r='30' opacity='.5'/><circle cx='40' cy='40' r='19'/></g><circle cx='40' cy='40' r='7' fill='#fff'/></svg>"
+            : "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'><g fill='#fff'><path d='M34 31 25 15a28 28 0 0 1 30 0l-9 16zm17 9h18a28 28 0 0 1-15 26l-9-16zm-22 0h-18a28 28 0 0 0 15 26l9-16z'/><circle cx='40' cy='40' r='7'/></g></svg>";
+    }
     if (id == SkillId::FluidReach) svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'><path d='M40 8C35 22 19 35 19 48a21 21 0 0 0 42 0C61 35 45 22 40 8Z' fill='#72d9ed' stroke='#28677e' stroke-width='4'/><path d='M29 49q1 9 10 11' fill='none' stroke='#d7f6ff' stroke-width='4' stroke-linecap='round'/></svg>";
     if (id == SkillId::ManaCap) svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'><rect x='32' y='6' width='16' height='8' rx='2' fill='#fff'/><rect x='28' y='12' width='24' height='12' rx='3' fill='#fff'/><circle cx='40' cy='50' r='26' fill='#fff'/><path d='M40 26C40 26 60 30 60 50C60 62 51 70 40 70C29 70 20 62 20 50C20 30 40 26 40 26Z M40 36C30 38 26 44 26 50C26 59 32 64 40 64C48 64 54 59 54 50C54 44 50 38 40 36Z' fill='#fff' fill-rule='evenodd'/></svg>";
     if (id == SkillId::Prestige) svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'><path d='M40 5L50 27L75 30L57 47L61 73L40 61L19 73L23 47L5 30L30 27Z' fill='#ffd43b' stroke='#8e7019' stroke-width='4'/><circle cx='34' cy='40' r='3' fill='#735c18'/><circle cx='46' cy='40' r='3' fill='#735c18'/><path d='M33 48Q40 55 47 48' fill='none' stroke='#735c18' stroke-width='3'/></svg>";
+    if (id == SkillId::Particle)
+        svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'><g fill='#fff'><circle cx='40' cy='22' r='13'/><circle cx='23' cy='53' r='13'/><circle cx='57' cy='53' r='13'/></g></svg>";
     if (svg == nullptr || *svg == '\0') return;
+    if (id == SkillId::SpillRate || id == SkillId::SecondaryReload || id == SkillId::FirePower ||
+        id == SkillId::LightningPower || id == SkillId::ExplosionReach) {
+        if (id == SkillId::SpillRate)
+            svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'><path d='M41 6c-6 16-24 25-24 43a24 24 0 0 0 48 0C65 31 49 22 41 6Z' fill='#fff'/></svg>";
+        else if (id == SkillId::FirePower)
+            svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'><path d='M42 5c3 23-20 23-20 43 0 15 8 25 22 25 22 0 31-26 14-42 1 10-3 13-6 13C54 27 50 14 42 5Z' fill='#fff'/></svg>";
+        else if (id == SkillId::LightningPower)
+            svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'><path d='M46 5 14 47h25l-5 28 32-42H43Z' fill='#fff'/></svg>";
+        else if (id == SkillId::ExplosionReach)
+            svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'><path d='m39 5 8 25 22-12-10 23 17 9-24 4-2 21-12-18-20 12 5-22-19-9 23-5Z' fill='#fff'/></svg>";
+        else
+            svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'><g fill='none' stroke='#fff' stroke-width='6'><circle cx='40' cy='43' r='27'/><path d='M40 23v20l13 8M31 7h18'/></g></svg>";
+    }
+    if (id == SkillId::CorruptDamage || id == SkillId::CorruptReload || id == SkillId::CorruptReach)
+        svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'><path d='M40 5 74 25v30L40 75 6 55V25Z' fill='none' stroke='#fff' stroke-width='5'/><path d='m46 13-21 30h15l-5 23 22-31H42Z' fill='#fff'/></svg>";
     static std::array<std::shared_ptr<SvgDocument>, kSkillCount> cache{};
     const std::size_t idx = static_cast<std::size_t>(id);
     if (idx >= cache.size()) return;

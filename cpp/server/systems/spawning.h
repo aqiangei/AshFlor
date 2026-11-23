@@ -241,7 +241,7 @@ inline constexpr double kLatentSleepMargin = 500.0;
 ///
 /// It says nothing about how many mobs the world holds: the map is stocked to
 /// its own area whatever this is, and the rest of that population is latent.
-inline constexpr int kMaxLiveMobs = 20000;
+inline constexpr int kMaxLiveMobs = 15000;
 
 /// Every escort -- a hole's or a server's guard and waves, a queen's soldiers
 /// -- comes up out of the CENTRE of whatever spawned it, this far off it on a
@@ -412,9 +412,8 @@ inline constexpr int kPrestigeEternalPopulationTarget = 2;
 inline constexpr int kHyperPopulationTarget = 3;
 inline constexpr int kNaturalApexPopulationTarget = 3;
 inline constexpr double kNaturalApexChance = 0.10;
-// AshFlor BJ: no apex time gate — one per biome may stand; when it dies the
-// next upgrade may place another immediately (cooldown was 2h upstream).
-inline constexpr double kApexSpawnCooldownMillis = 30.0 * 60.0 * 1000.0;
+// Natural Apex and the shared Hyper spawn budget use the biome's Apex clock.
+inline constexpr double kApexSpawnCooldownMillis = 20.0 * 60.0 * 1000.0;
 inline constexpr double kBossUpgradeChance = 0.10;
 
 /// The sacrifice (petalIsSacrifice): what a flower that dies wearing one

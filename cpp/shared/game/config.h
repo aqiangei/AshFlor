@@ -1360,11 +1360,33 @@ inline double uraniumRadiationDps(const PetalStats& stats, Rarity rarity) {
 inline constexpr double kRadiationDamageScale = 1.25;
 inline constexpr double kFluidRadiusScale = 1.20;
 inline constexpr double kRadiationRadiusScale = 1.20;
-inline constexpr double kFluidDamageScale = 1.25;
+inline constexpr double kFluidDamageScale = 1.5625;
+inline constexpr double kOffensiveSpillRadiusScale = 1.10;
+
+inline bool isOffensiveSpill(SpillKind kind) {
+    return kind == SpillKind::Acid || kind == SpillKind::Lava ||
+           kind == SpillKind::Oil || kind == SpillKind::Latrine;
+}
 
 inline double fluidDamageScale(SpillKind kind) {
-    return kind == SpillKind::Acid || kind == SpillKind::Lava || kind == SpillKind::Oil || kind == SpillKind::Latrine
-        ? kFluidDamageScale : 1.0;
+    return isOffensiveSpill(kind) ? kFluidDamageScale : 1.0;
+}
+
+inline bool isFireBomb(const PetalConfig& config) {
+    return config.id == "fire_bomb" || config.id == "void_fire_bomb";
+}
+
+inline constexpr int kFireBombBurnLayers = 3;
+inline constexpr double kFireBombBurnMillis = 3000.0;
+
+inline double fireBombBaseBurnRate(const PetalConfig& config) {
+    return config.blastRadiusPerTier > 0.0 ? 7.5 : 8.75;
+}
+
+inline double fireBombRadius(const PetalConfig& config, Rarity rarity) {
+    const auto tier = ladderIndex(rarity);
+    return config.blastRadiusPerTier > 0.0 ? config.blastRadiusPerTier * (1 + tier)
+                                         : 50.0 + 30.0 * tier;
 }
 
 inline double baseRadiationRadius(const PetalConfig& config, Rarity rarity) {
@@ -1544,6 +1566,10 @@ inline bool petalShotBounces(const PetalConfig& config) { return config.id == "c
 /// a second, so it is full grown 13 s after it spawned.
 inline constexpr double kTomatoGrowthStepMillis = 1000.0;
 inline constexpr double kTomatoMaxGrowth = 14.0;
+inline constexpr double kMagicTomatoGrowth = 10.0;
+inline double magicTomatoRipeningMana(Rarity rarity) {
+    return 8.75 * petalManaScale(rarity);
+}
 
 inline bool petalGrowsOverTime(const PetalConfig& config) { return config.id == "tomato"; }
 
@@ -1600,6 +1626,16 @@ inline double iodineHealRadius(Rarity rarity) {
 }
 inline double iodineHealAmount(Rarity rarity) { return 0.6 * petalHealScale(rarity); }
 
+/// Additive movement bonus for each equipped RNA, as a fraction of pet speed.
+inline double rnaPetSpeedBonus(Rarity rarity) {
+    // Apex RNA has an extra petal tier beyond the natural mob ladder's Hyper.
+    const int tier = rarity == Rarity::Ascendant ? ladderIndex(rarity) + 1 : ladderIndex(rarity);
+    return .04 + .0052 * tier * tier;
+}
+
+inline constexpr double kPalmLeafShieldCapFraction = 0.30;
+inline double palmLeafShieldPerSecond(Rarity rarity) { return 1.25 * petalHealScale(rarity); }
+
 inline bool petalIsCompass(const PetalConfig& config) { return config.id == "compass"; }
 
 /// A cursor walks its flower's pets of a LOWER tier to the pointer instead of
@@ -1618,12 +1654,14 @@ inline bool petalIsEgg(const PetalConfig& config) {
 // Compact liquid pools gain reach with quality. Wide fields such as Pyrite
 // already cover this distance, so their base radius is preserved.
 inline double spillBaseRadius(const SpillSpec& spill, Rarity rarity) {
-    return kFluidRadiusScale * std::min(spill.radius + 5.0 * ladderIndex(rarity), std::max(spill.radius, 100.0));
+    const double offenseRadius = isOffensiveSpill(spill.kind) ? kOffensiveSpillRadiusScale : 1.0;
+    return kFluidRadiusScale * offenseRadius *
+           std::min(spill.radius + 5.0 * ladderIndex(rarity), std::max(spill.radius, 100.0));
 }
 
 // Soap boosts the radius of the wearer's liquid fields. The bonus is additive
 // across active slots and limited independently of per-target effect strength.
-inline constexpr double kSoapMaxSpillRadiusScale = 2.0;
+inline constexpr double kSoapMaxSpillRadiusScale = 3.0;
 inline constexpr double soapSpillRadiusBonus(Rarity rarity) {
     return rarity == Rarity::Ascendant ? 0.80 : (20 + 6 * ladderIndex(rarity)) / 100.0;
 }
@@ -1963,14 +2001,12 @@ private:
     void foldMapsIntoHash(const std::string& dataDir);
 };
 
-/// Whether a Permanent Hyper of this petal crafts up to Apex, on the crafting
-/// table or at the ocean oracle. A petal with a source of its own keeps its
-/// Apex with that source, and Mjolnir's Apex is forged. Magic petals all
-/// craft, whatever keeps them off the drop rows and the shop.
+/// Permanent Hyper petals can upgrade at either crafting entry point, including
+/// items with biome-specific sources. Both hammer forms use their forge rules.
 inline bool petalCraftsToApex(const ContentRegistry& registry, std::uint16_t petalIndex) {
     if (petalIndex >= registry.petalCount()) return false;
-    const PetalConfig& petal = registry.petal(petalIndex);
-    return petal.id != "mjolnir" && (!petalHasOwnSource(petal) || petal.id.rfind("magic_", 0) == 0);
+    const auto& id = registry.petal(petalIndex).id;
+    return id != "mjolnir" && id != "timed_mjolnir";
 }
 
 /// The camera multiplier one worn petal asks for at `rarity`: below 1 pulls
