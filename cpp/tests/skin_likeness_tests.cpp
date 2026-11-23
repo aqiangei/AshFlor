@@ -232,7 +232,6 @@ namespace {
 
 using flix::testsupport::connectClient;
 using flix::testsupport::Harness;
-using flix::testsupport::sawText;
 
 bool registerAs(Harness& h, NetClient& client, const char* name) {
     if (!connectClient(h, client)) return false;
@@ -261,8 +260,8 @@ CustomSkin storedSkin(const char* id, const char* name, const char* author, doub
 
 } // namespace
 
-TEST(publishing_a_look_alike_is_refused_and_names_the_original) {
-    Harness h("skin-dedupe-publish", flix::testsupport::seedSkinReviewer, flix::testsupport::dataDir(), 0);
+TEST(similar_skins_can_be_submitted_approved_and_published) {
+    Harness h("skin-manual-review", flix::testsupport::seedSkinReviewer, flix::testsupport::dataDir(), 0);
     if (!h.ready) { CHECK(false); return; }
 
     NetClient first;
@@ -270,7 +269,7 @@ TEST(publishing_a_look_alike_is_refused_and_names_the_original) {
     NetClient reviewer;
     CHECK(flix::testsupport::loginAs(h, reviewer, "reviewer", "password7"));
     CHECK(registerAs(h, first, "original"));
-    CHECK(registerAs(h, second, "copier"));
+    CHECK(registerAs(h, second, "another_artist"));
 
     CHECK(publish(h, first, "smiley", starterWithMouth()));
     CHECK(!first.skinCatalog().empty());
@@ -278,40 +277,38 @@ TEST(publishing_a_look_alike_is_refused_and_names_the_original) {
     const auto originalId = first.skinCatalog().front().id;
     CHECK(flix::testsupport::approveSkin(h, reviewer, first, originalId));
     first.publishSavedSkin(originalId);
-    CHECK(h.stepUntil({&first, &second}, [&] { return second.skinCatalog().size() == 1; }));
+    CHECK(h.stepUntil({&first, &second}, [&] { return second.findSkin(originalId) != nullptr; }));
 
-    // Somebody else's skin, one shade off.
-    std::vector<SkinShape> copy = starterWithMouth();
-    copy[0].fill = "#fde865";
-    CHECK(publish(h, second, "mine now", copy));
-    CHECK(sawText(second, "looks just like \"smiley\" by original"));
-
-    // Your own again, under a new name.
-    CHECK(publish(h, first, "smiley again", starterWithMouth()));
-    CHECK(sawText(first, "looks just like your \"smiley\""));
-
-    // The starter flower itself is nobody's to publish.
-    CHECK(publish(h, second, "flower", starterSkinShapes()));
-    CHECK(sawText(second, "That's the starter flower"));
-
-    // A real change still goes through.
-    std::vector<SkinShape> red = starterWithMouth();
-    red[0].fill = "#d01c1d";
-    CHECK(publish(h, second, "angry", red));
+    auto similar = starterWithMouth();
+    similar[0].fill = "#fde865";
+    CHECK(skinsLookAlike(sampleSkinLook(similar), sampleSkinLook(starterWithMouth())));
+    CHECK(publish(h, second, "another smiley", similar));
     const auto pending = std::find_if(second.skinCatalog().begin(), second.skinCatalog().end(),
-        [](const CustomSkin& skin) { return skin.name == "angry" && skin.review == SkinReviewState::Pending; });
+        [](const CustomSkin& skin) { return skin.name == "another smiley" && skin.review == SkinReviewState::Pending; });
     CHECK(pending != second.skinCatalog().end());
     if (pending == second.skinCatalog().end()) return;
-    const auto angryId = pending->id;
-    CHECK(flix::testsupport::approveSkin(h, reviewer, second, angryId));
-    second.publishSavedSkin(angryId);
+    const auto similarId = pending->id;
+    CHECK(!first.findSkin(similarId));
+    CHECK(flix::testsupport::approveSkin(h, reviewer, second, similarId));
+    second.publishSavedSkin(similarId);
+    CHECK(h.stepUntil({&first, &second}, [&] { return first.findSkin(similarId) && first.findSkin(similarId)->published; }));
 
-    CHECK(h.stepUntil({&first, &second, &reviewer}, [&] { return first.findSkin(angryId) != nullptr; }));
-    CHECK_EQ(first.skinCatalog().size(), static_cast<std::size_t>(2));
-    CHECK_EQ(h.server.database().storedTable("customSkins").keys().size(), static_cast<std::size_t>(2));
+    // A saved draft can take the same route even if it matches the starter.
+    second.publishSkin("starter study", starterSkinShapes(), false);
+    CHECK(h.stepUntil({&second}, [&] { return second.skinCatalog().size() == 3; }));
+    const auto draft = std::find_if(second.skinCatalog().begin(), second.skinCatalog().end(),
+        [](const CustomSkin& skin) { return skin.name == "starter study" && skin.review == SkinReviewState::Draft; });
+    CHECK(draft != second.skinCatalog().end());
+    if (draft == second.skinCatalog().end()) return;
+    const auto draftId = draft->id;
+    second.publishSavedSkin(draftId);
+    CHECK(h.stepUntil({&second}, [&] { return second.findSkin(draftId)->review == SkinReviewState::Pending; }));
+    CHECK(flix::testsupport::approveSkin(h, reviewer, second, draftId));
+    second.publishSavedSkin(draftId);
+    CHECK(h.stepUntil({&first, &second}, [&] { return first.findSkin(draftId) && first.findSkin(draftId)->published; }));
 }
 
-TEST(a_catalog_full_of_copies_is_folded_into_its_originals_at_start) {
+TEST(startup_preserves_similar_public_skins_and_existing_equips) {
     std::string wearerId, starterWearerId, keeperId;
     Harness h("skin-dedupe-fold", [&](const std::string& path) {
         Database db;
@@ -330,15 +327,13 @@ TEST(a_catalog_full_of_copies_is_folded_into_its_originals_at_start) {
         red[0].fill = "#d01c1d";
 
         Json& catalog = db.rawTable("customSkins");
-        // Filed newest first, so only the timestamps say which is the original.
         catalog["sk_c"] = skinToJson(storedSkin("sk_c", "copy two", "thief", 300, biggerNose));
         catalog["sk_b"] = skinToJson(storedSkin("sk_b", "copy one", "thief", 200, nose));
         catalog["sk_a"] = skinToJson(storedSkin("sk_a", "original", "artist", 100, nose));
         catalog["sk_red"] = skinToJson(storedSkin("sk_red", "angry", "artist", 150, red));
         catalog["sk_plain"] =
             skinToJson(storedSkin("sk_plain", "flower", "lazy", 50, starterSkinShapes()));
-        // The browser build's payload: no shapes this build can read, never
-        // sent, and not this pass's to touch.
+        // Legacy catalog data is preserved even though this client cannot display it.
         Json legacy = Json::object();
         legacy["id"] = "skin-7";
         legacy["data"] = "AAAA";
@@ -360,21 +355,18 @@ TEST(a_catalog_full_of_copies_is_folded_into_its_originals_at_start) {
     CHECK(catalog.contains("sk_a"));
     CHECK(catalog.contains("sk_red"));
     CHECK(catalog.contains("skin-7"));
-    CHECK(!catalog.contains("sk_b"));
-    CHECK(!catalog.contains("sk_c"));
-    CHECK(!catalog.contains("sk_plain"));
+    CHECK(catalog.contains("sk_b"));
+    CHECK(catalog.contains("sk_c"));
+    CHECK(catalog.contains("sk_plain"));
 
-    // The wearer of a copy now wears the original; a starter look-alike's
-    // wearer is the plain flower; a distinct skin's wearer is untouched.
-    CHECK_EQ(db.findProgress(wearerId)->equippedSkinId, std::string("sk_a"));
-    CHECK(db.findProgress(starterWearerId)->equippedSkinId.empty());
+    CHECK_EQ(db.findProgress(wearerId)->equippedSkinId, std::string("sk_c"));
+    CHECK_EQ(db.findProgress(starterWearerId)->equippedSkinId, std::string("sk_plain"));
     CHECK_EQ(db.findProgress(keeperId)->equippedSkinId, std::string("sk_red"));
 
-    // And what a client is sent is the folded catalog.
     NetClient client;
     CHECK(connectClient(h, client));
     client.requestLogin("wearer", "hunter2!");
-    CHECK(h.stepUntil({&client}, [&] { return client.skinCatalog().size() == 2; }));
+    CHECK(h.stepUntil({&client}, [&] { return client.skinCatalog().size() == 5; }));
 }
 
 TEST(signing_in_leaves_the_skin_catalog_s_save_text_cached) {

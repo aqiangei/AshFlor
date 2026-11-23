@@ -203,7 +203,8 @@ TEST(skin_moderator_can_remove_public_skins_without_admin_access) {
     const auto rejectedId = artist.skinCatalog().front().id;
     moderator.requestSkinReview(net::SkinReviewAction::Reject, rejectedId);
     CHECK(h.stepUntil({&artist, &moderator, &other}, [&] {
-        return artist.findSkin(rejectedId)->review == SkinReviewState::Rejected;
+        return artist.findSkin(rejectedId)->review == SkinReviewState::Rejected &&
+            sawText(artist, "你的作品已保留在皮肤列表中");
     }));
     artist.publishSavedSkin(rejectedId);
     artist.equipSkin(rejectedId);
