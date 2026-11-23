@@ -13,6 +13,7 @@
   const done = document.querySelector('#done');
   const target = transfer.elements.realm;
   let token = '';
+  let sourceSettings = '';
   let pending;
   document.querySelector('#source').textContent = '原服：' + names[realm];
   const messages = {
@@ -24,7 +25,7 @@
     no_character:'原服没有可迁移的角色。',
     transfer_cooldown:'转服冷却尚未结束，请稍后再试。',
     transfer_capacity:'转服服务当前繁忙，请稍后再试。',
-    transfer_forge_review:'原服仍持有锻造名额，请联系管理员核对后转服。',
+    transfer_forge_review:'原服仍持有锻造名额，请刷新页面并确认解除规则后转服。',
     password_mismatch:'请填写首次提交时设置的目标账号密码。',
     cancelled:'该笔转服已撤销，可重新登录原服。',
   };
@@ -124,6 +125,8 @@
       window.removeEventListener('message',acceptSession);
       clearTimeout(handoffTimeout);
       token = event.data.token;
+      if (typeof event.data.settings === 'string' && event.data.settings.length <= 4096 &&
+          /^[A-Za-z0-9+/=]+$/.test(event.data.settings)) sourceSettings = event.data.settings;
       window.opener = null;
       if (version) {
         status.textContent = '已带入原服登录态。';
@@ -180,14 +183,23 @@
         showTransfer();
       }
       status.textContent='正在办理转服。';
-      const response=await fetch(endpoint,{
+      const requestTransfer = async () => (await fetch(endpoint,{
         method:'POST',cache:'no-store',
         headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},
         body:JSON.stringify({...pending,password:transfer.elements.password.value}),
-      });
-      const result=await response.json();
+      })).json();
+      let result = await requestTransfer();
+      if (result.error === 'transfer_forge_review' && !pending.releaseForgeClaims) {
+        if (window.confirm('原服的独占锻造名额会解除，对应花瓣会永久销毁，材料不退。确定继续转服吗？')) {
+          pending.releaseForgeClaims = true;
+          localStorage.setItem(storageKey,JSON.stringify(pending));
+          result = await requestTransfer();
+        } else result = {error:'cancelled'};
+      }
       if (result.ok) {
-        done.href=games[Number(pending.realm)];
+        const gameUrl = new URL(games[Number(pending.realm)]);
+        if (sourceSettings) gameUrl.hash = 'flix-settings=' + sourceSettings;
+        done.href=gameUrl.href;
         localStorage.removeItem(storageKey);
         pending=null;
         token='';

@@ -2432,7 +2432,9 @@ void WorldRenderer::drawFlower(Canvas& canvas, const RemoteEntity& entity, const
     if(entity.renderFlags&PlayerRenderBurrowed){
         const float r=static_cast<float>(kFlowerArtRadius*playerSizeMultiplier(entity)*zoom);
         canvas.save();canvas.translate(static_cast<float>(screen.x),static_cast<float>(screen.y));
-        ui::setFill(canvas,0x735239);canvas.beginPath();canvas.ellipse(0,0,r*1.2f,r*.6f,0,0,static_cast<float>(kTau));canvas.fill();
+        const bool corrupted = (entity.faceFlags & FaceHasCorruption) != 0;
+        // The burrow marker replaces the flower body, so it carries the same corruption color.
+        ui::setFill(canvas, corrupted ? 0xD91313u : 0x735239u);canvas.beginPath();canvas.ellipse(0,0,r*1.2f,r*.6f,0,0,static_cast<float>(kTau));canvas.fill();
         ui::setFill(canvas,0x35291f);canvas.beginPath();canvas.ellipse(0,0,r*.85f,r*.35f,0,0,static_cast<float>(kTau));canvas.fill();canvas.restore();return;
     }
     // The drawn flower is 25 world units times the petal-driven size
@@ -2809,8 +2811,40 @@ void WorldRenderer::drawPetalGlow(Canvas& canvas, double radius, std::uint32_t r
     });
 }
 
+namespace {
+bool drawDistantGamblerPetal(Canvas& canvas, std::string_view id, float size) {
+    if (canvas.colorTint().a != 0 || size > 24.0f) return false;
+    if (id == "poker_chip") {
+        ui::setFill(canvas, 0xE47678u);
+        canvas.fillCircle(0, 0, size * 0.46f);
+        ui::setStroke(canvas, 0x932F40u);
+        canvas.setLineWidth(size * 0.08f);
+        canvas.strokeCircle(0, 0, size * 0.39f);
+        return true;
+    }
+    const bool domino = id == "domino";
+    const bool dice = id == "dice";
+    if (!domino && !dice && id != "card") return false;
+
+    const float halfWidth = size * (domino ? 0.28f : dice ? 0.42f : 0.33f);
+    const float halfHeight = size * (dice ? 0.42f : 0.49f);
+    ui::setFill(canvas, domino ? 0xEEE9DBu : 0xFAF7EFu);
+    canvas.fillRect(-halfWidth, -halfHeight, halfWidth * 2, halfHeight * 2);
+    ui::setFill(canvas, 0x343431u);
+    if (domino) canvas.fillRect(-halfWidth, -size * 0.035f, halfWidth * 2, size * 0.07f);
+    else if (dice) {
+        canvas.fillCircle(-size * 0.17f, -size * 0.17f, size * 0.065f);
+        canvas.fillCircle(size * 0.17f, size * 0.17f, size * 0.065f);
+    } else {
+        canvas.fillCircle(0, 0, size * 0.13f);
+    }
+    return true;
+}
+} // namespace
+
 void WorldRenderer::drawPetalSprite(Canvas& canvas, const RemoteEntity& entity,
-                                    const Camera& camera, Vec2 at, double timeSeconds) const {
+                                   const Camera& camera, Vec2 at, double timeSeconds,
+                                   bool simplifyRingArt) const {
     const bool privateType = entity.typeIndex == kNoPetal &&
                              (entity.spawnFlags & net::SpawnForeign);
     if (privateType && (entity.petalVariant & net::PrivatePetalInvisible)) return;
@@ -2824,6 +2858,26 @@ void WorldRenderer::drawPetalSprite(Canvas& canvas, const RemoteEntity& entity,
 
     const double zoom = camera.zoom();
     const Vec2 screen = camera.worldToScreen(at);
+    const auto drawLaserBeam = [&] {
+        const float beam = static_cast<float>(kLaserBeamLength * zoom);
+        const float half = static_cast<float>(std::max(1.5, kLaserBeamHalfWidth * zoom));
+        canvas.save();
+        ui::setFill(canvas, 0xFF3B3Bu, 0.22);
+        canvas.fillRect(0, -half * 2.2f, beam, half * 4.4f);
+        ui::setFill(canvas, 0xFF1E1Eu, 0.85);
+        canvas.fillRect(0, -half, beam, half * 2.0f);
+        ui::setFill(canvas, 0xFF8A8Au, 0.95);
+        canvas.fillRect(0, -half * 0.35f, beam, half * 0.7f);
+        canvas.restore();
+    };
+    if (privateType && (entity.petalVariant & net::PrivatePetalBeamOnly)) {
+        canvas.save();
+        canvas.translate(static_cast<float>(screen.x), static_cast<float>(screen.y));
+        canvas.rotate(static_cast<float>(entity.angle));
+        drawLaserBeam();
+        canvas.restore();
+        return;
+    }
     // The drawn petal is 12 units per size unit, times the petal's own
     // `visual_scale`. entity.radius is the 20-unit gameplay reach, and
     // noPhysics petals carry no body at all, so neither is usable as a drawing
@@ -2912,7 +2966,7 @@ void WorldRenderer::drawPetalSprite(Canvas& canvas, const RemoteEntity& entity,
         drawPetalGlow(canvas, lightRadius, glow);
     }
     if (options.rarityGlow) {
-        // ALT held: every petal wears its tier, as one flat disc under it.
+        // The setting adds a flat disc in the petal's rarity color.
         ui::setFill(canvas, rarityColor(entity.rarity), kPetalGlowAlpha);
         canvas.fillCircle(0, 0, static_cast<float>(diameter * 0.5 + kPetalGlowPad * zoom));
     }
@@ -2928,6 +2982,12 @@ void WorldRenderer::drawPetalSprite(Canvas& canvas, const RemoteEntity& entity,
         canvas.translate(static_cast<float>(config->visualOffsetX * zoom),
                          static_cast<float>(config->visualOffsetY * zoom));
     }
+    if (simplifyRingArt && config && entity.petalVariant == 0 &&
+        drawDistantGamblerPetal(canvas, config->id, static_cast<float>(diameter))) {
+        canvas.restore();
+        return;
+    }
+
     if (privateType) {
         ui::disc(canvas, {0, 0}, diameter * 0.5, 0xCBD3D8u, ui::kInk, zoom);
     } else if (rollingDice) {
@@ -2952,9 +3012,14 @@ void WorldRenderer::drawPetalSprite(Canvas& canvas, const RemoteEntity& entity,
     } else if (config && config->id == "dust") {
         SpriteCache::drawDustGrain(canvas, diameter);
     } else if (sprites_) {
+        // Keep the equipped Trident readable without changing its combat
+        // shape, its rotation, or the inventory and drop artwork.
+        const bool equippedTrident = playerPetal && config && config->id == "void_trident" &&
+            sprites_->petalDrawable(entity.typeIndex);
+        const double spriteDiameter = equippedTrident ? diameter * 1.15 : diameter;
         // The sprite cache falls back to a disc in the petal's own colour when
         // its artwork failed to compile, which is the useful fallback here.
-        sprites_->drawPetal(canvas, entity.typeIndex, entity.rarity, 0, 0, diameter, 0,
+        sprites_->drawPetal(canvas, entity.typeIndex, entity.rarity, 0, 0, spriteDiameter, 0,
                             timeSeconds);
         if (equippedMissile && sprites_->petalDrawable(entity.typeIndex)) {
             // The mounted reference artwork has the same hull without the red
@@ -2969,20 +3034,7 @@ void WorldRenderer::drawPetalSprite(Canvas& canvas, const RemoteEntity& entity,
                  config ? static_cast<std::uint32_t>(config->colorRgba >> 8) : 0xFFFFFFu,
                  ui::kInk, zoom);
     }
-    // Laser beam: red ray along +X after the outward rotation above. Length
-    // matches the server's damage ray (kLaserBeamLength).
-    if (laser) {
-        const float beam = static_cast<float>(kLaserBeamLength * zoom);
-        const float half = static_cast<float>(std::max(1.5, kLaserBeamHalfWidth * zoom));
-        canvas.save();
-        ui::setFill(canvas, 0xFF3B3Bu, 0.22);
-        canvas.fillRect(0, -half * 2.2f, beam, half * 4.4f);
-        ui::setFill(canvas, 0xFF1E1Eu, 0.85);
-        canvas.fillRect(0, -half, beam, half * 2.0f);
-        ui::setFill(canvas, 0xFF8A8Au, 0.95);
-        canvas.fillRect(0, -half * 0.35f, beam, half * 0.7f);
-        canvas.restore();
-    }
+    if (laser) drawLaserBeam();
     canvas.restore();
 }
 
@@ -4301,19 +4353,22 @@ void WorldRenderer::drawTeleporters(Canvas& canvas, const Camera& camera, Realm 
             ui::text(canvas, ui::biomeTr(element.targetMap, fallback.c_str()), at.x, at.y - radius - 8.0, label);
         }
         const char* label = nullptr;
-        if (element.padId == "bio-centre-entry") label = ui::trEnZh("To the centre", "前往中心");
-        if (element.padId == "bio-centre-return") label = ui::trEnZh("Back to the entrance", "返回入口");
+        if (rift) label = ui::trEnZh("Rift Entrance", "裂隙入口");
+        else if (element.padId == "bio-centre-entry") label = ui::trEnZh("To the centre", "前往中心");
+        else if (element.padId == "bio-centre-return") label = ui::trEnZh("Back to the entrance", "返回入口");
         if (label) {
             ui::TextStyle style;
             style.size = 14.0;
             style.align = ui::Align::Centre;
-            ui::text(canvas, label, at.x, at.y + radius + 13.0, style);
+            const double offset = rift ? -radius - 12.0 : radius + 13.0;
+            ui::text(canvas, label, at.x, at.y + offset, style);
         }
     }
 }
 
 void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const Camera& camera,
-                               Vec2 at, double timeSeconds, double distantMobMarkerLimit) const {
+                               Vec2 at, double timeSeconds, double distantMobMarkerLimit,
+                               bool simplifyRingArt) const {
     const double zoom = camera.zoom();
     const Vec2 screen = camera.worldToScreen(at);
     const double radius = entity.radius * zoom;
@@ -4417,7 +4472,7 @@ void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const
         }
 
         case net::EntityKind::Petal:
-            drawPetalSprite(canvas, entity, camera, at, timeSeconds);
+            drawPetalSprite(canvas, entity, camera, at, timeSeconds, simplifyRingArt);
             break;
 
         case net::EntityKind::Projectile: {
@@ -4621,8 +4676,7 @@ void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const
                     const auto color = blood ? colors[3] : entity.typeIndex==static_cast<std::uint16_t>(GroundEffectKind::NitrogenSpill) ? 0xa7e4f2u : entity.typeIndex==static_cast<std::uint16_t>(GroundEffectKind::LatrineSpill) ? 0x705531u : colors[entity.typeIndex -
                         static_cast<std::uint16_t>(GroundEffectKind::AcidSpill)];
                     const double age = entity.effectAgeSeconds;
-                    const double spread = options.simplifyCombatEffects
-                        ? 1.0 : 1.0 - 0.76 * std::pow(1.0 - std::clamp(age / 0.34, 0.0, 1.0), 3.0);
+                    const double spread = 1.0; // Radius grows on the server and arrives in FieldSize.
                     const double liquidRadius = radius * spread;
                     // Keep the server's hit boundary visible as the liquid spreads inside it.
                     ui::setFill(canvas, color, 0.14);
@@ -5162,6 +5216,29 @@ void WorldRenderer::draw(Canvas& canvas, const EntityMap& entities, const Camera
     const double distantMobMarkerLimit =
         camera.zoom() <= kSmallMobMarkerZoom && canvas.pixelWidth() > 0
             ? kSmallMobMarkerMaxPixels * canvas.width() / canvas.pixelWidth() : 0.0;
+#ifdef __EMSCRIPTEN__
+    constexpr int kDenseGamblerRings = 40;
+    constexpr double kGamblerArtNearDistance = 140.0;
+    const auto gambler = content_ ? content_->mobIndex("gambler") : kInvalidIndex;
+    const auto isCommonGamblerRing = [&](const RemoteEntity& entity) {
+        if (!entity.isRingPetal() || entity.rarity != Rarity::Common) return false;
+        const auto owner = entities.find(entity.ownerNetId);
+        return owner != entities.end() && owner->second.kind == net::EntityKind::Mob &&
+            owner->second.typeIndex == gambler;
+    };
+    bool denseGamblerRings = false;
+    if (gambler != kInvalidIndex && entities.size() >= kDenseGamblerRings) {
+        int visible = 0;
+        for (const auto& entry : entities) {
+            const auto& petal = entry.second;
+            if (isCommonGamblerRing(petal) && onScreen(petal.position, petal.radius) &&
+                ++visible >= kDenseGamblerRings) {
+                denseGamblerRings = true;
+                break;
+            }
+        }
+    }
+#endif
     const auto drawLive = [&](const RemoteEntity& entity) {
         // Every entity draws at its own interpolated position, petals
         // included: WorldView has already anchored each ring to the
@@ -5212,7 +5289,13 @@ void WorldRenderer::draw(Canvas& canvas, const EntityMap& entities, const Camera
                 }
             }
         }
+#ifdef __EMSCRIPTEN__
+        const bool simplifyRingArt = denseGamblerRings && isCommonGamblerRing(entity) &&
+            distanceSq(at, selfDrawn) > kGamblerArtNearDistance * kGamblerArtNearDistance;
+        drawEntity(canvas, entity, camera, at, timeSeconds, markerLimit, simplifyRingArt);
+#else
         drawEntity(canvas, entity, camera, at, timeSeconds, markerLimit);
+#endif
         if (options.hitboxes) drawHitbox(canvas, entity, camera, at);
     };
     // The mobs the server has already destroyed finish their animation in

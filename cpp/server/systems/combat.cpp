@@ -1,6 +1,7 @@
 #include "shared/game/computer_set.h"
 #include "shared/game/body_contact.h"
 #include "server/systems/combat.h"
+#include "server/combat_talents.h"
 #include "shared/game/domino.h"
 #include "server/systems/flower_mobs.h"
 #include "server/hyper_petal_loadout.h"
@@ -64,6 +65,11 @@ Entity ownerOf(const World& world, Entity e) {
     if (const MobRingPetal* petal = world.tryGet<MobRingPetal>(e)) return petal->mob;
     if (const GroundEffect* effect = world.tryGet<GroundEffect>(e)) return effect->owner;
     return NULL_ENTITY;
+}
+
+bool riftPortalProtected(const World& world, Entity player, double nowMillis) {
+    const auto* rift = world.tryGet<RiftPlayer>(player);
+    return rift && rift->portalProtected(nowMillis);
 }
 
 bool woreCorruption(const World& world, Entity player) {
@@ -380,12 +386,19 @@ void creditSwing(World& world, Entity victim, Entity source, double amount) {
         }
     }
     if (credited == NULL_ENTITY) return;
-    // Connection keys the ledger across death / title rejoin (Bounty::Share).
-    const net::ConnectionId owner =
-        world.tryGet<PlayerAccount>(credited) != nullptr
-            ? world.get<PlayerAccount>(credited).connection
-            : 0;
-    bounty->credit(credited, amount, owner);
+    const auto* account = world.tryGet<PlayerAccount>(credited);
+    const net::ConnectionId owner = account ? account->connection : 0;
+    const auto credit = [&](Entity target, Bounty& ledger, double damage) {
+        const auto* mob = world.tryGet<MobType>(target);
+        const auto* location = world.tryGet<Transform>(target);
+        const bool worldBoss = mob && (mob->rarity == Rarity::Apex || mob->rarity == Rarity::Ascendant) &&
+            location && isWorldRealm(location->realm) &&
+            isWildMob(world, target) && !world.has<NpcTag>(target) && !world.has<WaveEnemy>(target);
+        const std::string_view accountId = owner != 0 && worldBoss
+            ? std::string_view(account->userId) : std::string_view{};
+        ledger.credit(credited, damage, owner, accountId);
+    };
+    credit(victim, *bounty, amount);
 
     // A swing inside a dungeon is a swing on the nest outside it, by the rule
     // an ambush nest's brood follows below: the nest cannot be hit, and its
@@ -400,7 +413,7 @@ void creditSwing(World& world, Entity victim, Entity source, double amount) {
             !(entrance->broodHealth > 0.0)) {
             return;
         }
-        nestBounty->credit(credited, amount * nestHealth->max / entrance->broodHealth, owner);
+        credit(nest, *nestBounty, amount * nestHealth->max / entrance->broodHealth);
         return;
     }
 
@@ -423,7 +436,7 @@ void creditSwing(World& world, Entity victim, Entity source, double amount) {
         !(ambush->broodHealth > 0.0)) {
         return;
     }
-    nestBounty->credit(credited, amount * nestHealth->max / ambush->broodHealth, owner);
+    credit(nest, *nestBounty, amount * nestHealth->max / ambush->broodHealth);
 }
 
 /// Which segment of a shared-health chain holds the pool: the one at the FRONT
@@ -459,6 +472,20 @@ Entity poolOwner(const World& world, Entity e) {
         owner = ahead;
     }
     return owner;
+}
+
+bool isBurning(const World& world, Entity victim, double nowMillis) {
+    const Entity target = poolOwner(world, victim);
+    const auto* radiation = world.tryGet<Burn>(target);
+    if (radiation && radiation->damage > 0.0 && nowMillis < radiation->untilMillis)
+        return true;
+    const auto* status = world.tryGet<Afflictions>(target);
+    return status &&
+        ((status->burnPerSecond > 0.0 && nowMillis < status->burnUntilMillis) ||
+         std::any_of(status->burns.begin(), status->burns.end(),
+             [nowMillis](const BurnStack& burn) {
+                 return burn.perSecond > 0.0 && nowMillis < burn.untilMillis;
+             }));
 }
 
 /// What a swing lands on `victim`: `damage`, plus a claw's `critDamage` while
@@ -796,6 +823,13 @@ DamageResult CombatSystem::applyDamage(World& world, Entity victim, Entity sourc
 DamageResult CombatSystem::applyDamageWithRuby(World& world, Entity victim, Entity source,
                                                double amount, double nowMillis, DamageKind kind,
                                                Entity checkedTarget, std::optional<Vec2> impactPoint) {
+    if (amount > 0.0 &&
+        (riftPortalProtected(world, victim, nowMillis) ||
+         riftPortalProtected(world, creditedPlayer(world, source), nowMillis))) {
+        DamageResult result;
+        result.refused = true;
+        return result;
+    }
     if(const auto* petal=world.tryGet<PetalInstance>(source); petal &&
        content().petal(petal->configIndex).id=="void_sad" && amount>0) {
         if(const auto* ownerAt=world.tryGet<Transform>(petal->owner)) {
@@ -901,20 +935,36 @@ DamageResult CombatSystem::applyDamageOnce(World& world, Entity victim, Entity s
     if (const auto* petal = world.tryGet<PetalInstance>(source); petal &&
         content().petal(petal->configIndex).id == "toilet_paper") {
         const auto* status = world.tryGet<Afflictions>(petal->owner);
-        const auto* wearer = world.tryGet<Health>(petal->owner);
-        const double hp = wearer ? wearer->fraction() : 0.0;
-        toiletBoosted = status && status->toiletBoostActive && nowMillis < status->toiletBoostUntilMillis &&
-            hp >= .01 && hp < .10 && !world.has<Undead>(petal->owner);
-        if (toiletBoosted) {
-            const auto* loadout = world.tryGet<Loadout>(petal->owner);
-            toiletBoosted = loadout && hasToiletPaperCombo(content(), *loadout);
-            if (toiletBoosted) amount *= 3.0;
+        toiletBoosted = status && nowMillis < status->toiletBoostUntilMillis;
+        if (toiletBoosted) amount *= 10.0;
+    }
+    if (const auto* burrow = world.tryGet<BurrowState>(victim);
+        burrow && burrow->active && nowMillis < burrow->untilMillis) {
+        const bool directOrLightning = kind == DamageKind::Direct || kind == DamageKind::Lightning;
+        const bool checksBurrow = directOrLightning ||
+            (kind == DamageKind::Piercing && world.has<Projectile>(source));
+        if (checksBurrow && !canNoticeBurrowed(world, source, victim)) {
+            // This exception is for ordinary PvP hits between two burrowed
+            // Rift players. Piercing projectiles keep the normal burrow check.
+            bool mutualRiftBurrow = false;
+            if (directOrLightning && world.has<RiftPlayer>(victim)) {
+                const Entity attacker = creditedPlayer(world, source);
+                if (attacker != NULL_ENTITY && attacker != victim && world.has<RiftPlayer>(attacker) &&
+                    isStanding(world, attacker)) {
+                    const auto* attackerBurrow = world.tryGet<BurrowState>(attacker);
+                    const auto* attackerAt = world.tryGet<Transform>(attacker);
+                    const auto* victimAt = world.tryGet<Transform>(victim);
+                    mutualRiftBurrow = attackerBurrow && attackerBurrow->active &&
+                        nowMillis < attackerBurrow->untilMillis &&
+                        attackerAt && victimAt && attackerAt->realm == victimAt->realm;
+                }
+            }
+            if (!mutualRiftBurrow) {
+                result.refused = true;
+                return result;
+            }
         }
     }
-    if(const auto* burrow=world.tryGet<BurrowState>(victim))
-        if(burrow->active&&nowMillis<burrow->untilMillis&&(kind==DamageKind::Direct||kind==DamageKind::Lightning)&&!canNoticeBurrowed(world,source,victim)){
-            result.refused=true;return result;
-        }
     if (kind == DamageKind::Poison && world.has<PoisonImmune>(victim)) {
         result.refused = true;
         return result;
@@ -926,6 +976,10 @@ DamageResult CombatSystem::applyDamageOnce(World& world, Entity victim, Entity s
         result.refused = true;
         return result;
     }
+
+    // Colony recursion receives an already scaled share, not a fresh attack.
+    if (amount > 0.0 && kind == DamageKind::Lightning && !sharingColonyHit_)
+        amount *= lightningTalentScale(world, source);
 
     // A shared chain answers as ONE mob from here down: armour, the ledger,
     // the XP, the loot slots and the death all belong to the pool's owner,
@@ -1414,9 +1468,8 @@ DamageResult CombatSystem::applyDamageOnce(World& world, Entity victim, Entity s
     // Training NPCs never lose HP: their damage readout must not be capped
     // by a decorative health pool (which differs between rarity tiers).
     const double applied = invulnerable ? amount : std::min(amount, health.current);
-    const bool canTriggerToiletPaper = !invulnerable && applied > 0.0 &&
-        world.has<PlayerTag>(victim) && !world.has<Undead>(victim);
-    const bool wasAboveToiletThreshold = canTriggerToiletPaper && health.fraction() > 0.9;
+    const bool canTriggerToiletPaper = !invulnerable && applied > 0.0 && world.has<PlayerTag>(victim);
+    const bool wasAtArmThreshold = canTriggerToiletPaper && health.fraction() >= 0.9;
     // The same loss against the whole bar, for the client's hit flash. Taken
     // now: `health` dangles past trySecondChance below.
     const double share = health.max > 0.0 ? applied / health.max : 0.0;
@@ -1455,6 +1508,20 @@ DamageResult CombatSystem::applyDamageOnce(World& world, Entity victim, Entity s
                      nowMillis + kPostHitInvulnerabilityMillis);
     }
 
+    // A heal and hit can occur between equipment updates. Check the
+    // pre-hit health for arming and the post-hit health before any rescue.
+    if (canTriggerToiletPaper) {
+        const auto* loadout = world.tryGet<Loadout>(victim);
+        auto* status = world.tryGet<Afflictions>(victim);
+        const bool trigger = !fatal && health.fraction() <= 0.1 &&
+            (wasAtArmThreshold || (status && status->toiletArmed));
+        if ((wasAtArmThreshold || trigger) && loadout && hasActiveToiletPaper(content(), *loadout)) {
+            auto& toilet = status ? *status : world.ensure<Afflictions>(victim);
+            toilet.toiletArmed = !trigger;
+            if (trigger) toilet.toiletBoostUntilMillis = nowMillis + kToiletPaperBurstMillis;
+        }
+    }
+
     // Second Chance turns a killing blow on a flower into 1 HP. It is asked
     // here rather than at the call sites because every lethal path in the game
     // funnels through this function, where the reference has to remember to
@@ -1468,27 +1535,6 @@ DamageResult CombatSystem::applyDamageOnce(World& world, Entity victim, Entity s
     // flower stands at 1 HP until the bandage's time is up, and dies then.
     // After Second Chance, which spares the flower outright.
     if (fatal && tryUndead(world, victim, source, nowMillis)) fatal = false;
-
-    // Use both the HP before the hit and the HP after either lifesaver.
-    // A heal and hit can happen between two equipment updates.
-    if (canTriggerToiletPaper && !fatal) {
-        const double hp = world.get<Health>(victim).fraction();
-        const bool belowThreshold = hp < .10;
-        const bool rescued = savedBySecondChance || world.has<Undead>(victim);
-        auto* status = world.tryGet<Afflictions>(victim);
-        if (rescued && status) status->toiletBoostActive = false;
-        const bool armed = status && status->toiletArmed;
-        const auto* loadout = world.tryGet<Loadout>(victim);
-        if (loadout && ((wasAboveToiletThreshold && !armed) || (belowThreshold && armed)) &&
-            hasToiletPaperCombo(content(), *loadout)) {
-            auto& toilet = status ? *status : world.ensure<Afflictions>(victim);
-            toilet.toiletArmed = !belowThreshold;
-            if (!rescued && belowThreshold && hp >= .01 && nowMillis >= toilet.toiletBoostUntilMillis) {
-                toilet.toiletBoostUntilMillis = nowMillis + 9000.0;
-                toilet.toiletBoostActive = true;
-            }
-        }
-    }
 
     creditSwing(world, victim, source, amount);
 
@@ -1841,7 +1887,7 @@ void CombatSystem::resolveMobDeathBlasts(World& world, const SpatialGrid& grid,
             if(location && world.isAlive(state.owner) && nowMillis<state.expiresAtMillis) {
                 const auto origin=*location;
                 world.get<PlantedMine>(death.entity).detonated=true;
-                const double radius=36.0+24.0*ladderIndex(state.rarity);
+                const double radius=explosionTalentRadius(world,state.owner,36.0+24.0*ladderIndex(state.rarity));
                 queryBodies(grid,origin.realm,origin.position,radius,candidates);
                 for(const Entity target:candidates) {
                     const auto* targetAt=world.tryGet<Transform>(target);
@@ -1869,7 +1915,7 @@ void CombatSystem::resolveMobDeathBlasts(World& world, const SpatialGrid& grid,
             for(int slot=0;slot<active;++slot) {
                 const auto& item=slots[slot];
                 if(item.empty() || content.petal(item.configIndex).id!="void_antimatter")continue;
-                const double radius=150.0+15.0*ladderIndex(item.rarity);
+                const double radius=explosionTalentRadius(world,death.entity,150.0+15.0*ladderIndex(item.rarity));
                 const double damage=1200.0*referenceOffenseScale(content.petal(item.configIndex),item.rarity);
                 candidates.clear();queryBodies(grid,origin.realm,origin.position,radius,candidates);
                 for(const Entity target:candidates) {
@@ -1897,7 +1943,8 @@ void CombatSystem::resolveMobDeathBlasts(World& world, const SpatialGrid& grid,
         if (damage <= 0.0) continue;
 
         const Transform origin = *at;
-        const double reach = nuke ? mob.deathBlastRadius : body->radius + mob.deathBlastRadius;
+        const double reach = explosionTalentRadius(world, death.entity,
+            nuke ? mob.deathBlastRadius : body->radius + mob.deathBlastRadius);
         const bool summonedNuke = nuke && world.has<Pet>(death.entity);
         if (nuke && events_) events_->explosion(origin.position, reach, origin.realm);
         candidates.clear();
@@ -1953,7 +2000,8 @@ void CombatSystem::awardBounty(World& world, Entity victim) {
         if (rarity == Rarity::Apex) {
             const auto* account = world.tryGet<PlayerAccount>(recipient);
             const int tenths = hyperRewardTenths(*bounty, recipient,
-                account ? account->connection : 0, maxHealth);
+                account ? account->connection : 0, maxHealth,
+                account ? std::string_view(account->userId) : std::string_view{});
             xp *= tenths / 10.0;
         }
         if (const auto* tree = world.tryGet<PlayerSkillTree>(recipient)) {
@@ -2288,7 +2336,8 @@ void markGlitched(World& world, Entity player) {
 } // namespace
 
 void CombatSystem::applyPoison(World& world, Entity victim, Entity source, double perSecond,
-                               double durationMillis, double nowMillis, bool stackByEmitter) {
+                               double durationMillis, double nowMillis, bool stackByEmitter,
+                               PoisonOrigin origin) {
     if (!std::isfinite(perSecond) || perSecond <= 0.0) return;
     if (!std::isfinite(durationMillis) || durationMillis <= 0.0) return;
     // A status lands on the ANIMAL, and a shared chain is one animal: poison
@@ -2302,6 +2351,8 @@ void CombatSystem::applyPoison(World& world, Entity victim, Entity source, doubl
     // petal is often destroyed before the poison finishes ticking, and a kill
     // whose source has been reaped would award nobody anything.
     const Entity credited = creditedPlayer(world, source);
+    if (riftPortalProtected(world, victim, nowMillis) ||
+        riftPortalProtected(world, credited, nowMillis)) return;
     const Entity attribution = credited != NULL_ENTITY ? credited : source;
 
     if (credited != NULL_ENTITY) if (const auto* tree=world.tryGet<PlayerSkillTree>(credited)) {
@@ -2321,6 +2372,7 @@ void CombatSystem::applyPoison(World& world, Entity victim, Entity source, doubl
     if (world.has<PlayerTag>(victim)) {
         afflictions.poisonPerSecond = perSecond;
         afflictions.poisonSource = attribution;
+        afflictions.uraniumSelfPoison = origin == PoisonOrigin::UraniumSelf;
         afflictions.poisonUntilMillis = untilMillis;
         return;
     }
@@ -2345,7 +2397,7 @@ void CombatSystem::applyPoison(World& world, Entity victim, Entity source, doubl
 }
 
 void CombatSystem::applySlow(World& world, Entity victim, double factor, double durationMillis,
-                             Rarity sourceRarity, double nowMillis, bool frost) {
+                             Rarity sourceRarity, double nowMillis, bool frost, bool freeze) {
     if (!std::isfinite(factor) || factor >= 1.0) return;
     if (!std::isfinite(durationMillis) || durationMillis <= 0.0) return;
     // The head is also the only body a slow could possibly mean: the segments
@@ -2370,6 +2422,12 @@ void CombatSystem::applySlow(World& world, Entity victim, double factor, double 
     if (landed >= 1.0) return;
 
     Afflictions& afflictions = world.ensure<Afflictions>(victim);
+    if (freeze) {
+        if (nowMillis >= afflictions.freezeUntilMillis) afflictions.freezeFactor = 1.0;
+        afflictions.freezeFactor = std::min(afflictions.freezeFactor, landed);
+        afflictions.freezeUntilMillis = std::max(afflictions.freezeUntilMillis, nowMillis + durationMillis);
+        return;
+    }
     if (frost) {
         afflictions.applyFrost(landed, durationMillis, nowMillis);
         return;
@@ -2389,6 +2447,9 @@ void CombatSystem::slowFlower(World& world, Entity victim, double factor,
     if (!std::isfinite(factor) || factor >= 1.0) return;
     if (!std::isfinite(durationMillis) || durationMillis <= 0.0) return;
     if (!world.isAlive(victim) || !world.has<PlayerTag>(victim)) return;
+    // Surface webs cannot apply or refresh their slow while a flower is underground.
+    if (const auto* burrow = world.tryGet<BurrowState>(victim);
+        burrow && burrow->active && nowMillis < burrow->untilMillis) return;
     // No rarity gate: a flower has no tier of its own and counts as common,
     // where stallPower() is 1 for every source.
     const double landed = clamp(factor, 0.0, 1.0);
@@ -2826,6 +2887,11 @@ void CombatSystem::runWorldPhase(World& world, const SpatialGrid& grid,
     events_ = nullptr;
 }
 
+static double petalFireTalentScale(const World& world, Entity player) {
+    const auto* tree = world.tryGet<PlayerSkillTree>(player);
+    return tree ? tree->skills.effectScale(SkillId::FirePower) : 1.0;
+}
+
 void CombatSystem::ignite(World& world, Entity victim, Entity emitter, Entity owner,
                           double rate, double duration, double now, bool fraction) {
     if (fraction) {
@@ -2833,12 +2899,22 @@ void CombatSystem::ignite(World& world, Entity victim, Entity emitter, Entity ow
         rate *= health ? health->max : 0.0;
     }
     if (rate <= 0.0 || duration <= 0.0) return;
+    const Entity player = creditedPlayer(world, owner);
+    if (riftPortalProtected(world, victim, now) || riftPortalProtected(world, player, now)) return;
+    if (player != NULL_ENTITY && creditedPlayer(world, victim) != player)
+        rate *= petalFireTalentScale(world, player);
     auto& burns = world.ensure<Afflictions>(victim).burns;
     auto existing = std::find_if(burns.begin(), burns.end(),
         [emitter](const BurnStack& burn) { return burn.emitter == emitter; });
     if (existing != burns.end()) {
-        *existing = {emitter, owner, rate, now + duration, existing->budgetWeight};
+        existing->perSecond = rate;
+        existing->untilMillis = now + duration;
+        existing->owner = owner;
     } else {
+        const bool fireBomb = world.has<FireBombField>(emitter);
+        if (fireBomb && std::count_if(burns.begin(), burns.end(), [&](const BurnStack& burn) {
+                return burn.fireBomb && burn.owner == owner && burn.untilMillis > now;
+            }) >= kFireBombBurnLayers) return;
         const auto* share = world.tryGet<ElementalOffenseShare>(emitter);
         const double weight = share ? share->value : 1.0;
         // Elemental's fragments consume only their fraction of a burn stack.
@@ -2848,7 +2924,7 @@ void CombatSystem::ignite(World& world, Entity victim, Entity emitter, Entity ow
             for (const auto& burn : burns) occupied += burn.budgetWeight;
             if (occupied + weight > 32.0 + 1e-9) return;
         }
-        burns.push_back({emitter, owner, rate, now + duration, weight});
+        burns.push_back({emitter, owner, rate, now + duration, weight, fireBomb});
     }
 }
 
@@ -2856,7 +2932,8 @@ void CombatSystem::applyBurn(World& world, Entity victim, Entity source,
                              double perSecond, double nowMillis) {
     if (perSecond <= 0.0 || !isWildMob(world, victim) || !isStanding(world, victim)) return;
     const Entity owner = creditedPlayer(world, source);
-    if (owner == NULL_ENTITY) return;
+    if (owner == NULL_ENTITY || riftPortalProtected(world, owner, nowMillis)) return;
+    perSecond *= petalFireTalentScale(world, owner);
     auto& status = world.ensure<Afflictions>(victim);
     if (nowMillis < status.burnUntilMillis && perSecond < status.burnPerSecond) return;
     status.burnPerSecond = perSecond;
@@ -2948,6 +3025,12 @@ void CombatSystem::tickAfflictions(World& world, const ContentRegistry& content,
         if (nowMillis < afflictions.poisonUntilMillis) {
             // Poison armor is a flower's modifier, and the scalar slot is the
             // flower's path -- a mob never reaches this branch.
+            if (afflictions.uraniumSelfPoison) {
+                if (const auto* health = world.tryGet<Health>(e)) {
+                    afflictions.poisonPerSecond = std::min(afflictions.poisonPerSecond,
+                        health->max * kUraniumSelfPoisonHealthFraction);
+                }
+            }
             double dps = afflictions.poisonPerSecond;
             if (const PlayerModifiers* modifiers = world.tryGet<PlayerModifiers>(e)) {
                 dps = std::max(0.0, dps - modifiers->poisonArmor);
@@ -2957,6 +3040,7 @@ void CombatSystem::tickAfflictions(World& world, const ContentRegistry& content,
             afflictions.poisonPerSecond = 0;
             afflictions.poisonUntilMillis = 0;
             afflictions.poisonSource = NULL_ENTITY;
+            afflictions.uraniumSelfPoison = false;
         }
     });
 
@@ -3027,14 +3111,19 @@ void CombatSystem::tickShieldDecay(World& world, double dt) {
     const double keep = std::exp(-std::max(0.0, dt) / kShieldDecaySeconds);
     Query<ShieldState> shields{world};
     shields.each([&](Entity, ShieldState& shield) {
-        if (shield.amount <= 0.0) return;
-        shield.amount *= keep;
-        if (shield.amount < kShieldDropBelow) shield.amount = 0.0;
+        if (shield.amount > 0.0) {
+            shield.amount *= keep;
+            // A petal's per-tick recovery can be smaller than the decay cutoff.
+            if (!shield.gainedPassiveShieldThisTick && shield.amount < kShieldDropBelow)
+                shield.amount = 0.0;
+        }
+        shield.gainedPassiveShieldThisTick = false;
     });
 }
 
 void CombatSystem::createSpill(World& world, Entity owner, Vec2 at, Rarity rarity,
-                               const SpillSpec& spill, double scale, std::uint32_t netId, double durabilityScale) {
+                               const SpillSpec& spill, double scale, std::uint32_t netId,
+                               double durabilityScale, Rng* rng) {
     const auto* ownerAt = world.tryGet<Transform>(owner);
     if (!ownerAt || spill.kind == SpillKind::None) return;
     const Realm realm = ownerAt->realm;
@@ -3044,7 +3133,7 @@ void CombatSystem::createSpill(World& world, Entity owner, Vec2 at, Rarity rarit
         case SpillKind::Acid: break;
         case SpillKind::Lava: kind = GroundEffectKind::LavaSpill; break;
         case SpillKind::Oil: kind = GroundEffectKind::OilSpill; break;
-        case SpillKind::Blood: kind = GroundEffectKind::BloodSpill; break;
+        case SpillKind::Blood: kind = GroundEffectKind::Blood; break;
         case SpillKind::Elixir: kind = GroundEffectKind::ElixirSpill; break;
         case SpillKind::Latrine: kind = GroundEffectKind::LatrineSpill; break;
         case SpillKind::Nitrogen: kind = GroundEffectKind::NitrogenSpill; break;
@@ -3070,15 +3159,34 @@ void CombatSystem::createSpill(World& world, Entity owner, Vec2 at, Rarity rarit
     world.add<GroundEffectTag>(e);
     world.add<Transform>(e, Transform{at, 0.0, realm});
     const auto* modifiers = world.tryGet<PlayerModifiers>(owner);
-    const double radius = spillBaseRadius(spill, rarity) *
-        (modifiers ? modifiers->spillRadiusScale : 1.0);
-    GroundEffect field{kind, owner, radius, spill.strength * scale * fluidDamageScale(spill.kind),
-                       spill.frostFactor, rarity};
+    const double baseRadius = kind == GroundEffectKind::Blood
+        ? bloodPoolRadius(rarity) : spillBaseRadius(spill, rarity);
+    const double radius = baseRadius * (modifiers ? modifiers->spillRadiusScale : 1.0);
+    double rate = spill.strength * scale * fluidDamageScale(spill.kind);
+    if (modifiers && isOffensiveSpill(spill.kind)) {
+        rate *= modifiers->spillDamageScale;
+        // One Opal roll for the pool, including its poison or burn after the target leaves.
+        if (rng && modifiers->opalTiers[petalTier(rarity)]) {
+            const int tier = std::min(petalTier(rarity), rarityIndex(Rarity::Apex));
+            if (rng->chance(1.0 / (12.0 - tier))) rate *= 1.5 + tier * (1.5 / 8.0);
+        }
+    }
+    GroundEffect field{kind, owner, radius * 0.24, rate, spill.frostFactor, rarity};
+    if (kind == GroundEffectKind::Blood) {
+        field.armorReduction = rate;
+        field.damagePerSecond = 0.0;
+    }
+    field.spreadTargetRadius = radius;
+    if (const auto* motion = world.tryGet<Motion>(owner)) {
+        field.spillDrift = motion->velocity * 0.35;
+        const double speed = field.spillDrift.length();
+        if (speed > 160.0) field.spillDrift *= 160.0 / speed;
+    }
     field.poisonDurationMillis = spill.lingerMillis;
     world.add<GroundEffect>(e, field);
     if(spill.health>0) {
         const double durability=spill.health*petalStrengthScale(rarity)*durabilityScale;
-        world.add<Health>(e,Health{durability,durability});world.add<Body>(e,Body{radius,1.0});
+        world.add<Health>(e,Health{durability,durability});world.add<Body>(e,Body{field.radius,1.0});
         const auto* side=world.tryGet<Faction>(owner);world.add<Faction>(e,side?*side:Faction{Team::Players,false});
     }
     world.add<Lifetime>(e, Lifetime{spill.durationMillis / 1000.0});
@@ -3093,9 +3201,52 @@ void CombatSystem::createSpill(World& world, Entity owner, Vec2 at, Rarity rarit
 void CombatSystem::tickGroundEffects(World& world, const SpatialGrid& grid,
                                      const ContentRegistry& content, double nowMillis, double dt,
                                      bool bodyGridOnly) {
+    struct FluidRepeller { Entity source; Realm realm; Vec2 at; double force, radius; };
+    std::vector<FluidRepeller> repellers;
+    Query<MobTag, MobType, Transform>{world}.without<Dead>().each(
+        [&](Entity e, MobTag&, MobType& type, Transform& at) {
+            const auto& mob = content.mob(type.configIndex);
+            if (mob.id == "void_white_hole" && mob.gravityForce < 0.0 &&
+                mob.gravityRadius > 0.0 && isStanding(world, e))
+                repellers.push_back({e, at.realm, at.position, mob.gravityForce, mob.gravityRadius});
+        });
     fields_.clear();
     queries_->fields.each([&](Entity e, GroundEffect& effect, Transform& transform) {
         if (effect.kind == GroundEffectKind::BlinkLanding) return;
+        if (isFluidField(effect.kind) && effect.spreadTargetRadius > 0.0) {
+            // 0.34 s is the former visual expansion duration, now authoritative.
+            constexpr double spreadSeconds = 0.34;
+            const double before = std::min(effect.spreadAgeSeconds, spreadSeconds);
+            effect.spreadAgeSeconds += std::max(0.0, dt);
+            const double after = std::min(effect.spreadAgeSeconds, spreadSeconds);
+            Vec2 acceleration{};
+            bool repelled = false;
+            for (const auto& field : repellers) {
+                if (field.realm != transform.realm ||
+                    (world.has<Pet>(field.source) && !canDamage(world, field.source, effect.owner))) continue;
+                const Vec2 toward = field.at - transform.position;
+                const double gap = toward.length();
+                if (gap <= 1.0 || gap >= field.radius ||
+                    (terrain && terrain->segmentBlocked(transform.position, field.at, transform.realm))) continue;
+                acceleration += toward / gap * (field.force * (1.0 - gap / field.radius));
+                repelled = true;
+            }
+            if (repelled) {
+                effect.spillGravityVelocity += acceleration * std::max(0.0, dt);
+                // Reuse the candidate's existing fluid speed ceiling, not rarity-scaled force.
+                const double speed = effect.spillGravityVelocity.length();
+                if (speed > 160.0) effect.spillGravityVelocity *= 160.0 / speed;
+            } else effect.spillGravityVelocity = {};
+            const Vec2 next = transform.position + effect.spillDrift * (after - before) +
+                effect.spillGravityVelocity * std::max(0.0, dt);
+            if (!terrain || !terrain->segmentBlocked(transform.position, next, transform.realm))
+                transform.position = next;
+            else { effect.spillDrift = {}; effect.spillGravityVelocity = {}; }
+            const double fraction = after / spreadSeconds;
+            effect.radius = effect.spreadTargetRadius *
+                (1.0 - 0.76 * std::pow(1.0 - fraction, 3.0));
+            if (auto* body = world.tryGet<Body>(e)) body->radius = effect.radius;
+        }
         // In-flight or disabled fields still age; zero radius must not make
         // their Lifetime immortal.
         // A strike's burst is a pollen puff in every respect the field pass
@@ -3184,6 +3335,8 @@ void CombatSystem::tickGroundEffects(World& world, const SpatialGrid& grid,
             const bool inside = radiation ? gapSq <= reach * reach
                                     : gapSq < reach * reach;
             if (!inside) continue;
+            if (isFluidField(field.kind) && terrain &&
+                terrain->segmentBlocked(field.position, transform->position, field.realm)) continue;
             if (field.kind == GroundEffectKind::ElixirSpill) {
                 const auto* squad = squads ? squads->membersOf(field.owner) : nullptr;
                 const bool ally = victim == field.owner || (squad && std::any_of(squad->begin(), squad->end(),
@@ -3211,8 +3364,11 @@ void CombatSystem::tickGroundEffects(World& world, const SpatialGrid& grid,
                     }
                 } else if(field.kind==GroundEffectKind::LatrineSpill) {
                     applyPoison(world,victim,field.effect,field.damagePerSecond,field.poisonDurationMillis,nowMillis,true);
-                } else if (field.kind == GroundEffectKind::BloodSpill) {
-                    applyArmorShred(world, victim, field.damagePerSecond, nowMillis);
+                } else if (field.kind == GroundEffectKind::Blood ||
+                           field.kind == GroundEffectKind::BloodSpill) {
+                    const double shred = field.kind == GroundEffectKind::Blood
+                        ? field.armorReduction : field.damagePerSecond;
+                    applyArmorShred(world, victim, shred, nowMillis);
                 } else if (field.kind == GroundEffectKind::LavaSpill) {
                     ignite(world, victim, field.effect, field.owner, field.damagePerSecond,
                            field.poisonDurationMillis, nowMillis);
@@ -3229,21 +3385,27 @@ void CombatSystem::tickGroundEffects(World& world, const SpatialGrid& grid,
                         }
                     }
                 } else {
-                    const auto* status = field.kind == GroundEffectKind::OilSpill
-                        ? world.tryGet<Afflictions>(victim) : nullptr;
-                    const bool burning = status &&
-                        ((status->burnPerSecond > 0.0 && nowMillis < status->burnUntilMillis) ||
-                         std::any_of(status->burns.begin(), status->burns.end(),
-                            [nowMillis](const BurnStack& burn) { return nowMillis < burn.untilMillis; }));
-                    const double scale = field.kind == GroundEffectKind::OilSpill && burning ? 2.0 : 1.0;
+                    double scale = field.kind == GroundEffectKind::OilSpill &&
+                        isBurning(world, victim, nowMillis) ? 2.0 : 1.0;
+                    // Acid and oil deal poison directly rather than scheduling a poison stack.
+                    const Entity player = creditedPlayer(world, field.owner);
+                    if (const auto* tree = world.tryGet<PlayerSkillTree>(player))
+                        scale *= 1.0 + tree->skills.poisonBonus();
                     applyDamage(world, victim, field.effect, field.damagePerSecond * dt * scale,
                                 nowMillis, DamageKind::Poison);
                 }
                 continue;
             }
 
-            if (field.burnPerSecond > 0.0)
-                applyBurn(world, victim, field.effect, field.burnPerSecond, nowMillis);
+            if (field.burnPerSecond > 0.0) {
+                if (world.has<FireBombField>(field.effect)) {
+                    if (isWildMob(world, victim) || isPracticeDummy(world, content, victim))
+                        ignite(world, poolOwner(world, victim), field.effect, field.owner,
+                               field.burnPerSecond, kFireBombBurnMillis, nowMillis);
+                } else {
+                    applyBurn(world, victim, field.effect, field.burnPerSecond, nowMillis);
+                }
+            }
 
             if (field.armorReduction > 0.0 && isWildMob(world, victim))
                 applyArmorShred(world, victim, field.armorReduction, nowMillis);
@@ -3302,14 +3464,17 @@ void CombatSystem::tickGroundEffects(World& world, const SpatialGrid& grid,
                             DamageKind::Periodic);
             }
             if (field.burnDamage > 0.0 && isStanding(world, victim)) {
+                const Entity player = creditedPlayer(world, field.owner);
                 const Entity target = poolOwner(world, victim);
-                if (!isStanding(world, target)) continue;
+                if (!isStanding(world, target) || riftPortalProtected(world, player, nowMillis)) continue;
+                const double burnDamage = creditedPlayer(world, target) == player
+                    ? field.burnDamage : field.burnDamage * petalFireTalentScale(world, player);
                 auto& burn = world.ensure<Burn>(target);
                 const bool active = burn.damage > 0.0 && nowMillis < burn.untilMillis;
-                if (!active || field.burnDamage >= burn.damage) {
+                if (!active || burnDamage >= burn.damage) {
                     if (!active) burn.startedAtMillis = nowMillis;
                     burn.source = field.owner;
-                    burn.damage = field.burnDamage;
+                    burn.damage = burnDamage;
                     burn.untilMillis = nowMillis + 3000.0;
                 }
             }
@@ -3334,14 +3499,20 @@ void CombatSystem::poisonFieldOwner(World& world, const FieldSource& field, doub
     // the flower's any more.
     const Transform* at = world.tryGet<Transform>(owner);
     if (at == nullptr || at->realm != field.realm) return;
-    if (const Afflictions* afflictions = world.tryGet<Afflictions>(owner)) {
-        if (nowMillis < afflictions->poisonUntilMillis &&
-            afflictions->poisonPerSecond > field.ownerPoisonPerSecond) {
-            return;
+    const bool uranium = world.get<GroundEffect>(field.effect).uraniumSelfPoison;
+    double rate = field.ownerPoisonPerSecond;
+    if (uranium) {
+        if (const auto* health = world.tryGet<Health>(owner)) {
+            rate = std::min(rate, health->max * kUraniumSelfPoisonHealthFraction);
         }
     }
-    applyPoison(world, owner, NULL_ENTITY, field.ownerPoisonPerSecond,
-                field.poisonDurationMillis, nowMillis);
+    if (const auto* afflictions = world.tryGet<Afflictions>(owner);
+        afflictions && nowMillis < afflictions->poisonUntilMillis &&
+        afflictions->poisonPerSecond > rate) {
+        return;
+    }
+    applyPoison(world, owner, NULL_ENTITY, rate, field.poisonDurationMillis, nowMillis,
+                false, uranium ? PoisonOrigin::UraniumSelf : PoisonOrigin::Ordinary);
 }
 
 void CombatSystem::gatherAuras(World& world, const ContentRegistry& content) {
@@ -3591,11 +3762,16 @@ void CombatSystem::gatherPetals(World& world, const ContentRegistry& content, do
         source.slowFactor = stats.slowFactor;
         source.slowDurationMillis = stats.slowDurationMillis;
         source.inflictsFrost = config.id == "arctic_frost";
+        source.inflictsFreeze = config.id == "arctic_icicle";
         source.noHealDurationMillis = stats.noHealDurationMillis;
         source.armorReduction = config.id == "blood" ? 0.0 : stats.armorReduction;
         source.armorDamageFraction = config.armorDamageFraction;
         if (config.id != "magic_fire")
             source.burnPerSecond = config.burnPerSecond * referenceOffenseScale(config,petal.rarity) * offenseScale;
+        if (config.id == "void_fire") {
+            if (const auto* mods = world.tryGet<PlayerModifiers>(petal.owner))
+                source.burnPerSecond *= mods->petalDamageScale;
+        }
             if (config.id == "torch") {
                 if (const auto* tech = hyperTechniqueInfo("torch", petal.rarity, petal.mimicked);
                     tech && tech->technique == HyperTechnique::TorchWildfire)
@@ -3630,6 +3806,8 @@ void CombatSystem::gatherPetals(World& world, const ContentRegistry& content, do
         // over, since the reload is a new petal.
         if (petalGrowsOverTime(config)) {
             source.damage *= tomatoGrowth(nowMillis - petal.spawnedAtMillis);
+        } else if (config.id == "magic_tomato" && petal.magicTomatoRipe) {
+            source.damage *= kMagicTomatoGrowth;
         }
         if (petalShredsShots(config)) source.shotDamageScale = kPlankShotDamageScale;
         // The flower's damage bonus is a property of the flower, not of the
@@ -4006,12 +4184,7 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
             double swing = swingDamage(world, baseDamage, source.critDamage, victim);
             if (wild && source.isPetal &&
                 registry.petal(world.get<PetalInstance>(source.attacker).configIndex).id == "void_gunpowder") {
-                const auto* status = world.tryGet<Afflictions>(poolOwner(world, victim));
-                const bool burning = status &&
-                    ((status->burnPerSecond > 0.0 && nowMillis < status->burnUntilMillis) ||
-                     std::any_of(status->burns.begin(), status->burns.end(),
-                        [nowMillis](const BurnStack& burn) { return nowMillis < burn.untilMillis; }));
-                if (burning) swing *= 5.0;
+                if (isBurning(world, victim, nowMillis)) swing *= 5.0;
             }
             if (wild && technique && technique->technique == HyperTechnique::TomatoRipening) {
                 const double age = nowMillis - instance->spawnedAtMillis;
@@ -4160,7 +4333,7 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
                         scale *= hyperAmount(technique, HyperTechnique::AcidPoolBoost);
                     }
                     createSpill(world, source.owner, at->position, source.rarity, *source.impactSpill,
-                                scale, allocateNetId ? allocateNetId() : 0);
+                                scale, allocateNetId ? allocateNetId() : 0, 1.0, &rng_);
                 }
                 if (auto* health = world.tryGet<Health>(source.attacker)) health->current = 0.0;
                 break;
@@ -4197,8 +4370,19 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
                             summarisePoison(*status, nowMillis);
                         }
                     } else if (id == "job_application" && !hit.killed) {
-                        if (auto* ai = world.tryGet<MobAi>(victim))
+                        Entity brain = victim;
+                        if (const auto* segment = world.tryGet<BodySegment>(victim);
+                            segment && segment->chainHead != NULL_ENTITY && world.isAlive(segment->chainHead)) {
+                            brain = segment->chainHead;
+                        }
+                        const auto* brainType = world.tryGet<MobType>(brain);
+                        auto* ai = world.tryGet<MobAi>(brain);
+                        if (ai && brainType && isWildMob(world, brain) &&
+                            petalTier(source.rarity) >= rarityIndex(brainType->rarity)) {
+                            ai->target = NULL_ENTITY;
+                            ai->unseenTarget = NULL_ENTITY;
                             ai->aggroSuppressedUntilMillis = nowMillis + 5000.0;
+                        }
                     } else if (id == "cancer") {
                         const Entity target = poolOwner(world, victim);
                         const auto* segment = world.tryGet<BodySegment>(target);
@@ -4312,7 +4496,7 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
                             source.poisonDurationMillis * poisonWindow, nowMillis, stackPoison);
                 applySlow(world, victim, source.slowFactor,
                           source.slowDurationMillis * hyperAmount(wildTechnique, HyperTechnique::WildSlow),
-                          source.rarity, nowMillis, source.inflictsFrost);
+                          source.rarity, nowMillis, source.inflictsFrost, source.inflictsFreeze);
                 applyNoHeal(world, victim,
                             source.noHealDurationMillis * hyperAmount(wildTechnique, HyperTechnique::WildNoHeal),
                             nowMillis);
@@ -4596,7 +4780,17 @@ void CombatSystem::strikeLightning(World& world, const SpatialGrid& grid, Entity
     // Entities, not pointers: applyDamage can mark a flower Dead, which
     // relocates the row every Transform* above came out of.
     for (const Entity victim : strikeVictims_) {
-        applyDamage(world, victim, source, damage, nowMillis, DamageKind::Lightning);
+        double dealt = damage;
+        if (world.has<RiftPlayer>(victim) && isWildMob(world, source)) {
+            const auto* mob = world.tryGet<MobType>(source);
+            if (mob && content().mob(mob->configIndex).id == "jellyfish") {
+                // Rift has a flat health pool. The ocean's rarity ladder can
+                // otherwise make a Jellyfish pulse lethal from outside contact.
+                constexpr double kRiftJellyfishPulseCap = kArenaMaxHealth * 0.40;
+                dealt = std::min(dealt, kRiftJellyfishPulseCap);
+            }
+        }
+        applyDamage(world, victim, source, dealt, nowMillis, DamageKind::Lightning);
     }
 }
 
@@ -4872,7 +5066,8 @@ void CombatSystem::prepareShotImpacts(World& world, const SpatialGrid& grid,
 
     std::fill(shotTargets_.begin(), shotTargets_.end(), ShotTarget{});
     queries_->meleeTargets.eachArchetype([&](Archetype& layout) {
-        if (layout.has(componentId<DropTag>()) || layout.has(componentId<GroundEffectTag>())) return;
+        if (layout.has(componentId<DropTag>()) ||
+            (layout.has(componentId<GroundEffectTag>()) && !layout.has(componentId<Health>()))) return;
         const auto* mobTypes = layout.data<MobType>();
         const bool mob = layout.has(componentId<MobTag>());
         const bool wild = mob && !layout.has(componentId<Pet>());
@@ -5205,8 +5400,28 @@ void CombatSystem::tickProjectiles(World& world, const SpatialGrid& grid,
                         ammoConfig.burnPerSecond * referenceOffenseScale(ammoConfig,rarity)*effectStrength, ammoConfig.burnMillis, nowMillis);
                 applyPoison(world, impact.victim, shot.entity, stats.poisonPerSecond*effectStrength,
                             stats.poisonDurationMillis, nowMillis);
-                applySlow(world, impact.victim, stats.slowFactor, stats.slowDurationMillis,
-                          rarity, nowMillis);
+                const bool icicle = ammoConfig.id == "arctic_icicle";
+                const auto* shooter = world.tryGet<MobType>(owner);
+                bool coldVolley = false;
+                if (shooter && (icicle || ammoConfig.id == "arctic_snowball")) {
+                    const auto& species = content.mob(shooter->configIndex).id;
+                    coldVolley = species == "arctic_snowman" || species == "arctic_tick" ||
+                                 species == "arctic_ice_dragon" || species == "arctic_ice_hornet";
+                }
+                if (coldVolley && !hit.refused && isStanding(world, impact.victim)) {
+                    // The hornet's cold status uses its own brief orbit debuff.
+                    // The equippable icicle's immobilization scales separately.
+                    const double factor = icicle ? 0.60 : stats.slowFactor;
+                    const double duration = icicle ? 200.0 : stats.slowDurationMillis;
+                    if (world.has<PlayerTag>(impact.victim)) {
+                        world.ensure<Afflictions>(impact.victim).applyFrost(factor, duration, nowMillis);
+                    } else {
+                        applySlow(world, impact.victim, factor, duration, rarity, nowMillis, true);
+                    }
+                } else if (!coldVolley) {
+                    applySlow(world, impact.victim, stats.slowFactor, stats.slowDurationMillis,
+                              rarity, nowMillis, false, icicle);
+                }
                 applyNoHeal(world, impact.victim, stats.noHealDurationMillis, nowMillis);
                 if (content.petal(petalIndex).id == "antibody")
                     applyArmorShred(world, impact.victim, stats.armorReduction, nowMillis);

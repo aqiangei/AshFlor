@@ -30,7 +30,9 @@
 #include "shared/game/dark_mark.h"
 #include "shared/game/domino.h"
 #include "shared/game/map_elements.h"
+#include "shared/game/npc.h"
 #include "shared/game/rarity.h"
+#include "shared/game/summon_combat_stats.h"
 
 namespace flix {
 
@@ -158,9 +160,13 @@ std::vector<bool> mapDropTypes(const MapData& map) {
         for (int tier = 0; tier < kRarityCount; ++tier) {
             const auto rarity = clampRarity(tier);
             if (tier >= kLadderRarityCount && rarity != Rarity::Ascendant) continue;
-            for (const auto& drop : galleryDropPreview(mob, rarity, kRarityCount))
-                if (drop.petalIndex < drops.size() && drop.probability > 0.0)
-                    drops[drop.petalIndex] = true;
+            // This filters owned petals by possible source. Use the gallery's
+            // Eternal orb preview alongside ordinary drops, regardless of equipment.
+            for (const int orbTier : {kRarityCount, rarityIndex(Rarity::Unique)}) {
+                for (const auto& drop : galleryDropPreview(mob, rarity, orbTier))
+                    if (drop.petalIndex < drops.size() && drop.probability > 0.0)
+                        drops[drop.petalIndex] = true;
+            }
         }
     }
     return drops;
@@ -388,6 +394,7 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     const double chargeScale = hyperAmount(technique, HyperTechnique::QuickCharge);
     const double health = std::round(stats.health > 1.0 ? stats.health * skills.healthScale(SkillId::PetalHealth) : stats.health);
     const double damageScale = skills.effectScale(SkillId::Damage);
+    const double fireScale = skills.effectScale(SkillId::FirePower);
     const double baseDamage = petalContactDamage(config, stats, rarity);
     const double damage = std::round((baseDamage + triangleBonus) * damageScale);
 
@@ -422,7 +429,16 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         // {0:rarity} is: a champion's crown hands out a Basic of whatever tier
         // the crown is.
         std::string description = petalDescTr(config.id, config.description.c_str());
-        if (config.id == "paranormal_goggles") {
+        if (config.id == "mjolnir" && rarity == Rarity::Ascendant) {
+            const std::string cost = std::to_string(kApexHammerForgeCost);
+            const std::string refund = std::to_string(hyperForgeRefund(kApexHammerForgeCost));
+            description = language() == Language::Zh
+                ? "Apex 争夺成品。锻造消耗 " + cost + " 个 Apex 碎片，被夺返还 " + refund
+                    + " 个。首保 15 小时，每次被夺后缩短 1 小时，最低 1 小时。接触时落下单目标雷击。"
+                : "Contested Apex reward. Forging costs " + cost + " Apex fragments and returns "
+                    + refund + " if taken. Protection starts at 15 hours, dropping one hour per takeover "
+                      "to a minimum of one hour. Contact strikes one target with lightning.";
+        } else if (config.id == "paranormal_goggles") {
             const double zoom = hyperAmount(technique, HyperTechnique::GhostSight, 1.25);
             const std::string loss = std::to_string(std::lround(100.0 * (1.0 - 1.0 / zoom)));
             description = language() == Language::Zh
@@ -542,10 +558,9 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     hit.alpha = 0.56;
     hit.labelColor = kStatDamage;
     hit.altText = damageLabel + exactNumber(damage);
-    // A tomato's hit grows while it is out, so the card gives the range it
-    // grows through, as florr's does.
-    if (petalGrowsOverTime(config)) {
-        const double grown = std::round(damage * kTomatoMaxGrowth);
+    const bool magicTomato = config.id == "magic_tomato";
+    if (petalGrowsOverTime(config) || magicTomato) {
+        const double grown = std::round(damage * (magicTomato ? kMagicTomatoGrowth : kTomatoMaxGrowth));
         hit.text = damageLabel + abbreviate(damage) + " ~ " + abbreviate(grown);
         hit.altText = damageLabel + exactNumber(damage) + " ~ " + exactNumber(grown);
     }
@@ -643,10 +658,33 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         line.alpha = 0.72;line.labelColor = kStatGeneric;lines.push_back(line);
     };
     if (stats.flowerHealthBonus > 0) special("增加花朵生命：+", "Flower health: +", stats.flowerHealthBonus);
+    if (magicTomato) {
+        char cost[32];
+        std::snprintf(cost, sizeof cost, "%g", magicTomatoRipeningMana(rarity));
+        lines.push_back({std::string(chinese ? "催熟消耗法力：" : "Mana to ripen: ") + cost, 12.0});
+    }
+    if (config.id == "palm_leaf" || config.id == "magic_palm_leaf") {
+        char rate[32];
+        std::snprintf(rate, sizeof rate, "%g", palmLeafShieldPerSecond(rarity));
+        TooltipLine line{std::string(chinese ? "回盾/秒：" : "Shield restored per second: ") + rate, 12.0};
+        line.alpha = 0.72;
+        line.labelColor = kStatGeneric;
+        lines.push_back(line);
+        special("回盾上限（最大生命）：", "Shield recovery cap (% of max health): ",
+                100.0 * kPalmLeafShieldCapFraction, "%");
+    }
     if (config.id == "monstera") {
         special("范围治疗（每秒）：", "Area healing per second: ",
                 monsteraHealPerSecond(rarity) * healTalent * kPlayerHealMultiplier);
         special("治疗半径：", "Healing radius: ", monsteraHealRadius(rarity));
+    }
+    if (config.id == "rna") {
+        char bonus[16];
+        std::snprintf(bonus, sizeof bonus, "%g%%", rnaPetSpeedBonus(rarity) * 100.0);
+        TooltipLine line{std::string(chinese ? "宠物移速：+" : "Pet movement speed: +") + bonus, 12.0};
+        line.alpha = 0.72;
+        line.labelColor = kStatGeneric;
+        lines.push_back(line);
     }
     if (config.id == "iodine") {
         special("每跳基础治疗：", "Base healing per pulse: ",
@@ -663,8 +701,41 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         special("整套爆炸基础总预算：", "Total base blast budget: ",210.0 * referenceOffenseScale(config, rarity));
         lines.push_back({chinese?"主爆炸约占总伤害的64%，其余由外围子爆炸平分。子爆炸数量增加时，整套总伤害不变。":"The main blast deals about 64% of the total damage. The sub-blasts share the rest. More sub-blasts leave the total damage unchanged.",12.0});
     }
+    if (isFireBomb(config)) {
+        char burnRate[32];
+        std::snprintf(burnRate, sizeof burnRate, "%.8g",
+                      fireBombBaseBurnRate(config) * referenceOffenseScale(config, rarity));
+        TooltipLine burn{std::string(chinese ? "每层基础燃烧伤害/秒：" : "Base burn damage per second per stack: ") +
+                         burnRate, 12.0};
+        burn.alpha = 0.72;
+        burn.labelColor = kStatGeneric;
+        lines.push_back(burn);
+        special("燃烧持续时间：", "Burn duration: ", kFireBombBurnMillis / 1000.0, "s");
+        special("燃烧半径：", "Burn radius: ", fireBombRadius(config, rarity));
+        special("同一玩家对单个目标的叠火上限：", "Max stacks per player on one target: ",
+                kFireBombBurnLayers);
+    }
     if (config.spill.kind != SpillKind::None) {
         special("流体基础半径：", "Base spill radius: ", spillBaseRadius(config.spill, rarity));
+        if (config.id == "acid" || config.id == "lava" ||
+            config.id == "acid_bomb" || config.id == "lava_bomb") {
+            if (!config.spill.onHit)
+                special("铺池准备时间：", "Pool charge time: ", config.spill.chargeMillis / 1000.0, "s");
+            TooltipLine trigger{config.spill.onHit
+                ? (chinese ? "有效命中野怪时，在其脚下铺池。"
+                           : "Landing a hit on a wild mob creates a pool at its position.")
+                : (chinese ? "花瓣出现并准备完成后，按攻击或防御在花瓣所在处铺池。提前破损时没有池。"
+                           : "After the petal spawns and charges, attack or defend to place a pool at the petal. Breaking early leaves no pool."),
+                12.0};
+            trigger.maxWidth = kTooltipWrapWidth;
+            lines.push_back(trigger);
+            TooltipLine reach{chinese
+                ? "虚空肥皂和流体范围天赋只扩大池的半径，花瓣的碰撞距离不变。"
+                : "Void Soap and Fluid Reach expand the pool radius only. Petal contact range stays the same.",
+                12.0};
+            reach.maxWidth = kTooltipWrapWidth;
+            lines.push_back(reach);
+        }
         if (config.spill.kind == SpillKind::Elixir) {
             special("液池基础治疗/秒：", "Base pool healing per second: ",
                     config.spill.strength * petalHealScale(rarity));
@@ -733,14 +804,9 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
                          rarityTr(summonRarity), 12.0, rarityColor(summonRarity)});
         const auto mummy = content().mobIndex("mummy_beetle");
         if (mummy != kInvalidIndex) {
-            const auto& mob = content().mob(mummy);
-            const auto statsRarity = pharaohCrownSummonStatsRarity(rarity);
-            const double scale = petalStatScale(statsRarity) * hyperSummonPromotionScale(config, statsRarity);
-            special("召唤物生命：", "Summon health: ", mob.health * scale * mob.petHealthScale *
-                kSummonedMobHealthScale * skills.healthScale(SkillId::Summoner) * ascendantSummonHealthScale(rarity));
-            special("召唤物接触伤害：", "Summon contact damage: ", mob.damage * scale *
-                mob.petDamageScale * summonDamageScale(config, statsRarity) *
-                skills.effectScale(SkillId::PetDamage) * ascendantSummonDamageScale(rarity));
+            const auto stats = pharaohCrownCombatStats(config, content().mob(mummy), rarity, &skills);
+            special("召唤物生命：", "Summon health: ", stats.health);
+            special("召唤物接触伤害：", "Summon contact damage: ", stats.contactDamage);
         }
     }
     if (config.petMobIndex != kInvalidIndex) {
@@ -788,19 +854,19 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         lines.push_back({chinese ? "伤害栏为平均值；每次重装独立掷两端0至6点，伤害随点数乘积变化，与幸运无关。" : "Damage shows the mean. Each reload rolls two independent ends from 0 to 6; their product determines damage, unaffected by Luck.",12.0});
         if (dominoHasReroll(rarity)) lines.push_back({chinese ? "H稳牌：每个零点端补掷一次，降低空牌概率；期望伤害仍为同种E的1.5倍。" : "H steady hand: reroll each zero end once, reducing blanks. Expected damage remains 1.5x the same Eternal petal.",12.0});
     }
-    if (config.id == "dark_mark") {
+    const bool darkMark = config.id == "dark_mark";
+    const bool voidMark = config.id == "void_mark" || config.id == "void_void_mark";
+    if (darkMark || voidMark) {
         special("印记蓄力：", "Mark delay: ", darkMarkDelayMillis(rarity) / 1000.0, "s");
-        lines.push_back({chinese ? "靠近倒下的玩家并按攻击放置印记，蓄力后将其送往地狱。被救起或印记被打破则取消。" : "Attack near a fallen flower to place a mark. After charging, sends them to Hel. Revival or breaking the mark cancels it.",12.0});
-        lines.push_back({chinese ? "双方需20级；不作用于更高阶装备、分身、副本或已在地狱的玩家。成功后目标5分钟免疫Mark。" : "Both flowers must be level 20+. Cannot target higher-tier equipment, split flowers, dungeon runs or flowers in Hel. Target gains 5 minutes of Mark immunity.",12.0});
-    }
-    if (config.id == "dark_mark" || config.id == "void_mark" ||
-        config.id == "void_void_mark" || config.id == "arctic_frozen_mark") {
-        if (ladderRarity(rarity) == Rarity::Apex) {
-            special("地狱滞留：", "Hel hold: ", kHyperMarkHoldMillis / 1000.0, "s");
-            lines.push_back({chinese ? "H印记传送后滞留30秒：期间不能用传送门或 /mark-return；死亡或返回菜单可解除。" : "H marks hold for 30s: no pads or /mark-return until it ends; death or menu clears it.",12.0});
+        if (darkMark) {
+            lines.push_back({chinese ? "靠近倒下的玩家并按攻击放置印记，蓄力后将其送往地狱。被救起或印记被打破则取消。" : "Attack near a fallen flower to place a mark. After charging, sends them to Hel. Revival or breaking the mark cancels it.",12.0});
         } else {
-            lines.push_back({chinese ? "传送后可立即使用 /mark-return 返回原处。" : "Use /mark-return immediately after transport to go back.",12.0});
+            lines.push_back({chinese ? "靠近倒下的玩家并按攻击放置印记。目标提前复活或印记被打破时取消。" : "Attack near a fallen flower to place a mark. Revival or breaking the mark during the charge cancels it.",12.0});
         }
+        lines.push_back({chinese ? "双方需20级；不作用于更高阶装备、分身、副本或已在地狱的玩家。成功后目标5分钟免疫印记。" : "Both flowers must be level 20+. Cannot target higher-tier equipment, split flowers, dungeon runs or flowers in Hel. Target gains 5 minutes of Mark immunity.",12.0});
+    }
+    if (darkMark || voidMark || config.id == "arctic_frozen_mark") {
+        lines.push_back({chinese ? "传送后可立即使用 /mark-return 返回原处。" : "Use /mark-return immediately after transport to go back.",12.0});
     }
     if (config.id == "magic_bubble") {
         lines.push_back({chinese ? "按住防御并移动时向该方向冲刺，攻击与防御可以同时按住。" : "Hold defend and move to dash in that direction. You can hold attack at the same time.",12.0});
@@ -870,9 +936,17 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     if (config.id == "observer") lines.push_back({chinese ?
         "机械导弹发射时自动瞄准同地图内的敌方目标。" :
         "Mecha Missiles automatically aim at hostile targets in the same map on launch.",12.0});
-    if (stats.modifiers.luck != 0.0)
-        special(stats.modifiers.luck > 0 ? "幸运加成：+" : "幸运变化：",
-                stats.modifiers.luck > 0 ? "Luck: +" : "Luck: ", stats.modifiers.luck);
+    if (stats.modifiers.luck != 0.0) {
+        const bool positiveLuck = stats.modifiers.luck > 0;
+        const char* label = chinese ? (positiveLuck ? "幸运加成：+" : "幸运变化：")
+                                    : (positiveLuck ? "Luck: +" : "Luck: ");
+        char value[32];
+        std::snprintf(value, sizeof value, "%g", stats.modifiers.luck);
+        TooltipLine line{std::string(label) + value, 12.0};
+        line.alpha = 0.72;
+        line.labelColor = kStatGeneric;
+        lines.push_back(line);
+    }
     if (stats.modifiers.aggroRange != 1.0)
         special("怪物警觉范围变化：", "Mob detection range: ", (stats.modifiers.aggroRange - 1.0) * 100.0, "%");
     if (config.id == "bulb") {
@@ -890,10 +964,22 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
             lines.push_back({chinese ? "单发伤害随召唤物伤害天赋提升。" :
                                        "Missile damage scales with the summon damage talent.", 12.0});
         }
-        special("每轮弹数：", "Projectiles per volley: ", config.projectile.count);
+        if (config.id != "mecha_missile" && config.id != "magic_peas") {
+            const double baseProjectileDamage = config.lightningDamage && stats.lightningDamagePerHit > 0.0
+                ? stats.lightningDamagePerHit : stats.damage;
+            if (baseProjectileDamage > 0.0)
+                special("单发基础伤害（含召唤物伤害天赋）：", "Base shot damage with Pet Damage: ",
+                        baseProjectileDamage * skills.effectScale(SkillId::PetDamage));
+        }
+        if (config.id == "spaceship") {
+            lines.push_back({chinese ? "飞船单发基础伤害未计电脑套装加成。"
+                                     : "Base Spaceship shot damage excludes computer set bonuses.", 12.0});
+        }
+        special("每颗花瓣每次发射弹数：", "Shots per petal per volley: ", config.projectile.count);
         special("弹速：", "Projectile speed: ", config.projectile.speed);
-        special("射程：", "Projectile range: ", config.projectile.distance);
-        if (config.projectile.seekRange > 0) special("索敌范围：", "Seeking range: ", config.projectile.seekRange);
+        special("基础飞行距离：", "Base projectile travel distance: ", config.projectile.distance);
+        if (config.projectile.seekRange > 0)
+            special("基础锁定半径：", "Base targeting radius: ", config.projectile.seekRange);
     }
     if (config.id == "magic_eye") {
         special("每次消耗当前魔力：", "Current mana spent per cast: ", 50.0, "%");
@@ -907,7 +993,11 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         special("基础流体半径：", "Base spill radius: ", spillBaseRadius(config.spill, rarity));
     if (config.id == "blood")
         special("基础血池半径：", "Base blood pool radius: ", bloodPoolRadius(rarity));
+    if (fireScale > 1.0 && (config.burnPerSecond > 0.0 || config.radiation.burnDamage > 0.0))
+        special("火伤天赋倍率：", "Fire talent multiplier: ", fireScale, "x");
     if (config.radiation.present) {
+        const double radiationReach = skills.effectScale(SkillId::RadiationReach);
+        const double radiationPower = skills.effectScale(SkillId::RadiationPower);
         if (config.id == "uranium")
             special("基础辐射伤害/秒：", "Base radiation damage per second: ", uraniumRadiationDps(stats, rarity) * kRadiationDamageScale);
         if(config.id=="uranium")
@@ -916,12 +1006,32 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
             config.radiation.poisonPerSecond;
         if (poison > 0.0)
             special("基础辐射毒伤/秒：", "Base radiation poison per second: ", poison * referenceOffenseScale(config, rarity) * kRadiationDamageScale);
-        if (config.radiation.burnDamage > 0.0)
-            special("基础辐射灼烧强度：", "Base radiation burn strength: ",
-                    config.radiation.burnDamage * referenceOffenseScale(config, rarity) * kRadiationDamageScale);
+        if (config.radiation.burnDamage > 0.0) {
+            const double baseBurn = config.radiation.burnDamage * referenceOffenseScale(config, rarity) *
+                kRadiationDamageScale;
+            special("基础辐射灼烧强度：", "Base radiation burn strength: ", baseBurn);
+            if (config.id == "arctic_plutonium") {
+                special("辐射灼烧强度（含伤害天赋）：", "Radiation burn strength with talents: ",
+                        baseBurn * damageScale * radiationPower * fireScale);
+                lines.push_back({chinese ? "离开辐射区后灼烧最多持续 3 秒，伤害随灼烧时间上升。"
+                                         : "Burn lasts up to 3 seconds after leaving the field. Damage ramps up over time.", 12.0});
+            }
+        }
         if (config.id == "void_stardust")
             special("中毒持续：", "Poison duration: ", config.radiation.poisonDurationMillis / 1000.0, "s");
-        special("基础辐射半径：", "Base radiation radius: ", baseRadiationRadius(config, rarity));
+        const double baseRadius = baseRadiationRadius(config, rarity);
+        special("基础辐射半径：", "Base radiation radius: ", baseRadius);
+        if (technique && technique->technique == HyperTechnique::WideRadiation) {
+            special("专属辐射半径：", "Radiation radius with technique: ", baseRadius * technique->amount);
+        }
+        if (radiationReach > 1.0) {
+            const double techniqueScale = technique && technique->technique == HyperTechnique::WideRadiation
+                ? technique->amount : 1.0;
+            special("实战辐射半径（含天赋）：", "Radiation radius with talent: ",
+                    baseRadius * techniqueScale * radiationReach);
+        }
+        if (radiationPower > 1.0)
+            special("辐射增幅倍率：", "Radiation Power multiplier: ", radiationPower, "x");
         special("辐射间隔：", "Radiation interval: ", config.radiation.intervalMillis / 1000.0, "s");
         if (config.radiation.selfPoisonScale > 0)
             special("自身中毒倍率：", "Self-poison multiplier: ", config.radiation.selfPoisonScale);
@@ -1247,13 +1357,13 @@ void InventoryPanel::reset() {
     runLootScroll_ = {};
 }
 
-void InventoryPanel::openRunLoot(NetClient& net, DragState& drag) {
+void InventoryPanel::openRunLoot(DragState& drag) {
     searchField_.blur();
     drag.clear();
     runLootScroll_ = {};
     showRunLoot_ = true;
     showRunKills_ = false;
-    net.requestRunLoot();
+    requestedRunStatsRevision_.reset();
 }
 
 bool InventoryPanel::renderRunLoot(MenuContext& ctx) {
@@ -1290,6 +1400,17 @@ bool InventoryPanel::renderRunLoot(MenuContext& ctx) {
         const char* label = kills ? (zh ? "本局击杀" : "Kills") : (zh ? "本局收集" : "Collected");
         drawSlotButton(canvas, tab, label, kInventorySkin.fill, tab.contains(mouse),
                        showRunKills_ == kills);
+    }
+
+    // Profile updates invalidate the server's run totals. Coalesce bursts
+    // without polling while idle or replacing the current grid with a spinner.
+    constexpr double kRunStatsRefreshSeconds = 0.75;
+    const auto revision = ctx.net.runStatsRevision();
+    const bool opening = !requestedRunStatsRevision_;
+    if (opening || (*requestedRunStatsRevision_ != revision && ctx.timeSeconds >= nextRunStatsRefreshAt_)) {
+        ctx.net.requestRunLoot(opening);
+        requestedRunStatsRevision_ = revision;
+        nextRunStatsRefreshAt_ = ctx.timeSeconds + kRunStatsRefreshSeconds;
     }
 
     const auto& loot = ctx.net.runLootOverview();
@@ -1341,13 +1462,26 @@ bool InventoryPanel::renderRunLoot(MenuContext& ctx) {
         if (showRunKills_) {
             const auto& kill = (*kills)[i];
             tile.rarity = kill.rarity;
-            tile.badge = "x" + stackCountText(kill.count);
             tile.showName = false;
             drawItemTile(canvas, ctx.sprites, cell, tile);
             const double radius = content().mobStats(kill.mobIndex, Rarity::Common).radius;
             ctx.sprites.drawMobPicture(canvas, kill.mobIndex, kill.rarity,
-                cell.x + side * 0.5, cell.y + side * 0.53, side * 0.72, side * 0.58,
+                cell.x + side * 0.5, cell.y + side * 0.64, side * 0.72, side * 0.52,
                 ctx.timeSeconds, radius);
+
+            // Reserve the top strip for the count and paint it after the mob.
+            const std::string count = "x" + stackCountText(kill.count);
+            TextStyle label;
+            label.size = 13.0;
+            const double countWidth = measure(count, label.size);
+            if (countWidth > side - 8.0) label.size *= (side - 8.0) / countWidth;
+            label.fill = kPaper;
+            label.stroke = kInk;
+            label.strokeWidth = 2.5;
+            label.roundJoin = true;
+            label.align = Align::Centre;
+            label.baseline = Baseline::Top;
+            text(canvas, count, cell.x + side * 0.5, cell.y + 4.0, label);
         } else {
             const auto& item = (*loot)[i];
             tile.petalIndex = item.petalIndex;
@@ -1415,7 +1549,7 @@ bool InventoryPanel::render(MenuContext& ctx) {
         drawSlotButton(canvas, runLootButton, "This Run", kInventorySkin.fill,
                        hovered, hovered && ctx.pressed());
         if (hovered && ctx.pressed()) {
-            openRunLoot(ctx.net, ctx.drag);
+            openRunLoot(ctx.drag);
             return true;
         }
     }

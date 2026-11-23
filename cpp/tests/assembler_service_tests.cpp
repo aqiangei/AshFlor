@@ -51,12 +51,19 @@ TEST(assembler_conversion_cycles_cannot_mint_material_value) {
         {"moon_rock",20},{"rock",1},{"honey",1},{"wax",3},{"rose",1},{"light",1},
         {"dahlia",2},{"battery",2},{"lightning",4},{"pollen",2},{"triangle",1},
         {"cutter",10},{"mimic",20},{"ram",1},{"sawblade",21},{"square",1},
-        {"pentagon",2},{"cogwheel",1},{"fragment",1}};
+        {"pentagon",2},{"cogwheel",1},{"fragment",1},
+        {"iris",1},{"poo",1},{"gas",5},{"fang",1},{"blood_rose",5},
+        {"web",1},{"cotton",1},{"silk",5},{"marble",6}};
+    const auto materialValue = [&](const std::string& id) {
+        const auto entry = value.find(id);
+        CHECK(entry != value.end());
+        return entry == value.end() ? 0.0 : entry->second;
+    };
     for(const char* id:{"assembler","cyber_assembler","super_assembler"}) {
         for(const auto& recipe:c.mob(c.mobIndex(id)).npc.recipes) {
             double input=0,output=0;
-            for(const auto& s:recipe.inputs) input+=value.at(c.petal(s.petal).id)*s.count;
-            for(const auto& s:recipe.outputs) output+=value.at(c.petal(s.petal).id)*s.count;
+            for(const auto& s:recipe.inputs) input+=materialValue(c.petal(s.petal).id)*s.count;
+            for(const auto& s:recipe.outputs) output+=materialValue(c.petal(s.petal).id)*s.count;
             CHECK(!recipe.outputRarity.has_value());
             CHECK(output<=input);
         }

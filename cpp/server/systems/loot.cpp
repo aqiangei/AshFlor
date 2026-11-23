@@ -1,5 +1,6 @@
 #include "server/systems/loot.h"
 #include "server/workers.h"
+#include "server/systems/spawning.h"
 
 #include <algorithm>
 #include <limits>
@@ -767,6 +768,7 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
             life && life->remainingSeconds > 0) indexStack(e, item, at, false);
     });
     bool hyperKill=false,hyperEternalRoll=false;
+    bool anyUltraOrHigher = false;
     Rarity bossFloor = Rarity::Common;
     std::vector<std::string> bossFloorPaid;
     const auto markBossFloorPaid = [&](Entity player) {
@@ -795,6 +797,7 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
         }
         const auto& eligible = reducedClaimants.empty() ? claimants : filteredClaimants;
         if (eligible.empty()) return;
+        if (rarityIndex(rarity) >= rarityIndex(Rarity::Ultra)) anyUltraOrHigher = true;
         if (bossFloor != Rarity::Common && rarityIndex(rarity) >= rarityIndex(bossFloor))
             for (const Entity player : eligible) markBossFloorPaid(player);
         StackEntry* merge = nullptr;
@@ -849,6 +852,10 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
         const MobType* type = world.tryGet<MobType>(corpse);
         const Transform* transform = world.tryGet<Transform>(corpse);
         if (type == nullptr || transform == nullptr) continue;
+        if (world.has<StemCellOffspring>(corpse)) {
+            world.add<LootAwarded>(corpse);
+            continue;
+        }
         if (const auto* subdivision = world.tryGet<CancerSubdivision>(corpse);
             subdivision && subdivision->spawnedCopy) {
             world.add<LootAwarded>(corpse);
@@ -987,6 +994,7 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
         // from everybody else. kRarityCount is "no orb worn", which is almost
         // every flower in the game, and then nothing splits.
         const auto baseEligible=eligible_;
+        anyUltraOrHigher = false;
         bossFloorPaid.clear();
         bossFloor = hyperKill && !wave && !visibleGarbage &&
                     !world.has<InheritedLootClaims>(corpse) &&
@@ -1077,7 +1085,8 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
             if (hyperKill) {
                 const auto* account = world.tryGet<PlayerAccount>(claimant);
                 const int tenths = hyperRewardTenths(world.get<Bounty>(corpse), claimant,
-                    account ? account->connection : 0, maxHealth);
+                    account ? account->connection : 0, maxHealth,
+                    account ? std::string_view(account->userId) : std::string_view{});
                 if (tenths < 10) {
                     reducedClaimants.push_back(claimant);
                 } else if (tenths > 10) {
@@ -1295,7 +1304,64 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
                     auto& item = world.get<DropItem>(drop);
                     item.humansOnly = true;
                     item.singleCopy = true;
+                    anyUltraOrHigher = true;
                     fresh_.push_back(drop);
+                }
+            }
+        }
+
+        // The shared Eternal reward above already establishes who may contest
+        // a single item. Reuse that personal floor for this shared fallback.
+        const auto& mobId = content.mob(mobIndex).id;
+        const auto* ambient = world.tryGet<AmbientMob>(corpse);
+        const auto* part = world.tryGet<BodySegment>(corpse);
+        if (!anyUltraOrHigher && mobRarity == Rarity::Unique && ordinaryTrials &&
+            allowsBossParticipationFloor && allowsBossParticipationFloor(realm) &&
+            ambient && ambient->zone != kInvalidIndex && (!part || part->head) &&
+            !world.has<Pet>(corpse) && !world.has<InheritedLootClaims>(corpse) &&
+            (mobId == "void_white_hole" || mobId == "void_ufo" ||
+             mobId == "arctic_ice_dragon" || mobId == "arctic_centipede")) {
+            std::vector<Entity> recipients;
+            for (const auto claimant : baseEligible) {
+                const auto* account = world.tryGet<PlayerAccount>(claimant);
+                const auto* life = world.tryGet<Health>(claimant);
+                if (account && life && life->alive() && !world.has<Dead>(claimant) &&
+                    qualifiesPersonally(claimant, *account)) recipients.push_back(claimant);
+            }
+
+            // Draw from a copy, so the extra 25% chance does not shift
+            // the ordinary drops or the current shared Eternal lottery.
+            Rng fallbackRng = rng;
+            if (!recipients.empty() && fallbackRng.chance(0.25)) {
+                // Take only same-species items already authored to occur at
+                // Ultra from its Super form. Do not promote a random or
+                // Super-only row, or create an Ultra magic form.
+                std::vector<std::pair<std::uint16_t, double>> pool;
+                double total = 0.0;
+                for (const auto& entry : table) {
+                    const auto petal = entry.petalIndex;
+                    if (entry.kind == DropTables::Kind::RandomPetal || petal >= content.petalCount() ||
+                        !allowsAuthoredApexReward(content.petal(petal)) ||
+                        !petalComesAt(content.petal(petal), Rarity::Ultra)) continue;
+                    double weight = 0.0;
+                    for (const auto& rate : ratesFor(entry.rates, Rarity::Super))
+                        if (rate.rarity == Rarity::Ultra) weight += rate.probability;
+                    if (weight <= 0.0) continue;
+                    pool.emplace_back(petal, weight);
+                    total += weight;
+                }
+                if (!pool.empty()) {
+                    double roll = fallbackRng.unit() * total;
+                    auto petal = pool.back().first;
+                    for (const auto& [item, weight] : pool)
+                        if ((roll -= weight) < 0.0) { petal = item; break; }
+                    const Entity drop = spawnDrop(world, petal, Rarity::Ultra, scatterDrop({}), realm, recipients);
+                    if (drop != NULL_ENTITY) {
+                        auto& item = world.get<DropItem>(drop);
+                        item.humansOnly = true;
+                        item.singleCopy = true;
+                        fresh_.push_back(drop);
+                    }
                 }
             }
         }

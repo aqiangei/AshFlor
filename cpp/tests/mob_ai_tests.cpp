@@ -3,6 +3,7 @@
 #include "server/replication.h"
 #include "server/systems/combat.h"
 #include "server/systems/mob_ai.h"
+#include "server/systems/petals.h"
 #include "server/systems/movement.h"
 #include "server/systems/spawning.h"
 #include "server/workers.h"
@@ -11,6 +12,9 @@
 // guards it reads that rate from the client rather than restating it.
 #include "client/interpolation.h"
 
+#include "client/ui/i18n.h"
+#include "client/ui/menu_widgets.h"
+#include "server/systems/petals.h"
 #include "shared/game/config.h"
 #include "shared/game/spatial.h"
 #include "shared/game/terrain.h"
@@ -1921,31 +1925,35 @@ TEST(a_hole_pet_left_behind_holds_its_ground_until_it_is_recalled) {
     CHECK(sim.velocityOf(ant).x < 0.0);
 }
 
-TEST(a_sandstorm_pet_pulls_ahead_of_a_running_owner_but_stays_on_its_leash) {
+TEST(a_sandstorm_pet_stays_with_a_running_turning_and_stopping_owner) {
     CHECK(contentReady());
     Sim sim;
     const Entity owner = sim.spawnPlayer(kOrigin);
     const Entity storm = sim.spawnMob("sandstorm", kOrigin + Vec2{50, 0});
     sim.world.add<Pet>(storm, Pet{owner, 0});
-
-    // Thirty seconds flat out: long enough to have pulled away six times over
-    // under the old drift, and to have lapped the leash several times now.
-    const int ticks = static_cast<int>(30.0 / net::kTickSeconds);
-    double farthest = 0.0;
-    bool turned = false;
-    for (int i = 0; i < ticks; ++i) {
-        sim.world.get<Motion>(owner).velocity = Vec2{kPlayerMaxSpeed, 0};
-        sim.tick();
-        if (!sim.world.isAlive(storm)) break;
-        farthest = std::max(farthest, sim.gap(storm, owner));
-        turned = turned || sim.brainOf(storm).petReturning;
+    for (const Vec2 velocity : {Vec2{kPlayerMaxSpeed, 0}, Vec2{0, kPlayerMaxSpeed},
+                               Vec2{-kPlayerMaxSpeed, 0}, Vec2{0, 0}}) {
+        sim.world.get<Motion>(owner).velocity = velocity;
+        for (int tick = 0; tick < 60; ++tick) {
+            sim.tick();
+            CHECK(sim.gap(storm, owner) <= kSandstormPetHomeDistance + 1e-6);
+            CHECK(!sim.brainOf(storm).petReturning);
+        }
     }
-    CHECK(sim.world.isAlive(storm));
-    CHECK(turned);
-    // One tick's travel is all it may overshoot the leash by before turning.
-    const double step = kPlayerMaxSpeed * kSandstormPetReturnSpeedFactor * net::kTickSeconds;
-    CHECK(farthest <= kSandstormPetLeash + step);
-    CHECK(farthest > 500.0);
+    CHECK_NEAR(sim.velocityOf(storm).length(), 0.0, 1e-9);
+}
+
+TEST(a_sandstorm_pet_catches_up_when_its_owner_stops_inside_the_leash) {
+    CHECK(contentReady());
+    Sim sim;
+    const Entity owner = sim.spawnPlayer(kOrigin);
+    const Entity storm = sim.spawnMob("sandstorm", kOrigin + Vec2{400, 0});
+    sim.world.add<Pet>(storm, Pet{owner, 0});
+    sim.tick();
+    CHECK(sim.positionOf(storm).x < kOrigin.x + 400.0);
+    sim.tick(40);
+    CHECK(sim.gap(storm, owner) < kSandstormPetHomeDistance + 1.0);
+    CHECK_NEAR(sim.velocityOf(storm).length(), 0.0, 1.0);
 }
 
 TEST(an_egg_summon_reaches_a_distant_wild_mob_then_returns) {
@@ -2207,6 +2215,68 @@ void wearCursor(Sim& sim, Entity owner, Rarity tier, double aimAngle, std::uint1
 
 } // namespace
 
+TEST(bio_rna_scales_real_pet_chase_across_tiers_and_stacks) {
+    CHECK(contentReady());
+    struct Result { double velocity; double distance; double modifier; };
+    const auto chase = [&](const char* species, Rarity petTier, Rarity rnaTier, int copies) {
+        Sim sim;
+        PetalSystem petals;
+        const Entity owner = sim.spawnPlayer(kOrigin);
+        sim.world.add<PetalRing>(owner);
+        auto& loadout = sim.world.add<Loadout>(owner);
+        for (int slot = 0; slot < copies; ++slot) {
+            loadout.slots[slot] = {content().petalIndex("rna"), rnaTier};
+        }
+        petals.foldModifiers(sim.world, content());
+        const Entity pet = sim.spawnMob(species, kOrigin, petTier);
+        sim.world.get<Faction>(pet) = Faction{Team::Players, false};
+        sim.world.add<Pet>(pet, Pet{owner, 0});
+        // Keep even the fastest ten-copy setup in the approach phase for both ticks.
+        const Entity prey = sim.spawnMob("rock", kOrigin + Vec2{400, 0});
+        sim.tick(2);
+        CHECK_EQ(sim.brainOf(pet).target, prey);
+        return Result{sim.velocityOf(pet).x, sim.positionOf(pet).x - kOrigin.x,
+                      sim.world.get<PlayerModifiers>(owner).petMoveSpeedScale};
+    };
+    constexpr std::array<double, 10> percent{4, 4.52, 6.08, 8.68, 12.32, 17, 22.72, 29.48, 37.28, 46.12};
+    for (const char* species : {"bio_bacteria", "jurassic_pteranodon"}) {
+        for (const Rarity petTier : {Rarity::Common, Rarity::Rare}) {
+            const auto baseline = chase(species, petTier, Rarity::Common, 0);
+            CHECK(baseline.velocity > 0);
+            CHECK(baseline.distance > 0);
+            for (const auto rnaTier : {Rarity::Common, Rarity::Uncommon, Rarity::Rare,
+                                       Rarity::Epic, Rarity::Legendary, Rarity::Mythic, Rarity::Ultra,
+                                       Rarity::Super, Rarity::Unique, Rarity::Apex, Rarity::PermanentHyper,
+                                       Rarity::Ascendant}) {
+                for (const int copies : {1, 2, kLoadoutActiveSlots}) {
+                    const auto actual = chase(species, petTier, rnaTier, copies);
+                    const auto expected = 1.0 + copies * (rnaTier == Rarity::Ascendant ? 56.0 : percent[ladderIndex(rnaTier)]) / 100.0;
+                    std::printf("RNA %s pet=%s rna=%s copies=%d velocity=%.6f distance=%.6f scale=%.6f\n",
+                                species, rarityName(petTier), rarityName(rnaTier), copies,
+                                actual.velocity, actual.distance, actual.modifier);
+                    CHECK_NEAR(actual.modifier, expected, 1e-9);
+                    CHECK_NEAR(actual.velocity, baseline.velocity * expected, 1e-6);
+                    CHECK_NEAR(actual.distance, baseline.distance * expected, 1e-6);
+                }
+            }
+        }
+    }
+}
+
+TEST(bio_rna_inventory_lists_the_per_copy_speed_in_both_languages) {
+    CHECK(contentReady());
+    const auto original = ui::language();
+    for (const auto language : {ui::Language::En, ui::Language::Zh}) {
+        ui::setLanguage(language);
+        const auto lines = ui::petalTooltipLines(content().petalIndex("rna"), Rarity::Unique, {}, 1.0);
+        const char* text = language == ui::Language::Zh ? "宠物移速：+37.28%" : "Pet movement speed: +37.28%";
+        CHECK(std::any_of(lines.begin(), lines.end(), [&](const ui::TooltipLine& row) {
+            return row.text == text;
+        }));
+    }
+    ui::setLanguage(original);
+}
+
 TEST(a_worn_cursor_walks_pets_below_its_tier_to_the_pointer) {
     CHECK(contentReady());
     Sim sim;
@@ -2240,6 +2310,47 @@ TEST(a_worn_cursor_walks_pets_below_its_tier_to_the_pointer) {
     input.flags &= static_cast<std::uint8_t>(~net::InputNoPetPointer);
     sim.tick();
     CHECK_EQ(sim.brainOf(below).target, NULL_ENTITY);
+}
+
+TEST(coordinate_routes_directional_input_at_its_own_tier_and_returns_to_pointer) {
+    CHECK(contentReady());
+    Sim sim;
+    PetalSystem petals;
+    const Entity owner = sim.spawnPlayer(kOrigin);
+    sim.world.add<Loadout>(owner);
+    sim.world.add<PetalRing>(owner);
+    const auto equip = [&](const char* id) {
+        auto& loadout = sim.world.get<Loadout>(owner);
+        loadout.slots[0] = {content().petalIndex(id), Rarity::Rare};
+        petals.foldModifiers(sim.world, content());
+    };
+    equip("coordinate");
+    const Entity same = sim.spawnMob("soldier_ant", kOrigin + Vec2{0, 90}, Rarity::Rare);
+    const Entity above = sim.spawnMob("soldier_ant", kOrigin + Vec2{0, -90}, Rarity::Epic);
+    sim.world.add<Pet>(same, Pet{owner, 0});
+    sim.world.add<Pet>(above, Pet{owner, 0});
+    const Entity prey = sim.spawnMob("rock", kOrigin + Vec2{-300, 0});
+
+    net::InputFrame& input = sim.world.ensure<PlayerInput>(owner).current;
+    input.aimDistance = 500;
+    input.moveAngle = kPi / 2;
+    input.moveStrength = 0.5;
+    input.flags = net::InputPetMoveDirection | net::InputNoPetPointer;
+    sim.tick(10);
+    CHECK(sim.positionOf(same).y > (kOrigin.y + 90));
+    CHECK_NEAR(sim.positionOf(same).x, kOrigin.x, 0.01);
+    CHECK_EQ(sim.brainOf(same).target, NULL_ENTITY);
+    CHECK_EQ(sim.brainOf(above).target, prey);
+
+    sim.world.get<PlayerInput>(owner).current.flags = 0;
+    sim.tick(240);
+    CHECK(distance(sim.positionOf(same), kOrigin + Vec2{500, 0}) < 15.0);
+
+    equip("cursor");
+    sim.world.get<Transform>(same).position = kOrigin + Vec2{0, 90};
+    sim.world.get<PlayerInput>(owner).current.flags = net::InputPetMoveDirection | net::InputNoPetPointer;
+    sim.tick(120);
+    CHECK_EQ(sim.brainOf(same).target, prey);
 }
 
 TEST(a_cursor_pointer_is_held_to_the_screen_its_owner_claims) {
@@ -2501,8 +2612,10 @@ TEST(an_ice_hornet_turns_its_tail_to_the_target_before_firing) {
     const double tail = wrapAngle(sim.angleOf(hornet) + kPi);
     CHECK(std::fabs(angleDelta(tail, bearing)) <= kStingerAimTolerance + 1e-9);
     CHECK(std::cos(sim.angleOf(hornet)) < 0.0);
-    CHECK_EQ(sim.world.get<Projectile>(shot).petalConfigIndex,
-             content().petalIndex("arctic_electron_missile"));
+    const auto& projectile = sim.world.get<Projectile>(shot);
+    CHECK_EQ(projectile.petalConfigIndex, content().petalIndex("arctic_icicle"));
+    const auto previousAmmo = content().petalIndex("arctic_electron_missile");
+    CHECK_NEAR(projectile.damage, content().petalStats(previousAmmo, Rarity::Common).damage, 1e-9);
 
     const Vec2 muzzle = sim.world.get<Transform>(shot).position - sim.positionOf(hornet);
     const double radius = sim.world.get<Body>(hornet).radius + sim.world.get<Body>(shot).radius;
@@ -4945,4 +5058,65 @@ TEST(corruption_equipped_makes_the_wild_gambler_and_its_ring_neutral) {
     CHECK(CombatSystem::canDamage(sim.world, ringPetal, flower));
     sim.tickIntent(2);
     CHECK_EQ(sim.brainOf(gambler).target, flower);
+}
+
+TEST(fire_baby_ant_follows_an_equipped_bulb_and_drops_it_when_broken) {
+    if (!contentReady()) return;
+    Sim sim;
+    PetalSystem petals;
+    const Entity baby = sim.spawnMob("baby_fire_ant", kOrigin, Rarity::Super);
+    const Entity flower = sim.spawnPlayer(kOrigin + Vec2{310.0, 0.0});
+    auto& loadout = sim.world.add<Loadout>(flower);
+    loadout.slots[0] = {content().petalIndex("bulb"), Rarity::Super};
+    sim.world.add<PlayerInput>(flower);
+    sim.world.add<PetalRing>(flower);
+    sim.world.get<Loadout>(flower).slots[0].broken = false;
+    petals.foldModifiers(sim.world, content(), sim.now);
+    CHECK(sim.world.get<PlayerModifiers>(flower).litAggroBulb);
+    sim.tick();
+    CHECK_EQ(sim.brainOf(baby).target, flower);
+    CHECK_EQ(sim.brainOf(baby).kind, AiKind::Passive);
+    CHECK(sim.velocityOf(baby).x > 0.0);
+    sim.world.get<Loadout>(flower).slots[0].broken = true;
+    petals.foldModifiers(sim.world, content(), sim.now);
+    CHECK(!sim.world.get<PlayerModifiers>(flower).litAggroBulb);
+    sim.tick();
+    CHECK_EQ(sim.brainOf(baby).target, NULL_ENTITY);
+}
+
+TEST(big_baby_ant_measures_visible_honey_from_its_body_edge) {
+    if (!contentReady()) return;
+    for (const char* id : {"baby_ant", "baby_fire_ant"}) {
+        Sim sim;
+        const Entity ant = sim.spawnMob(id, kOrigin, Rarity::Super);
+        const Entity flower = sim.spawnPlayer(kOrigin + Vec2{-80.0, 0.0});
+        const auto radius = sim.world.get<Body>(ant).radius;
+        CHECK(radius > 0.0);
+        const Entity bait = sim.world.create();
+        sim.world.add<Transform>(bait, Transform{kOrigin + Vec2{600.0 + radius * .5, 0.0}, 0.0});
+        sim.world.add<Health>(bait, Health{1000.0, 1000.0});
+        sim.world.add<HoneyBait>(bait, HoneyBait{flower});
+        sim.tick();
+        CHECK_EQ(sim.brainOf(ant).target, bait);
+        CHECK(sim.velocityOf(ant).x > 0.0);
+        sim.world.get<Transform>(bait).position = sim.positionOf(ant) + Vec2{601.0 + radius, 0.0};
+        sim.tick();
+        CHECK_EQ(sim.brainOf(ant).target, NULL_ENTITY);
+    }
+}
+
+TEST(baby_fire_ant_does_not_follow_honey_or_a_bulb_through_a_wall) {
+    if (!contentReady()) return;
+    Sim sim;
+    const double wall = std::floor(kOrigin.x / kTileSize + 1.0) * kTileSize;
+    const double y = kOrigin.y;
+    for (int i = 0; i < kTilesPerAxis; ++i) sim.terrain.setTile(static_cast<int>(wall / kTileSize), i, Tile::Solid);
+    const Entity baby = sim.spawnMob("baby_fire_ant", Vec2{wall - 40.0, y}, Rarity::Super);
+    const Entity flower = sim.spawnPlayer(Vec2{wall + kTileSize + 45.0, y}, 0.0, 2.0);
+    const Entity bait = sim.world.create();
+    sim.world.add<Transform>(bait, Transform{sim.positionOf(flower), 0.0});
+    sim.world.add<Health>(bait, Health{1000.0, 1000.0});
+    sim.world.add<HoneyBait>(bait, HoneyBait{flower});
+    sim.tick();
+    CHECK_EQ(sim.brainOf(baby).target, NULL_ENTITY);
 }

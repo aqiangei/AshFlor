@@ -51,6 +51,7 @@ struct PetalTag {};
 struct ProjectileTag {};
 struct DropTag {};
 struct GroundEffectTag {};
+struct FireBombField {};
 /// An NPC. Deliberately NOT a MobTag entity, although it wears a mob's config:
 /// see shared/game/npc.h for everything that buys.
 struct NpcTag {};
@@ -276,13 +277,13 @@ struct BurnStack {
     double perSecond = 0;
     double untilMillis = 0;
     double budgetWeight = 1.0;
+    bool fireBomb = false;
 };
 
 struct Afflictions {
     double blindUntilMillis = 0;
     bool toiletArmed = false;
-    bool toiletBoostActive = false;
-    // The combat timer also gates rearming after a rescue or an equipment change.
+    // An active window survives health and equipment changes on this body.
     double toiletBoostUntilMillis = 0;
     double cancer = 0.0;
     double burnPerSecond = 0.0;
@@ -291,6 +292,8 @@ struct Afflictions {
     double poisonPerSecond = 0;
     double poisonUntilMillis = 0;
     Entity poisonSource = NULL_ENTITY;
+    // The scalar slot otherwise holds ordinary poison, even if it has no source.
+    bool uraniumSelfPoison = false;
 
     /// Concurrent per-source poison. A refresh from a source already in the
     /// list REPLACES both fields when the new bite outlasts the live one, so a
@@ -309,6 +312,10 @@ struct Afflictions {
 
     double slowFactor = 1.0;      ///< multiplies speed; 1 = unaffected
     double slowUntilMillis = 0;
+    // Short hard freezes must not inherit an ordinary slow's longer expiry.
+    double freezeFactor = 1.0;
+    double freezeUntilMillis = 0;
+    double freezeSpeed(double now) const { return now < freezeUntilMillis ? freezeFactor : 1.0; }
 
     /// A MOB's web holding a flower. gardn's web halves the speed of anything
     /// on the other side that walks into it, flowers included, where the slow
@@ -419,6 +426,7 @@ struct Unrevivable {
 /// exponentially as gardn's does (CombatSystem::tickShieldDecay).
 struct ShieldState {
     double amount = 0;
+    bool gainedPassiveShieldThisTick = false;
 
     bool active() const { return amount > 0.0; }
 };
@@ -478,6 +486,15 @@ struct SpongeDamageState {
     std::vector<SpongeDamageEffect> effects;
 };
 
+// Blood cells released by a wild stem cell are encounter adds, with no separate payout.
+struct StemCellOffspring {};
+
+struct StemCellBrood {
+    int whiteSpawned = 0;
+    int whiteEarned = 0;
+    bool redReleased = false;
+};
+
 /// Marks a wild mob for subdivision, or identifies a copy created by subdivision.
 struct CancerSubdivision {
     bool spawnedCopy = false;
@@ -502,30 +519,33 @@ struct InheritedLootClaims {
 /// LootClaim is. A flower is destroyed and rebuilt on every death (and on a
 /// leave to the title screen that rejoins the map), so an entity-only ledger
 /// would throw away damage the moment the player respawned. The connection is
-/// stable across that; a full reconnect is a new session and forfeits, as
-/// drops already do. Zero owner is a bot / harness, keyed by body alone.
+/// stable across that. A wild high-tier boss can also retain a verified
+/// account key until it dies. Already-spawned drops still use connection keys.
+/// Zero owner is a bot / harness, keyed by body alone.
 struct Bounty {
     double xp = 0;
     struct Share {
         Entity player = NULL_ENTITY;
         net::ConnectionId owner = 0;
         double damage = 0;
+        std::string accountId;
     };
     std::vector<Share> contributors;
 
-    void credit(Entity player, double damage, net::ConnectionId owner = 0) {
-        for (Share& s : contributors) {
-            if (owner != 0 && s.owner == owner) {
-                s.player = player;
-                s.damage += damage;
-                return;
-            }
-            if (owner == 0 && s.owner == 0 && s.player == player) {
-                s.damage += damage;
-                return;
-            }
+    void credit(Entity player, double damage, net::ConnectionId owner = 0,
+                std::string_view accountId = {}) {
+        for (Share& share : contributors) {
+            const bool same = accountId.empty()
+                ? share.accountId.empty() && (owner != 0 ? share.owner == owner
+                                                        : share.owner == 0 && share.player == player)
+                : share.accountId == accountId;
+            if (!same) continue;
+            share.player = player;
+            share.owner = owner;
+            share.damage += damage;
+            return;
         }
-        contributors.push_back({player, owner, damage});
+        contributors.push_back({player, owner, damage, std::string(accountId)});
     }
 };
 
@@ -602,7 +622,13 @@ struct PlayerSkillTree {
 /// the score is the XP it has earned since it walked in, plus whatever a
 /// flower it killed had built up (src/server/playerManager.ts:929,
 /// src/server/playerState.ts:1354). It is what the arena leaderboard ranks.
-struct RiftPlayer {};
+struct RiftPlayer {
+    double portalProtectedUntilMillis = 0.0;
+
+    bool portalProtected(double nowMillis) const {
+        return nowMillis < portalProtectedUntilMillis;
+    }
+};
 
 struct ArenaScore {
     double score = 0;
@@ -689,6 +715,7 @@ struct PlayerModifiers {
     /// NO petal damage modifier at all, so collapsing the two costs a fully
     /// talented ring roughly two and a half times its damage.
     double petalDamageScale = 1.0;
+    double spillDamageScale = 1.0;
     double jurassicDirectDamageScale = 1.0;
     std::array<double, kLadderRarityCount> magicBoneDamageBonus{};
     double amberPetalReduction = 0.0;
@@ -699,6 +726,8 @@ struct PlayerModifiers {
     double summonDamageScale = 1.0;
     double fireResistance = 0.0;
     double spillRadiusScale = 1.0;
+    double radiationRadiusScale = 1.0;
+    double radiationDamageScale = 1.0;
     double missileSpeedScale = 1.0;
     int homingMissileMaxTier = -1;
     std::array<std::uint8_t, kRarityCount> eggMutationSources{};
@@ -786,6 +815,7 @@ struct PlayerModifiers {
     /// BELOW that tier walk to its pointer (MobAiSystem::steerPet).
     bool controlsPets = false;
     Rarity petControlRarity = Rarity::Common;
+    int coordinateControlTier = -1; ///< Inclusive Coordinate tier, or -1 without it.
 };
 
 /// What a player's replication is cut to. Which space the player is in is
@@ -1255,6 +1285,7 @@ struct PetalInstance {
     double chromosomeShield = 0.0;
     double chromosomeShieldUntilMillis = 0.0;
     bool magicToothManaRefunded = false;
+    bool magicTomatoRipe = false;
     // A placed Dark Mark stays over its corpse while it charges. Ordinary
     // petal replication carries its position; no message layout changes.
     Entity markTarget = NULL_ENTITY;
@@ -1325,6 +1356,8 @@ struct PetalInstance {
     /// means an idle ring does not spend a shot cooldown, and an aura on the
     /// same petal cannot delay its projectile.
     double nextProjectileMillis = 0;
+    // Biological Electron Missile begins preparing on the first ready attack.
+    double projectilePreparationStartedMillis = -1;
     double spawnedAtMillis = 0;
     /// Sub-tick reload time carried forward only by an immediate lightning strike.
     double lightningReloadCarryMillis = 0;
@@ -1341,6 +1374,9 @@ struct PetalInstance {
     double homingSinceMillis = 0;
     /// Next time this petal may heal, emit a field, or maintain summons.
     double nextActionMillis = 0;
+    // Unmodified interval of the scheduled secondary action. Talent changes
+    // affect the remaining wait without resetting or advancing primary reload.
+    double nextActionIntervalMillis = 0;
 
     /// Ring physics. The petal is carried toward its orbit point by gardn's
     /// step (kPetalFriction) rather than pinned to it, so `Transform::position`
@@ -1592,7 +1628,9 @@ enum class GroundEffectKind : std::uint8_t {
     NitrogenSpill = 20,
 };
 inline bool isFluidField(GroundEffectKind kind) {
-    return (kind>=GroundEffectKind::AcidSpill && kind<=GroundEffectKind::ElixirSpill) || kind==GroundEffectKind::LatrineSpill || kind==GroundEffectKind::NitrogenSpill;
+    return kind == GroundEffectKind::Blood ||
+           (kind >= GroundEffectKind::AcidSpill && kind <= GroundEffectKind::ElixirSpill) ||
+           kind == GroundEffectKind::LatrineSpill || kind == GroundEffectKind::NitrogenSpill;
 }
 
 
@@ -1749,12 +1787,20 @@ struct GroundEffect {
     /// Uranium poisons its wearer as well: `owner` at this rate, for
     /// poisonDurationMillis, every tick the field stands, anywhere in its realm.
     double ownerPoisonPerSecond = 0;
+    bool uraniumSelfPoison = false;
     double slowDurationMillis = 0;
     double activatesAtMillis = 0;
     bool showExplosion = false;
     double burnDamage = 0;
     double armorReduction = 0;
     double burnPerSecond = 0.0;
+    // Server-authoritative spreading. Zero target leaves non-fluid fields unchanged.
+    double spreadTargetRadius = 0.0;
+    double spreadAgeSeconds = 0.0;
+    Vec2 spillDrift{};
+    // External white-hole acceleration; separate from the brief release drift.
+    Vec2 spillGravityVelocity{};
+
 };
 
 struct Burn {
@@ -1814,6 +1860,7 @@ FLIX_COMPONENT(flix::PetalTag);
 FLIX_COMPONENT(flix::ProjectileTag);
 FLIX_COMPONENT(flix::DropTag);
 FLIX_COMPONENT(flix::GroundEffectTag);
+FLIX_COMPONENT(flix::FireBombField);
 FLIX_COMPONENT(flix::NpcTag);
 FLIX_COMPONENT(flix::Npc);
 FLIX_COMPONENT(flix::Dead);
@@ -1839,6 +1886,8 @@ FLIX_COMPONENT(flix::RisesUndead);
 FLIX_COMPONENT(flix::Bounty);
 FLIX_COMPONENT(flix::InheritedLootClaims);
 FLIX_COMPONENT(flix::CancerSubdivision);
+FLIX_COMPONENT(flix::StemCellBrood);
+FLIX_COMPONENT(flix::StemCellOffspring);
 FLIX_COMPONENT(flix::Loadout);
 FLIX_COMPONENT(flix::PetalRing);
 FLIX_COMPONENT(flix::PlayerInput);

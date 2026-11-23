@@ -562,8 +562,11 @@ void MovementSystem::movePlayers(World& world, const Terrain& terrain,
         // keeps full speed. The one thing that does slow a flower is a MOB's
         // web, which is gardn's (speed_ratio 0.5 while the two overlap) and has
         // a field of its own.
+        const auto* burrow = world.tryGet<BurrowState>(e);
+        const bool underground = burrow && burrow->active && nowMillis < burrow->untilMillis;
         if (const Afflictions* afflictions = world.tryGet<Afflictions>(e)) {
-            const double web = afflictions->webbed(nowMillis) ? afflictions->webbedFactor : 1.0;
+            const double web = !underground && afflictions->webbed(nowMillis)
+                ? afflictions->webbedFactor : 1.0;
             maxSpeed *= std::min(clamp(web, 0.0, 1.0), afflictions->frostSpeed(nowMillis));
         }
         if (terrain.inWater(transform.position, transform.realm)) maxSpeed *= kWaterSpeedScale;
@@ -606,8 +609,6 @@ void MovementSystem::movePlayers(World& world, const Terrain& terrain,
         // often enough that without it, diagonal seams are passable.
         const StepOutcome movement = stepCollide(terrain, transform.realm, transform.position, velocity, body.radius, dt, true,
                     true);
-        const auto* burrow = world.tryGet<BurrowState>(e);
-        const bool underground = burrow && burrow->active && nowMillis < burrow->untilMillis;
         // Loose petals are on the surface. A burrowed flower cannot shove them
         // or be pushed aside by them, just as with surface mobs.
         if (!underground && !looseDiscs_.empty()) shoveLooseBodies(terrain, transform, body);

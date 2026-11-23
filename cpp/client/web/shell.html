@@ -41,6 +41,30 @@
             -webkit-user-select: none;
             -webkit-touch-callout: none;
         }
+        #ashflor-shop-link,#ashflor-petal-redeem-link {position:fixed;z-index:5;border:0;padding:0;color:transparent;background:transparent;font-size:0;cursor:pointer;touch-action:manipulation;}
+        #ashflor-shop-link:focus-visible,#ashflor-petal-redeem-link:focus-visible {outline:3px solid #fff;outline-offset:1px;}
+        #game-agreement {width:min(620px,calc(100% - 24px));max-height:calc(100dvh - 24px);
+            margin:auto;padding:0;overflow:hidden;color:#ecfff0;background:#183b2a;
+            border:3px solid #78ba83;border-radius:14px;}
+        #game-agreement::backdrop {background:#081a13dc;}
+        #game-agreement form {display:flex;flex-direction:column;max-height:calc(100dvh - 30px);}
+        #game-agreement header,#game-agreement footer {padding:12px 16px;}
+        #game-agreement header {background:#23553a;}
+        #game-agreement h2 {font-size:1.35rem;}
+        #game-agreement article {overflow:auto;overscroll-behavior:contain;padding:8px 16px;
+            font-size:1rem;line-height:1.55;font-weight:400;}
+        #game-agreement article h3 {font-size:1rem;margin-top:8px;}
+        #game-agreement article p {margin:3px 0 9px;}
+        #game-agreement footer {background:#23553a;}
+        #game-agreement label {display:flex;align-items:center;gap:9px;min-height:44px;}
+        #game-agreement label[hidden] {display:none;}
+        #game-agreement input {width:20px;height:20px;flex:none;}
+        #game-agreement button {width:100%;min-height:42px;padding:6px;border:2px solid #397647;
+            border-radius:7px;font:inherit;color:#09200e;background:#90db77;cursor:pointer;}
+        #game-agreement footer .agreement-actions {display:flex;gap:8px;}
+        #game-agreement footer .agreement-actions button {flex:1;}
+        #game-agreement button[type=button] {background:#2c6242;color:#ecfff0;border-color:#437c51;}
+        #game-agreement button:disabled {opacity:.5;cursor:default;}
         #lobby-links {position:fixed;z-index:6;display:flex;gap:6px;}
         #lobby-links[hidden] {display:none;}
         #lobby-links > * {display:flex;align-items:center;justify-content:center;
@@ -173,6 +197,12 @@
         .server-notice-header h2 {color:#fff;font-size:20px;-webkit-text-stroke-width:2.6px;}
         #server-notice-countdown {display:block;font-size:12px;font-weight:normal;-webkit-text-stroke:0;color:#122c48;}
         .server-notice-body {padding:0 14px 14px;}
+        #serverNotice .server-notice-highlight {
+            margin:0 0 6px;padding:7px 10px;border:2px solid #846530;border-radius:5px;
+            background:#47361d;color:#fff4ce;font-size:14px;font-weight:700;line-height:1.35;
+        }
+        #serverNotice .server-notice-highlight strong {color:#ffd776;}
+
         #serverNotice p {margin:8px 0;}
         #serverNotice .transfer-guide-trigger {
             box-sizing:border-box;width:100%;min-height:44px;margin:5px 0;
@@ -302,7 +332,9 @@
           <strong>AshFlor 官方入口</strong>
           <a href="https://ashflor.com/">https://ashflor.com/</a>
         </div>
+        <p class="server-notice-highlight"><strong>榜一</strong> · deny</p>
         <a href="/workshop.html">地图工坊</a>
+        <button type="button" id="read-game-agreement" class="transfer-guide-trigger">服务条款</button>
         <details id="secure-transfer-entries" hidden>
           <summary class="transfer-guide-trigger">自助转服安全入口</summary>
           <p><strong>仅支持一服、二服、三服互迁。</strong></p>
@@ -317,11 +349,12 @@
         <button type="button" id="open-account-transfer" class="transfer-guide-trigger" hidden>自助转服</button>
         <form id="account-transfer" hidden>
           <p><strong>仅支持一服、二服、三服互迁。</strong></p>
-          <p>每次转服都要在目标服创建新账号，返回旧服时也一样。同一角色同时只能办理一笔。角色等级、普通库存、配装、天赋、星星和共用兑换记录随迁。Apex 等已拥有的普通花瓣实物随迁。持有独占锻造名额时，请联系管理员核对后转服。原服账号将在迁入成功后归档注销。QQ 绑定、公会、议会记录和皮肤不随迁。</p>
+          <p>每次转服都要在目标服创建新账号，返回旧服时也一样。同一角色同时只能办理一笔。角色等级、普通库存、配装、天赋、星星和共用兑换记录随迁。Apex 等已拥有的普通花瓣实物随迁。原服账号将在迁入成功后归档注销。QQ 绑定、公会、议会记录和皮肤不随迁。</p>
           <p><label>目标服 <select name="realm" required></select></label></p>
           <p><label>新账号 <input name="username" autocomplete="off" maxlength="32" required></label></p>
           <p><label>新密码 <input name="password" type="password" autocomplete="new-password" maxlength="72" required></label></p>
           <p><label><input type="checkbox" required> 我确认转服并注销原服账号</label></p>
+          <p><strong>如需解除原服锻造名额，系统会另外请你确认。</strong></p>
           <button type="submit">确认转服</button>
           <p role="status" aria-live="polite"></p>
           <a id="transfer-destination" hidden>前往目标服登录</a>
@@ -397,9 +430,126 @@
 })();
 // MOBILE_FULLSCREEN_END
     </script>
+    <dialog id="game-agreement" aria-labelledby="game-agreement-title">
+      <form>
+        <header>
+          <h2 id="game-agreement-title">AshFlor 服务条款</h2>
+          <small>版本 1.0</small>
+        </header>
+        <article tabindex="0">
+          <h3>账号与虚拟道具</h3>
+          <p>账号、花瓣、星星及卡密用于 AshFlor 游戏。永久超凡道具没有预设到期时间，其使用依赖游戏服务持续提供。请妥善保管账号、密码及兑换码。</p>
+          <h3>购买、兑换与售后</h3>
+          <p>请在下单前核对商品、数量及随机奖池说明。请通过链动小铺商品说明中的花瓣兑换网页登记领取。每张花瓣码可在一、二、三服任选其一兑换一次。兑换前请确认账号和区服。遇到未发码、有效码无法兑换或奖励未到账，请通过订单售后提交订单号和问题截图，遮住完整卡密。核实后按实际情况补发、修复或依法处理退款。</p>
+          <h3>维护与停止运营</h3>
+          <p>计划维护、迁服或停止运营时，我们会通过游戏公告说明影响范围和付费订单的处理方式。突发故障发生后，我们会在具备通知条件时尽快说明恢复进展。</p>
+          <h3>不可抗力及责任</h3>
+          <p>因依法认定的不可抗力导致服务无法履行时，按实际影响及法律规定处理责任，并及时通知玩家、采取合理措施减少损失。法律规定应当承担的责任及玩家依法享有的权利仍然适用。</p>
+          <h3>条款更新</h3>
+          <p>条款有重大变更时，游戏会展示新版条款并重新征求同意。</p>
+        </article>
+        <footer>
+          <label id="agree-game-label"><input type="checkbox" id="agree-game-terms" autocomplete="off">我已阅读并同意《AshFlor 服务条款》</label>
+          <div class="agreement-actions">
+            <button id="close-game-agreement" type="button">取消</button>
+            <button id="enter-after-agreement" type="submit" disabled>同意并打开链动小铺</button>
+          </div>
+        </footer>
+      </form>
+    </dialog>
     <canvas id="canvas" oncontextmenu="return false;"></canvas>
+    <button id="ashflor-shop-link" type="button" hidden data-store-url="https://wzyp.cn/shop/FZ7ZPILX">前往链动小铺获取花瓣</button>
+    <a id="ashflor-petal-redeem-link" hidden href="https://154.8.157.208/redeem/" target="_blank" rel="noopener noreferrer">花瓣兑换网站</a>
+    <script>
+(() => {
+  const dialog = document.getElementById('game-agreement');
+  const store = document.getElementById('ashflor-shop-link');
+  const checkbox = document.getElementById('agree-game-terms');
+  const submit = document.getElementById('enter-after-agreement');
+  const label = document.getElementById('agree-game-label');
+  const cancel = document.getElementById('close-game-agreement');
+  let openStore = false;
+  const open = forStore => {
+    if (dialog.open) return;
+    openStore = forStore;
+    checkbox.checked = false;
+    label.hidden = submit.hidden = !forStore;
+    submit.disabled = true;
+    cancel.textContent = forStore ? '取消' : '关闭';
+    dialog.showModal();
+  };
+  checkbox.addEventListener('change', () => { submit.disabled = !checkbox.checked; });
+  cancel.addEventListener('click', () => dialog.close());
+  dialog.querySelector('form').addEventListener('submit', event => {
+    event.preventDefault();
+    if (!openStore || !checkbox.checked) return;
+    try { localStorage.setItem('ashflor/store-agreement', '1.0'); } catch (_) {}
+    window.open(store.dataset.storeUrl, '_blank', 'noopener,noreferrer');
+    dialog.close();
+  });
+  store.addEventListener('click', () => open(true));
+  document.getElementById('read-game-agreement').addEventListener('click', () => {
+    document.getElementById('serverNotice').close();
+    open(false);
+  });
+})();
+    </script>
     <script>
 (function () {
+  // The WASM client reads this file from the current origin at startup.
+  const settingsKey = 'flowrix/session-settings';
+  const settingsFragment = '#flix-settings=';
+  const transferSettingKeys = new Set([
+    'names','healthBars','damageNumberUnit','damageNumbers','hitboxes','hideOtherPetals',
+    'hideOtherPets','hideOwnPets','disableUltraPetalParticles','simplifyCombatEffects',
+    'screenShake','chat','hudPanelsCollapsed','chatTabs','chatChannels','stats','exactValues',
+    'hideMobAnnouncements','hideCraftAnnouncements','petalRarityGlow','debugButton',
+    'adminsOnBoard','zoom','interp','renderScale','uiScale','desynchronized','mouseControls',
+    'movementHelper','invertAttack','invertDefend','classicLoadout','rotationStep',
+    'language','requestMobile','craftExclude'
+  ]);
+  const splitSettings = text => text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  const settingKey = line => line.split(/\s/, 1)[0];
+  const portableSettings = text => splitSettings(text).filter(line => {
+    const fields = line.split(/\s+/);
+    if (fields.length !== 2) return false;
+    const [key,value] = fields;
+    if (!transferSettingKeys.has(key) && !/^(?:key|ctl)\.\d{1,2}$/.test(key)) return false;
+    if (key === 'language') return /^(zh|en)$/.test(value);
+    if (key === 'craftExclude') return /^[a-z0-9_]{1,64}$/.test(value);
+    return /^-?\d{1,10}(?:\.\d{1,10})?$/.test(value) && Math.abs(Number(value)) <= 2147483647;
+  });
+  const readTransferSettings = () => {
+    try {
+      const stored = localStorage.getItem(settingsKey);
+      if (!stored || stored.length > 131072) return '';
+      const rows = portableSettings(atob(stored));
+      const data = btoa(rows.join('\n'));
+      return data.length <= 4096 ? data : '';
+    } catch (_) { return ''; }
+  };
+  const destinationWithSettings = (href, data) => {
+    if (!data) return href;
+    const url = new URL(href);
+    url.hash = 'flix-settings=' + data;
+    return url.href;
+  };
+  if (location.hash.startsWith(settingsFragment)) {
+    const data = location.hash.slice(settingsFragment.length);
+    try {
+      history.replaceState(history.state, '', location.pathname + location.search);
+      if (data.length <= 4096 && /^[A-Za-z0-9+/=]+$/.test(data)) {
+        const rows = portableSettings(atob(data));
+        if (rows.length) {
+          const keys = new Set(rows.map(settingKey));
+          const stored = localStorage.getItem(settingsKey);
+          const prior = stored && stored.length <= 131072 ? splitSettings(atob(stored)) : [];
+          const retained = prior.filter(line => !keys.has(settingKey(line)));
+          localStorage.setItem(settingsKey,btoa([...retained,...rows].join('\n')+'\n'));
+        }
+      }
+    } catch (_) {} // Storage is optional. Continue loading the game normally.
+  }
   const query = new URLSearchParams(location.search);
   const status = document.getElementById('loadingScreen');
   const canvas = document.getElementById('canvas');
@@ -569,7 +719,7 @@
               const token = readToken();
               if (/^[a-f0-9]{64}$/.test(token)) portalWindow.postMessage({
                 type:'ashflor-transfer-session',realm:source.dataset.transferRealm,
-                challenge:message.data.challenge,token
+                challenge:message.data.challenge,token,settings:readTransferSettings()
               },portalUrl.origin);
             };
             const cleanup = () => {
@@ -598,7 +748,7 @@
       login_required:'请先登录原服账号，再打开服务器指引。',
       ineligible_account:'这个账号无法自助转服。',
       transfer_unavailable:'这个角色当前不可发起新转服，请继续原申请。',
-      transfer_forge_review:'原服仍持有锻造名额，请联系管理员核对后转服。',
+      transfer_forge_review:'原服仍持有锻造名额，请刷新页面并确认解除规则后转服。',
       no_character:'这个账号还没有可转服的角色。',
       character_too_large:'该角色的存档过大，请联系管理员。',
       transfer_capacity:'转服服务当前已达容量上限，请稍后再试。',
@@ -678,12 +828,23 @@
       submit.disabled = true;
       status.textContent = '正在办理转服。';
       try {
-        const response = await fetch(endpoint, {method:'POST',cache:'no-store',
+        const requestTransfer = async () => (await fetch(endpoint, {method:'POST',cache:'no-store',
           headers:{'Content-Type':'application/json',Authorization:'Bearer '+token()},
-          body:JSON.stringify({...pending,password:password.value})});
-        const result = await response.json();
+          body:JSON.stringify({...pending,password:password.value})})).json();
+        let result = await requestTransfer();
+        if (result.error === 'transfer_forge_review' && !pending.releaseForgeClaims) {
+          if (window.confirm('原服的独占锻造名额会解除，对应花瓣会永久销毁，材料不退。确定继续转服吗？')) {
+            pending.releaseForgeClaims = true;
+            localStorage.setItem(key,JSON.stringify(pending));
+            result = await requestTransfer();
+          } else result = {error:'cancelled'};
+        }
         if (result.ok) {
-          destination.href = targets[pending.realm];
+          const preferences = readTransferSettings();
+          const gameEntry = Array.from(serverNotice.querySelectorAll('[data-transfer-realm]'))
+            .find(link => link.dataset.transferRealm === pending.realm);
+          destination.href = preferences && gameEntry
+            ? destinationWithSettings(gameEntry.href,preferences) : targets[pending.realm];
           destination.hidden = false;
           status.textContent = '已转服。请使用新账号和最初设置的密码登录目标服。';
           password.value = '';

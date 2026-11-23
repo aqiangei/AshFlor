@@ -188,6 +188,7 @@ enum Toggle : int {
     kInvertDefend,
     kHideOtherPetals,
     kHideOtherPets,
+    kHideOutsideSquad,
     kHideOwnPets,
     kDesynchronizedCanvas,
     kScreenShake,
@@ -308,6 +309,7 @@ bool* toggleValue(PanelState& st, ClientSettings& settings, int id) {
         case kInvertDefend: return &settings.invertDefend;
         case kHideOtherPetals: return &settings.render.hideOtherPetals;
         case kHideOtherPets: return &settings.render.hideOtherPets;
+        case kHideOutsideSquad: return &settings.hideOutsideSquad;
         case kHideOwnPets: return &settings.render.hideOwnPets;
         case kHideMobAnnouncements: return &settings.hideMobAnnouncements;
         case kHideCraftAnnouncements: return &settings.hideCraftAnnouncements;
@@ -812,6 +814,8 @@ bool SettingsPanel::render(MenuContext& ctx) {
                 p.cy += kRowStride;
             }
             p.checkbox(kHideOtherPets, tr(Msg::HideOtherPets));
+            p.checkbox(kHideOutsideSquad, trEnZh("Hide Petals and Summons Outside Your Squad",
+                                                 "隐藏队外玩家的花瓣和召唤物"));
             p.checkbox(kHideOwnPets, trEnZh("Hide Own Summons", "隐藏自己的召唤物"));
             p.checkbox(kScreenShake, tr(Msg::ScreenShake));
             p.checkbox(kShowStats, tr(Msg::ShowStats));

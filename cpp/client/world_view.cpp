@@ -230,7 +230,17 @@ bool WorldView::applyBossDamage(ByteReader& reader) {
             auto name = reader.str();
             const double damage = reader.f64();
             if (!reader.ok() || !std::isfinite(damage) || damage <= 0) return false;
-            rank.push_back({std::move(name), damage});
+            rank.rows.push_back({std::move(name), damage});
+        }
+        rank.ownRank = reader.varU32();
+        if (rank.ownRank == net::kBossDamageOwnUnavailable) continue;
+        if (rank.ownRank > rows) {
+            if (rows != net::kBossDamageRows) return false;
+            rank.ownDamage = reader.f64();
+            if (!reader.ok() || !std::isfinite(rank.ownDamage) || rank.ownDamage <= 0)
+                return false;
+        } else if (rank.ownRank != 0) {
+            rank.ownDamage = rank.rows[rank.ownRank - 1].damage;
         }
     }
     if (!reader.ok() || reader.remaining() != 0) return false;

@@ -779,6 +779,7 @@ bool ClientSettings::load(const std::string& path) {
         else if (key == "hideOtherPetals") render.hideOtherPetals = number != 0;
         else if (key == "hideOtherPets") render.hideOtherPets = number != 0;
         else if (key == "hideOwnPets") render.hideOwnPets = number != 0;
+        else if (key == "hideOutsideSquad") hideOutsideSquad = number != 0;
         else if (key == "disableUltraPetalParticles") render.disableUltraPetalParticles = number != 0;
         else if (key == "simplifyCombatEffects") render.simplifyCombatEffects = number != 0;
         else if (key == "screenShake") render.screenShake = number != 0;
@@ -888,6 +889,7 @@ bool ClientSettings::save(const std::string& path) const {
          << "hideOtherPetals " << (render.hideOtherPetals ? 1 : 0) << '\n'
          << "hideOtherPets " << (render.hideOtherPets ? 1 : 0) << '\n'
          << "hideOwnPets " << (render.hideOwnPets ? 1 : 0) << '\n'
+         << "hideOutsideSquad " << (hideOutsideSquad ? 1 : 0) << '\n'
          << "disableUltraPetalParticles " << (render.disableUltraPetalParticles ? 1 : 0) << '\n'
          << "simplifyCombatEffects " << (render.simplifyCombatEffects ? 1 : 0) << '\n'
          << "screenShake " << (render.screenShake ? 1 : 0) << '\n'
@@ -1182,7 +1184,7 @@ bool MenuSystem::handleKeys(Window& window, NetClient& net) {
         if (net.status() == NetClient::Status::Playing && !net.dead() &&
             boundPressed(settings_.controlKey(ControlAction::ThisRun))) {
             if (open_ != MenuId::Inventory) toggle(MenuId::Inventory);
-            inventory_.openRunLoot(net, drag_);
+            inventory_.openRunLoot(drag_);
             return true;
         }
     }
@@ -2446,6 +2448,7 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
         const double x = clamp(anchor.x + (anchor.w - width) * 0.5,
                                gap, canvas.width() - gap - width);
         const double y = barTop - gap - size.y * scale;
+        loadoutTooltipRect_ = {x, y, width, size.y * scale};
         canvas.save();
         canvas.translate(static_cast<float>(x), static_cast<float>(y));
         canvas.scale(static_cast<float>(scale), static_cast<float>(scale));
@@ -3344,6 +3347,7 @@ MenuSystem::OpCounts MenuSystem::takeOpCounts() {
 void MenuSystem::render(Canvas& canvas, Window& window, NetClient& net, const SpriteCache& sprites,
                         const WorldRenderer& renderer, double timeSeconds, double dt,
                         const OverlayFn& overStripUnderBar) {
+    loadoutTooltipRect_ = {};
     crafting_.update(net, timeSeconds);
     const bool enterDungeon=pendingDungeonEntry_;pendingDungeonEntry_=false;
     wantsText_ = false;

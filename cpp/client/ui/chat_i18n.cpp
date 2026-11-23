@@ -815,6 +815,8 @@ std::string localizeMarkupAware(std::string text) {
 
 std::string localizeChatText(std::string text) {
     if (!zh() || text.empty()) return text;
+    if (text == "This entrance has no Prestige map. Switch to Ordinary or choose another entrance.")
+        return "这个入口没有声望地图。请切换到普通，或选择其他入口。";
     for (const auto& pair : {Pair{"crafted x", "合成 ×"}, Pair{"forged x", "锻造 ×"}, Pair{"consumed x", "消耗 ×"}}) {
         std::size_t at = 0;
         while ((at = text.find(pair.en, at)) != std::string::npos) {

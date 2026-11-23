@@ -956,12 +956,25 @@ void App::drawLobby(Canvas& canvas, double time) {
     TextStyle label;
     label.size = 18.0;
     label.align = Align::Centre;
+    const auto& skills = net_.profile().skills;
+    const char* spawnLabel = tr(Msg::SpawnAt);
     if (prestigeOn()) {
         label.fill = kPrestigeYellow;
-        text(canvas, tr(Msg::SpawnAtPrestige), centreX, centreY - 64.0, label);
-    } else {
-        text(canvas, tr(Msg::SpawnAt), centreX, centreY - 64.0, label);
+        const int rank = skills.level(SkillId::Prestige) + 1;
+        bool available = true;
+        if (const auto* door = worldMaps_.choice(menus_.settings().spawnChoice)) {
+            worldMaps_.prestigeRealm(door->realm, available, rank);
+        }
+        if (!available) {
+            spawnLabel = trEnZh("No Prestige map for this entrance", "这个入口没有声望地图");
+        } else {
+            spawnLabel = rank == 2 ? trEnZh("Spawn At (Prestige II):", "出生点（声望 II）：")
+                                   : trEnZh("Spawn At (Prestige I):", "出生点（声望 I）：");
+        }
+    } else if (skills.prestigeUnlocked()) {
+        spawnLabel = trEnZh("Spawn At (Ordinary):", "出生点（普通）：");
     }
+    text(canvas, spawnLabel, centreX, centreY - 64.0, label);
 
     // The picker: a row of biome tabs, and under it the doors of the open
     // tab. The chosen one in each row is drawn darker with a heavier

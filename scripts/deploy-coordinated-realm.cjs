@@ -108,6 +108,7 @@ function installNginx(localFile, backupFile) {
       '; nginx -t && systemctl reload nginx; exit 1; }; }');
 }
 const {renderLiveFrontend}=require('./live-frontend.cjs');
+const {mustKeepNewestSave}=require('./coordinated-rollback-boundary.cjs');
 async function main(){
   const announcements=require("./deploy-coordinated-announcement.cjs");
   const noticeConfig=announcements.readConfig(process.env.FLORR_DEPLOY_ADMIN_FILE);
@@ -210,9 +211,8 @@ async function main(){
     // Publish this release's Chinese notes before enabling maintenance.
     const notes=JSON.parse(fs.readFileSync(process.env.FLORR_RELEASE_NOTES_FILE||path.join(__dirname,'release-notes.json'),'utf8'));
     assert(Array.isArray(notes.changes)&&notes.changes.length>0,'Release notes are required');
-    const escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-    const html=fs.readFileSync(path.join(__dirname,'maintenance.html'),'utf8').replace('<!-- RELEASE_NOTES -->',
-      '<section style="text-align:left;font-size:14px"><h2>'+escape(notes.title)+'</h2><ul>'+notes.changes.map(t=>'<li>'+escape(t)+'</li>').join('')+'</ul></section>');
+    const {renderMaintenance,escape}=require('./maintenance-page.cjs');
+    const html=renderMaintenance(fs.readFileSync(path.join(__dirname,'maintenance.html'),'utf8'),notes);
     const waitingFile=path.join(local,'maintenance.html');fs.writeFileSync(waitingFile,html);
     scp(waitingFile,host+':'+maintenance+'/maintenance.next.html');
     ssh('chmod 644 '+q(maintenance+'/maintenance.next.html')+' && mv '+q(maintenance+'/maintenance.next.html')+' '+q(maintenance+'/maintenance.html'));
@@ -220,7 +220,10 @@ async function main(){
     const frontendSha=crypto.createHash('sha256').update(frontendBefore).digest('hex');
     const mirrorWasmSha256=process.env.FLORR_THIRD_WASM_BIN_SHA256;
     fs.writeFileSync(path.join(local,'nginx-client-assets.conf'),
-        renderLiveFrontend(frontendBefore,{role,old,release,assetHashes,mirrorWasmSha256}));
+        renderLiveFrontend(frontendBefore,{role,old,release,assetHashes,mirrorWasmSha256,
+          retiringFrontend:process.env.FLORR_RETIRING_FRONTEND,
+          retiringIndexRoot:process.env.FLORR_RETIRING_INDEX_ROOT,
+          retiringAssetHashes:JSON.parse(process.env.FLORR_RETIRING_ASSET_HASHES || 'null')}));
     // Announce while players are still connected, before the maintenance gate.
     // Only an echoed Admin-channel broadcast counts as delivery confirmation.
     assert(!bootstrap && preserveSave,'Coordinated maintenance requires standard announcements and save preservation');
@@ -290,7 +293,7 @@ async function main(){
     archiveProof=localArchives;
     const metadata={timestamp:stamp,previousRelease:old,nextRelease:release,sha256:hash,
       accounts:Object.keys(before.players||{}).length,remoteBackup:remote,transferArchives:archiveProof,...(saved&&{finalSave:saved})};
-    fs.writeFileSync(path.join(local,'backup-metadata.json'),JSON.stringify(metadata,null,2));
+    fs.writeFileSync(path.join(local,'backup-metadata.json'),JSON.stringify(metadata,null,2),{flush:true});
     console.log('已验证本地最新存档备份：'+path.join(local,'inventory.json'));
     const transfer=await barrier('backup',{directory:local,sha256:hash,transferArchives:archiveProof,
       gatedAt:bonusGatedAt,stoppedAt:bonusStoppedAt,stopConfirmedAt:bonusConfirmedStoppedAt});
@@ -408,9 +411,10 @@ async function main(){
     }
     assert.equal(next,path.join(local,'inventory.json'),'Unexpected concurrent save operation');
     assert.equal(transfer.sourceSHA256,hash,'Migration source does not match this stopped save');
-    next=path.join(coordinated,role+'-candidate.json');
-    assert.equal(crypto.createHash('sha256').update(fs.readFileSync(next)).digest('hex'),transfer.candidateSHA256);
-    report.accountMigration=true;
+    const verifiedCandidate=path.join(coordinated,role+'-candidate.json');
+    assert.equal(crypto.createHash('sha256').update(fs.readFileSync(verifiedCandidate)).digest('hex'),transfer.candidateSHA256);
+    assert.equal(transfer.candidateSHA256, hash, 'This release requires the exact stopped save');
+    report.preservedStoppedSave=true;
     if (preserveSave && next === path.join(local,'inventory.json')) {
       ssh('cp '+q(remote+'/inventory.json')+' '+q(remote+'/inventory.next.json')+
           ' && printf "%s\\n" '+q(hash+'  '+remote+'/inventory.next.json')+' | sha256sum -c --status');
@@ -519,6 +523,8 @@ async function main(){
         /\bname\s*=\s*["']?florr-client-assets(?=["'\s>])/i.test(item));
       const meta=tag?.match(/\bcontent\s*=\s*["']?([A-Za-z0-9_-]+)/i);
       assert(meta && /data:image\/svg\+xml;base64,/.test(html),'Loaded homepage is missing asset routing or background');
+      assert(html.includes('id=ashflor-shop-link') && html.includes('同意并打开链动小铺') &&
+        html.includes('/server-guide-live.js'), 'Loaded homepage is missing the store agreement or independent guide');
       const routing=JSON.parse(Buffer.from(meta[1],'base64url').toString());
       for(const file of clientAssets.assetNames)
         assert.equal(routing.assets[file],clientAssets.cacheAssetPath(file,assetHashes),'Loaded homepage references a different '+file);
@@ -538,7 +544,7 @@ async function main(){
     const abort=fs.existsSync(path.join(coordinated,'abort'));
     // Once we have told the parent installation succeeded, a local timeout
     // is not permission to restore if the parent has yet to decide.
-    if(mayHaveOpened||commit||(engaged&&!abort)){
+    if(mustKeepNewestSave({mayHaveOpened,commit,engaged,abort})){
       // Players may already have earned progress: never restore the pre-cutover
       // save after reopening. Keep this verified backend and close the gate for
       // diagnosis if the final public probe fails.

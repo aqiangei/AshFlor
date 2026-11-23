@@ -223,3 +223,45 @@ TEST(ring_speed_still_cannot_pull_a_drop_through_a_wall) {
   CHECK(r.loot.pickups().empty());
  }
 }
+
+TEST(zorr_completion_apex_magnet_picks_up_further_and_keeps_its_defence_bonus) {
+    for (const auto rarity : {Rarity::PermanentHyper, Rarity::Ascendant}) {
+        RingWorld r;
+        r.equip(0, "magnet", rarity);
+        r.tickPetals(0);
+        r.tickPetals(7000);
+        const bool apex = rarity == Rarity::Ascendant;
+        const double expected = apex ? 1650.0 : 1500.0;
+        const auto id = r.c.petalIndex("magnet");
+        CHECK_NEAR(r.c.petalStats(id, rarity).modifiers.magnetism, expected, 1e-8);
+        CHECK_NEAR(r.w.get<PlayerModifiers>(r.player).magnetism, expected, 1e-8);
+        const double base = 2.0 * r.w.get<Body>(r.player).radius;
+        r.drop({5000.0 + base + 1575.0, 5000.0});
+        r.tickLoot(7050);
+        CHECK_EQ(r.loot.pickups().size(), apex ? std::size_t{1} : std::size_t{0});
+        r.w.get<PlayerInput>(r.player).current.flags = net::InputDefend;
+        r.tickPetals(7100);
+        CHECK_NEAR(r.w.get<PlayerModifiers>(r.player).magnetism, expected * 1.12, 1e-8);
+    }
+}
+
+TEST(zorr_completion_apex_ring_magnet_pulls_loot_from_beyond_ph_range) {
+    for (const auto rarity : {Rarity::PermanentHyper, Rarity::Ascendant}) {
+        RingWorld r;
+        r.equip(0, "ring_magnet", rarity);
+        r.tickPetals(0);
+        r.tickPetals(7000);
+        const bool apex = rarity == Rarity::Ascendant;
+        const double expected = apex ? 3190.0 : 2900.0;
+        const auto id = r.c.petalIndex("ring_magnet");
+        CHECK_NEAR(r.c.petalStats(id, rarity).modifiers.magnetism, expected, 1e-8);
+        CHECK_NEAR(r.w.get<PlayerModifiers>(r.player).ringMagnetism, expected, 1e-8);
+        CHECK_NEAR(r.w.get<PlayerModifiers>(r.player).magnetism, 0.0, 1e-8);
+        const double at = 8000.0;
+        const auto drop = r.drop({at, 5000.0});
+        r.tickLoot(7050);
+        const double moved = apex ? expected / 2.5 * net::kTickSeconds : 0.0;
+        CHECK_NEAR(r.w.get<Transform>(drop).position.x, at - moved, 1e-6);
+        CHECK(r.loot.pickups().empty());
+    }
+}

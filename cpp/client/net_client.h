@@ -1174,9 +1174,12 @@ public:
         std::uint32_t count;
     };
     const auto& runKillsOverview() const { return runKillsOverview_; }
-    void requestRunLoot() {
-        runLootOverview_.reset();
-        runKillsOverview_.reset();
+    std::uint32_t runStatsRevision() const { return runStatsRevision_; }
+    void requestRunLoot(bool clearPrevious = true) {
+        if (clearPrevious) {
+            runLootOverview_.reset();
+            runKillsOverview_.reset();
+        }
         sendChat("/run-loot");
     }
 
@@ -1402,6 +1405,7 @@ private:
     static std::optional<std::vector<Profile::Stack>> readRunLoot(ByteReader&);
     std::vector<Profile::Stack> runLoot_;
     std::optional<std::vector<Profile::Stack>> runLootOverview_;
+    std::uint32_t runStatsRevision_ = 0;
     std::optional<std::vector<RunKill>> runKillsOverview_;
     /// See joinPending().
     bool joinPending_ = false;

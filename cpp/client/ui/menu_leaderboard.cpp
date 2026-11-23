@@ -118,6 +118,8 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
 
     const std::vector<LeaderboardRow>& rows = playtime_ ? ctx.net.playtimeLeaderboard() : ctx.net.leaderboard();
     const auto& holdings = ctx.net.hyperBoard();
+    const bool legacyHoldings = !holdings.empty() && !holdings.front().petal.empty();
+    const bool showLegacyHoldings = hyper_ && legacyHoldings;
     const auto& practice = ctx.net.practiceBoard();
     const bool pending = damage_ ? practice.pending : ctx.net.leaderboardPending();
     const std::size_t rowCount = hyper_ ? holdings.size() : rows.size();
@@ -234,7 +236,7 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
     pillButton(canvas, refreshRect, tipRefresh(), kLeaderboardSkin.border);
     panelClose(canvas, closeRect, closeRect.contains(mouse));
     pillButton(canvas, xpTab, "等级榜", !hyper_ && !playtime_ && !damage_ ? 0x85530Cu : kLeaderboardSkin.border);
-    pillButton(canvas, hyperTab, "超凡持有", hyper_ ? 0x85530Cu : kLeaderboardSkin.border);
+    pillButton(canvas, hyperTab, legacyHoldings ? "超凡持有" : "Apex 总数", hyper_ ? 0x85530Cu : kLeaderboardSkin.border);
     pillButton(canvas, timeTab, "有效游玩时间", playtime_ ? 0x85530Cu : kLeaderboardSkin.border);
     pillButton(canvas, damageTab, "伤害统计", damage_ ? 0x85530Cu : kLeaderboardSkin.border);
     if (!damage_) {
@@ -412,7 +414,7 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
         empty.align = Align::Centre;
         empty.baseline = Baseline::Top;
         empty.strokeWidth = 0.0;
-        textAtAlpha(canvas, pending ? "加载中…" : (hyper_ ? "暂无超凡持有记录" : "暂无账号"),
+        textAtAlpha(canvas, pending ? "加载中…" : (hyper_ ? "暂无 Apex 持有记录" : "暂无账号"),
                     panel.x + panel.w * 0.5, y + 20.0, empty, 0.7);
     } else {
         const double rankX = panel.x + 15.0;
@@ -424,11 +426,11 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
         header.size = 14.0;
         header.baseline = Baseline::Top;
         header.strokeWidth = 0.0;
-        textAtAlpha(canvas, hyper_ ? "总H" : "#", rankX, y + 8.0, header, 0.8);
+        textAtAlpha(canvas, showLegacyHoldings ? "总H" : "#", rankX, y + 8.0, header, 0.8);
         textAtAlpha(canvas, "玩家", nameX, y + 8.0, header, 0.8);
-        textAtAlpha(canvas, hyper_ ? "花瓣" : (playtime_ ? "" : "等级"), levelX, y + 8.0, header, 0.8);
+        textAtAlpha(canvas, showLegacyHoldings ? "花瓣" : (hyper_ || playtime_ ? "" : "等级"), levelX, y + 8.0, header, 0.8);
         header.align = Align::Right;
-        textAtAlpha(canvas, hyper_ ? "数量" : (playtime_ ? "活跃小时" : "XP"), xpX, y + 8.0, header, 0.8);
+        textAtAlpha(canvas, hyper_ ? (showLegacyHoldings ? "数量" : "Apex 总数") : (playtime_ ? "活跃小时" : "XP"), xpX, y + 8.0, header, 0.8);
         y += kColumnHeader;
 
         for (std::size_t i = 0; i < rowCount; ++i) {
@@ -442,13 +444,13 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
             canvas.fillRect(static_cast<float>(row.x), static_cast<float>(row.y),
                             static_cast<float>(row.w), static_cast<float>(row.h));
 
-            const int rank = static_cast<int>(i) + 1;
+            const auto rank = i + 1 + (hyper_ ? ctx.net.hyperHoldingsOffset() : 0);
             const double middle = row.y + kRowHeight * 0.5;
 
             TextStyle cell;
             cell.size = 16.0;
-            cell.fill = rankColor(rank);
-            text(canvas, std::to_string(hyper_ ? holdings[i].ownerTotal : rank), rankX, middle, cell);
+            cell.fill = rankColor(static_cast<int>(std::min<std::size_t>(rank, 4)));
+            text(canvas, std::to_string(showLegacyHoldings ? holdings[i].ownerTotal : rank), rankX, middle, cell);
 
             cell.size = 14.0;
             const auto& name = hyper_ ? holdings[i].name : rows[i].name;
@@ -458,7 +460,7 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
             // The level travels with the row; the panel does not re-derive it
             // from XP with a curve that could drift from the server's.
             cell.fill = kPaper;
-            const auto label = hyper_ ? petalNameTr(holdings[i].petal, holdings[i].petal.c_str()) : (playtime_ ? std::string() : std::to_string(rows[i].level));
+            const auto label = showLegacyHoldings ? petalNameTr(holdings[i].petal, holdings[i].petal.c_str()) : (hyper_ || playtime_ ? std::string() : std::to_string(rows[i].level));
             cell.size = std::min(14.0, 14.0 * (xpX-levelX-35) / std::max(1.0, measure(label,14.0)));
             text(canvas, label, levelX, middle, cell);
 

@@ -688,7 +688,7 @@ void drawItemTile(Canvas& canvas, const SpriteCache& sprites, Rect rect, const I
         // An egg tile represents one egg, regardless of how many can hatch from its slot.
         const int baseCount = config.id == "egg" ? 1 : stats.count;
         const int copies = tile.loadoutSlot >= 0
-            ? petalCopies(baseCount, viewerSkills, tile.loadoutSlot,
+            ? orbitPetalCopies(baseCount, viewerSkills, tile.loadoutSlot,
                           petalTier(tile.rarity), config.stackable)
             : baseCount;
         canvas.save();

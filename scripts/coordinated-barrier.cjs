@@ -6,7 +6,7 @@ module.exports=function createBarrier(root,role){
   return async function barrier(phase, detail={}){
     const signal=path.join(folder,role+'.'+phase);
     const temporary=signal+'.tmp';
-    fs.writeFileSync(temporary,JSON.stringify(detail),{flag:'wx'});
+    fs.writeFileSync(temporary,JSON.stringify(detail),{flag:'wx',flush:true});
     fs.renameSync(temporary,signal);
     const deadline=Date.now()+12*60*1000;
     const release=path.join(folder,role+'.'+phase+'.go');

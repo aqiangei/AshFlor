@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cmath>
 
+#include "server/systems/combat.h"
 #include "server/systems/petals.h"
 #include "shared/game/constants.h"
 #include "shared/game/spatial.h"
@@ -138,8 +139,7 @@ double replicatedRadius(World& world, Entity e) {
     if (const MobRemains* remains = world.tryGet<MobRemains>(e)) return remains->radius;
     if (const GroundEffect* effect = world.tryGet<GroundEffect>(e)) {
         const auto kind = effect->kind;
-        const bool spill = kind == GroundEffectKind::Blood ||
-            isFluidField(kind);
+        const bool spill = isFluidField(kind);
         if ((spill || kind == GroundEffectKind::Web || kind == GroundEffectKind::ElectricWeb ||
              kind == GroundEffectKind::BlinkLanding) &&
             effect->radius > 0.0) return effect->radius;
@@ -172,7 +172,7 @@ double replicatedAngle(World& world, Entity e, const Transform& transform) {
 /// The viewer is matched by connection as well as by body, because a
 /// splitter's parked half is not `viewer` and is still the viewer's own.
 std::uint8_t ownershipFlags(World& world, Entity e, Entity viewer,
-                            net::ConnectionId viewerOwner) {
+                            net::ConnectionId viewerOwner, Entity* owner = nullptr) {
     Entity player = NULL_ENTITY;
     std::uint8_t flags = 0;
     const auto isViewer = [&](Entity entity) {
@@ -204,6 +204,7 @@ std::uint8_t ownershipFlags(World& world, Entity e, Entity viewer,
     } else {
         return 0;
     }
+    if (owner) *owner = player;
     return isViewer(player) ? flags : flags | net::SpawnForeign;
 }
 
@@ -427,7 +428,7 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         return std::abs(dx) - reach >= (mob ? mobNearX : nearX) ||
             std::abs(dy) - reach >= (mob ? mobNearY : nearY);
     };
-    // At most three entries, scanned linearly: a set for a squad would cost
+    // At most seven other squad bodies, scanned linearly: a set would cost
     // more to build each tick than it could ever save looking through.
     const auto exempt = [&](Entity e) {
         return frame.alwaysVisible != nullptr &&
@@ -456,16 +457,37 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
                                                       : net::InputHideForeignPetals;
         return (frame.visibility & setting) != 0;
     };
+    const bool hideOutsideSquad = (frame.visibility & net::InputHideOutsideSquad) != 0;
+    const auto inSquad = [&](Entity owner) {
+        if (exempt(owner)) return true;
+        const auto* account = world.tryGet<PlayerAccount>(owner);
+        if (!frame.alwaysVisible || !account || account->connection == 0) return false;
+        return std::any_of(frame.alwaysVisible->begin(), frame.alwaysVisible->end(), [&](Entity member) {
+            const auto* teammate = world.tryGet<PlayerAccount>(member);
+            return teammate && teammate->connection == account->connection;
+        });
+    };
     const auto gather = [&](Entity e, const NetId& id, const Transform& transform) {
         // Cull before looking up claim and ghost components. Only in-view
         // drops can consume a viewer's snapshot budget.
         if (e != viewer && transform.realm != realm) return;
-        const bool mob = world.get<Replicated>(e).kind == net::EntityKind::Mob;
+        const auto& info = world.get<Replicated>(e);
+        const bool mob = info.kind == net::EntityKind::Mob;
         const auto* body = mob ? world.tryGet<Body>(e) : nullptr;
         const double radius = body && std::isfinite(body->radius) ? std::max(0.0, body->radius) : 0.0;
         if (e != viewer && outsideView(transform.position, radius * kMobVisualReachPerRadius) && !exempt(e)) return;
-        if (frame.visibility && hidden(world.get<Replicated>(e).spawnFlags |
-                                       ownershipFlags(world, e, viewer, viewerOwner))) return;
+        bool beamOnly = false;
+        if (frame.visibility) {
+            Entity owner = NULL_ENTITY;
+            const auto flags = info.spawnFlags | ownershipFlags(world, e, viewer, viewerOwner, &owner);
+            if (hidden(flags)) return;
+            const bool equipment = info.kind == net::EntityKind::Petal || (mob && (flags & net::SpawnIsPet));
+            if (hideOutsideSquad && equipment && (flags & net::SpawnForeign) &&
+                !inSquad(owner) && !CombatSystem::canDamage(world, e, viewer)) {
+                beamOnly = info.kind == net::EntityKind::Petal && petalIsLaser(content().petal(info.typeIndex));
+                if (!beamOnly) return;
+            }
+        }
         if (const auto* sparkle = world.tryGet<GhostSparkle>(e)) {
             if (!isStanding(world, sparkle->ghost)) return;
             const auto* visuals = world.tryGet<PlayerVisuals>(viewer);
@@ -504,12 +526,16 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
             }
             return;
         }
-        // The observer and nearby claimable loot must survive a full
-        // snapshot even if a barrage fills the remaining entity budget.
-        const double selectionKey = e == viewer ? -3.0 :
-            (mob && !outsideNearBox(transform.position, radius, true) ? -2.0 - 1.0 / (1.0 + distanceSq)
-                : drop && !outsideNearBox(transform.position, 0.0) ? -1.0 / (1.0 + distanceSq) : distanceSq);
-        candidates_.push_back({e, id.value, selectionKey});
+        // Reserve the observer and squad bodies before ordinary viewport candidates.
+        // Without this priority, far squadmates lose their map positions at the cap.
+        double selectionKey = distanceSq;
+        if (e == viewer) selectionKey = -4.0;
+        else if (exempt(e)) selectionKey = -3.5;
+        else if (mob && !outsideNearBox(transform.position, radius, true))
+            selectionKey = -2.0 - 1.0 / (1.0 + distanceSq);
+        else if (drop && !outsideNearBox(transform.position, 0.0))
+            selectionKey = -1.0 / (1.0 + distanceSq);
+        candidates_.push_back({e, id.value, selectionKey, beamOnly});
     };
 
     const Vec2 corner{reachX + frame.mobRadiusPadding, reachY + frame.mobRadiusPadding};
@@ -542,7 +568,7 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
 
     candidates_.insert(candidates_.end(), nearbyLoot.begin(), nearbyLoot.begin() + nearbyLootCount);
     if (candidates_.size() > maxEntities) {
-        // After the observer and visible loot, nearest wins.
+        // Reserve the squad, then keep the existing viewport priorities.
         std::nth_element(candidates_.begin(),
                          candidates_.begin() + static_cast<std::ptrdiff_t>(maxEntities),
                          candidates_.end(),
@@ -777,13 +803,13 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         const auto* petal = info.kind == net::EntityKind::Petal
             ? world.tryGet<PetalInstance>(candidate.entity) : nullptr;
         const auto* wearer = petal ? world.tryGet<PlayerAccount>(petal->owner) : nullptr;
-        const bool petalTypeHidden = wearer && wearer->hidePetalTypes &&
-            petal->owner != viewer && (viewerOwner == 0 || wearer->connection != viewerOwner);
+        const bool petalTypeHidden = candidate.beamOnly || (wearer && wearer->hidePetalTypes &&
+            petal->owner != viewer && (viewerOwner == 0 || wearer->connection != viewerOwner));
         const bool foreignLoan = petal && petal->slot == kLentPetalSlot &&
             (ownershipFlags(world, candidate.entity, viewer, viewerOwner) & net::SpawnForeign);
         auto it = view.tracked.find(candidate.netId);
         if (it != view.tracked.end() && it->second.petalTypeHidden == petalTypeHidden &&
-            it->second.foreignLoan == foreignLoan) {
+            it->second.foreignLoan == foreignLoan && it->second.beamOnly == candidate.beamOnly) {
             it->second.seenThisTick = true;
             continue;
         }
@@ -861,6 +887,7 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
                 if (config.hidden || config.id == "pharaoh_s_crown" || config.id == "corruption")
                     cues |= net::PrivatePetalInvisible;
                 if (petalIsLaser(config)) cues |= net::PrivatePetalBeam;
+                if (candidate.beamOnly) cues |= net::PrivatePetalBeamOnly;
                 out.u8(cues);
             } else {
                 out.u8(petalInstance ? (petalInstance->diceFace != 0 ? petalInstance->diceFace
@@ -897,6 +924,7 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         tracked.arenaScore = visuals.arenaScore;
         tracked.shield = visuals.shield;
         tracked.petalTypeHidden = petalTypeHidden;
+        tracked.beamOnly = candidate.beamOnly;
         tracked.foreignLoan = foreignLoan;
         if (!petalTypeHidden && petalInstance &&
             (petalInstance->diceFace != 0 || content().petal(info.typeIndex).id == "dice")) {
@@ -975,7 +1003,7 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
             if (healthWide) mask |= net::FieldHealthWide;
         }
         if (state != tracked.state) mask |= net::FieldState;
-        if (body && std::fabs(body->radius - tracked.radius) > tolerances.radius) {
+        if (std::fabs(replicatedRadius(world, candidate.entity) - tracked.radius) > tolerances.radius) {
             mask |= net::FieldSize;
         }
         if (world.get<Replicated>(candidate.entity).kind == net::EntityKind::Player &&
@@ -1051,8 +1079,8 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
             tracked.state = state;
         }
         if (mask & net::FieldSize) {
-            out.f32(static_cast<float>(body->radius));
-            tracked.radius = body->radius;
+            out.f32(static_cast<float>(replicatedRadius(world, candidate.entity)));
+            tracked.radius = replicatedRadius(world, candidate.entity);
         }
         if (mask & net::FieldPlayerVisuals) {
             out.u8(visuals.faceFlags);

@@ -394,8 +394,14 @@ public:
     }
 
     const std::unordered_map<std::uint32_t, RemoteEntity>& entities() const { return entities_; }
+    struct BossDamageRanking {
+        std::vector<net::BossDamageRow> rows;
+        std::uint32_t ownRank = 0;
+        double ownDamage = 0;
+    };
+
     bool applyBossDamage(ByteReader& reader);
-    const std::vector<net::BossDamageRow>* bossDamage(std::uint32_t netId) const {
+    const BossDamageRanking* bossDamage(std::uint32_t netId) const {
         const auto it = bossDamage_.find(netId);
         return it == bossDamage_.end() ? nullptr : &it->second;
     }
@@ -485,7 +491,7 @@ private:
     std::unordered_map<std::string,std::string> guildNames_;
     std::vector<ViewEvent> events_;
     std::vector<net::PracticeMeter> practiceMeters_;
-    std::unordered_map<std::uint32_t, std::vector<net::BossDamageRow>> bossDamage_;
+    std::unordered_map<std::uint32_t, BossDamageRanking> bossDamage_;
     std::vector<RemoteEntity> removedPetals_;
     SelfState self_;
     Realm realm_ = Realm::Overworld;

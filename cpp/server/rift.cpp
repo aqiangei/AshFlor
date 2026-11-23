@@ -22,11 +22,22 @@ constexpr double kRiftMaxExactEpochMillis = 9007199254740991.0;
 constexpr double kRiftAdmission = 3 * kRiftMinute;
 constexpr double kRiftMatch = 60 * kRiftMinute;
 constexpr double kRiftResults = 3 * kRiftMinute;
+constexpr double kRiftPortalProtectionMillis = 3000.0;
 constexpr std::size_t kRiftCapacity = 150;
 constexpr int kRiftEternalCount = 10;
 constexpr Rarity kRiftPrizeRarity = Rarity::Unique;
 constexpr const char* kRiftClaimHint =
     "走到地上的花瓣旁拾取冠军奖励，捡齐后自动返回。";
+
+void protectRiftPortalArrival(World& world, Entity flower, double nowMillis) {
+    auto& player = world.get<RiftPlayer>(flower);
+    const double until = nowMillis + kRiftPortalProtectionMillis;
+    player.portalProtectedUntilMillis = until;
+    auto& health = world.get<Health>(flower);
+    health.invulnerableUntilMillis = std::max(health.invulnerableUntilMillis, until);
+    auto& pads = world.ensure<TeleporterState>(flower);
+    pads.cooldownUntilMillis = std::max(pads.cooldownUntilMillis, until);
+}
 
 bool isRiftPrize(const Json& prize) {
     return prize["remainingEternals"].isArray() ||
@@ -63,7 +74,11 @@ void GameServer::broadcastRiftStatus() {
 void GameServer::riftTeleport(Entity entity, Realm realm, Vec2 position) {
     const auto* at = world_.tryGet<Transform>(entity);
     if (!at) return;
-    if (!isRiftRealm(at->realm) && isRiftRealm(realm)) {
+    const auto* player = world_.tryGet<RiftPlayer>(entity);
+    if (player && player->portalProtected(clockMillis_)) return;
+    const bool riftPlayer = player != nullptr;
+    const Transform origin = *at;
+    if (!isRiftRealm(origin.realm) && isRiftRealm(realm)) {
         Session* session = sessionForEntity(entity);
         const auto* map = worldMaps_.forRealm(realm);
         if (session && session->entity == entity && map && map->id() == "rift_main")
@@ -79,6 +94,12 @@ void GameServer::riftTeleport(Entity entity, Realm realm, Vec2 position) {
         }
     }
     moveEntityToRealm(entity, realm, position);
+    if (!riftPlayer) return;
+    const auto* arrived = world_.tryGet<Transform>(entity);
+    if (arrived &&
+        (arrived->realm != origin.realm || distanceSq(arrived->position, origin.position) > 0.0)) {
+        protectRiftPortalArrival(world_, entity, clockMillis_);
+    }
 }
 
 void GameServer::enterRift(Session& session, Vec2 position) {
@@ -107,6 +128,7 @@ void GameServer::enterRift(Session& session, Vec2 position) {
     session.runLoot.clear();
     session.runKills.clear();
     const Entity flower = finishPlayerSpawn(session, main, position);
+    protectRiftPortalArrival(world_, flower, clockMillis_);
     world_.get<NetId>(flower) = netId;
     world_.get<PlayerLocation>(flower).viewport = viewport;
     sendRealmChange(session, world_.get<Transform>(flower).position);

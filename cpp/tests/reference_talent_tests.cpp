@@ -255,3 +255,107 @@ TEST(reference_absorption_talent_preview_matches_server_and_protects_hyper) {
     }));
     CHECK(!absorbable(content().petal(content().petalIndex("mjolnir")), Rarity::Ascendant));
 }
+
+TEST(radiation_talents_serialize_purchase_and_refund_every_rank) {
+    Harness h("radiation-talents", [](const std::string& path) {
+        seedUser(path, "radiationqa", "password7");
+        Database db;
+        std::string error;
+        CHECK(db.load(path, error));
+        const auto* user = db.findUser("radiationqa");
+        CHECK(user != nullptr);
+        if (!user) return;
+        auto& record = db.progress(user->id);
+        record.totalXp = 1e15;
+        record.skills.set(SkillId::Health, 2);
+        db.markDirty();
+        CHECK(db.save());
+    }, dataDir(), 0);
+    CHECK(h.ready);
+    if (!h.ready) return;
+    NetClient client;
+    CHECK(loginAs(h, client, "radiationqa", "password7"));
+    const int startPoints = client.profile().talentPoints();
+    CHECK_EQ(client.profile().skills.level(SkillId::RadiationReach), -1);
+    CHECK_EQ(client.profile().skills.level(SkillId::RadiationPower), -1);
+    client.requestUpgradeSkill(SkillId::RadiationReach, 4);
+    h.step(10, {&client});
+    CHECK_EQ(client.profile().skills.level(SkillId::RadiationReach), -1);
+    constexpr std::array<int, 5> reachSpent{6, 18, 36, 60, 90};
+    constexpr std::array<int, 3> powerSpent{4, 12, 26};
+    int alreadySpent = 0;
+    for (auto id : {SkillId::RadiationReach, SkillId::RadiationPower}) {
+        const auto expected = id == SkillId::RadiationReach ? reachSpent.data() : powerSpent.data();
+        for (int tier = 0; tier < skillTierCount(id); ++tier) {
+            client.requestUpgradeSkill(id, tier);
+            CHECK(awaitProfile(h, client, [=](const Profile& p) {
+                return p.skills.level(id) == tier;
+            }));
+            CHECK_EQ(client.profile().talentPoints(), startPoints - alreadySpent - expected[tier]);
+            CHECK_NEAR(client.profile().skills.effectScale(id), 1.0 + (tier + 1) * 0.05, 1e-12);
+        }
+        alreadySpent += expected[skillTierCount(id) - 1];
+    }
+    client.disconnect();
+    h.step(10, {});
+    NetClient reconnect;
+    CHECK(loginAs(h, reconnect, "radiationqa", "password7"));
+    CHECK_EQ(reconnect.profile().skills.level(SkillId::RadiationReach), 4);
+    CHECK_EQ(reconnect.profile().skills.level(SkillId::RadiationPower), 2);
+    CHECK_EQ(reconnect.profile().skills.level(SkillId::Health), 2);
+    for (auto id : {SkillId::RadiationReach, SkillId::RadiationPower}) {
+        reconnect.requestDowngradeSkill(id, 0);
+        CHECK(awaitProfile(h, reconnect, [=](const Profile& p) {
+            return p.skills.level(id) == -1;
+        }));
+        CHECK_NEAR(reconnect.profile().skills.effectScale(id), 1.0, 1e-12);
+    }
+    CHECK_EQ(reconnect.profile().talentPoints(), startPoints);
+}
+
+TEST(imported_talents_new_nodes_buy_sync_and_refund_prerequisites) {
+    Harness h("imported-talents", [](const std::string& path) {
+        seedUser(path, "importedtalentqa", "password7");
+        Database db;
+        std::string error;
+        CHECK(db.load(path, error));
+        const auto* user = db.findUser("importedtalentqa");
+        CHECK(user != nullptr);
+        if (!user) return;
+        auto& record = db.progress(user->id);
+        record.totalXp = 1e15;
+        record.skills.set(SkillId::Damage, 4);
+        record.skills.set(SkillId::Reload, 4);
+        db.markDirty();
+        CHECK(db.save());
+    }, dataDir(), 0);
+    CHECK(h.ready);
+    if (!h.ready) return;
+    NetClient client;
+    CHECK(loginAs(h, client, "importedtalentqa", "password7"));
+    const int before = client.profile().talentPoints();
+    const std::array<SkillId, 8> ids{{
+        SkillId::SpillRate, SkillId::SecondaryReload, SkillId::FirePower, SkillId::LightningPower,
+        SkillId::ExplosionReach, SkillId::CorruptDamage, SkillId::CorruptReload, SkillId::CorruptReach,
+    }};
+    int spent = 0;
+    for (const SkillId id : ids) {
+        client.requestUpgradeSkill(id, 0);
+        CHECK(awaitProfile(h, client, [=](const Profile& p) { return p.skills.level(id) == 0; }));
+        spent += skillTierCost(id, 0);
+        CHECK_EQ(client.profile().talentPoints(), before - spent);
+    }
+    client.requestDowngradeSkill(SkillId::Damage, 4);
+    CHECK(awaitProfile(h, client, [](const Profile& p) {
+        return p.skills.level(SkillId::Damage) == 3 &&
+               p.skills.level(SkillId::FirePower) == -1 &&
+               p.skills.level(SkillId::LightningPower) == -1;
+    }));
+    client.requestDowngradeSkill(SkillId::Reload, 4);
+    CHECK(awaitProfile(h, client, [](const Profile& p) {
+        return p.skills.level(SkillId::Reload) == 3 &&
+               p.skills.level(SkillId::SecondaryReload) == -1;
+    }));
+    CHECK_EQ(client.profile().skills.level(SkillId::SpillRate), 0);
+    CHECK_EQ(client.profile().skills.level(SkillId::ExplosionReach), 0);
+}

@@ -1,6 +1,7 @@
 #include "test.h"
 #include "server_harness.h"
 #include "client/ui/i18n.h"
+#include "server/systems/combat.h"
 #include "server/systems/loot.h"
 
 using namespace flix;
@@ -315,3 +316,101 @@ TEST(rift_entrant_keeps_account_level) {
     }
 }
 
+TEST(rift_portal_arrival_blocks_damage_and_repeat_travel_for_three_seconds) {
+    Harness h("rift-portal-protection", [](const std::string& path) {
+        seedUser(path, "portalrunner", "password7");
+    }, dataDir(), 0);
+    if (!h.ready) { CHECK(h.ready); return; }
+    NetClient player;
+    if (!connectClient(h, player)) { CHECK(false); return; }
+    player.requestLogin("portalrunner", "password7");
+    CHECK(h.stepUntil({&player}, [&] { return player.status() == NetClient::Status::LoggedIn; }));
+    player.joinGame(1280, 720, "", "Runner", false);
+    CHECK(h.stepUntil({&player}, [&] { return player.status() == NetClient::Status::Playing; }));
+    const auto* session = GameServerPeer::sessionOf(h.server, "portalrunner");
+    if (!session || !session->playing()) { CHECK(false); return; }
+
+    const auto& maps = h.server.worldMaps();
+    bool found = false;
+    const Realm main = maps.realmOfId("rift_main", found);
+    if (!found) { CHECK(found); return; }
+    const Realm sewers = maps.realmOfId("rift_sewers", found);
+    if (!found) { CHECK(found); return; }
+    const auto findPad = [&](Realm realm, const std::string& target) -> const MapElement* {
+        for (const auto& pad : maps.forRealm(realm)->elements()) {
+            if (pad.kind == MapElementKind::Teleporter && pad.targetMap == target) return &pad;
+        }
+        return nullptr;
+    };
+    const auto* entry = findPad(Realm::Overworld, "rift_main");
+    const auto* onward = findPad(main, "rift_sewers");
+    const auto* back = findPad(sewers, "rift_main");
+    CHECK(entry && onward && back);
+    if (!entry || !onward || !back) return;
+
+    auto& world = h.server.world();
+    const auto takePad = [&](const MapElement& pad, Realm target, int ticks) {
+        for (int i = 0; i < ticks; ++i) {
+            if (auto* at = world.tryGet<Transform>(session->entity)) at->position = pad.centre();
+            h.step(1, {&player});
+            if (player.view().realm() == target) return true;
+        }
+        return false;
+    };
+    h.clock += 4.0 * 60 * 60 * 1000;
+    CHECK(h.stepUntil({&player}, [&] { return player.riftOpen(); }));
+    const bool entered = takePad(*entry, main, 100);
+    CHECK(entered);
+    if (!entered) return;
+    const Entity flower = session->entity;
+    const double entryUntil = world.get<RiftPlayer>(flower).portalProtectedUntilMillis;
+    CHECK_NEAR(entryUntil, GameServerPeer::practiceClock(h.server) + 3000.0, 1e-6);
+    CHECK(!takePad(*onward, sewers, 40));
+    CHECK_NEAR(world.get<RiftPlayer>(flower).portalProtectedUntilMillis, entryUntil, 1e-6);
+    const bool arrived = takePad(*onward, sewers, 100);
+    CHECK(arrived);
+    if (!arrived) return;
+
+    const double now = GameServerPeer::practiceClock(h.server);
+    const double until = world.get<RiftPlayer>(flower).portalProtectedUntilMillis;
+    CHECK_NEAR(until, now + 3000.0, 1e-6);
+    CHECK_NEAR(world.get<Health>(flower).invulnerableUntilMillis, until, 1e-6);
+    CHECK_NEAR(world.get<TeleporterState>(flower).cooldownUntilMillis,
+               now + kTeleporterCooldownMillis, 1e-6);
+
+    const Entity opponent = world.create();
+    world.add<Health>(opponent, Health{100.0, 100.0});
+    const Entity pet = world.create();
+    world.add<Pet>(pet).owner = flower;
+    const Entity shot = world.create();
+    world.add<Projectile>(shot).owner = pet;
+    world.get<Projectile>(shot).creditTo = flower;
+    const Entity field = world.create();
+    world.add<GroundEffect>(field).owner = flower;
+    auto& combat = GameServerPeer::practiceCombat(h.server);
+    for (const Entity source : {flower, pet, shot, field}) {
+        CHECK(combat.applyDamage(world, opponent, source, 1.0, until - 1.0).refused);
+    }
+    CHECK(combat.applyDamage(world, opponent, flower, 1.0, until - 1.0, DamageKind::Poison).refused);
+    combat.applyPoison(world, opponent, shot, 1.0, 5000.0, until - 1.0);
+    CombatSystem::ignite(world, opponent, shot, flower, 1.0, 5000.0, until - 1.0);
+    CHECK(!world.has<Afflictions>(opponent));
+    CHECK_NEAR(world.get<Health>(opponent).current, 100.0, 1e-6);
+    CHECK(combat.applyDamage(world, flower, opponent, 1.0, until - 1.0).refused);
+    CHECK(combat.applyDamage(world, flower, NULL_ENTITY, 1.0, until - 1.0, DamageKind::Poison).refused);
+
+    CHECK(!takePad(*back, main, 40));
+    CHECK_NEAR(world.get<RiftPlayer>(flower).portalProtectedUntilMillis, until, 1e-6);
+    CHECK(combat.applyDamage(world, opponent, shot, 1.0, until).applied > 0.0);
+    CHECK(combat.applyDamage(world, flower, opponent, 1.0, until).applied > 0.0);
+    for (const Entity fixture : {opponent, pet, shot, field}) world.destroy(fixture);
+    // The fixture jumped directly onto the arrival pad before the first
+    // ordinary movement tick. A player must leave that pad once before it
+    // can charge again, independent of the three-second damage protection.
+    world.get<Transform>(flower).position = back->centre() + Vec2{400.0, 0.0};
+    h.step(1, {&player});
+    CHECK(!world.get<TeleporterState>(flower).arriving);
+    CHECK(takePad(*back, main, 160));
+    CHECK_NEAR(world.get<RiftPlayer>(flower).portalProtectedUntilMillis,
+               GameServerPeer::practiceClock(h.server) + 3000.0, 1e-6);
+}

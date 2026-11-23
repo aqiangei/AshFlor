@@ -580,6 +580,20 @@ void App::markPhaseOps(OpPhase phase) {
 }
 
 void App::frame(double dt) {
+#ifdef __EMSCRIPTEN__
+    // The real DOM anchor receives the browser gesture for a new-tab link.
+    EM_ASM({ Module.ashflorShopVisible = 0; });
+    struct HideInactiveShopLink {
+        ~HideInactiveShopLink() {
+            EM_ASM({
+                const anchor = document.getElementById('ashflor-shop-link');
+                const redeem = document.getElementById('ashflor-petal-redeem-link');
+                if (anchor && !(Module.ashflorShopVisible & 1)) anchor.hidden = true;
+                if (redeem && !(Module.ashflorShopVisible & 2)) redeem.hidden = true;
+            });
+        }
+    } hideInactiveShopLink;
+#endif
     chatNameHits_.clear();
     // Every ease this frame steps by the smoothed frame period, not by `dt`:
     // see client/ease.h. Advanced first so nothing eases on last frame's.
@@ -871,16 +885,13 @@ void App::frame(double dt) {
     // The renderer's switches live in the settings menu, so they are copied
     // across every frame rather than the menu reaching into the renderer.
     renderer_.options = menus_.settings().render;
-    // ALT is a latch (default off): exact HUD numbers, spawn bands, rarity
-    // glow. Skip while typing so chat / fields keep Alt as a modifier.
+    // ALT toggles exact HUD numbers and spawn bands. Skip while typing.
     if (!chatOpen_ && !menus_.wantsText() &&
         (window_.keyPressed(Key::LeftAlt) || window_.keyPressed(Key::RightAlt) ||
          (!menus_.anyOpen() && boundKeyPressed(window_,
              menus_.settings().controlKey(ControlAction::ToggleAltDisplay))))) {
         altMode_ = !altMode_;
     }
-    // The copy above resets it every frame, so it has to be put back after it.
-    renderer_.options.rarityGlow = altMode_ || menus_.settings().render.rarityGlow;
     menus_.setAltMode(altMode_);
     camera_.userZoom = menus_.settings().zoom;
     // The petals' share of the zoom, read off the account's own loadout. It is
@@ -1104,6 +1115,7 @@ void App::frame(double dt) {
     // Keyboard movement still needs a pointer for HUD tooltips and menus.
     window_.setCursorVisible(true);
 #ifdef __EMSCRIPTEN__
+    const Rect loadoutTip = screen_ == Screen::Lobby ? menus_.loadoutTooltipRect() : Rect{};
     // Use this frame's actual menu bounds, in the same design coordinates as
     // the daily card. The link occupies the free top gap, never the icon strip.
     EM_ASM(({
@@ -1173,6 +1185,18 @@ void App::frame(double dt) {
                     feedback.style.width=freeWidth+'px';
                 }
             }
+            // An HTML button paints above the canvas regardless of the canvas draw order.
+            // Keep its layout box available so placement works while the button is hidden.
+            let covered=false;
+            if($14>0&&$15>0){
+                const link=feedbackLink.getBoundingClientRect();
+                const left=box.left+$12*scale;
+                const top=box.top+$13*scale;
+                covered=left<link.right&&left+$14*scale>link.left&&
+                    top<link.bottom&&top+$15*scale>link.top;
+            }
+            const visibility=covered?"hidden":"";
+            if(feedback.style.visibility!==visibility)feedback.style.visibility=visibility;
             const target=new URL(UTF8ToString($7));
             target.searchParams.set('from',location.href);
             target.searchParams.set('name',Module.feedbackUsername||'');
@@ -1182,7 +1206,8 @@ void App::frame(double dt) {
        window_.width(),menus_.stripRight(),menus_.stripBottom(),screen_==Screen::Lobby&&net_.dailyStreak().known,
        menus_.feedbackButton().right(),streakDetailsOpen_,kAshflorFeedbackBoard,
        screen_==Screen::Lobby?nameBox_.x:0,screen_==Screen::Lobby?nameBox_.y:0,
-       menus_.feedbackButton().w,menus_.feedbackButton().y);
+       menus_.feedbackButton().w,menus_.feedbackButton().y,
+       loadoutTip.x,loadoutTip.y,loadoutTip.w,loadoutTip.h);
 #endif
     auto& settingsForSave = menus_.settings();
     if (settingsForSave.craftBlacklistDirty || settingsForSave.notificationReadsDirty ||

@@ -981,6 +981,8 @@ Entity SpawnSystem::spawnMobAt(World& world, const Terrain& terrain, const Conte
         }
         // Armed, with nothing out: the brood waits for a flower (runNests).
         if (!config.dungeon.present && config.ambush.present) world.add<AmbushNest>(e);
+        if (config.id == "bio_stem_cell" && map && map->biome() == "bio")
+            world.add<StemCellBrood>(e);
         // Unclaimed: the dungeon is built the first time a flower walks in
         // (DungeonSystem).
         if (config.dungeon.present) world.add<DungeonEntrance>(e);
@@ -1095,6 +1097,23 @@ void SpawnSystem::answerDeaths(World& world, const Terrain& terrain, const Conte
         if (lifetime.remainingSeconds <= 0.0) commands.destroy(e);
     });
 
+    const auto spawnBloodCell = [&](std::uint16_t index, Rarity tier, const Transform& anchor) {
+        if (census_.mobs >= mobCap || index == kInvalidIndex) return false;
+        const Entity child = spawnMobAt(world, terrain, content, index, tier,
+            escortSpawnPoint(anchor.position, rng), anchor.realm, nowMillis, rng, 1,
+            kInvalidIndex, std::nullopt, false, false, true);
+        if (child == NULL_ENTITY) return false;
+        const auto& where = world.get<Transform>(child);
+        const auto& body = world.get<Body>(child);
+        if (terrain.resolveWall(where.position, mobWallRadius(&body), where.realm).unresolved) {
+            commands.destroy(child);
+            return false;
+        }
+        world.add<StemCellOffspring>(child);
+        world.get<Bounty>(child).xp = 0.0;
+        return true;
+    };
+
     for (const Entity e : dead) {
         const MobType* type = world.tryGet<MobType>(e);
         const Transform* transform = world.tryGet<Transform>(e);
@@ -1188,6 +1207,11 @@ void SpawnSystem::answerDeaths(World& world, const Terrain& terrain, const Conte
                 }
             }
         }
+        if (auto* brood = world.tryGet<StemCellBrood>(e); brood && !brood->redReleased) {
+            brood->redReleased = true;
+            spawnBloodCell(content.mobIndex("bio_red_blood_cell"), minionRarity(rarity),
+                           Transform{at, angle, realm});
+        }
         if (config.allySpawn.present && rng.chance(config.allySpawn.chance)) {
             for (int i = 0; i < config.allySpawn.count; ++i) {
                 if (spawnEscort(world, terrain, content, config.allySpawn.mobIndex, rarity,
@@ -1196,6 +1220,25 @@ void SpawnSystem::answerDeaths(World& world, const Terrain& terrain, const Conte
                     break;
             }
         }
+    }
+    // Keep each threshold spent for this stem cell's life. A lethal hit can
+    // cross several thresholds on the same tick as the death spawn.
+    const auto white = content.mobIndex("bio_white_blood_cell");
+    const auto stems = Query<StemCellBrood>{world}.collect();
+    for (const Entity stem : stems) {
+        const auto& health = world.get<Health>(stem);
+        const double damageFraction = 1.0 - health.current / health.max;
+        const int crossed = std::clamp(static_cast<int>(std::floor((damageFraction + 1e-9) / 0.15)),
+                                       0, 6);
+        const Rarity tier = world.get<MobType>(stem).rarity;
+        const Transform anchor = world.get<Transform>(stem);
+        auto& brood = world.get<StemCellBrood>(stem);
+        const int earned = std::max(brood.whiteEarned, crossed);
+        int spawned = brood.whiteSpawned;
+        while (spawned < earned && spawnBloodCell(white, tier, anchor)) ++spawned;
+        auto& updated = world.get<StemCellBrood>(stem);
+        updated.whiteEarned = earned;
+        updated.whiteSpawned = spawned;
     }
 }
 
@@ -1602,7 +1645,8 @@ void SpawnSystem::takeCensus(World& world, const ContentRegistry& content,
         if (nearAnyone && !reclaimOffscreen) {
             ambient.lastNearPlayerMillis = nowMillis;
         } else if ((reclaimOffscreen || nowMillis - ambient.lastNearPlayerMillis >= graceMillis) &&
-                   !alwaysAwake(content, type, prestigeRealm(transform.realm))) {
+                   (world.has<StemCellOffspring>(e) ||
+                    !alwaysAwake(content, type, prestigeRealm(transform.realm)))) {
             // Nobody has been near it for the grace period, so it stops being
             // an entity. Whether that is the END of it depends on whether a
             // band is holding a slot for it: one the band placed goes back
@@ -2488,7 +2532,8 @@ bool SpawnSystem::topBossTaken(World& world, Rarity rarity, Realm realm, bool in
         const Rarity tier = type.rarity == Rarity::Ascendant && rarity == Rarity::Apex &&
             ambient.zone != kInvalidIndex ? Rarity::Apex : type.rarity;
         if (tier != rarity || !isWholeAnimal(world, e) ||
-            world.has<HoleTether>(e) || world.has<WaveEnemy>(e)) return;
+            world.has<HoleTether>(e) || world.has<WaveEnemy>(e) ||
+            world.has<StemCellOffspring>(e)) return;
         if (isWorldRealm(transform.realm) && biomeKey(transform.realm) == key) ++standing;
     });
     if (includeRituals) {
@@ -2515,7 +2560,8 @@ void SpawnSystem::noteStandingBosses(World& world, const CommandBuffer& commands
                        AmbientMob& ambient) {
         if (type.rarity != Rarity::Unique && type.rarity != Rarity::Apex &&
             !(type.rarity == Rarity::Ascendant && ambient.zone != kInvalidIndex)) return;
-        if (world.has<HoleTether>(e) || world.has<WaveEnemy>(e)) return;
+        if (world.has<HoleTether>(e) || world.has<WaveEnemy>(e) ||
+            world.has<StemCellOffspring>(e)) return;
         const auto* map = worldMaps ? worldMaps->forRealm(transform.realm) : nullptr;
         if (map && map->prestigeLevel() == 2 && !ambient.managedPopulation) return;
         if (!isWorldRealm(transform.realm) || !isWholeAnimal(world, e)) return;
@@ -2922,7 +2968,8 @@ void SpawnSystem::stockHypers(World& world, const Terrain& terrain,
     candidatesByMap.insert(candidatesByMap.end(), expansionMaps.begin(), expansionMaps.end());
     std::array<int, kMaxRealms> standingByRealm{};
     ambient_->each([&](Entity e, MobTag&, Transform& at, Body&, MobType& type, AmbientMob& ambient) {
-        if (world.has<HoleTether>(e) || world.has<Dead>(e) || !isWholeAnimal(world, e)) return;
+        if (world.has<HoleTether>(e) || world.has<Dead>(e) ||
+            world.has<StemCellOffspring>(e) || !isWholeAnimal(world, e)) return;
         if (type.rarity == Rarity::Apex || (type.rarity == Rarity::Ascendant && ambient.zone != kInvalidIndex))
             ++standingByRealm[realmIndex(at.realm)];
     });

@@ -1529,7 +1529,7 @@ private:
 
     // -- tick phases -------------------------------------------------------
     void runSystems(double nowMillis, double dt);
-    void applyVoidGravity(double dt);
+    void applyVoidGravity(double dt, bool mobsOnly = false);
 
     /// Moves what the loot system handed out into the owning accounts.
     void bankPickups(std::size_t first = 0);

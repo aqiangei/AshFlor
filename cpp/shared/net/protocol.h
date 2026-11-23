@@ -27,9 +27,10 @@ using ConnectionId = std::uint32_t;
 // Version 128: snapshot update records are smaller. The mask is a varint with
 // the common fields in its low seven bits, a short move is two bytes, and the
 // state byte carries only the bits a client draws from.
-inline constexpr std::uint16_t kProtocolVersion = 145; // Practice history eligibility.
+inline constexpr std::uint16_t kProtocolVersion = 148; // Adds two radiative talent branch IDs.
 inline constexpr std::size_t kBossDamageRows = 3;
 inline constexpr std::size_t kBossDamageTargets = 6;
+inline constexpr std::uint32_t kBossDamageOwnUnavailable = UINT32_MAX;
 struct BossDamageRow {
     std::string name;
     double damage = 0;
@@ -498,7 +499,9 @@ enum class ServerMessage : std::uint8_t {
     RiftStatus,         ///< bool admissionOpen.
     RunLoot,            ///< u32 count, {u16 petal, u8 rarity, u32 count}* (own run).
     RunKills,           ///< u32 count, {u16 mob, u8 rarity, u32 count}* (own run).
-    BossDamage,         ///< u8 count, {u32 mob net ID, u8 rows, {str name, f64 damage}*}*.
+    BossDamage,         ///< u8 count, {u32 mob ID, u8 rows, {str name, f64 damage}*,
+                        ///< varU32 own rank (0 if unranked, UINT32_MAX if unavailable),
+                        ///< f64 own damage if a real rank is outside the public rows}*.
     OracleShopForecast, ///< u16 itemType, bool available, i64 superAt, i64 eternalAt (Unix seconds, -1 if absent).
     BulkCraftTicket,    ///< u32 request, u64 ticket (zero on refusal).
 };
@@ -621,8 +624,12 @@ enum InputFlags : std::uint8_t {
     InputHideForeignPetals = 1 << 2,
     InputHideForeignPets   = 1 << 3,
     InputNoPetPointer      = 1 << 4,
+    InputHideOutsideSquad  = 1 << 5,
+    InputPetMoveDirection  = 1 << 6, ///< Keyboard or touch-stick movement.
 };
-inline constexpr std::uint8_t kInputVisibilityMask = InputHideForeignPetals | InputHideForeignPets;
+inline constexpr std::uint8_t kInputVisibilityMask =
+    InputHideForeignPetals | InputHideForeignPets | InputHideOutsideSquad;
+static_assert((kInputVisibilityMask & InputPetMoveDirection) == 0);
 
 /// One tick of intent from a client.
 ///
@@ -798,6 +805,7 @@ enum class EntityKind : std::uint8_t {
 enum PrivatePetalCue : std::uint8_t {
     PrivatePetalInvisible = 1u << 0,
     PrivatePetalBeam = 1u << 1,
+    PrivatePetalBeamOnly = 1u << 2,
 };
 
 enum SpawnFlags : std::uint8_t {

@@ -676,7 +676,9 @@ EM_JS(int, flix_ch_listen,
     try {
       const token = String(request.headers.authorization || "").replace(/^Bearer /,"");
       const operation = {operation:operationId,realm,username};
-      const prepared = transferLocal(token,"prepare",operation);
+      const prepared = transferLocal(token,"prepare",{
+        ...operation,releaseForgeClaims:input.releaseForgeClaims === true
+      });
       if (prepared.error) return reply(200,prepared);
       if (prepared.delivered) {
         const finished = finishTransferredSource(operation);

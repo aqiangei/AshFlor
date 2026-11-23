@@ -54,15 +54,12 @@ constexpr double kWheelStep = 100.0;
 constexpr std::uint32_t kBodyBorder = kChangelogSkin.border;
 constexpr std::uint32_t kLinkFill = 0xD8F7FFu;
 
-constexpr int kMaxChanges = 80;
-
 struct ChangelogEntry {
     const char* date;
-    const char* changes[kMaxChanges];
+    std::vector<std::string_view> changes;
+};
 
-  };
-
-constexpr ChangelogEntry kChangelog[] = {
+const ChangelogEntry kChangelog[] = {
     {"October 18, 2025",
      {"Added changelog"}},
     {"October 19, 2025",
@@ -921,46 +918,6 @@ constexpr ChangelogEntry kChangelog[] = {
       "野生沙暴会朝视线内的灯泡持有者移动，灯泡离开后恢复游荡。",
       "泰坦可用 30 个未装备的永恒血祭兑换 1 个永久超凡血祭，沿用超凡血祭的召唤规则。",
       "星星商店每小时轮换 5 种不同的 Super 花瓣，停止出售 Ultra 花瓣。旧锁定商店也按新规则补齐。"}},
-
-    {"2026年11月21日 · 刷怪、战斗与操作修复",
-     {"声望二原地清掉低阶怪时，更稳定地在同一刷怪带补位。刷怪总量、高阶刷新时钟和掉落表沿用现行规则。",
-      "虚空伤疤随机落点避开传送门的吸引范围。主动走入传送门照常换图。",
-      "铲子单次下潜恢复至 4 秒。超级及以上可连续接潜，地下仍可攻击。同档铲子在配装间换槽会保留剩余计时。",
-      "普通弹珠准备时间从 500 毫秒缩短至 350 毫秒。反弹投射物在射程最后一段正常判定命中，连续命中的伤害飘字会补齐。",
-      "卫生纸修复同一更新间隔回血后再受重击时漏触发的问题。爆发伤害正确显示为暴击，保持十倍和九秒。",
-      "吸收永久超凡和 Apex 之前需设置账号密码。切换至合卡时清除密码和确认状态，保留已选材料。",
-      "裂隙临时背包禁止吸收。拒绝时保留材料，经验不会变化。",
-      "背包和合卡支持按花瓣名称或品质搜索，筛选与展开状态在取消时保留。",
-      "毒刺和魔法毒刺现可施加毒伤。木桩统计分别显示持续毒伤和燃烧。",
-      "蛋孵化的召唤体生命提高 20%。蛋壳生命、碰撞伤害、孵化数量和冷却保持原规则。",
-      "Apex 极地蜘蛛洞蛋孵出的十只蜘蛛显示为超凡；实际生命和接触伤害保持原值。",
-      "超凡及 Apex 野怪的基础击杀经验分别提高到原来的 2 倍和 3 倍，合格击杀星星调整为 2,000 和 8,000。Wave 沿用既有奖励。",
-      "法老之冠换成蓝金头巾，Apex 佩戴时带金翼冠徽。甲虫召唤的战斗数值保持原档。",
-      "灵异护目镜说明补充可看见及攻击的幽灵品质和镜头效果，吸收天赋说明补齐下一等级倍率。",
-      "新增仅合成神话、究极。确认前显示参与合成的材料，服务器用一次性确认保护库存。"}},
-    {"2026年11月21日 · 裂隙计时、图鉴与合成修复",
-     {"正常维护重启会保留裂隙下一次开放时间。若维护跨过开放时刻，服务器恢复后仍开放完整三分钟报名。",
-      "修复白蚁穴清完敌怪后，玩家的召唤物仍被算作剩余敌怪而无法结算。通关后会正常返回入口旁。",
-      "仅合成神话、究极时，以确认页列出的材料为准。确认后新获得的材料不会被这次合成扣除，原材料不足时整批取消。",
-      "在图鉴搜索特定魔法花瓣时，可预览装备永恒法力宝珠后的掉落来源。窄窗口内的搜索与列表显示也已修正。",
-      "酸液炸弹、熔岩炸弹的液池面板与实际伤害对齐。酸液炸弹的说明补充命中野怪才铺池。",
-      "修正训练木桩的红宝石追加闪电伤害统计。冰冻蓝莓仍按原规则结算。",
-      "魔法染色体每次施盾统一结算。盾量上限、持续时间和现有配装的有效耗蓝保持原规则。",
-      "Apex 极地蜈蚣蛋孵出头部和体节的接触伤害提高 50%，生命、数量和重孵时间保持原值。"}},
-    {"2026年11月22日 · 自助转服、补怪与战斗修复",
-     {"正常维护重启会保留裂隙下一次开放时间。若维护跨过开放时刻，服务器恢复后仍开放完整三分钟报名。",
-      "修复白蚁穴清完敌怪后，玩家的召唤物仍被算作剩余敌怪而无法结算。通关后会正常返回入口旁。",
-      "仅合成神话、究极时，以确认页列出的材料为准。确认后新获得的材料不会被这次合成扣除，原材料不足时整批取消。",
-      "在图鉴搜索特定魔法花瓣时，可预览装备永恒法力宝珠后的掉落来源。窄窗口内的搜索与列表显示也已修正。",
-      "酸液炸弹、熔岩炸弹的液池面板与实际伤害对齐。酸液炸弹的说明补充命中野怪才铺池。",
-      "修正训练木桩的红宝石追加闪电伤害统计。冰冻蓝莓仍按原规则结算。",
-      "魔法染色体每次施盾统一结算。盾量上限、持续时间和现有配装的有效耗蓝保持原规则。",
-      "Apex 极地蜈蚣蛋孵出头部和体节的接触伤害提高 50%，生命、数量和重孵时间保持原值。",
-      "服务器指引新增自助转服。请在原服的安全入口登录，再选择目标服并为新账号设置密码。迁入成功后原角色会锁定，绑定权益保留在原服。",
-      "虚空元素之力默认三颗。对野怪全中时，接触、毒伤与灼烧的总量维持原值，三颗共同分摊。回蓝、治疗、护盾及装备被动按槽位结算。",
-      "超凡、永久超凡和 Apex 酸液炸弹的专属效果使液池每秒伤害提高 20%。池子持续时间保持 2.1 秒，面板可查看加成前后的数值。",
-      "卫生纸基础伤害由 100 调为 6。生命曾高于 90% 后自然受伤存活且降到 1% 至不足 10% 才会开启三倍强化。同一目标每 0.5 秒最多命中一次。卸下卫生纸或触发保命时取消强化。",
-      "声望二在多人附近持续缺少低阶怪时，会限额尝试同一刷怪带内已可刷新的休眠库存。怪物总库存、高阶刷新冷却和掉落规则保持现值。"}},
 };
 
 const std::vector<ChangelogEntry>& changelog() {
@@ -977,7 +934,7 @@ const std::vector<ChangelogEntry>& changelog() {
             release.title = notes["title"].asString();
             if (release.title.empty()) return;
             for (const auto& line : notes["changes"].items()) {
-                if (line.isString() && release.changes.size() < kMaxChanges)
+                if (line.isString())
                     release.changes.push_back(line.asString());
             }
             auto previous = std::find_if(releases.begin(), releases.end(), [&](const Release& item) {
@@ -998,9 +955,9 @@ const std::vector<ChangelogEntry>& changelog() {
             // Build pointers after all owned strings are in their final positions.
             for (const auto& source : releases) {
                 ChangelogEntry entry{source.title.c_str(), {}};
-                for (std::size_t i = 0; i < source.changes.size(); ++i)
-                    entry.changes[i] = source.changes[i].c_str();
-                rows.push_back(entry);
+                entry.changes.reserve(source.changes.size());
+                for (const auto& line : source.changes) entry.changes.push_back(line);
+                rows.push_back(std::move(entry));
             }
         }
     };
@@ -1009,9 +966,7 @@ const std::vector<ChangelogEntry>& changelog() {
 }
 
 int changeCount(const ChangelogEntry& entry) {
-    int count = 0;
-    while (count < kMaxChanges && entry.changes[count] != nullptr) ++count;
-    return count;
+    return static_cast<int>(entry.changes.size());
 }
 
 double entryHeight(const ChangelogEntry& entry) {

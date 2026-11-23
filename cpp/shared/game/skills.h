@@ -41,6 +41,17 @@ enum class SkillId : std::uint8_t {
     ManaRegen,
     FluidReach,
     ManaCap,
+    RadiationReach,
+    RadiationPower,
+    SpillRate,
+    SecondaryReload,
+    FirePower,
+    LightningPower,
+    ExplosionReach,
+    CorruptDamage,
+    CorruptReload,
+    CorruptReach,
+    Particle,
     Count,
 };
 
@@ -50,23 +61,23 @@ inline constexpr int kSkillCount = static_cast<int>(SkillId::Count);
 inline constexpr std::array<const char*, kSkillCount> kSkillKeys = {
     "health", "loadout", "rotation", "antennae", "luck", "medic", "petalHealth",
     "poison", "reach", "reload", "sharpEdges", "secondChance", "magnetism",
-    "duplicator", "bodyToxicity", "concentratedPoison", "summoner", "damage", "absorbing", "movementSpeed", "prestige", "petDamage", "manaRegen", "fluidReach", "manaCap",
+    "duplicator", "bodyToxicity", "concentratedPoison", "summoner", "damage", "absorbing", "movementSpeed", "prestige", "petDamage", "manaRegen", "fluidReach", "manaCap", "radiationReach", "radiationPower", "spillRate", "secondaryReload", "firePower", "lightningPower", "explosionReach", "corruptDamage", "corruptReload", "corruptReach", "particle",
 };
 
 inline constexpr std::array<const char*, kSkillCount> kSkillLabels = {
     "Health", "Loadout", "Petal Rotation", "Antennae", "Luck", "Medic",
     "Petal Health", "Poison", "Reach", "Reload", "Sharp Edges", "Second Chance",
-    "Magnetism", "Duplicator", "Body Toxicity", "Concentrated Poison", "Summoner", "Damage", "Absorption", "Movement Speed", "Prestige", "Pet Damage", "Mana Regeneration", "Fluid Reach", "Mana Capacity",
+    "Magnetism", "Duplicator", "Body Toxicity", "Concentrated Poison", "Summoner", "Damage", "Absorption", "Movement Speed", "Prestige", "Pet Damage", "Mana Regeneration", "Fluid Reach", "Mana Capacity", "Radioactive", "Radiation Power", "Laminer", "Secondary Reload", "BURN!", "Thunder", "Explosion", "Corrupt Damage", "Corrupt Reload", "Corrupt Range", "Particle",
 };
 
 inline constexpr std::array<const char*, kSkillCount> kSkillLabelsZh = {
     "血量", "槽位", "转速", "触角", "幸运", "治疗", "花瓣耐久", "剧毒", "攻击范围",
-    "刷新", "锐利边缘", "第二次机会", "磁性", "重瓣", "身体毒性", "浓缩剧毒", "召唤师", "伤害", "吸收", "移动速度", "声望", "宠物伤害", "魔力回复", "流体范围", "魔力上限",
+    "刷新", "锐利边缘", "第二次机会", "磁性", "重瓣", "身体毒性", "浓缩剧毒", "召唤师", "伤害", "吸收", "移动速度", "声望", "宠物伤害", "魔力回复", "流体范围", "魔力上限", "辐射范围", "辐射增幅", "流体频率", "二次装填", "火伤增幅", "雷伤增幅", "爆炸范围", "腐化伤害", "腐化装填", "腐化范围", "多粒子",
 };
 
 /// How many buyable tiers each branch has (florrclone costs[].length).
 inline constexpr std::array<int, kSkillCount> kSkillTiers = {
-    9, 5, 5, 3, 9, 9, 9, 9, 3, 9, 8, 2, 2, 4, 1, 1, 9, 10, 10, 3, 2, 10, 9, 3, 9,
+    9, 5, 5, 3, 9, 9, 9, 9, 3, 9, 8, 2, 2, 4, 1, 1, 9, 10, 10, 3, 2, 10, 9, 3, 9, 5, 3, 5, 2, 2, 2, 4, 7, 3, 3, 4,
 };
 
 /// Per-tier point costs from florrclone.
@@ -96,9 +107,29 @@ inline constexpr std::array<std::array<int, 10>, kSkillCount> kSkillCosts = {{
     {{2, 4, 6, 8, 10, 14, 18, 22, 26}}, // mana regeneration
     {{4, 8, 14}}, // fluid reach
     {{2, 4, 6, 8, 10, 14, 18, 22, 26}}, // mana capacity
+    {{6, 12, 18, 24, 30}}, // radiation reach (cumulative 6/18/36/60/90 TP)
+    {{4, 8, 14}}, // radiation power
+    {{6, 12, 18, 24, 30}}, // spill rate
+    {{39, 24}}, // secondary reload after Reload 5
+    {{35, 40}}, // fire after Damage 5
+    {{35, 40}}, // lightning after Damage 5
+    {{15, 20, 15, 35}}, // explosion reach
+    {{3, 3, 3, 6, 9, 14, 24}}, // corrupt damage
+    {{12, 12, 12}}, // corrupt reload
+    {{9, 3, 3}}, // corrupt reach
+    {{43, 43, 43, 86}}, // Particle cumulative 43/86/129/215 TP
 }};
 
 inline constexpr std::array<double, 2> kMagnetismRange = {1000.0, 1500.0};
+inline constexpr std::array<double, 7> kCorruptDamageScale = {1.025, 1.05, 1.075, 1.10, 1.125, 1.15, 1.175};
+inline constexpr std::array<double, 3> kCorruptReloadScale = {1.04, 1.08, 1.12};
+inline constexpr std::array<double, 3> kCorruptReachBonus = {20.0, 40.0, 60.0};
+inline constexpr std::array<double, 5> kSpillRateTalentScale = {1.06, 1.12, 1.18, 1.24, 1.30};
+inline constexpr std::array<double, 2> kSecondaryReloadTalentScale = {1.075, 1.15};
+inline constexpr std::array<double, 2> kElementalPowerTalentScale = {1.075, 1.15};
+inline constexpr std::array<double, 4> kExplosionReachTalentBonus = {75.0, 150.0, 225.0, 300.0};
+inline constexpr std::array<double, 5> kRadiationReachTalentScale = {1.05, 1.10, 1.15, 1.20, 1.25};
+inline constexpr std::array<double, 3> kRadiationPowerTalentScale = {1.05, 1.10, 1.15};
 inline constexpr std::array<double, 3> kFluidReachTalentScale = {1.10, 1.20, 1.30};
 inline constexpr std::array<double, 9> kManaRegenTalentScale = {1.08, 1.16, 1.25, 1.35, 1.45, 1.56, 1.68, 1.82, 2.0};
 inline constexpr std::array<double, 9> kManaCapTalentScale = {1.12, 1.25, 1.40, 1.55, 1.72, 1.90, 2.10, 2.35, 2.60};
@@ -127,7 +158,7 @@ struct SkillGate {
     int parentLevel;  ///< 1-based owned level required on parent
 };
 
-inline constexpr std::array<SkillGate, 7> kSkillGates = {{
+inline constexpr std::array<SkillGate, 10> kSkillGates = {{
     {SkillId::Antennae, SkillId::Loadout, 1},
     {SkillId::Reach, SkillId::Loadout, 2},
     {SkillId::SecondChance, SkillId::Health, 3},
@@ -135,6 +166,9 @@ inline constexpr std::array<SkillGate, 7> kSkillGates = {{
     {SkillId::Duplicator, SkillId::Loadout, 4},
     {SkillId::BodyToxicity, SkillId::SharpEdges, 7},
     {SkillId::ConcentratedPoison, SkillId::Poison, 3},
+    {SkillId::FirePower, SkillId::Damage, 5},
+    {SkillId::LightningPower, SkillId::Damage, 5},
+    {SkillId::SecondaryReload, SkillId::Reload, 5},
 }};
 
 inline const SkillGate* skillGate(SkillId id) {
@@ -360,6 +394,14 @@ struct SkillSet {
         return std::min(kMaxPetalCopies,copies+extra);
     }
 
+    // Evaluate the resolved petal's own count, before native duplication or fission.
+    // A brood size is not an orbit particle count; use only for physical petal copies.
+    int extraParticle(int baseCount) const {
+        const int t = level(SkillId::Particle);
+        static constexpr int minimum[] = {5, 4, 3, 2};
+        return t >= 0 && t < 4 && baseCount > minimum[t] ? 1 : 0;
+    }
+
     // Compatibility shims for call sites still using old flowrix SkillId names
     // via overloaded helpers below — prefer the methods above.
     double healthScale(SkillId id) const {
@@ -373,12 +415,32 @@ struct SkillSet {
         if (id == SkillId::ManaCap) return tableAt(kManaCapTalentScale, level(id));
         if (id == SkillId::PetDamage) return tableAt(kPetDamageTalentScale, level(id));
         if (id == SkillId::Damage) return tableAt(kDamageTalentPetalScale, level(id));
+        if (id == SkillId::CorruptDamage) return tableAt(kCorruptDamageScale, level(id));
+        if (id == SkillId::CorruptReload) return tableAt(kCorruptReloadScale, level(id));
+        if (id == SkillId::SpillRate) return tableAt(kSpillRateTalentScale, level(id));
+        if (id == SkillId::SecondaryReload || id == SkillId::FirePower || id == SkillId::LightningPower) {
+            if (!prerequisiteMet(id)) return 1.0;
+            return tableAt(id == SkillId::SecondaryReload ? kSecondaryReloadTalentScale : kElementalPowerTalentScale,
+                           level(id));
+        }
+        if (id == SkillId::RadiationReach) return tableAt(kRadiationReachTalentScale, level(id));
+        if (id == SkillId::RadiationPower) return tableAt(kRadiationPowerTalentScale, level(id));
         if (id == SkillId::FluidReach) return tableAt(kFluidReachTalentScale, level(id));
         if (id == SkillId::Absorbing) return tableAt(kAbsorbTalentScale, level(id));
         if (id == SkillId::Medic) return medicScale();
         return 1.0;
     }
+    double corruptReachBonus() const {
+        const int tier = level(SkillId::CorruptReach);
+        return tier < 0 || tier >= static_cast<int>(kCorruptReachBonus.size())
+            ? 0.0 : kCorruptReachBonus[static_cast<std::size_t>(tier)];
+    }
     double statScale(SkillId id) const {
+        if (id == SkillId::ExplosionReach) {
+            const int tier = level(id);
+            return tier < 0 || tier >= static_cast<int>(kExplosionReachTalentBonus.size())
+                ? 0.0 : kExplosionReachTalentBonus[static_cast<std::size_t>(tier)];
+        }
         if (id == SkillId::Damage) return tableAt(kDamageTalentBodyScale, level(id));
         if (id == SkillId::Health) return healthScale();
         if (id == SkillId::SharpEdges) return bodyDamageScale();
@@ -389,6 +451,12 @@ struct SkillSet {
 
 inline int petalCopies(int copies, const SkillSet* skills, int slot=-1, int rarity=0, bool stackable=true) {
     return skills != nullptr ? skills->petalCopies(copies,slot,rarity,stackable) : copies;
+}
+
+inline int orbitPetalCopies(int baseCount, const SkillSet* skills, int slot=-1,
+                            int rarity=0, bool stackable=true) {
+    return std::min(kMaxPetalCopies, petalCopies(baseCount, skills, slot, rarity, stackable) +
+                    (skills ? skills->extraParticle(baseCount) : 0));
 }
 
 inline int availableTalentPoints(int level, const SkillSet& skills, int migrationBonus = 0) {

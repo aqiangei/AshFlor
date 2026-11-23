@@ -15,9 +15,11 @@
 #include "server/replication.h"
 #include "server/squads.h"
 #include "server/systems/combat.h"
+#include "server/combat_talents.h"
 #include "shared/game/map_elements.h"
 #include "server/systems/movement.h"
 #include "server/systems/spawning.h"
+#include "shared/game/summon_combat_stats.h"
 #include "shared/game/terrain.h"
 #include "shared/game/dark_mark.h"
 #include "shared/game/domino.h"
@@ -242,6 +244,11 @@ double barReloadCutOf(const ContentRegistry& registry, const Loadout& loadout, c
 /// and the golden leaves on its bar. A flower with no tree at all reads as
 /// neutral rather than as an error: the ring runs on entities, and not every
 /// entity carrying a loadout came from an account.
+bool talentCorrupted(const World& world, Entity player) {
+    const auto* visuals = world.tryGet<PlayerVisuals>(player);
+    return visuals != nullptr && visuals->corrupted;
+}
+
 double reloadScaleOf(World& world, const ContentRegistry& registry, Entity player) {
     const PlayerSkillTree* tree = world.tryGet<PlayerSkillTree>(player);
     const Loadout* loadout = world.tryGet<Loadout>(player);
@@ -261,7 +268,9 @@ double reloadScaleOf(World& world, const ContentRegistry& registry, Entity playe
             }
         }
     }
-    return zodiacPenalty * (tree ? tree->skills.reloadScale() : 1.0) *
+    const double corruptRate = tree && talentCorrupted(world, player)
+        ? tree->skills.effectScale(SkillId::CorruptReload) : 1.0;
+    return zodiacPenalty * (tree ? tree->skills.reloadScale() : 1.0) / corruptRate *
            (1.0 - (loadout ? barReloadCutOf(registry, *loadout, tree ? &tree->skills : nullptr) : 0.0)) *
            deadLeafPenalty *
            kPetalReloadFeelScale;
@@ -524,6 +533,26 @@ bool hasNonProjectileAction(const PetalConfig& config, const PetalStats& stats) 
 
 bool hasTimedAction(const PetalConfig& config, const PetalStats& stats) {
     return config.projectile.present || hasNonProjectileAction(config, stats);
+}
+
+double secondaryActionRate(const World& world, Entity player, const PetalConfig& config) {
+    const auto* tree = world.tryGet<PlayerSkillTree>(player);
+    if (!tree) return 1.0;
+    const bool liquid = config.id == "blood" ||
+        (config.spill.kind != SpillKind::None && !config.spill.onHit);
+    if (liquid)
+        return tree->skills.effectScale(SkillId::SpillRate) *
+               tree->skills.effectScale(SkillId::SecondaryReload);
+    if ((config.petMobIndex != kInvalidIndex && petalIsEgg(config)) ||
+        config.id == "coffee" || config.id == "chilly" || config.id == "fire" ||
+        config.id == "pill" || config.id == "cancer" || config.id == "peas" ||
+        config.id == "electron_missile")
+        return tree->skills.effectScale(SkillId::SecondaryReload);
+    return 1.0;
+}
+
+double secondaryActionWait(double interval, double rate) {
+    return std::max(net::kTickMillis, interval / rate);
 }
 
 /// The gap between two of a petal's actions. A petal may declare more than one
@@ -905,7 +934,7 @@ void PetalSystem::run(World& world, const ContentRegistry& registry, double nowM
         }
         if (nowMillis < state.armedAtMillis ||
             !touchesGridMob(world, at.realm, at.position, 20.0, true, true)) continue;
-        const double radius = 36.0 + 24.0 * ladderIndex(state.rarity);
+        const double radius = explosionTalentRadius(world,state.owner,36.0 + 24.0 * ladderIndex(state.rarity));
         emitDamageBurst(world, state.owner, at.position, radius,
                         300.0 * referenceOffenseScale(registry.petal(registry.petalIndex("void_landmine")),state.rarity)*state.combinationStrength, false, nowMillis, true);
         attractionGrid_.query(at.realm, at.position, radius, attractionCandidates_);
@@ -986,9 +1015,10 @@ void PetalSystem::run(World& world, const ContentRegistry& registry, double nowM
         const auto owner=shot->owner;const auto rarity=shot->rarity;
         const auto* mods=world.tryGet<PlayerModifiers>(owner);
         const double damage=config.radiation.poisonPerSecond*referenceOffenseScale(config,rarity)*
-            shot->effectStrength*kRadiationDamageScale*(mods?mods->petalDamageScale:1.0);
+            shot->effectStrength*kRadiationDamageScale*(mods ? mods->petalDamageScale * mods->radiationDamageScale : 1.0);
         const Entity cloud=emitGroundEffect(world,owner,at.position,GroundEffectKind::Radiation,
-            baseRadiationRadius(config,rarity),damage,1.0,rarity,interval/1000.0+net::kTickSeconds);
+            baseRadiationRadius(config,rarity) * (mods ? mods->radiationRadiusScale : 1.0),
+            damage,1.0,rarity,interval/1000.0+net::kTickSeconds);
         if(auto* field=world.tryGet<GroundEffect>(cloud))field->poisonDurationMillis=config.radiation.poisonDurationMillis;
     }
     for(Entity owner:playerList_) {
@@ -1389,7 +1419,7 @@ void PetalSystem::reconcileSlots(World& world, const ContentRegistry& registry, 
         // seat 0 — but Duplicator's single-petal bonus is seat-0 only. Treat a
         // fission target as seat 0 for copy math, then triple.
         const int copySlot = split ? 0 : i;
-        const int copies = petalCopies(std::max(0, stats.count), skills, copySlot,
+        const int copies = orbitPetalCopies(std::max(0, stats.count), skills, copySlot,
                                        petalTier(equipped.rarity), config.stackable) *
                            (split ? 3 : 1);
         const int count = petalAnchorsRing(config) && i != moonSlot ? 0
@@ -1609,6 +1639,7 @@ void PetalSystem::reconcileSlots(World& world, const ContentRegistry& registry, 
         const double spawnHealth = stats.breakable
                                        ? (slotState.independent ? stats.health : slotState.poolHealth)
                                        : 0.0;
+        bool spawnedThisTick = false;
         for (int k = 0; k < count && k < 64; ++k) {
             if ((present & (1ull << k)) != 0) continue;
             // Gated on the cooldown, not on whether the petal can break: an
@@ -1632,6 +1663,7 @@ void PetalSystem::reconcileSlots(World& world, const ContentRegistry& registry, 
                                             static_cast<std::uint8_t>(count), config, stats,
                                             equipped, spawnHealth, nowMillis);
             if (petal == NULL_ENTITY) continue;
+            spawnedThisTick = true;
             world.get<PetalInstance>(petal).combinationStrength = combination.strength;
             if (elemental) world.add<ElementalOffenseShare>(petal, {elementalShare});
             if (config.id == "lightning" && ready > 0.0 && nowMillis >= ready &&
@@ -1644,6 +1676,15 @@ void PetalSystem::reconcileSlots(World& world, const ContentRegistry& registry, 
             present |= 1ull << k;
             if (slotState.independent) {
                 slotState.instanceReadyAtMillis[static_cast<std::size_t>(k)] = 0.0;
+            }
+        }
+        if (spawnedThisTick && config.id == "blood_stinger" && world.has<PlayerTag>(player)) {
+            // Pay once per replenished slot. The reference cost is 5% of a
+            // stinger's damage. Cap each payment at the local Chilly cost,
+            // since upper-tier damage outgrows a player's health pool.
+            if (auto* health = world.tryGet<Health>(player); health && health->current > 1.0) {
+                const double cost = std::min(stats.damage * .05, health->max * .025);
+                health->current = std::max(1.0, health->current - cost);
             }
         }
         // Sticky: once a slot has actually put petals on the field, an empty
@@ -2012,7 +2053,7 @@ Entity PetalSystem::spawnPetal(World& world, Entity player, Loadout& loadout, st
     // the ring. Its cooldown begins only after an actual shot.
     instance.nextProjectileMillis = config.projectile.present ? nowMillis : 0.0;
     // A reloaded berry must reach the client before being spent on a held attack.
-    if (hasBerryLoadAnimation(config.id)) {
+    if (hasBerryLoadAnimation(config.id) && config.id != "peas") {
         instance.nextProjectileMillis = nowMillis + kBerryLoadMillis;
     }
     if (config.id == "marble") instance.nextProjectileMillis = nowMillis + 350.0;
@@ -2030,16 +2071,19 @@ Entity PetalSystem::spawnPetal(World& world, Entity player, Loadout& loadout, st
     // petals do.
     // A non-projectile action waits out a full interval after the petal
     // arrives.
-    instance.nextActionMillis = hasNonProjectileAction(config, stats)
-                                    ? nowMillis + actionIntervalMillis(config, stats, world, player)
-                                    : 0.0;
+    if (hasNonProjectileAction(config, stats)) {
+        instance.nextActionIntervalMillis = actionIntervalMillis(config, stats, world, player);
+        instance.nextActionMillis = nowMillis + instance.nextActionIntervalMillis;
+    }
     // A freshly equipped or reloaded summoner has already served its reload.
     // Long-lived summons such as Square must not wait a second full cooldown.
-    if (config.petMobIndex != kInvalidIndex && config.petLifetimeMillis <= 0.0 && !config.petSummonTiers)
-        instance.nextActionMillis = nowMillis + 1000.0 * hyperAmount(technique, HyperTechnique::EarlySummon);
+    if (config.petMobIndex != kInvalidIndex && config.petLifetimeMillis <= 0.0 && !config.petSummonTiers) {
+        instance.nextActionIntervalMillis = 1000.0 * hyperAmount(technique, HyperTechnique::EarlySummon);
+        instance.nextActionMillis = nowMillis + instance.nextActionIntervalMillis;
+    }
     if (config.burrowDurationMillis > 0.0)
         instance.nextActionMillis = nowMillis +
-            actionIntervalMillis(config, stats, world, player) * hyperAmount(technique, HyperTechnique::QuickDig);
+            instance.nextActionIntervalMillis * hyperAmount(technique, HyperTechnique::QuickDig);
     // A reload hands back a FULL battery: the charges ride the instance, and
     // the instance is new. Ready at once, unlike the action gate above -- the
     // petal has just served its whole cooldown to get here, and a slam it is
@@ -2169,7 +2213,6 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
     aggregate.modifiers.passiveHealPerSecond = 1.0;
     std::uint16_t equipFlags = EquipNone;
     bool hasToiletPaper = false;
-    bool hasSponge = false;
     bool equippedCorruption = false;
     bool hyperCorruption = false;
     bool apexCorruption = false;
@@ -2184,6 +2227,8 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
     double flowerRadiusBonus = 0.0;
     double powderBonus = 0.0;
     double woundBonus = 0.0;
+    double dizzyBonus = 0.0;
+    double elementalDamageBonus = 0.0;
     double palmShield = 0.0;
     double featherSpeed = 0.0;
     std::array<int, kLadderRarityCount> magicBones{};
@@ -2237,12 +2282,11 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
                 if(worn.id=="vampire_fang")aggregate.modifiers.bodyHitHeal+=1.2*petalHealScale(equipped.rarity);
                 if (i < loadout->activeSlots) {
                     hasToiletPaper |= worn.id == "toilet_paper";
-                    hasSponge |= worn.id == "sponge";
                 }
                 if (worn.id == "void_elemental") {
                     const int tier = ladderIndex(equipped.rarity);
                     const int beyondSuper = std::max(0, tier - rarityIndex(Rarity::Super));
-                    aggregate.modifiers.petalDamageScale += (tier + beyondSuper * 6) / 100.0;
+                    elementalDamageBonus += (tier + beyondSuper * 6) / 100.0;
                     aggregate.modifiers.speedScale += (40.0 + tier * 7.5 + beyondSuper * 22.5) / kPlayerMaxSpeed;
                     aggregate.elementalShieldPerSecond += 2.5 * petalHealScale(equipped.rarity);
                 }
@@ -2299,8 +2343,7 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
                         aggregate.modifiers.spillRadiusScale + soapSpillRadiusBonus(equipped.rarity));
                 }
                 if (worn.id == "rna") {
-                    const int tier = std::min(petalTier(equipped.rarity), rarityIndex(Rarity::Apex));
-                    aggregate.modifiers.petMoveSpeedScale += .04 + .0052 * tier * tier;
+                    aggregate.modifiers.petMoveSpeedScale += rnaPetSpeedBonus(equipped.rarity);
                 }
                 if (worn.id == "chloroplast") {
                     const int tier = std::min(petalTier(equipped.rarity), rarityIndex(Rarity::Apex));
@@ -2316,9 +2359,7 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
                         combined = 1.0 - (1.0 - combined) * (1.0 - chance);
                     }
                 }
-                if (worn.id == "opal")
-                    aggregate.modifiers.opalTiers[petalTier(equipped.rarity)] = true;
-                if (worn.id == "void_opal") {
+                if (worn.id == "opal" || worn.id == "void_opal") {
                     const int tier = petalTier(equipped.rarity);
                     std::fill_n(aggregate.modifiers.opalTiers.begin(), tier + 1, true);
                 }
@@ -2352,7 +2393,7 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
                     constexpr std::array<double, kLadderRarityCount> bonuses{
                         .04, .05, .06, .07, .09, .12, .15, .18, .22, .25
                     };
-                    woundBonus = std::max(woundBonus, bonuses[ladderIndex(equipped.rarity)]);
+                    dizzyBonus = std::max(dizzyBonus, bonuses[ladderIndex(equipped.rarity)]);
                 }
                 if (!slot.broken && worn.id == "wound") {
                     constexpr std::array<double, kLadderRarityCount> bonuses{
@@ -2362,7 +2403,7 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
                 }
                 if (!slot.broken && worn.id == "compass") aggregate.compassSteer = true;
                 if (!slot.broken && (worn.id == "palm_leaf" || worn.id == "magic_palm_leaf"))
-                    palmShield += 1.25 * petalHealScale(equipped.rarity);
+                    palmShield += palmLeafShieldPerSecond(equipped.rarity);
                 if (worn.id == "triangle")
                     ++aggregate.modifiers.triangleCounts[petalTier(equipped.rarity)];
                 if (worn.id == "pharaoh_s_crown") {
@@ -2568,10 +2609,9 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
                 auto commandTier = technique && technique->technique == HyperTechnique::CommandApex
                     ? Rarity::Universal : equipped.rarity;
                 if (registry.petal(equipped.configIndex).id == "coordinate") {
-                    commandTier = clampRarity(petalTier(equipped.rarity) + 1);
-                }
-                if (!out.controlsPets || commandTier > out.petControlRarity) {
-                    out.petControlRarity = commandTier;
+                    out.coordinateControlTier = std::max(out.coordinateControlTier, petalTier(equipped.rarity));
+                } else {
+                    out.petControlRarity = std::max(out.petControlRarity, commandTier);
                 }
                 out.controlsPets = true;
             }
@@ -2611,16 +2651,19 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
         }
     }
     auto& toilet = world.get<Afflictions>(player);
-    if (!hasToiletPaper || !hasSponge) {
+    if (!hasToiletPaper) {
         toilet.toiletArmed = false;
-        toilet.toiletBoostActive = false;
-    } else if (wearerHealth && wearerHealth->fraction() > .9) {
+    } else if (wearerHealth && wearerHealth->fraction() >= 0.9) {
         toilet.toiletArmed = true;
     }
     aggregate.modifiers.speedScale *= (1.0 + powderBonus) * (1.0 + featherSpeed);
-    aggregate.jurassicWoundBonus = woundBonus;
+    const double directBonus = std::max(woundBonus, dizzyBonus);
+    aggregate.jurassicWoundBonus = directBonus;
     aggregate.jurassicShieldPerSecond = palmShield;
-    aggregate.modifiers.jurassicDirectDamageScale = 1.0 + woundBonus;
+    aggregate.modifiers.jurassicDirectDamageScale = 1.0 + directBonus;
+    aggregate.modifiers.petalDamageScale += elementalDamageBonus;
+    aggregate.modifiers.spillDamageScale =
+        (1.0 + elementalDamageBonus) * (1.0 + dizzyBonus) * aggregate.modifiers.summonDamageScale;
     if (const auto* boost = world.tryGet<JurassicSpeedBoost>(player)) {
         if (nowMillis < boost->coffeeUntilMillis) aggregate.modifiers.speedScale *= boost->coffeeScale;
         if (nowMillis < boost->chillyUntilMillis) aggregate.modifiers.speedScale *= boost->chillyScale;
@@ -2669,12 +2712,18 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
         // side at all. Collapsing the two costs an apex-talented ring 2.5x its
         // damage, so the two factors are published separately.
         aggregate.modifiers.spillRadiusScale *= tree->skills.effectScale(SkillId::FluidReach);
+        aggregate.modifiers.radiationRadiusScale = tree->skills.effectScale(SkillId::RadiationReach);
+        aggregate.modifiers.radiationDamageScale = tree->skills.effectScale(SkillId::RadiationPower);
         aggregate.modifiers.petalDamageScale *= tree->skills.effectScale(SkillId::Damage);
         aggregate.modifiers.maxHealthScale *= tree->skills.statScale(SkillId::Health);
         aggregate.modifiers.damageScale *= tree->skills.bodyDamageScale() *
                                            tree->skills.statScale(SkillId::Damage);
         aggregate.modifiers.luck += tree->skills.luck();
         aggregate.modifiers.attackRange += tree->skills.reachBonus();
+        if (talentCorrupted(world, player)) {
+            aggregate.modifiers.petalDamageScale *= tree->skills.effectScale(SkillId::CorruptDamage);
+            aggregate.modifiers.attackRange += tree->skills.corruptReachBonus();
+        }
         aggregate.spinScale *= tree->skills.rotationSpeed() / kPetalSpinRate;
         const double petalHealing = aggregate.modifiers.passiveHealPerSecond - 1.0;
         aggregate.modifiers.passiveHealPerSecond =
@@ -2717,6 +2766,19 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
     sizeScale = std::min(sizeScale, kMaxPlayerSizeScale);
     if (Body* body = world.tryGet<Body>(player)) {
         body->radius = playerRadiusForLevel(level) * sizeScale + flowerRadiusBonus;
+        double extraMass = 0.0;
+        if (const auto* bar = world.tryGet<Loadout>(player)) {
+            const auto* tree = world.tryGet<PlayerSkillTree>(player);
+            const int active = tree ? tree->skills.loadoutSlots() : kLoadoutActiveSlots;
+            constexpr std::array<double, kLadderRarityCount> mass{
+                .4, 1.2, 2.0, 2.8, 3.6, 4.4, 5.2, 6.0, 11.8, 17.6};
+            for (int slot = 0; slot < active; ++slot) {
+                const auto worn = equippedPetal(registry, *bar, slot);
+                if (!worn.empty() && registry.petal(worn.configIndex).id == "void_singularity")
+                    extraMass += mass[ladderIndex(worn.rarity)];
+            }
+        }
+        body->mass = 1.0 + extraMass;
     }
     if (Health* health = world.tryGet<Health>(player)) {
         // In the ring the pool is flat and no petal or talent moves it
@@ -2871,9 +2933,11 @@ void PetalSystem::applyPassiveHeal(World& world, const ContentRegistry& registry
         if (aggregate.jurassicShieldPerSecond > 0.0 &&
             !CombatSystem::healingBlocked(world, player, nowMillis)) {
             if (auto* shield = world.tryGet<ShieldState>(player)) {
-                const double cap = health->max * .30;
-                if (shield->amount < cap)
+                const double cap = health->max * kPalmLeafShieldCapFraction;
+                if (shield->amount < cap && dt > 0.0) {
                     shield->amount = std::min(cap, shield->amount + aggregate.jurassicShieldPerSecond * dt);
+                    shield->gainedPassiveShieldThisTick = true;
+                }
             }
         }
     }
@@ -3127,7 +3191,7 @@ void PetalSystem::placePetals(World& world, const ContentRegistry& registry, Ent
         if (config.noPhysics || petalIsLooseBody(config) || combinations[i].copies == 0) continue;
         const auto stats = equippedPetalStats(registry, slot);
         const bool splitOrbit = fissionSplits(registry, *loadout, i, slot, stats);
-        const int copies = petalCopies(stats.count, skills, splitOrbit ? 0 : i, petalTier(slot.rarity),
+        const int copies = orbitPetalCopies(stats.count, skills, splitOrbit ? 0 : i, petalTier(slot.rarity),
                                        config.stackable) * (splitOrbit ? 3 : 1);
         const int count = std::clamp(combinations[i].copies * copies, 1, 64);
         occupied[orbitIndex] += config.clumped ? 1 : count;
@@ -3261,7 +3325,7 @@ void PetalSystem::placePetals(World& world, const ContentRegistry& registry, Ent
         }
         transform->angle = angle;
         if (petalIsCompass(config)) {
-            facingAngle = compassBearing(world, registry, *instance, transform->position, player,
+            facingAngle = compassBearing(world, *instance, transform->position, player,
                                          transform->realm, facingAngle, nowMillis);
         }
         instance->facingAngle = facingAngle;
@@ -3540,13 +3604,17 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
         const PetalStats stats = instanceStats(world, registry, *instance);
         const auto* profile = hyperTechniqueInfo(config.id, instance->rarity, instance->mimicked);
         const auto technique = profile ? profile->technique : HyperTechnique::None;
+        if (config.id == "magic_tomato" && !instance->magicTomatoRipe && isStanding(world, petal)) {
+            instance->magicTomatoRipe = spendMana(world, player, magicTomatoRipeningMana(instance->rarity));
+        }
         if(config.id=="arctic_nitro" && nowMillis>=instance->spawnedAtMillis+nitroUseMillis(instance->rarity)) {
             const auto slot=instance->slot,sub=instance->subIndex;
             spendPetal(world,registry,player,petal,slot,sub,stats,nowMillis);
             continue;
         }
         if (config.id == "fire" && (attacking || defending) &&
-            nowMillis >= instance->spawnedAtMillis + 2000.0) {
+            nowMillis >= instance->spawnedAtMillis +
+                secondaryActionWait(2000.0, secondaryActionRate(world, player, config))) {
             const auto slot = instance->slot;
             const auto sub = instance->subIndex;
             const auto tier = instance->rarity;
@@ -3562,7 +3630,8 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
             continue;
         }
         if (config.id == "cancer" && isStanding(world, petal) &&
-            nowMillis >= instance->spawnedAtMillis + 10000.0) {
+            nowMillis >= instance->spawnedAtMillis +
+                secondaryActionWait(10000.0, secondaryActionRate(world, player, config))) {
             const auto* owner = world.tryGet<Transform>(player);
             if (owner && owner->realm != Realm::Arena) {
                 const int tier = petalTier(instance->rarity);
@@ -3965,19 +4034,19 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
         // neutral orbit while attacking and is thrown 620 units along its own
         // bearing; defending plants it where the pulled-in ring put it.
         if (attacking || defending) {
-            if (config.id == "blood" && nowMillis >= instance->spawnedAtMillis + 1000.0) {
+            if (config.id == "blood" && nowMillis >= instance->spawnedAtMillis +
+                secondaryActionWait(1000.0, secondaryActionRate(world, player, config))) {
                 const auto slot = instance->slot;
                 const auto sub = instance->subIndex;
                 const Vec2 at = transform->position;
                 const auto* owner = world.tryGet<Transform>(player);
                 if (!terrain_ || (owner && !terrain_->segmentBlocked(owner->position, at, owner->realm))) {
-                    const auto* modifiers = world.tryGet<PlayerModifiers>(player);
-                    const double radius = bloodPoolRadius(instance->rarity) *
-                        (modifiers ? modifiers->spillRadiusScale : 1.0);
-                    const Entity patch = emitGroundEffect(world, player, at, GroundEffectKind::Blood,
-                        radius, 0.0, 1.0, instance->rarity, 2.0);
-                    if (patch != NULL_ENTITY)
-                        world.get<GroundEffect>(patch).armorReduction = stats.armorReduction;
+                    SpillSpec blood;
+                    blood.kind = SpillKind::Blood;
+                    blood.strength = stats.armorReduction;
+                    blood.durationMillis = 2000.0;
+                    CombatSystem::createSpill(world, player, at, instance->rarity, blood, 1.0,
+                                             allocateNetId ? allocateNetId() : 0);
                 }
                 spendPetal(world, registry, player, petal, slot, sub, stats, nowMillis);
                 continue;
@@ -4078,7 +4147,8 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
                 stats.mana > 0.0 && pool != nullptr && pool->max > 0.0 && pool->current < pool->max;
             const double charge = std::max(
                 0.0, stats.mana > 0.0 ? stats.manaChargeMillis : stats.healChargeMillis) *
-                hyperAmount(profile, HyperTechnique::QuickCharge);
+                hyperAmount(profile, HyperTechnique::QuickCharge) /
+                secondaryActionRate(world, player, config);
             const bool wasHoming = instance->homing;
             instance->homing = nowMillis - instance->spawnedAtMillis >= charge &&
                                (wantsCure || wantsHeal || wantsShield || wantsMana);
@@ -4245,8 +4315,46 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
         }
 
         const bool shooting = attackHeld || (config.defendOnly && defending);
-        if ((config.projectile.present || hyperShot) && config.id != "diamond" && shooting &&
-            nowMillis >= instance->nextProjectileMillis) {
+        const bool peas = config.id == "peas";
+        const bool electron = config.id == "electron_missile";
+        bool projectilePrepared = true;
+        bool trackPreparationCredit = false;
+        double preparationBudget = 0.0;
+        if (peas || electron) {
+            if (electron && instance->projectilePreparationStartedMillis < 0.0 &&
+                attackHeld && nowMillis >= instance->nextProjectileMillis && isStanding(world, petal)) {
+                instance->projectilePreparationStartedMillis = nowMillis;
+            }
+            const double started = peas ? instance->spawnedAtMillis : instance->projectilePreparationStartedMillis;
+            const double base = peas ? kBerryLoadMillis : 500.0;
+            auto& slot = world.get<PetalSlotState>(player).slots[instance->slot];
+            const double rate = secondaryActionRate(world, player, config);
+            if (slot.projectilePreparationRate != rate) {
+                slot.projectilePreparationRate = rate;
+                slot.projectilePreparationCreditMillis.clear();
+            }
+            double wait = base;
+            if (rate > 1.0) {
+                auto& credits = slot.projectilePreparationCreditMillis;
+                if (instance->subIndex >= credits.size()) credits.resize(instance->subIndex + 1);
+                trackPreparationCredit = true;
+                const double saved = base - secondaryActionWait(base, rate);
+                // Apply complete 50 ms steps immediately and carry only
+                // the fractional step into the next successful shot.
+                const double wholeSteps = std::floor(saved / net::kTickMillis) * net::kTickMillis;
+                wait -= wholeSteps;
+                preparationBudget = credits[instance->subIndex] + saved - wholeSteps;
+                if (preparationBudget >= net::kTickMillis) {
+                    wait -= net::kTickMillis;
+                    preparationBudget -= net::kTickMillis;
+                }
+            }
+            // Releasing attack cannot fire the shot, but the already started
+            // preparation continues, as it does for Peas.
+            projectilePrepared = started >= 0.0 && nowMillis >= started + wait;
+        }
+        if ((config.projectile.present || hyperShot) && config.id != "diamond" && config.id != "arctic_snowflake" && shooting &&
+            projectilePrepared && nowMillis >= instance->nextProjectileMillis) {
             // No mana is asked here: a magic missile paid for itself when it
             // spawned, and the shot it is spent on is free.
             //
@@ -4262,6 +4370,12 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
             const std::uint8_t firedSub = instance->subIndex;
             if (fireProjectiles(world, registry, player, petal, config, stats, instance->configIndex,
                                 instance->rarity, hyperShot)) {
+                if (trackPreparationCredit) {
+                    // fireProjectiles can relocate the player's ECS row. The
+                    // per-grain credit belongs to the same equipped slot.
+                    auto& state = world.get<PetalSlotState>(player).slots[firedSlot];
+                    state.projectilePreparationCreditMillis[firedSub] = preparationBudget;
+                }
                 // The shot IS the petal leaving the ring: firing spends it, the
                 // same way being thrown spends web and pollen, and the
                 // reference launches the petal ITSELF as the missile.
@@ -4278,11 +4392,17 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
         // independently of the current input, as in the reference ring.
         if (config.defendOnly && !defending) continue;
         if (!hasNonProjectileAction(config, stats)) continue;
-        if (nowMillis < instance->nextActionMillis) continue;
+        const double actionRate = secondaryActionRate(world, player, config);
+        const double interval = instance->nextActionIntervalMillis;
+        const double speedup = actionRate > 1.0 ? interval - secondaryActionWait(interval, actionRate)
+                                                : 0.0;
+        if (nowMillis < instance->nextActionMillis - speedup) continue;
 
-        // Armed before acting: the actions below create entities, and the
-        // instance pointer is not worth carrying across that.
-        instance->nextActionMillis = nowMillis + actionIntervalMillis(config, stats, world, player);
+        // Keep the unmodified deadline, so resetting a talent also restores the
+        // unmodified timing for a charge that has not been spent yet.
+        const double actionInterval = actionIntervalMillis(config, stats, world, player);
+        instance->nextActionIntervalMillis = actionInterval;
+        instance->nextActionMillis = nowMillis + actionInterval;
         const Vec2 at = transform->position;
         const Rarity rarity = instance->rarity;
         const auto slot = instance->slot;
@@ -4379,12 +4499,12 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
             spendPetal(world, registry, player, petal, slot, sub, stats, nowMillis);
             continue;
         }
-        const bool offensiveFluid=config.spill.kind==SpillKind::Acid || config.spill.kind==SpillKind::Lava || config.spill.kind==SpillKind::Oil || config.spill.kind==SpillKind::Latrine;
+        const bool offensiveFluid = isOffensiveSpill(config.spill.kind);
         const double effectScale = (offensiveFluid?referenceOffenseScale(config,rarity):petalStrengthScale(rarity))*instance->combinationStrength;
         if (config.spill.kind != SpillKind::None && !config.spill.onHit) {
             const auto sub = instance->subIndex;
             CombatSystem::createSpill(world, player, at, rarity, config.spill, effectScale,
-                                      allocateNetId ? allocateNetId() : 0,instance->combinationStrength);
+                                      allocateNetId ? allocateNetId() : 0, instance->combinationStrength, &rng_);
             spendPetal(world, registry, player, petal, slot, sub, stats, nowMillis);
             continue;
         }
@@ -4495,9 +4615,12 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
             const bool plutonium = config.id == "arctic_plutonium";
             const bool corium = config.id == "arctic_corium" || config.id=="void_corium";
             const double radius = baseRadiationRadius(config, rarity) *
-                hyperAmount(profile, HyperTechnique::WideRadiation);
+                hyperAmount(profile, HyperTechnique::WideRadiation) *
+                (modifiers ? modifiers->radiationRadiusScale : 1.0);
+            // Keep wearer poison on the pre-existing rate, separate from offensive scaling.
+            const double radiationPower = modifiers ? modifiers->radiationDamageScale : 1.0;
             if (radiation.lightningBounces > 0 && radiation.pulseDamage > 0.0) {
-                strikeLightning(world, player, at, radiation.pulseDamage * strength * offensiveRatio * kRadiationDamageScale, rarity,
+                strikeLightning(world, player, at, radiation.pulseDamage * strength * offensiveRatio * kRadiationDamageScale * radiationPower, rarity,
                                 nowMillis, radiation.lightningBounces+(config.id=="void_lithium"?ladderIndex(rarity)/2:0), radius / 240.0);
                 continue;
             }
@@ -4505,8 +4628,9 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
                 (radiation.poisonPerSecond > 0.0
                                       ? radiation.poisonPerSecond * strength : stats.damage) * damageScale;
             const bool uranium = config.id == "uranium";
-            const double enemyPulse = (uranium ? uraniumRadiationDps(stats, rarity) * damageScale : pulse) * offensiveRatio * kRadiationDamageScale;
-            const double directHit = radiation.pulseDamage * strength * damageScale * offensiveRatio * kRadiationDamageScale;
+            const double enemyScale = offensiveRatio * kRadiationDamageScale * radiationPower;
+            const double enemyPulse = (uranium ? uraniumRadiationDps(stats, rarity) * damageScale : pulse) * enemyScale;
+            const double directHit = radiation.pulseDamage * strength * damageScale * enemyScale;
             const double lifetime = interval + (directHit > 0.0 ? net::kTickMillis * 0.5 : 0.0);
             const auto kind = plutonium ? GroundEffectKind::Plutonium : corium ? GroundEffectKind::Corium
                 : GroundEffectKind::Radiation;
@@ -4517,12 +4641,15 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
                 // Uranium's stronger offensive radiation uses the original self-poison rate.
                 field->poisonDurationMillis = config.radiation.poisonDurationMillis;
                 field->ownerPoisonPerSecond = pulse * config.radiation.selfPoisonScale;
-                field->burnDamage = radiation.burnDamage * strength * damageScale * offensiveRatio * kRadiationDamageScale;
+                field->burnDamage = radiation.burnDamage * strength * damageScale * enemyScale;
                 // Monster-tier damage must not instantly kill the wearer.
                 // Retain real self-harm, bounded to 4% max flower HP per second.
                 if (uranium) {
-                    if (const auto* health = world.tryGet<Health>(player))
-                        field->ownerPoisonPerSecond = std::min(field->ownerPoisonPerSecond, health->max * 0.04);
+                    field->uraniumSelfPoison = true;
+                    if (const auto* health = world.tryGet<Health>(player)) {
+                        field->ownerPoisonPerSecond = std::min(field->ownerPoisonPerSecond,
+                            health->max * kUraniumSelfPoisonHealthFraction);
+                    }
                 }
             }
         }
@@ -4813,7 +4940,7 @@ void PetalSystem::drainBehaviourQueues(World& world, const ContentRegistry& regi
         const PetalConfig& config = registry.petal(broken.configIndex);
         PetalStats stats = registry.petalStats(broken.configIndex, broken.rarity);
         scaleCombination(stats,broken.combinationStrength);
-        if (config.id == "diamond") {
+        if (config.id == "diamond" || config.id == "arctic_snowflake") {
             fireProjectiles(world, registry, player, NULL_ENTITY, config, stats, broken.configIndex,
                             broken.rarity, nullptr, &broken.at);
         }
@@ -4849,7 +4976,7 @@ void PetalSystem::queueBreakBehaviour(World& world, const ContentRegistry& regis
     const PetalBehaviour behaviour = behaviourOf(config.id);
     const auto technique = hyperTechnique(config.id, instance->rarity, instance->mimicked);
     if (behaviour.kind == PetalBehaviourKind::None && technique != HyperTechnique::BroccoliBurst &&
-        technique != HyperTechnique::CoralFragments && config.id != "diamond") return;
+        technique != HyperTechnique::CoralFragments && config.id != "diamond" && config.id != "arctic_snowflake") return;
     // A petal that detonated itself on contact is already spent. The reference
     // puts it straight on cooldown, and a slot on cooldown never reaches the
     // break branch -- which is what stops a bomb exploding twice for one hit.
@@ -4948,11 +5075,11 @@ void PetalSystem::runBehaviour(World& world, Entity player, Entity petal,
             if (behaviour.kind == PetalBehaviourKind::CryoBomb) {
                 const int tier = ladderIndex(rarity);
                 const auto field = emitGroundEffect(world, player, at, GroundEffectKind::Cryo,
-                    50.0 * (tier + 1), 0.0, 0.0, rarity, 0.20);
+                    explosionTalentRadius(world,player,50.0 * (tier + 1)), 0.0, 0.0, rarity, 0.20);
                 if (auto* effect = world.tryGet<GroundEffect>(field))
                     effect->slowDurationMillis = 75.0 + tier * 32.0;
             } else if (behaviour.kind == PetalBehaviourKind::GasBomb) {
-                const double radius = 50.0 * (ladderIndex(rarity) + 1);
+                const double radius = explosionTalentRadius(world,player,50.0 * (ladderIndex(rarity) + 1));
                 emitDamageBurst(world, player, at, radius, (referenceOffenseScale(config,rarity)*effectStrength), false, nowMillis, true);
                 const Entity gas = emitGroundEffect(world, player, at, GroundEffectKind::Poison,
                     radius, 10.0 * (referenceOffenseScale(config,rarity)*effectStrength), 1.0, rarity, .20);
@@ -4963,19 +5090,19 @@ void PetalSystem::runBehaviour(World& world, Entity player, Entity petal,
                 const double radius = 70.0 * (std::min(tier, mythic) + 1) +
                                       35.0 * std::max(0, tier - mythic);
                 const double strength = (referenceOffenseScale(config,rarity)*effectStrength);
-                emitDamageBurst(world, player, at, radius, 135.0 * strength, false, nowMillis, true);
+                emitDamageBurst(world, player, at, explosionTalentRadius(world,player,radius), 135.0 * strength, false, nowMillis, true);
                 const int count = 3 + tier / 2;
                 // More sub-blasts cover more ground without raising the total damage budget.
                 const double subDamage = 75.0 * strength / count;
                 for (int i = 0; i < count; ++i) {
                     const double angle = kTau * i / count;
                     const Vec2 centre = at + Vec2{std::cos(angle), std::sin(angle)} * (radius * 0.75);
-                    emitDamageBurst(world, player, centre, radius * 0.5, subDamage, false,
+                    emitDamageBurst(world, player, centre, explosionTalentRadius(world,player,radius * 0.5), subDamage, false,
                                     nowMillis + net::kTickMillis * (i + 1), true);
                 }
             } else if (config.blastRadiusPerTier > 0.0) {
                 if (rng_.chance(config.blastChance)) {
-                    const double radius = config.blastRadiusPerTier * (1 + ladderIndex(rarity));
+                    const double radius = explosionTalentRadius(world,player,config.blastRadiusPerTier * (1 + ladderIndex(rarity)));
                     emitDamageBurst(world, player, at, radius, config.blastDamage * (referenceOffenseScale(config,rarity)*effectStrength));
                 }
             } else {
@@ -4998,7 +5125,8 @@ void PetalSystem::runBehaviour(World& world, Entity player, Entity petal,
             if (outward.lengthSq() < 1e-12) outward = Vec2::fromAngle(owner->angle, 1.0);
             outward = outward.normalized();
             const bool magic = config.id == "magic_bubble_bomb";
-            const double radius = magic ? 64.0 + 8.0 * ladderIndex(rarity) : 32.0 + 6.0 * ladderIndex(rarity);
+            const double radius = explosionTalentRadius(world,player,
+                magic ? 64.0 + 8.0 * ladderIndex(rarity) : 32.0 + 6.0 * ladderIndex(rarity));
             emitDamageBurst(world, player, at, radius, 0.35 * (referenceOffenseScale(config,rarity)*effectStrength),
                             false, nowMillis, true);
             attractionGrid_.query(realm, at, radius, attractionCandidates_);
@@ -5022,10 +5150,8 @@ void PetalSystem::runBehaviour(World& world, Entity player, Entity petal,
 
         case PetalBehaviourKind::FireBomb: {
             if (trigger == PetalTrigger::Spawn || trigger == PetalTrigger::Interval) return;
-            const int tier = ladderIndex(rarity);
             const bool configuredBlast = config.blastRadiusPerTier > 0.0;
-            const double radius = configuredBlast ? config.blastRadiusPerTier * (1 + tier)
-                                                   : 50.0 + 30.0 * tier;
+            const double radius = explosionTalentRadius(world,player,fireBombRadius(config, rarity));
             const double strength = (referenceOffenseScale(config,rarity)*effectStrength);
             if (configuredBlast) {
                 emitDamageBurst(world, player, at, radius, config.blastDamage * strength,
@@ -5035,8 +5161,10 @@ void PetalSystem::runBehaviour(World& world, Entity player, Entity petal,
             }
             const Entity field = emitGroundEffect(world, player, at, GroundEffectKind::Fire,
                 radius, 0.0, 1.0, rarity, 0.20);
-            if (auto* effect = world.tryGet<GroundEffect>(field))
-                effect->burnPerSecond = (configuredBlast ? 6.0 : 7.0) * strength;
+            if (auto* effect = world.tryGet<GroundEffect>(field)) {
+                effect->burnPerSecond = fireBombBaseBurnRate(config) * strength;
+                world.add<FireBombField>(field);
+            }
             if (trigger == PetalTrigger::Collision && world.isAlive(petal))
                 world.add<Dead>(petal, Dead{player});
             return;
@@ -5293,7 +5421,7 @@ void PetalSystem::explodePetal(World& world, Entity player, Vec2 at, double peta
     if (nowMillis - lastExplosionMillis_ < kExplosionThrottleMillis) return;
     lastExplosionMillis_ = nowMillis;
 
-    const double radius = petalSize * kExplosionRadiusPerSize;
+    const double radius = explosionTalentRadius(world,player,petalSize * kExplosionRadiusPerSize);
     emitDamageBurst(world, player, at, radius, damage);
 
     // Knockback is dealt here rather than left to the field, because a field
@@ -5595,23 +5723,45 @@ bool PetalSystem::touchesGridMob(World& world, Realm realm, Vec2 at, double radi
     return false;
 }
 
-double PetalSystem::compassBearing(World& world, const ContentRegistry& registry,
+double PetalSystem::compassBearing(World& world,
                                    PetalInstance& compass, Vec2 at, Entity player, Realm realm,
                                    double fallback, double nowMillis) {
-    (void)registry;
-    (void)at;
-    (void)realm;
-    // florr's needle is never still: it swings 0.1 rad either side, once
-    // every 2*pi/0.01 ms (the ultra branch of its render).
     const double wobble =
         kCompassWobble * std::sin((nowMillis - compass.spawnedAtMillis) * kCompassWobbleRate);
-    // Always opposite the pointer: the compass steers petal facing, so the
-    // needle itself mirrors aim rather than hunting mobs.
-    if (const auto* input = world.tryGet<PlayerInput>(player)) {
+    const auto* owner = world.tryGet<Transform>(player);
+    const Vec2 origin = owner ? owner->position : at;
+    const auto eligible = [&](Entity mob, const Transform& transform) {
+        if (transform.realm != realm || !isStanding(world, mob) || world.has<Pet>(mob) ||
+            world.has<NpcTag>(mob) || world.has<Intangible>(mob)) return false;
+        const auto* type = world.tryGet<MobType>(mob);
+        const auto* faction = world.tryGet<Faction>(mob);
+        return type && (type->rarity == Rarity::Apex || type->rarity == Rarity::Ascendant) &&
+               (!faction || faction->team != Team::Players);
+    };
+
+    const Entity held = compass.compassTarget;
+    const auto* target = held != NULL_ENTITY ? world.tryGet<Transform>(held) : nullptr;
+    const bool lostTarget = held != NULL_ENTITY && (!target || !eligible(held, *target));
+    if (lostTarget || nowMillis >= compass.compassScanAtMillis) {
+        compass.compassScanAtMillis = nowMillis + kCompassScanIntervalMillis;
         compass.compassTarget = NULL_ENTITY;
-        return wrapAngle(input->current.aimAngle + kPi + wobble);
+        double nearest = std::numeric_limits<double>::infinity();
+        mobs_->each([&](Entity mob, MobTag&, Transform& transform, Body&) {
+            if (!eligible(mob, transform)) return;
+            const double gap = distanceSq(origin, transform.position);
+            if (gap >= nearest) return;
+            nearest = gap;
+            compass.compassTarget = mob;
+        });
+        target = compass.compassTarget != NULL_ENTITY
+            ? world.tryGet<Transform>(compass.compassTarget) : nullptr;
     }
-    return wrapAngle(fallback + kPi + wobble);
+    if (target) {
+        const Vec2 toward = target->position - at;
+        if (toward.lengthSq() > 1e-9) return wrapAngle(toward.angle() + wobble);
+    }
+    const auto* input = world.tryGet<PlayerInput>(player);
+    return wrapAngle((input ? input->current.aimAngle : fallback) + kPi + wobble);
 }
 
 void PetalSystem::recoverDistantPets(World& world, Entity player, std::uint16_t meteorMob) {
@@ -6034,20 +6184,25 @@ Entity PetalSystem::hatchPetBody(World& world, const ContentRegistry& registry, 
             }
         }
     }
-    if (source) strength *= eggSummonCombatScale(*source) * hyperSummonPromotionScale(*source, statsRarity);
-    mob.health = config.health * ladder * config.petHealthScale * strength * kSummonedMobHealthScale;
-    mob.damage = config.damage * ladder * config.petDamageScale * strength;
-    if (source) {
-        mob.health *= eggSummonHealthScale(*source) * ascendantSummonHealthScale(sourceRarity);
-        mob.damage *= summonDamageScale(*source, statsRarity) * configuredSummonDamageScale(*source, sourceRarity);
-    }
-    // The Pet Health talent is the Petal Health talent for the squad: the same
-    // curve, and on this pool alone. Read at the hatch, as the petal talent is
-    // read when the slot's pool is sized, so a tier bought while the squad is
-    // out reaches the next one summoned.
-    if (const PlayerSkillTree* tree = world.tryGet<PlayerSkillTree>(player)) {
-        mob.health *= tree->skills.healthScale(SkillId::Summoner);
-        mob.damage *= tree->skills.effectScale(SkillId::PetDamage);
+    // Read talents at hatch so newly bought tiers reach the next pet.
+    const auto* tree = world.tryGet<PlayerSkillTree>(player);
+    if (source && source->id == "pharaoh_s_crown") {
+        const auto stats = pharaohCrownCombatStats(*source, config, sourceRarity,
+                                                  tree ? &tree->skills : nullptr);
+        mob.health = stats.health;
+        mob.damage = stats.contactDamage;
+    } else {
+        if (source) strength *= eggSummonCombatScale(*source) * hyperSummonPromotionScale(*source, statsRarity);
+        mob.health = config.health * ladder * config.petHealthScale * strength * kSummonedMobHealthScale;
+        mob.damage = config.damage * ladder * config.petDamageScale * strength;
+        if (source) {
+            mob.health *= eggSummonHealthScale(*source) * ascendantSummonHealthScale(sourceRarity);
+            mob.damage *= summonDamageScale(*source, statsRarity) * configuredSummonDamageScale(*source, sourceRarity);
+        }
+        if (tree) {
+            mob.health *= tree->skills.healthScale(SkillId::Summoner);
+            mob.damage *= tree->skills.effectScale(SkillId::PetDamage);
+        }
     }
     // Summons get at least the default chase range before rarity bonuses.
     // In particular, small ants should notice enemies before body contact.
@@ -6151,7 +6306,10 @@ int PetalSystem::summonPets(World& world, const ContentRegistry& registry, Entit
     const double ownerRadius=ownerBody?ownerBody->radius:kPlayerBaseRadius;
     const double maxRadius=mob.radius*petSizeScale*config.maxRandomSize();
     const double searchReach = ownerRadius + (closeHatch ? 4.0 : 14.0) * maxRadius + 10.0;
-    enum class HatchOccupant { Shell, Mobile, Fixed };
+    const bool mobileHatch = !chain && mob.ai != AiKind::Stationary && config.speed != 0.0;
+    const bool canHatchAtOwner = !chain && ownerAt && at == ownerAt->position &&
+        source && source->petMobIndex == mobIndex;
+    enum class HatchOccupant { Shell, Mobile, NewMobile, Fixed };
     struct HatchCircle { Vec2 at; double radius; HatchOccupant kind; };
     std::vector<HatchCircle> occupied;
     const auto collect=[&](const Transform& pos,const Body& body,HatchOccupant kind){
@@ -6290,25 +6448,22 @@ int PetalSystem::summonPets(World& world, const ContentRegistry& registry, Entit
                 placed = true;
             }
         }
-        if (!placed && closeHatch && terrain_ && radius > ownerRadius) {
-            // A sandstorm can travel on its normal movement hull even when
-            // the passage cannot fit either its full body or a hatch ring.
-            // Try the wearer's side of the wall before leaving the slot empty.
-            const auto hull = terrain_->resolveWall(at, kMobWallRadius, realm);
-            const auto full = terrain_->resolveWall(at, radius, realm);
-            if (!hull.collided && !hull.unresolved && !terrain_->blocked(at, realm) &&
-                (full.collided || full.unresolved)) {
-                const bool occupiedByFixed = std::any_of(occupied.begin(), occupied.end(),
-                    [&](const HatchCircle& other) {
-                        if (other.kind == HatchOccupant::Mobile) return false;
-                        const double clearance = other.radius +
-                            (other.kind == HatchOccupant::Fixed ? radius : kMobWallRadius) + 2;
-                        return (other.at - at).lengthSq() < clearance * clearance;
-                    });
-                if (!occupiedByFixed) {
-                    spawnAt = at;
-                    placed = true;
-                }
+        if (!placed && !crowdedLanding && canHatchAtOwner) {
+            // Mobile occupants and orbiting shells can yield after spawn.
+            // A fixed summon still needs its footprint left clear.
+            const bool clearOfWalls = [&] {
+                if (!terrain_) return true;
+                if (terrain_->blocked(at, realm)) return false;
+                const auto wall = terrain_->resolveWall(at, mobileHatch ? kMobWallRadius : radius, realm);
+                return !wall.collided && !wall.unresolved;
+            }();
+            if (clearOfWalls && std::none_of(occupied.begin(), occupied.end(), [&](const HatchCircle& other) {
+                const double clearance = other.radius + radius + 2.0;
+                return other.kind == HatchOccupant::Fixed &&
+                    (other.at - at).lengthSq() < clearance * clearance;
+            })) {
+                spawnAt = at;
+                placed = true;
             }
         }
         if (!placed && crowdedLanding) {
@@ -6338,7 +6493,8 @@ int PetalSystem::summonPets(World& world, const ContentRegistry& registry, Entit
         if (crownSummon)
             world.get<Replicated>(pet).rarity = pharaohCrownSummonLabelRarity(slotState.rarity);
         slotState.pets.push_back(pet);
-        occupied.push_back({spawnAt,radius,HatchOccupant::Fixed});
+        // Keep spacing within this brood during the regular search.
+        occupied.push_back({spawnAt, radius, mobileHatch ? HatchOccupant::NewMobile : HatchOccupant::Fixed});
         ++owned;
         ++spawned;
 

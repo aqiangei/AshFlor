@@ -90,7 +90,27 @@ constexpr std::array<std::uint32_t, kMazeZoneCount> kMazeZoneTints = {
 };
 constexpr double kMazeZoneTintAlpha = 0.30;
 
-enum class MapLabelPriority { Player, Guild, Self, Squad, Portal };
+enum class MapLabelPriority { Player, Guild, Self, Squad, Portal, RiftEntrance };
+
+struct MapDot {
+    Vec2 position;
+    double radius;
+    std::uint32_t fill;
+    bool outlined;
+};
+
+void paintMapDot(Canvas& canvas, const MapDot& dot) {
+    const auto x = static_cast<float>(dot.position.x);
+    const auto y = static_cast<float>(dot.position.y);
+    const auto radius = static_cast<float>(dot.radius);
+    setFill(canvas, dot.fill);
+    canvas.fillCircle(x, y, radius);
+    if (dot.outlined) {
+        setStroke(canvas, kInk);
+        canvas.setLineWidth(1.0f);
+        canvas.strokeCircle(x, y, radius);
+    }
+}
 
 struct MapLabel {
     Vec2 baseline;
@@ -103,7 +123,6 @@ void paintMapLabels(Canvas& canvas, const Rect& map, std::vector<MapLabel>& labe
         return a.priority > b.priority;
     });
     TextStyle style;
-    style.size = 9.0;
     style.fill = kPaper;
     style.stroke = kInk;
     style.align = Align::Centre;
@@ -111,11 +130,14 @@ void paintMapLabels(Canvas& canvas, const Rect& map, std::vector<MapLabel>& labe
     std::vector<Rect> occupied;
     occupied.reserve(labels.size());
     for (const auto& label : labels) {
+        style.size = label.priority == MapLabelPriority::RiftEntrance ? 12.0 : 9.0;
+        const double labelHeight = style.size + 2.0;
         const double width = textWidth(canvas, label.name, style.size) + 4.0;
         const double half = std::min(width, map.w) * 0.5;
         const double x = std::clamp(label.baseline.x, map.x + half, map.right() - half);
-        const double y = std::clamp(label.baseline.y, map.y + 11.0, map.bottom() - 1.0);
-        const Rect bounds{x - half, y - 11.0, half * 2.0, 12.0};
+        const double y = std::clamp(label.baseline.y, std::min(map.y + labelHeight, map.bottom() - 1.0),
+                                    map.bottom() - 1.0);
+        const Rect bounds{x - half, y - labelHeight, half * 2.0, labelHeight + 1.0};
         if (std::any_of(occupied.begin(), occupied.end(),
                         [&](const Rect& previous) { return previous.intersects(bounds); })) continue;
         text(canvas, label.name, x, y, style);
@@ -551,6 +573,7 @@ void App::drawMinimap(Canvas& canvas, bool expanded) {
                 static_cast<float>(side));
     canvas.clip();
     std::vector<MapLabel> labels;
+    std::vector<MapDot> squadDots;
     const auto dot = [&](Vec2 world, double radius, std::uint32_t fill, bool outlined,
                          const std::string& label, MapLabelPriority priority) {
         const Vec2 box = fit.toBox(world);
@@ -560,21 +583,23 @@ void App::drawMinimap(Canvas& canvas, bool expanded) {
         // own rectangle -- in the letterbox bar, or off the map altogether --
         // is not on this map and gets no dot.
         if (dx <= x || dx >= x + side || dy <= y || dy >= y + side) return;
-        setFill(canvas, fill);
-        canvas.fillCircle(static_cast<float>(dx), static_cast<float>(dy),
-                          static_cast<float>(radius));
-        if (outlined) {
-            setStroke(canvas, kInk);
-            canvas.setLineWidth(1.0f);
-            canvas.strokeCircle(static_cast<float>(dx), static_cast<float>(dy),
-                                static_cast<float>(radius));
-        }
+        const MapDot marker{{dx, dy}, radius, fill, outlined};
+        if (priority == MapLabelPriority::Squad) squadDots.push_back(marker);
+        else paintMapDot(canvas, marker);
         if (!label.empty()) labels.push_back({{dx, dy - radius - 2.0}, label, priority});
     };
     if (const MapData* map = worldMaps_.forRealm(realm)) {
         for (const auto& element : map->elements()) {
-            if (element.kind != MapElementKind::Teleporter || element.padId == "rift" ||
-                element.targetMap.empty()) continue;
+            if (element.kind != MapElementKind::Teleporter || element.targetMap.empty()) continue;
+            // Admission changes without changing maps. Draw this marker with
+            // the live overlays so neither view needs to rebake on opening.
+            if (element.padId == "rift") {
+                const bool open = net_.riftOpen();
+                dot(element.centre(), open ? 5.0 : 4.0, open ? 0xDAA7FFu : 0xA6A8B0u,
+                    true, open ? trEnZh("Rift Entrance", "裂隙入口") : "",
+                    MapLabelPriority::RiftEntrance);
+                continue;
+            }
             bool found = false;
             const Realm target = worldMaps_.realmOfId(element.targetMap, found);
             const MapData* targetMap = found ? worldMaps_.forRealm(target) : nullptr;
@@ -632,6 +657,8 @@ void App::drawMinimap(Canvas& canvas, bool expanded) {
         dot(at, 4.0, squadmate ? 0xFF69B4u : kInk, squadmate, markerLabel,
             playerLabelPriority(net_.guild(), row.guild, squadmate));
     }
+    // Keep squadmates above unrelated dots from either position stream.
+    for (const auto& marker : squadDots) paintMapDot(canvas, marker);
     // Keep the self marker clear of the minimap edge even at a world boundary.
     constexpr double selfRadius = 7.0;
     const Vec2 projected = fit.toBox(me);
@@ -951,19 +978,14 @@ void App::drawMazeMinimap(Canvas& canvas, const Rect& box) {
     canvas.clip();
     // AOI + OnlineRoster (same realm), labeled — roster covers far humans.
     std::vector<MapLabel> labels;
+    std::vector<MapDot> squadDots;
     const auto dot = [&](Vec2 world, double radius, std::uint32_t fill, bool outlined,
                          const std::string& label, MapLabelPriority priority) {
         const double dx = x + (world.x - kMazeOriginX) * scale;
         const double dy = y + (world.y - kMazeOriginY) * scale;
-        setFill(canvas, fill);
-        canvas.fillCircle(static_cast<float>(dx), static_cast<float>(dy),
-                          static_cast<float>(radius));
-        if (outlined) {
-            setStroke(canvas, kInk);
-            canvas.setLineWidth(1.0f);
-            canvas.strokeCircle(static_cast<float>(dx), static_cast<float>(dy),
-                                static_cast<float>(radius));
-        }
+        const MapDot marker{{dx, dy}, radius, fill, outlined};
+        if (priority == MapLabelPriority::Squad) squadDots.push_back(marker);
+        else paintMapDot(canvas, marker);
         if (!label.empty()) labels.push_back({{dx, dy - radius - 2.0}, label, priority});
     };
     const SquadState& squad = net_.squad();
@@ -1005,6 +1027,7 @@ void App::drawMazeMinimap(Canvas& canvas, const Rect& box) {
         dot(at, 4.0, squadmate ? 0xFF69B4u : kInk, squadmate, row.name,
             playerLabelPriority(net_.guild(), row.guild, squadmate));
     }
+    for (const auto& marker : squadDots) paintMapDot(canvas, marker);
     dot(net_.view().selfDrawnPosition(), 3.0, 0x0000FFu, true, selfName, MapLabelPriority::Self);
     paintMapLabels(canvas, box, labels);
     canvas.restore();
