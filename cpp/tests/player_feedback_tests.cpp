@@ -1,3 +1,4 @@
+#include <map>
 #include "test.h"
 #include "test_data.h"
 #include "client/ui/menus.h"
@@ -347,7 +348,8 @@ TEST(feedback_ant_hell_supers_cover_black_fire_and_termite_habitats) {
 TEST(feedback_mound_entry_selects_tier_map_and_exposes_exterior_marker) {
     CHECK(feedbackContent());WorldMaps maps;Terrain terrain;std::string error;CHECK(maps.load(testsupport::dataDir(),&terrain,error));
     bool found=false;const auto home=maps.realmOfId("jungle",found);CHECK(found);if(!found)return;Rng rng{88};
-    for(const auto tier:{Rarity::Uncommon,Rarity::Super}){
+    for (int i = 0; i <= kLadderRarityCount; ++i) {
+        const auto tier = i == kLadderRarityCount ? Rarity::Ascendant : static_cast<Rarity>(i);
         World w;CommandBuffer commands{w};SpawnSystem spawn;CombatSystem combat;DungeonSystem dungeon;dungeon.worldMaps=&maps;
         const auto at=maps.forRealm(home)->defaultSpawn(rng,terrain);
         const auto nest=spawn.spawnMob(w,terrain,content(),content().mobIndex("termite_mound"),tier,at,home,0,rng);CHECK(nest!=NULL_ENTITY);if(nest==NULL_ENTITY)continue;
@@ -361,10 +363,29 @@ TEST(feedback_mound_entry_selects_tier_map_and_exposes_exterior_marker) {
         dungeon.run(w,terrain,content(),spawn,combat,rng,1000,commands);commands.flush();
         dungeon.run(w,terrain,content(),spawn,combat,rng,1700,commands);commands.flush();
         const auto inside=w.get<Transform>(player).realm;CHECK(inside!=home);CHECK(dungeon.isInstance(inside));
-        int brood=0;Query<DungeonDweller,Transform> insideMobs{w};
-        insideMobs.each([&](Entity,DungeonDweller& dweller,Transform& at){if(dweller.entrance==nest){++brood;CHECK(at.realm==inside);}});
-        CHECK(brood>0);
-        CHECK_EQ(maps.forRealm(inside)->width(),16+2*rarityIndex(tier));Realm exterior;Vec2 projected;
+        std::map<std::string, int> counts;
+        Query<DungeonDweller, Transform, MobType, Health, ContactDamage> insideMobs{w};
+        insideMobs.each([&](Entity, DungeonDweller& dweller, Transform& at, MobType& mob,
+                            Health& health, ContactDamage& contact) {
+            CHECK(dweller.entrance == nest);
+            CHECK(at.realm == inside);
+            const auto& id = content().mob(mob.configIndex).id;
+            const bool highMound = tier == Rarity::Apex || tier == Rarity::Ascendant;
+            const auto expected = highMound && id != "termite_overmind" ? Rarity::Unique : tier;
+            CHECK(mob.rarity == expected);
+            ++counts[id];
+            const auto stats = content().mobStats(mob.configIndex, expected);
+            CHECK_NEAR(health.max, stats.health, 1e-6);
+            CHECK_NEAR(contact.amount, stats.damage * mobContactScale(expected), 1e-6);
+        });
+        CHECK_EQ(counts["termite_overmind"], 1);
+        CHECK_EQ(counts["worker_termite"], 10);
+        CHECK_EQ(counts["baby_termite"], 10);
+        CHECK_EQ(counts["soldier_termite"], 10);
+        CHECK_EQ(counts.size(), 4u);
+        const int layoutTier = tier == Rarity::Ascendant ? 11 : rarityIndex(tier);
+        CHECK_EQ(maps.forRealm(inside)->width(), 16 + 2 * layoutTier);
+        Realm exterior;Vec2 projected;
         CHECK(dungeon.exteriorForRealm(inside,exterior,projected));CHECK(exterior==home);CHECK_NEAR(distance(projected,entrance),0,1e-6);
         NetClient::OnlineRosterEntry row;row.placed=true;row.realm=static_cast<std::uint8_t>(inside);row.x=100;row.y=200;
         row.insideDungeon=true;row.exteriorRealm=static_cast<std::uint8_t>(home);row.exteriorX=projected.x;row.exteriorY=projected.y;

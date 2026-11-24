@@ -136,6 +136,54 @@ int inkedPixels(const std::vector<std::uint8_t>& rgba) {
 
 } // namespace
 
+TEST(small_wild_mob_sheets_preserve_the_silhouette_and_animation) {
+    for (const MobArt art : {MobArt::Spider, MobArt::Fly, MobArt::Moth, MobArt::Roach}) {
+        std::shared_ptr<Canvas> sheet;
+        MobArtAttributes pose;
+        pose.baseColor = 0x995533;
+        pose.radius = 12.0;
+        pose.inWorld = true;
+        std::vector<std::uint8_t> first;
+        for (int frame = 0; frame < 2; ++frame) {
+            Canvas direct = Canvas::createVirtual(kSide, kSide);
+            Canvas cached = Canvas::createVirtual(kSide, kSide);
+            direct.translate(kSide / 2, kSide / 2);
+            cached.translate(kSide / 2, kSide / 2);
+            pose.distance = frame * 0.25 * kTau / kGaitRadiansPerUnitWalked;
+            pose.clockMs = frame * 100.0 * kPi;
+            paintMobArt(direct, art, pose);
+            const auto* previous = sheet.get();
+            CHECK(drawSmallMobPose(cached, art, pose, sheet));
+            if (frame != 0) CHECK(previous == sheet.get());
+            const auto pixels = cached.getImageData(0, 0, kSide, kSide);
+            const auto reference = direct.getImageData(0, 0, kSide, kSide);
+            int either = 0, both = 0;
+            for (std::size_t i = 3; i < reference.size(); i += 4) {
+                const bool a = reference[i] > 63, b = pixels[i] > 63;
+                either += a || b;
+                both += a && b;
+            }
+            CHECK(both > 200);
+            CHECK(both > 0.90 * either);
+            if (frame == 0) first = pixels;
+            else if (art == MobArt::Roach) CHECK(first == pixels);
+            else CHECK(first != pixels);
+        }
+        Canvas scene = Canvas::createVirtual(kSide, kSide);
+        pose.pet = true;
+        CHECK(!drawSmallMobPose(scene, art, pose, sheet));
+        pose.pet = false;
+        scene.setGlobalAlpha(0.5f);
+        CHECK(!drawSmallMobPose(scene, art, pose, sheet));
+        scene.setGlobalAlpha(1.0f);
+        scene.setColorTint(Color{255, 0, 0, 255});
+        CHECK(!drawSmallMobPose(scene, art, pose, sheet));
+        scene.setColorTint(Color{0, 0, 0, 0});
+        scene.scale(3.0f, 3.0f);
+        CHECK(!drawSmallMobPose(scene, art, pose, sheet));
+    }
+}
+
 TEST(every_florr_marker_names_a_painter_that_draws) {
     // A marker that resolves to nothing falls back to a flat disc in the
     // world, and one whose painter was never written draws nothing at all --

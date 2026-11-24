@@ -92,7 +92,7 @@ struct ArcticBlast {
         commands.flush();
     }
 
-    Vec2 armBomb() {
+    Vec2 armBomb(double now = 4050) {
         const auto& ring = world.get<Loadout>(player).spawned;
         CHECK(!ring.empty());
         if (ring.empty()) return {};
@@ -100,7 +100,7 @@ struct ArcticBlast {
         const auto position = world.get<Transform>(petal).position;
         world.get<Health>(petal).current = 0;
         world.add<Dead>(petal);
-        tickPetals(4050);
+        tickPetals(now);
         return position;
     }
 };
@@ -344,6 +344,225 @@ TEST(magic_fang_with_and_without_an_equipped_mana_source) {
                 CHECK(rig.world.tryGet<ManaPool>(rig.player) == nullptr);
             }
         }
+    }
+}
+
+TEST(magic_fang_refunds_mana_on_real_bites_against_training_dummies) {
+    std::string error;
+    if (!loadContent(testsupport::dataDir(), error)) { CHECK(false); return; }
+    for (const char* target : {"target_dummy", "test_dummy"}) {
+        ArcticBlast rig("magic_fang", Rarity::Rare, "mana_orb");
+        const auto fangs = rig.liveIn(0);
+        CHECK(!fangs.empty());
+        if (fangs.empty()) return;
+        const auto dummy = rig.dummy(rig.world.get<Transform>(fangs.front()).position);
+        rig.world.get<Npc>(dummy).configIndex = rig.registry.mobIndex(target);
+        auto& pool = rig.world.get<ManaPool>(rig.player);
+        pool.current = 0;
+        rig.combatTick(5000);
+        CHECK_NEAR(pool.current, magicFangManaPerBite(Rarity::Rare), 1e-9);
+        CHECK_NEAR(rig.world.get<Health>(dummy).current, 1000, 1e-9);
+    }
+}
+
+TEST(magic_claw_converts_from_claw_and_scales_contact_with_current_mana) {
+    ArcticBlast dry("magic_claw");
+    const auto claw = dry.registry.petalIndex("magic_claw");
+    CHECK_EQ(dry.registry.magicFormOf(dry.registry.petalIndex("claw")), claw);
+    CHECK(dry.liveIn(0).empty());
+    for (double fraction : {0.0, 0.5, 1.0}) {
+        ArcticBlast rig("magic_claw", Rarity::Common, "mana_orb");
+        const auto petals = rig.liveIn(0);
+        CHECK_EQ(petals.size(), std::size_t{1});
+        if (petals.empty()) return;
+        auto& pool = rig.world.get<ManaPool>(rig.player);
+        pool.current = pool.max * fraction;
+        const auto mob = rig.mob(rig.world.get<Transform>(petals.front()).position);
+        rig.combatTick(5000);
+        CHECK_NEAR(1000 - rig.world.get<Health>(mob).current, 105 * fraction, 1e-6);
+    }
+}
+
+TEST(magic_variant_ruby_concentrates_actual_bomb_damage_on_one_target) {
+    const auto blast = [](bool focus) {
+        ArcticBlast rig("magic_bomb", Rarity::Common, "mana_orb");
+        if (focus) rig.equip(2,"magic_ruby");
+        rig.tickPetals(4050);
+        rig.tickPetals(14000);
+        if (focus) CHECK(rig.world.get<PlayerModifiers>(rig.player).concentratesBlasts);
+        const auto at = rig.armBomb(14050);
+        std::array<Entity,3> targets{};
+        for (int i=0;i<3;++i) targets[i]=rig.mob(at+Vec2{25.0+i*4,0});
+        rig.combatTick(14100);
+        double total=0; int touched=0;
+        for(Entity e:targets) {
+            const double damage=1000-rig.world.get<Health>(e).current;
+            total+=damage;
+            if(damage>0) ++touched;
+        }
+        return std::make_pair(total,touched);
+    };
+    const auto normal=blast(false), focused=blast(true);
+    CHECK_EQ(normal.second,3);
+    CHECK_EQ(focused.second,1);
+    CHECK_NEAR(normal.first,focused.first,1e-6);
+}
+TEST(magic_variant_relic_splits_a_formation_cost_and_sponge_repays_after_unequip) {
+    ArcticBlast rig("magic_mysterious_relic",Rarity::Uncommon,"magic_cactus");
+    const auto peer=rig.world.create();
+    rig.world.add<Transform>(peer,rig.world.get<Transform>(rig.player));
+    rig.world.add<Health>(peer,Health{100,100});
+    rig.world.add<ManaPool>(peer,ManaPool{30,30});
+    rig.world.add<PlayerModifiers>(peer).sharesMana=true;
+    SquadEntityIndex squad;
+    squad.group[rig.player]=squad.group[peer]=0;
+    squad.groups.push_back({{rig.player,1},{peer,2}});
+    rig.petals.squads=&squad;
+    rig.equip(2,"magic_sponge");
+    rig.tickPetals(8000);
+    rig.tickPetals(15000);
+    CHECK(rig.world.get<PlayerModifiers>(rig.player).sharesMana);
+    CHECK(rig.world.get<PlayerModifiers>(rig.player).magicSponge);
+    auto& mana=rig.world.get<ManaPool>(rig.player);
+    mana.current=mana.max;
+    const double before=mana.current;
+    const double peerBefore=rig.world.get<ManaPool>(peer).current;
+    rig.equip(3,"magic_claw");
+    rig.tickPetals(24000);
+    rig.tickPetals(36000);
+    CHECK(!rig.liveIn(3).empty());
+    const double cost=rig.registry.petalStats(rig.registry.petalIndex("magic_claw"),Rarity::Common).requiredMana;
+    CHECK_NEAR(peerBefore-rig.world.get<ManaPool>(peer).current,cost*.5,1e-8);
+    CHECK(mana.deferred > 0 && mana.deferred <= cost*.25);
+    CHECK_NEAR(before - mana.current + mana.deferred, cost*.5,1e-8);
+    rig.world.get<Loadout>(rig.player).slots[2] = {};
+    for(int tick=0;tick<180;++tick) rig.tickPetals(36100+tick*net::kTickSeconds*1000);
+    CHECK_NEAR(mana.deferred,0,1e-8);
+    CHECK_NEAR(before - mana.current,cost*.5,1e-8);
+}
+
+TEST(magic_variant_relic_shares_cotton_absorption_and_incense_shields_the_payer) {
+    std::string error; CHECK(loadContent(testsupport::dataDir(),error));
+    ArcticBlast rig("magic_cotton",Rarity::Common,"magic_cactus");
+    rig.equip(2,"magic_mysterious_relic",Rarity::Uncommon);
+    rig.equip(3,"magic_agarbatti",Rarity::Uncommon);
+    rig.world.ensure<ShieldState>(rig.player);
+    rig.tickPetals(16000);
+    rig.tickPetals(24000);
+    CHECK(!rig.liveIn(0).empty());
+    rig.world.get<ShieldState>(rig.player).amount=0;
+    auto& mana=rig.world.get<ManaPool>(rig.player);
+    mana.current=mana.max;
+    const double before=mana.current;
+    const double shieldShare=rig.world.get<PlayerModifiers>(rig.player).manaShieldFraction;
+    CHECK(shieldShare>0);
+    const auto peer=rig.world.create();
+    rig.world.add<Transform>(peer,rig.world.get<Transform>(rig.player));
+    rig.world.add<Health>(peer,Health{100,100});
+    rig.world.add<ManaPool>(peer,ManaPool{30,30});
+    rig.world.add<PlayerModifiers>(peer).sharesMana=true;
+    SquadEntityIndex group;
+    group.group[peer]=group.group[rig.player]=0;
+    group.groups.push_back({{peer,2},{rig.player,1}});
+    rig.combat.squads=&group;
+    const auto foe=rig.mob({5200,5000});
+    const double hit=4.0*magicCottonDamagePerMana(Rarity::Common);
+    CHECK_NEAR(rig.combat.applyDamage(rig.world,rig.player,foe,hit,25000).applied,0,1e-9);
+    CHECK_NEAR(before-mana.current,2,1e-8);
+    CHECK_NEAR(rig.world.get<ManaPool>(peer).current,28,1e-8);
+    CHECK_NEAR(rig.world.get<ShieldState>(rig.player).amount,2*shieldShare,1e-8);
+}
+
+TEST(magic_variant_nazar_blocks_two_actual_pet_hits_then_reloads) {
+    std::string error; CHECK(loadContent(testsupport::dataDir(),error));
+    ArcticBlast rig("magic_nazar_amulet", Rarity::Common, "mana_orb");
+    rig.tickPetals(15000);
+    CHECK_EQ(rig.liveIn(0).size(),1u);
+    const Entity pet=rig.mob({5200,5000}), foe=rig.mob({5250,5000});
+    rig.world.get<Faction>(pet).team=Team::Players;
+    rig.world.add<Pet>(pet,Pet{rig.player});
+    for(int i=0;i<2;++i)
+        CHECK(rig.combat.applyDamage(rig.world,pet,foe,10,15100+i*100).refused);
+    CHECK_NEAR(rig.world.get<Health>(pet).current,1000,1e-6);
+    CHECK(rig.combat.applyDamage(rig.world,pet,foe,10,15500).applied>0);
+    rig.tickPetals(15550);
+    CHECK(rig.world.get<Loadout>(rig.player).slots[0].broken);
+}
+TEST(magic_variant_coral_and_adjacent_fission_emit_bounded_shards) {
+    const auto split = [](bool coral, Rarity other) {
+        ArcticBlast rig(coral?"magic_coral":"magic_arctic_fission",Rarity::Common,"mana_orb");
+        const int slot = coral?0:1;
+        if (!coral) {
+            rig.equip(2,"mana_orb");
+            rig.equip(1,"basic",other);
+            rig.tickPetals(5000);
+            rig.tickPetals(12000);
+        }
+        const auto live=rig.liveIn(slot);
+        CHECK(!live.empty());
+        if (live.empty()) return 0;
+        rig.world.get<Health>(live.front()).current=0;
+        rig.world.add<Dead>(live.front());
+        rig.tickPetals(12050);
+        std::vector<Entity> first;
+        Query<Projectile>{rig.world}.each([&](Entity e, Projectile& shot){
+            if(shot.fragmented && shot.owner==rig.player && shot.damage>0) first.push_back(e);
+        });
+        for(Entity e:first) rig.world.add<Dead>(e);
+        rig.combatTick(12100);
+        int children=0;
+        Query<Projectile>{rig.world}.each([&](Entity e, Projectile& shot){
+            if(shot.fragmented && !rig.world.has<Dead>(e) && shot.owner==rig.player) ++children;
+        });
+        return static_cast<int>(first.size()) + children;
+    };
+    CHECK_EQ(split(true,Rarity::Common),10);
+    CHECK_EQ(split(false,Rarity::Common),4);
+    CHECK_EQ(split(false,Rarity::Rare),0);
+}
+
+TEST(magic_variant_mimic_uses_right_neighbor_without_recursing_or_creating_items) {
+    ArcticBlast rig("magic_mimic");
+    rig.equip(1,"rose", Rarity::Rare);
+    rig.tickPetals(8000);
+    const auto& loadout = rig.world.get<Loadout>(rig.player);
+    const auto copied = equippedPetal(rig.registry, loadout, 0);
+    CHECK_EQ(copied.configIndex, rig.registry.petalIndex("mana_orb"));
+    CHECK_EQ(copied.rarity, Rarity::Common);
+    CHECK_EQ(loadout.slots[0].configIndex, rig.registry.petalIndex("magic_mimic"));
+    CHECK(rig.world.get<ManaPool>(rig.player).has());
+    rig.equip(1, "claw");
+    CHECK_EQ(equippedPetal(rig.registry, loadout, 0).configIndex, rig.registry.petalIndex("magic_claw"));
+    rig.equip(1, "magic_mimic");
+    CHECK_EQ(equippedPetal(rig.registry, loadout, 0).configIndex, rig.registry.petalIndex("magic_mimic"));
+}
+
+TEST(magic_variant_battery_pays_once_after_maturing_and_respects_pool_cap) {
+    ArcticBlast rig("magic_battery", Rarity::Common, "magic_cactus");
+    auto& pool = rig.world.get<ManaPool>(rig.player);
+    pool.current = 0;
+    rig.tickPetals(6999);
+    CHECK_NEAR(pool.current, 0, 1e-6);
+    rig.tickPetals(7000);
+    CHECK_NEAR(pool.current, 40.0, 1e-6);
+    rig.tickPetals(7050);
+    CHECK_NEAR(pool.current, 40.0, 1e-6);
+}
+
+TEST(magic_variant_bombs_burst_on_break_with_their_element_and_cost) {
+    for (const char* id : {"magic_bomb","magic_void_cryo_bomb","magic_gas_bomb","magic_void_fire_bomb"}) {
+        ArcticBlast dry(id);
+        CHECK(dry.liveIn(0).empty());
+        ArcticBlast rig(id, Rarity::Common, "mana_orb");
+        CHECK_EQ(rig.liveIn(0).size(), 1u);
+        const auto at = rig.armBomb();
+        const Entity target = rig.mob(at + Vec2{30,0});
+        rig.combatTick(4100);
+        CHECK(rig.world.get<Health>(target).current < 1000.0);
+        const auto* status = rig.world.tryGet<Afflictions>(target);
+        if (std::string_view(id) == "magic_void_cryo_bomb") CHECK(status && status->slowFactor < 1.0 && status->slowUntilMillis >= 4250);
+        if (std::string_view(id) == "magic_gas_bomb") CHECK(status && status->poisoned(4100));
+        if (std::string_view(id) == "magic_void_fire_bomb") CHECK(status && !status->burns.empty());
     }
 }
 
@@ -1368,7 +1587,10 @@ TEST(magic_bubble_bomb_high_blueberries_keep_volley_rate) {
     const auto berry=c.petalIndex("magic_peas");
     for(const auto r:{Rarity::Super,Rarity::Unique,Rarity::Apex,Rarity::PermanentHyper}) {
         const auto stats=c.petalStats(berry,r);
-        CHECK_NEAR(stats.lightningDamagePerHit,r==Rarity::Super?262440:r==Rarity::Unique?372009:744018,1e-6);
+        const double eternalHit = 279006.75; // Authored Eternal projectile damage, including its rounding.
+        const double expectedHit = r == Rarity::Super ? 90.0 * petalStrengthScale(r) :
+                                   r == Rarity::Unique ? eternalHit : 3.0 * eternalHit;
+        CHECK_NEAR(stats.lightningDamagePerHit, expectedHit, 1e-6);
         CHECK_NEAR(stats.reloadMillis,250,1e-6);
         CHECK(stats.count==4);
     }
@@ -1432,6 +1654,51 @@ TEST(zorr_reference_eyeball_homes_same_or_lower_tiers_and_gunpowder_speeds_missi
     }
 }
 
+TEST(eyeball_aims_charged_magic_missiles_through_their_effective_range) {
+    const auto checkLaunch = [](const char* petal, Rarity tier, Rarity eye,
+                                double distance, bool shouldAim) {
+        ArcticBlast rig(petal, tier);
+        rig.equip(1, "void_eyeball", eye);
+        rig.equip(2, "mana_orb", tier);
+        rig.tickPetals(16000);
+        auto& mana = rig.world.get<ManaPool>(rig.player);
+        mana.current = mana.max;
+        rig.world.get<PlayerInput>(rig.player).current.flags = net::InputAttack;
+        const auto type = rig.registry.petalIndex(petal);
+        Entity shot = NULL_ENTITY;
+        int now = 16000;
+        while (shot == NULL_ENTITY && now < 23000) {
+            now += 50;
+            rig.tickPetals(now);
+            Query<Projectile>{rig.world}.without<Dead>().each([&](Entity e, Projectile& p) {
+                if (p.petalConfigIndex == type) shot = e;
+            });
+        }
+        CHECK(shot != NULL_ENTITY);
+        if (shot == NULL_ENTITY) return;
+        const auto origin = rig.world.get<Transform>(shot).position;
+        const auto initial = rig.world.get<Motion>(shot).velocity;
+        const Vec2 side = Vec2::fromAngle(initial.angle() + kPi / 2);
+        const auto target = rig.mob(origin + side * distance);
+        Terrain terrain;
+        MovementSystem movement;
+        movement.runWorldPhase(rig.world, terrain, now, net::kTickSeconds);
+        const auto launch = rig.world.get<Motion>(shot).velocity;
+        CHECK_NEAR(angleDelta(initial.angle(), launch.angle()), shouldAim ? kPi / 2 : 0.0, 1e-8);
+        CHECK_NEAR(launch.length(), initial.length(), 1e-8);
+        rig.world.get<Transform>(target).position = origin - side * distance;
+        movement.runWorldPhase(rig.world, terrain, now + 50, net::kTickSeconds);
+        CHECK_NEAR(angleDelta(launch.angle(), rig.world.get<Motion>(shot).velocity.angle()), 0.0, 1e-8);
+    };
+    checkLaunch("magic_missile", Rarity::Apex, Rarity::Apex, 574, true);
+    checkLaunch("magic_missile", Rarity::Apex, Rarity::Apex, 576, false);
+    checkLaunch("magic_missile", Rarity::Apex, Rarity::Unique, 400, false);
+    checkLaunch("magic_missile", Rarity::Unique, Rarity::Apex, 501, false);
+    checkLaunch("magic_electron_missile", Rarity::Unique, Rarity::Unique, 379, true);
+    checkLaunch("magic_electron_missile", Rarity::Unique, Rarity::Unique, 381, false);
+    checkLaunch("void_gamma_ray", Rarity::Unique, Rarity::Unique, 200, false);
+}
+
 TEST(zorr_reference_gunpowder_fivefold_contact_damage_requires_live_burn) {
     double plain=0;
     for (int burn : {0,1,2,3,4}) {
@@ -1461,7 +1728,7 @@ TEST(zorr_reference_mask_powder_and_slime_use_the_standard_combat_stats) {
     rig.tickPetals(4500);
     const auto& mods=rig.world.get<PlayerModifiers>(rig.player);
     CHECK_NEAR(mods.poisonArmor,1.0,1e-6);
-    CHECK_NEAR(mods.speedScale,1.04,1e-6);
+    CHECK_NEAR(mods.speedScale,(1.0 + 25.0 / kPlayerMaxSpeed) * 1.04,1e-6);
     const auto slime=rig.registry.petalIndex("void_slime");
     CHECK_EQ(rig.liveIn(0).size(),std::size_t(2));
     CHECK_NEAR(rig.registry.petalStats(slime,Rarity::Rare).knockback,20.0,1e-6);
@@ -2428,7 +2695,7 @@ TEST(reference_scythe_shares_real_damage_and_durability_across_equipped_slots) {
 TEST(reference_all_imported_petal_descriptions_reach_the_actual_bilingual_lookup) {
  const auto& c=testsupport::shippedContent();auto previous=ui::language();int checked=0;
  for(std::uint16_t i=0;i<c.petalCount();++i) {
-  const auto& v=c.petal(i);if(v.id=="arctic_stick")continue;
+  const auto& v=c.petal(i);
   if(!v.biomeDropOnly && v.id.rfind("void_",0)!=0 && v.id.rfind("arctic_",0)!=0 && v.id.rfind("bio_",0)!=0 && v.id.rfind("jurassic_",0)!=0)continue;
   ++checked;
   ui::setLanguage(ui::Language::En);
@@ -2440,7 +2707,7 @@ TEST(reference_all_imported_petal_descriptions_reach_the_actual_bilingual_lookup
       std::fprintf(stderr, "Missing bilingual description for %s\n", v.id.c_str());
   CHECK(!english.empty());CHECK(!chinese.empty());CHECK(chinese!=english);
  }
- CHECK_EQ(checked,218);ui::setLanguage(previous);
+ CHECK_EQ(checked,219);ui::setLanguage(previous);
 }
 
 TEST(reference_original_headwear_produces_visible_pixels_on_default_and_builtin_skins) {
@@ -2915,7 +3182,7 @@ TEST(reference_long_imported_summons_hatch_replace_and_recall) {
         std::printf("SUMMON %s sim_s=300 peak=%d expected=%d replenished=%d after_unequip=%zu\n",
                     config.id.c_str(), peak, wanted, respawned, after);
     }
-    CHECK_EQ(checked, 60);
+    CHECK_EQ(checked, 61);
 }
 
 TEST(reference_long_all_imported_petals_run_with_combat_and_repeated_input) {
@@ -3009,6 +3276,37 @@ TEST(fluid_motion_bomb_collision_pools_expand_without_repeated_birth) {
   r.world.get<Transform>(r.player).realm=Realm::Arena;r.combatTick(4500);CHECK(r.world.has<Dead>(pool)||!r.world.isAlive(pool));
  }
 }
+TEST(fluid_bombs_spill_on_practice_dummies_and_record_the_pool_damage) {
+    std::string error;
+    if (!loadContent(testsupport::dataDir(), error)) { CHECK(false); return; }
+    for (const char* id : {"acid_bomb", "lava_bomb"}) {
+        ArcticBlast rig(id);
+        const auto petals = rig.liveIn(0);
+        CHECK_EQ(petals.size(), 1u);
+        if (petals.size() != 1) continue;
+        const auto at = rig.world.get<Transform>(petals.front()).position;
+        const auto dummy = rig.dummy(at);
+        rig.combatTick(4050);
+        const auto pools = Query<GroundEffect>{rig.world}.without<Dead>().collect();
+        CHECK_EQ(pools.size(), 1u);
+        if (pools.size() != 1) continue;
+        const auto pool = pools.front();
+        const auto& field = rig.world.get<GroundEffect>(pool);
+        CHECK_EQ(field.owner, rig.player);
+        CHECK_EQ(field.kind, std::string_view(id) == "acid_bomb" ? GroundEffectKind::AcidSpill : GroundEffectKind::LavaSpill);
+        CHECK_NEAR(distance(at, rig.world.get<Transform>(pool).position), 0.0, 1e-6);
+        CHECK(rig.world.get<Health>(petals.front()).current <= 0.0);
+        rig.tickPetals(4100);
+        rig.combat.resetPracticeDamage(rig.player);
+        for (int i = 0; i < 20; ++i) rig.combatTick(4100 + i * 50);
+        double total = 0.0;
+        for (const auto& row : rig.combat.practiceDamage(rig.player, 5100, dummy)) total += row.amount;
+        CHECK(total > 0.0);
+        CHECK_EQ(rig.world.get<Health>(dummy).current, rig.world.get<Health>(dummy).max);
+        CHECK_EQ(Query<GroundEffect>{rig.world}.without<Dead>().count(), 1u);
+    }
+}
+
 TEST(fluid_motion_walls_block_drift_and_damage_across_the_wall) {
  ArcticBlast r("basic");Terrain terrain;
  CHECK(terrain.setTiles(std::vector<std::uint8_t>(32*32,0),32,32));

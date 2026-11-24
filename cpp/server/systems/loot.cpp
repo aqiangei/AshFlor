@@ -1159,8 +1159,12 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
                         const auto& rates=convert&&!entry->magicRates.empty()?entry->magicRates:entry->rates;
                         int rolled=rollDropRates(rates,mobRarity,sample);
                         if(rolled<0)continue;
-                        const auto petal=convert?magic:ordinary;
-                        if(convert)rolled=std::max(rarityIndex(content.petal(petal).minRarity),std::min(rolled,tier));
+                        // A themed substitute can have a higher entry tier than the original roll.
+                        // Keep the original reward until that roll actually reaches the substitute.
+                        const bool eligibleMagic = convert && (content.petal(magic).magicDropSource.empty() ||
+                            rolled >= rarityIndex(content.petal(magic).minRarity));
+                        const auto petal = eligibleMagic ? magic : ordinary;
+                        if(eligibleMagic)rolled=std::max(rarityIndex(content.petal(petal).minRarity),std::min(rolled,tier));
                         const auto rarity=clampRarity(rolled);
                         if(!petalComesAt(content.petal(petal),rarity))continue;
                         orbGroup_.clear();

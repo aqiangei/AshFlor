@@ -474,6 +474,7 @@ struct Painter {
             // Touching this row IS the choice, and the choice is what stops
             // the device's own answer from overruling it -- see
             // ClientSettings::touchControlsWanted.
+            if (toggleId == kShowExactValues) ctx.settings.settingsDirty = true;
             if (toggleId == kRequestMobile) ctx.settings.requestMobileChosen = true;
         }
         cy += kRowStride;
@@ -798,7 +799,7 @@ bool SettingsPanel::render(MenuContext& ctx) {
             const bool zh = language() == Language::Zh;
             const char* quality = lowQuality
                 ? (zh ? "切换到标准画质（重载）" : "Standard graphics (reload)")
-                : (zh ? "切换到低清模式（重载）" : "Low graphics (reload)");
+                : (zh ? "低清土豆模式（重载）" : "Low graphics / Potato Mode (reload)");
             if (p.button(Rect{p.x, p.cy, p.w, 30.0}, quality, kActionFill, 14.0, 9902))
                 flix_settings_change_quality(lowQuality ? 0 : 1);
             p.cy += 40.0;

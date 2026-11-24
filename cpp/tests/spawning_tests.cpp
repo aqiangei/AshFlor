@@ -4026,12 +4026,12 @@ std::vector<Entity> farmLeafbugs(World& world, LootSystem& loot, CommandBuffer& 
 
 TEST(the_magic_form_table_is_derived_from_the_petal_ids) {
     // magic_X is the magic form of X, and the orb is the rose's.
-    for (const char* id : {"leaf", "stick", "cactus", "missile", "bubble", "peas"}) {
+    for (const char* id : {"leaf", "cactus", "missile", "bubble", "peas"}) {
         const std::uint16_t base = shipped().petalIndex(id);
         CHECK_EQ(shipped().magicFormOf(base), shipped().petalIndex(std::string("magic_") + id));
     }
-    CHECK_EQ(shipped().magicFormOf(shipped().petalIndex("rose")),
-             shipped().petalIndex("magic_orb"));
+    CHECK_EQ(shipped().magicSourceOf(shipped().petalIndex("mana_orb")),shipped().petalIndex("rose"));
+    CHECK_EQ(shipped().magicSourceOf(shipped().petalIndex("magic_stick")),shipped().petalIndex("mysterious_stick"));
 
     // A petal with no magic counterpart converts into nothing, and a magic
     // petal is a destination rather than a source.
@@ -4046,7 +4046,7 @@ TEST(a_magic_petal_is_never_in_the_random_drop_pool) {
     for (const std::uint16_t index : tables.droppablePetals()) {
         CHECK(!shipped().isMagicForm(index));
     }
-    CHECK(shipped().isMagicForm(shipped().petalIndex("magic_orb")));
+    CHECK(shipped().isMagicForm(shipped().petalIndex("mana_orb")));
     CHECK(!shipped().isMagicForm(shipped().petalIndex("rose")));
 }
 
@@ -4070,9 +4070,9 @@ TEST(without_an_orb_a_mob_drops_exactly_what_its_table_says) {
     const std::uint16_t leaf = shipped().petalIndex("leaf");
     int leaves = 0;
     for (const Entity drop : farmLeafbugs(world, loot, commands, grid, events, rng, player)) {
-        if (world.get<DropItem>(drop).configIndex == leaf) ++leaves;
+        if (world.get<DropItem>(drop).configIndex == leaf) leaves += world.get<DropItem>(drop).quantity;
     }
-    CHECK_EQ(leaves, 40);
+    CHECK_EQ(leaves, 40 * baseLootTrialsForRarity(Rarity::Uncommon));
 }
 
 TEST(a_worn_orb_converts_every_drop_that_has_a_magic_form) {
@@ -4084,7 +4084,7 @@ TEST(a_worn_orb_converts_every_drop_that_has_a_magic_form) {
     Rng rng(42);
 
     const Entity player = makePlayer(world, kCentre + Vec2{5000, 0});
-    wear(world, player, "magic_orb", Rarity::Ultra);
+    wear(world, player, "mana_orb", Rarity::Ultra);
 
     const std::uint16_t leaf = shipped().petalIndex("leaf");
     const std::uint16_t magicLeaf = shipped().petalIndex("magic_leaf");
@@ -4095,12 +4095,12 @@ TEST(a_worn_orb_converts_every_drop_that_has_a_magic_form) {
         const DropItem& item = world.get<DropItem>(drop);
         // Not one ordinary leaf gets through.
         CHECK(item.configIndex != leaf);
-        if (item.configIndex == magicLeaf) ++magic;
+        if (item.configIndex == magicLeaf) magic += item.quantity;
         // Root has no magic form, so the orb leaves it alone: the conversion
         // is a table, not a blanket.
         if (item.configIndex == root) ++roots;
     }
-    CHECK_EQ(magic, 40);
+    CHECK_EQ(magic, 40 * baseLootTrialsForRarity(Rarity::Uncommon));
     CHECK(roots > 0);
 }
 
@@ -4113,7 +4113,7 @@ TEST(a_common_orb_gatekeeps_every_conversion_to_common) {
     Rng rng(43);
 
     const Entity player = makePlayer(world, kCentre + Vec2{5000, 0});
-    wear(world, player, "magic_orb", Rarity::Common);
+    wear(world, player, "mana_orb", Rarity::Common);
 
     const std::uint16_t magicLeaf = shipped().petalIndex("magic_leaf");
     const std::uint16_t root = shipped().petalIndex("root");
@@ -4140,7 +4140,7 @@ TEST(a_better_orb_lets_a_better_conversion_through) {
     Rng rng(43);
 
     const Entity player = makePlayer(world, kCentre + Vec2{5000, 0});
-    wear(world, player, "magic_orb", Rarity::Ultra);
+    wear(world, player, "mana_orb", Rarity::Ultra);
 
     const std::uint16_t magicLeaf = shipped().petalIndex("magic_leaf");
     int aboveCommon = 0;
@@ -4164,14 +4164,14 @@ TEST(a_stashed_orb_converts_nothing) {
     const Entity player = makePlayer(world, kCentre + Vec2{5000, 0});
     // The first secondary slot: held, not worn, exactly as it grants no
     // modifier and draws no petal.
-    wear(world, player, "magic_orb", Rarity::Ultra, kLoadoutActiveSlots);
+    wear(world, player, "mana_orb", Rarity::Ultra, kLoadoutActiveSlots);
 
     const std::uint16_t leaf = shipped().petalIndex("leaf");
     int leaves = 0;
     for (const Entity drop : farmLeafbugs(world, loot, commands, grid, events, rng, player)) {
-        if (world.get<DropItem>(drop).configIndex == leaf) ++leaves;
+        if (world.get<DropItem>(drop).configIndex == leaf) leaves += world.get<DropItem>(drop).quantity;
     }
-    CHECK_EQ(leaves, 40);
+    CHECK_EQ(leaves, 40 * baseLootTrialsForRarity(Rarity::Uncommon));
 }
 
 TEST(an_orb_converts_only_its_wearers_drops) {
@@ -6128,9 +6128,12 @@ TEST(restored_termite_mound_map_allows_entry_and_returns_to_its_entrance) {
     World w;CommandBuffer commands{w};SpawnSystem spawn;CombatSystem combat;DungeonSystem dungeons;dungeons.worldMaps=&maps;
     const Entity player=makePlayer(w,at);w.get<Transform>(player).realm=home;
     const Entity mound=spawn.spawnMob(w,terrain,shipped(),shipped().mobIndex("termite_mound"),Rarity::Uncommon,at,home,0,rng);
-    CHECK(mound!=NULL_ENTITY);if(mound==NULL_ENTITY)return;w.get<Transform>(player).position=w.get<Transform>(mound).position;
+    CHECK(mound!=NULL_ENTITY);if(mound==NULL_ENTITY)return;const auto nestRadius=w.get<Body>(mound).radius*mobBodyContactScale("termite_mound");
+    w.get<Transform>(player).position=w.get<Transform>(mound).position+Vec2{nestRadius+w.get<Body>(player).radius,0};
+    bool transferBlocked = false;
     double now = 1000;
     dungeons.moveToRealm = [&](Entity entity, Realm realm, Vec2 position) {
+        if (transferBlocked) return;
         auto& transform = w.get<Transform>(entity);
         transform.realm = realm;
         transform.position = position;
@@ -6157,6 +6160,13 @@ TEST(restored_termite_mound_map_allows_entry_and_returns_to_its_entrance) {
     CHECK(w.get<Transform>(player).realm == inside);
 
     now += kDungeonClearedLingerMillis;
+    transferBlocked = true;
+    dungeons.run(w, terrain, shipped(), spawn, combat, rng, now, commands);
+    commands.flush();
+    CHECK(w.get<Transform>(player).realm == inside);
+    CHECK(dungeons.exitFor(inside, rng, kPlayerBaseRadius, outside, exit));
+    transferBlocked = false;
+    now += net::kTickMillis;
     dungeons.run(w, terrain, shipped(), spawn, combat, rng, now, commands);
     commands.flush();
     CHECK(w.get<Transform>(player).realm == home);
@@ -6167,7 +6177,7 @@ TEST(imported_powder_bonuses_stack_additively_and_do_not_change_mob_speed) {
     w.add<Loadout>(p);w.add<PetalRing>(p);w.add<PlayerInput>(p);w.add<PlayerProgress>(p);
     for(int i=0;i<2;++i){auto& slot=w.get<Loadout>(p).slots[i];slot.configIndex=shipped().petalIndex("mysterious_powder");slot.rarity=Rarity::Rare;}
     petals.run(w,shipped(),1000,net::kTickSeconds,commands);commands.flush();
-    CHECK_NEAR(w.get<PlayerModifiers>(p).speedScale,1.5,1e-9);
+    CHECK_NEAR(w.get<PlayerModifiers>(p).speedScale,1.4,1e-9);
     CHECK_NEAR(kPlayerMaxSpeed,843.75,1e-9);CHECK_NEAR(kMobBaseSpeed,300,1e-9);
 }
 TEST(soil_wiki_bonus_and_totem_kill_regeneration_match_runtime) {

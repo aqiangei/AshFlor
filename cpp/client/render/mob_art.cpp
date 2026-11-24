@@ -3434,4 +3434,47 @@ void paintMobArt(Canvas& canvas, MobArt art, const MobArtAttributes& attr) {
     }
 }
 
+bool drawSmallMobPose(Canvas& canvas, MobArt art, const MobArtAttributes& attr,
+                      std::shared_ptr<Canvas>& sheet) {
+    int frames;
+    switch (art) {
+        case MobArt::Roach: frames = 1; break;
+        case MobArt::Fly:
+        case MobArt::Moth: frames = 9; break;
+        case MobArt::Spider: frames = 16; break;
+        default: return false;
+    }
+    if (!attr.inWorld || attr.pet || canvas.globalAlpha() != 1.0f || canvas.colorTint().a != 0) return false;
+    const auto transform = canvas.currentTransform();
+    const double scale = std::max(std::hypot(transform[0], transform[1]),
+                                  std::hypot(transform[2], transform[3]));
+    if (attr.radius <= 0.0 || 2.0 * attr.radius * scale > 64.0) return false;
+
+    // The spider's legs follow distance walked. The fly's wing sweep already
+    // blends idle and aggro, so sample its resulting amplitude, not its clock.
+    constexpr int tile = 192;
+    constexpr double radius = 36.0;
+    const bool spider = art == MobArt::Spider;
+    if (!sheet) {
+        sheet = std::make_shared<Canvas>(Canvas::createVirtual(frames * tile, tile));
+        MobArtAttributes pose;
+        pose.radius = radius;
+        pose.baseColor = attr.baseColor;
+        for (int frame = 0; frame < frames; ++frame) {
+            if (spider) pose.distance = frame * kTau / (frames * kGaitRadiansPerUnitWalked);
+            else if (frames > 1) pose.clockMs = std::acos(1.0 - 2.0 * frame / (frames - 1)) / 0.01;
+            sheet->save();
+            sheet->translate((frame + 0.5f) * tile, tile * 0.5f);
+            paintMobArt(*sheet, art, pose);
+            sheet->restore();
+        }
+    }
+    const int frame = spider
+        ? walkPoseFrame(attr.distance * kGaitRadiansPerUnitWalked, frames)
+        : (frames == 1 ? 0 : static_cast<int>(std::lround(clawBeat(attr) * (frames - 1))));
+    const float side = static_cast<float>(attr.radius * tile / radius);
+    canvas.drawCanvas(*sheet, frame * tile, 0, tile, tile, -side * 0.5f, -side * 0.5f, side, side);
+    return true;
+}
+
 } // namespace flix

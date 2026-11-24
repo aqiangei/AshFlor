@@ -282,6 +282,7 @@ struct BurnStack {
 
 struct Afflictions {
     double blindUntilMillis = 0;
+    double veerUntilMillis = 0;
     bool toiletArmed = false;
     // An active window survives health and equipment changes on this body.
     double toiletBoostUntilMillis = 0;
@@ -441,10 +442,14 @@ struct ShieldState {
 /// one number that is genuinely the flower's: it survives a loadout edit,
 /// clamped down to whatever the new bar can hold, so swapping one orb for
 /// another does not hand the player a refill.
+struct MagicOpalRoll { double nextMillis = 0.0; double multiplier = 1.0; };
+
 struct ManaPool {
     double current = 0;
     double max = 0;
 
+    double deferred = 0.0;
+    double repaymentPerSecond = 0.0;
     bool has() const { return max > 0.0; }
     bool canAfford(double cost) const { return cost <= 0.0 || current >= cost; }
 };
@@ -698,12 +703,34 @@ struct JurassicSpeedBoost {
 };
 
 struct PlayerModifiers {
+    bool magicAntennae = false;
+    bool magicSponge = false;
+    bool sharesMana = false;
+    bool concentratesBlasts = false;
+    bool wideReflection = false;
+    double retaliationBlast = 0.0;
+    double manaShieldFraction = 0.0;
+    int magicalHatchTier = -1;
+    int arcaneHatchTier = -1;
+    int twinHatchTier = -1;
     std::array<std::uint8_t, kRarityCount> computerParts{};
     std::array<std::uint8_t, kRarityCount> triangleCounts{};
     double maxHealthScale = 1.0;
     double speedScale = 1.0;
     double accelerationScale = 1.0;
     double bodyHitHeal = 0.0;
+    double bodyHitMana = 0.0;
+    double summonedArmor = 0.0;
+    double magicRegenScale = 1.0;
+    double petalSizeFactor = 1.0;
+    double secondaryMotionBonus = 0.0;
+    double blindRecovery = 0.0;
+    int autoAbsorbTier = -1;
+    int magicOpalTier = -1;
+    int quartzTier = -1;
+    double quartzChance = 0.0;
+    double honeySizeScale = 1.0;
+    double magicExplosionRadiusScale = 1.0;
     double lightningReduction = 0.0;
     Vec2 petalDriftVelocity{}; ///< live directional boosters; world units/second
     /// The flower's BODY damage: equipped petal damage modifiers times the
@@ -1127,6 +1154,7 @@ struct Pet {
     double crystalLeafShield = 0.0;
     double crystalLeafShieldUntilMillis = 0.0;
     double previousHealthFraction = 1.0;
+    double variantSpeed = 1.0;
 };
 
 /// A summoned mob whose config spawns minions on a clock (`periodic_spawn` --
@@ -1411,6 +1439,10 @@ struct PetalInstance {
     /// the flower's cotton by walking its ring.
     bool soaksOwnerDamage = false;
     /// The same, for LIGHTNING aimed at the flower and nothing else. Rubber's.
+    double formationMana = 0.0;
+    double scytheManaDamage = 0.0;
+    double citronScale = 1.0;
+    bool skipPreparation = false;
     bool soaksOwnerLightning = false;
     /// PetalConfig::ignoresMobs, set at spawn for the same reason: canDamage,
     /// which refuses every pair of this petal and a mob's doing, has no
@@ -1458,6 +1490,8 @@ struct PetalInstance {
     /// fire, a spent shot, a pet's hatch cycle). See resolveEquippedPetal.
     bool mimicked = false;
     Rarity reloadRarity = Rarity::Common;
+    double plantedUntilMillis = 0;
+    unsigned wardHits = 0;
 };
 
 /// A petal that is a body on the ground rather than a place on the ring --
@@ -1527,6 +1561,8 @@ struct Projectile {
     double effectStrength = 1.0;
     double nextRadiationMillis = 0.0;
     double collisionHalfWidth = 0.0; ///< nonzero for a long, narrow beam
+    bool coralElements = false;
+    std::uint8_t childShards = 0;
 };
 
 struct Lifetime {
@@ -1731,6 +1767,7 @@ struct LightningTarget {
     Rarity rarity = Rarity::Common;
     bool fromBattery = false;
     double burnPerSecond = 0.0;
+    double poisonPerSecond = 0.0;
 };
 struct BurrowState {
     double untilMillis = 0;
@@ -1739,6 +1776,7 @@ struct BurrowState {
         UINT16_MAX, UINT16_MAX, UINT16_MAX, UINT16_MAX,
         UINT16_MAX, UINT16_MAX, UINT16_MAX, UINT16_MAX
     };
+    Entity overlappingTrainingDummy = NULL_ENTITY;
 };
 
 struct AttachedSilk { Entity owner = NULL_ENTITY; Entity target = NULL_ENTITY; };
@@ -1806,6 +1844,7 @@ struct GroundEffect {
     // External white-hole acceleration; separate from the brief release drift.
     Vec2 spillGravityVelocity{};
 
+    bool suppressesAggro = false;
 };
 
 struct Burn {
@@ -1883,6 +1922,7 @@ FLIX_COMPONENT(flix::HitCooldowns);
 FLIX_COMPONENT(flix::Afflictions);
 FLIX_COMPONENT(flix::ShieldState);
 FLIX_COMPONENT(flix::ManaPool);
+FLIX_COMPONENT(flix::MagicOpalRoll);
 FLIX_COMPONENT(flix::SpongeDamageState);
 FLIX_COMPONENT(flix::SecondChance);
 FLIX_COMPONENT(flix::Undead);

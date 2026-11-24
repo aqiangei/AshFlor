@@ -22,7 +22,7 @@ struct BossFloorAudit {
     std::vector<int> floorCopiesByKill;
 };
 Counts kills(const char* id,Rarity rarity,int count,bool orb=false,int bonus=1,int* maxEternal=nullptr,bool splitAccount=false,double damage=100.0,
-             BossFloorAudit* audit=nullptr, bool finisher=false, bool ordinaryMap=false){
+             BossFloorAudit* audit=nullptr, bool finisher=false, bool ordinaryMap=false,Rarity orbTier=Rarity::Mythic){
     const auto& c=registry();World w;CommandBuffer commands{w};EventQueue events;SpatialGrid grid;Rng rng{81927};LootSystem loot;loot.bonusMultiplier=[bonus](Entity){return bonus;};
     loot.ordinaryMapLoot = [ordinaryMap](Realm realm) { return ordinaryMap && realm == Realm::Overworld; };
     if (audit) loot.allowsBossParticipationFloor = [audit](Realm) { return audit->enabled; };
@@ -34,7 +34,7 @@ Counts kills(const char* id,Rarity rarity,int count,bool orb=false,int bonus=1,i
     Entity sibling=NULL_ENTITY;
     if(splitAccount){sibling=w.create();w.add<PlayerTag>(sibling);w.add<PlayerAccount>(sibling,PlayerAccount{"audit-user","audit",77,false});w.add<Transform>(sibling,Transform{{10000,10000},0});w.add<Health>(sibling,Health{100,100,0,0});}
     int previousEternal=0;
-    if(orb){w.add<Loadout>(p);auto& s=w.get<Loadout>(p).slots[0];s.configIndex=c.petalIndex("mana_orb");s.rarity=Rarity::Mythic;}
+    if(orb){w.add<Loadout>(p);auto& s=w.get<Loadout>(p).slots[0];s.configIndex=c.petalIndex("mana_orb");s.rarity=orbTier;}
     for(int i=0;i<count;++i){const Entity corpse=w.create();w.add<MobTag>(corpse);w.add<MobType>(corpse,MobType{c.mobIndex(id),rarity,1});w.add<Transform>(corpse,Transform{{1000,1000},0});w.add<Health>(corpse,Health{0,100,0,0});Bounty b;b.credit(p,damage,77);if(splitAccount)b.credit(sibling,damage,77);w.add<Bounty>(corpse,b);w.add<Dead>(corpse,Dead{finisher ? (splitAccount ? sibling : p) : NULL_ENTITY});loot.run(w,grid,c,rng,i,0,commands,events);commands.flush();w.destroy(corpse);
         if (audit) {
             int meaningful = 0, privateFloor = 0;
@@ -303,9 +303,9 @@ TEST(ant_egg_trials_and_golden_leafbug_orb_conversion_use_reference_probabilitie
     CHECK_EQ(total(common,"egg"),rolls);
     const auto super=kills("ant_egg",Rarity::Super,100);const int supers=100*baseLootTrialsForRarity(Rarity::Super);
     CHECK_EQ(total(super,"egg"),supers);CHECK_EQ(super.size(),std::size_t(3));CHECK_NEAR(static_cast<double>(super.at({"egg",5}))/supers,.357,.03);
-    const auto ordinary=kills("golden_leafbug",Rarity::Super,100);CHECK_EQ(total(ordinary,"magic_leaf"),0);CHECK_EQ(total(ordinary,"golden_leaf"),supers);
-    const auto magic=kills("golden_leafbug",Rarity::Super,30,true);CHECK_EQ(total(magic,"golden_leaf"),0);CHECK_EQ(total(magic,"magic_leaf"),30*baseLootTrialsForRarity(Rarity::Super));
-    for(const auto&[key,n]:magic)if(key.first=="magic_leaf")CHECK_EQ(key.second,5);
+    const auto ordinary=kills("golden_leafbug",Rarity::Super,100);CHECK_EQ(total(ordinary,"magic_golden_leaf"),0);CHECK_EQ(total(ordinary,"golden_leaf"),supers);
+    const auto magic=kills("golden_leafbug",Rarity::Super,30,true);CHECK_EQ(total(magic,"golden_leaf"),0);CHECK_EQ(total(magic,"magic_golden_leaf"),30*baseLootTrialsForRarity(Rarity::Super));
+    for(const auto&[key,n]:magic)if(key.first=="magic_golden_leaf")CHECK_EQ(key.second,5);
 }
 
 TEST(daily_bonus_adds_independent_trials_and_reduced_super_bonus){
@@ -401,6 +401,13 @@ TEST(hyper_rewards_follow_personal_damage_and_km_wins_ties_before_the_finisher) 
         CHECK_EQ(world.get<PlayerProgress>(players[2]).totalXp, kills * 500.0);
         CHECK_EQ(world.get<PlayerProgress>(players[3]).totalXp, 0.0);
     }
+}
+TEST(magic_variant_crab_pays_claws_through_normal_loot_with_equipped_orb) {
+    const auto plain = kills("crab", Rarity::Ultra, 128, false);
+    const auto enchanted = kills("crab", Rarity::Ultra, 128, true);
+    CHECK(total(plain, "claw") > 0);
+    CHECK_EQ(total(plain, "magic_claw"), 0);
+    CHECK(total(enchanted, "magic_claw") > 0);
 }
 TEST(centipede_segments_drop_leaf_and_convert_it_with_mana_orb){
     const auto normal=kills("centipede_body",Rarity::Super,30);
@@ -573,6 +580,114 @@ TEST(ordinary_and_void_ghosts_drop_splitter_with_the_existing_high_tier_rates) {
         }
         CHECK(total(kills(id, Rarity::Super, 600), "splitter") > 0);
     }
+}
+
+TEST(zorr_magic_sacrifice_keeps_low_rolls_at_their_original_rarity) {
+    const auto ordinary=kills("void_grave_digger",Rarity::Rare,100);
+    const auto magic=kills("void_grave_digger",Rarity::Rare,100,true,1,nullptr,false,100.0,nullptr,false,false,Rarity::Apex);
+    CHECK(total(ordinary,"void_cross")>0);
+    CHECK_EQ(total(magic,"void_cross"),total(ordinary,"void_cross"));
+    CHECK_EQ(total(magic,"magic_blood_sacrifice"),0);
+}
+
+TEST(zorr_magic_catalog_has_obtainable_orb_drops) {
+    CHECK(total(kills("magic_firefly",Rarity::Common,4,false),"mana_orb")>0);
+    const std::map<std::string,std::vector<std::string>> routes{
+        {"ant_hole", {"magic_soil", "magic_shovel"}},
+        {"arctic_centipede", {"magic_arctic_blueberries"}},
+        {"arctic_frost_digger", {"magic_arctic_sapphire", "magic_topaz"}},
+        {"arctic_ice_cube", {"magic_arctic_nitrogen"}},
+        {"arctic_nuke", {"magic_arctic_fission", "magic_arctic_splitter"}},
+        {"arctic_snowbush", {"magic_arctic_banana"}},
+        {"arctic_spider_digger", {"magic_arctic_emerald"}},
+        {"arctic_stalagmite", {"magic_arctic_nitro"}},
+        {"arctic_tick", {"magic_arctic_ice_rose"}},
+        {"bee", {"magic_stinger", "magic_honey", "magic_pollen"}},
+        {"beetle", {"magic_cherry"}},
+        {"bio_atom", {"magic_electron_missile", "magic_fire"}},
+        {"bio_bacteriophage", {"magic_pill"}},
+        {"bio_biologist", {"magic_cancer", "magic_job_application", "magic_microplastics"}},
+        {"bio_parasite", {"magic_chromosome"}},
+        {"bio_red_blood_cell", {"magic_hemoglobin"}},
+        {"bio_stem_cell", {"magic_dna", "magic_iodine", "magic_rna"}},
+        {"bio_virus", {"magic_bubonic_plague"}},
+        {"bubble", {"magic_bubble", "magic_air", "magic_bubble_bomb"}},
+        {"bush", {"magic_cotton"}},
+        {"cactus", {"magic_cactus"}},
+        {"crab", {"magic_claw"}},
+        {"cube", {"magic_rocket"}},
+        {"desert_ladybug", {"magic_yggdrasil", "magic_dahlia"}},
+        {"digger", {"magic_cutter"}},
+        {"evil_centipede", {"magic_grapes"}},
+        {"firefly", {"magic_wing", "magic_battery"}},
+        {"fly", {"magic_poo"}},
+        {"gambler", {"magic_dice", "magic_corruption", "magic_dollar", "magic_yuan"}},
+        {"golden_leafbug", {"magic_golden_leaf"}},
+        {"hel_centipede", {"magic_gas_bomb"}},
+        {"hel_spider", {"magic_gas", "magic_hel_lightning", "magic_latrine"}},
+        {"hel_wasp", {"magic_hel_missile", "magic_viper"}},
+        {"hornet", {"magic_missile", "magic_orange"}},
+        {"javascript", {"magic_bomb"}},
+        {"jellyfish", {"magic_lightning"}},
+        {"jurassic_ankylosaurus", {"magic_citron"}},
+        {"jurassic_fern", {"magic_sunflower", "magic_lily_pad"}},
+        {"jurassic_fossil", {"magic_crystal_leaf", "magic_quartz"}},
+        {"jurassic_nigersaurus", {"magic_blood_stinger"}},
+        {"jurassic_stegosaurus", {"magic_palm_leaf", "magic_bloom"}},
+        {"jurassic_tyrannosaurus", {"magic_tooth"}},
+        {"jurassic_volcano", {"magic_torch"}},
+        {"ladybug", {"mana_orb"}},
+        {"leafbug", {"magic_leaf"}},
+        {"leech", {"magic_fang", "magic_vampire_fang"}},
+        {"mantis", {"magic_peas", "magic_bur"}},
+        {"mecha_flower", {"magic_mimic"}},
+        {"mecha_spider", {"magic_usain_bolt"}},
+        {"moth", {"magic_candlestick"}},
+        {"nazar_beetle", {"magic_nazar_amulet"}},
+        {"pharaoh_beetle", {"magic_aztec_coin"}},
+        {"queen_ant", {"magic_basil"}},
+        {"roach", {"magic_antennae"}},
+        {"rock", {"magic_rock", "magic_marble"}},
+        {"scorpion", {"magic_iris"}},
+        {"server", {"magic_bitcoin", "magic_ruby"}},
+        {"shell", {"magic_pearl"}},
+        {"soldier_termite", {"magic_bone"}},
+        {"spider", {"magic_web"}},
+        {"sponge", {"magic_sponge", "magic_coral"}},
+        {"starfish", {"magic_salt", "magic_starfish"}},
+        {"termite_mound", {"magic_rubber", "magic_mysterious_relic"}},
+        {"termite_overmind", {"magic_tomato", "magic_compass"}},
+        {"tomb", {"magic_agarbatti"}},
+        {"void_alien", {"magic_void_slime", "magic_void_nut"}},
+        {"void_alien_digger", {"magic_void_opal"}},
+        {"void_angel", {"magic_void_halo"}},
+        {"void_black_hole", {"magic_void_singularity", "magic_void_relativity"}},
+        {"void_eye", {"magic_void_blood_scythe"}},
+        {"void_ghost", {"magic_void_balloon"}},
+        {"void_grave_digger", {"magic_blood_sacrifice"}},
+        {"void_illuminati", {"magic_void_scar"}},
+        {"void_momy", {"magic_void_scythe", "magic_void_zodiac"}},
+        {"void_rain_frog", {"magic_neurotoxin"}},
+        {"void_tesla_coil", {"magic_void_copper_rod"}},
+        {"void_troll", {"magic_void_sad"}},
+        {"void_unabomber", {"magic_void_cryo_bomb", "magic_void_gunpowder", "magic_void_pipe_bomb", "magic_void_mask"}},
+        {"void_white_hole", {"magic_void_antimatter", "magic_void_stardust"}},
+        {"void_zatan", {"magic_void_fire_bomb", "magic_void_trident"}},
+        {"worker_ant", {"magic_pumpkin_seed"}},
+        {"worker_fire_ant", {"magic_fries"}},
+    };
+    int observed = 0;
+    for (const auto& [mob,expected] : routes) {
+        const int trials = (mob == "arctic_nuke" || mob == "void_grave_digger") ? 6000 : 160;
+        auto rewards = kills(mob.c_str(), Rarity::Apex, trials, true, 1, nullptr, false, 100.0, nullptr, false, false, Rarity::Apex);
+        for (const auto& id : expected) {
+            if (!total(rewards,id)) {
+                std::printf("  missing magic reward: %s / %s\n",mob.c_str(),id.c_str());
+                CHECK(false);
+            } else ++observed;
+        }
+    }
+    CHECK_EQ(observed,122);
 }
 
 TEST(ordinary_map_uses_fifty_trials_and_preserves_per_roll_rates) {

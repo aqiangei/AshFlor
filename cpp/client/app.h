@@ -796,6 +796,15 @@ private:
     /// that realm is holding. Two maps are never the same realm, and the
     /// dimensions are what notice the wire grid arriving after the join --
     /// before it lands the realm has no map and the bake would be of nothing.
+    struct MinimapPortal {
+        Vec2 centre;
+        std::string name;
+        bool rift;
+        bool arcane;
+    };
+    std::vector<MinimapPortal> minimapPortals_;
+    const MapData* minimapPortalMap_ = nullptr;
+    ui::Language minimapPortalLanguage_ = ui::Language::Zh;
     Realm minimapRealm_ = Realm::Overworld;
     int minimapCols_ = -1;
     int minimapRows_ = -1;

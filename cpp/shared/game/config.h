@@ -449,7 +449,7 @@ struct AmbushSpec {
 };
 
 /// A lingering damage field (uranium).
-enum class SpillKind { None, Acid, Lava, Oil, Blood, Elixir, Latrine, Nitrogen };
+enum class SpillKind { None, Acid, Lava, Oil, Blood, Elixir, Latrine, Nitrogen, PacifyingNitrogen };
 
 struct SpillSpec {
     SpillKind kind = SpillKind::None;
@@ -940,6 +940,7 @@ struct PetalConfig {
     std::string color;
     Rgba colorRgba = kOpaqueWhite;
     std::string image;
+    std::string magicDropSource; ///< Ordinary artwork/source for a mob-specific orb conversion.
 
     /// The artwork repainted from a tier up: every fill in `image` becomes
     /// `fill`, and every stroke the outline the client derives from it, so
@@ -1384,7 +1385,7 @@ inline double fluidDamageScale(SpillKind kind) {
 }
 
 inline bool isFireBomb(const PetalConfig& config) {
-    return config.id == "fire_bomb" || config.id == "void_fire_bomb";
+    return config.id == "fire_bomb" || config.id == "void_fire_bomb" || config.id == "magic_void_fire_bomb";
 }
 
 inline constexpr int kFireBombBurnLayers = 3;
@@ -1441,6 +1442,7 @@ inline bool isReferenceJet(std::string_view id) {
         id=="void_cyanide" || id=="oxygen";
 }
 inline double referencePetalHalfWidth(std::string_view id,Rarity rarity) {
+    if(id=="magic_void_trident")return 10.0;
     if(id=="void_gamma_ray")return 2.5*(1+.2*ladderIndex(rarity));
     if(isReferenceJet(id)) {
         const bool blade=id=="arctic_lightsaber" || id=="arctic_visaber";
@@ -1450,6 +1452,7 @@ inline double referencePetalHalfWidth(std::string_view id,Rarity rarity) {
     return 0.0;
 }
 inline double referencePetalLengthRadius(std::string_view id,Rarity rarity) {
+    if(id=="magic_void_trident")return 100.0;
     if(id=="void_gamma_ray")return 40.0;
     if(isReferenceJet(id)) {
         const double base=(id=="arctic_lightsaber" || id=="arctic_visaber")?40.0:20.0;
@@ -1592,7 +1595,7 @@ inline double tomatoGrowth(double ageMillis) {
 }
 
 /// Rubber soaks the lightning aimed at its flower, as cotton soaks every hit.
-inline bool petalSoaksLightning(const PetalConfig& config) { return config.id == "rubber"; }
+inline bool petalSoaksLightning(const PetalConfig& config) { return config.id == "rubber" || config.id == "magic_void_copper_rod"; }
 
 /// A relic's wearer shares the damage it takes with the other wearers in its
 /// squad.
@@ -1771,11 +1774,15 @@ inline double eggSummonCombatScale(const PetalConfig& config) {
     return petalIsEgg(config) ? 2.0 : 1.0;
 }
 
+inline bool isPermanentSandstormStick(const PetalConfig& config) {
+    return config.id == "mysterious_stick" || config.id == "arctic_stick";
+}
+
 inline double summonDamageScale(const PetalConfig& config, Rarity rarity) {
     if (config.id == "void_alien_digger_egg") return 0.55;
     if (config.id == "void_troll_egg") return 0.70;
     if (config.id == "void_momy_egg") return 0.80;
-    if (config.id == "mysterious_stick")
+    if (isPermanentSandstormStick(config))
         return ladderIndex(rarity) >= rarityIndex(Rarity::Unique) ? 0.40 : 0.55;
     if (config.id == "arctic_snow_stick") return 0.80;
     return config.id == "magic_stick" ? 1.25 : 1.0;
@@ -1784,7 +1791,7 @@ inline double summonDamageScale(const PetalConfig& config, Rarity rarity) {
 /// Hyper boosts individual summons without adding entities or attack events.
 inline double hyperSummonScale(const PetalConfig& config, Rarity rarity) {
     if (ladderRarity(rarity) != Rarity::Apex) return 1.0;
-    return config.id == "magic_stick" || config.id == "mysterious_stick" ? 1.5 : 1.25;
+    return config.id == "magic_stick" || isPermanentSandstormStick(config) ? 1.5 : 1.25;
 }
 
 // Promoting previously Eternal-capped escorts to actual Hyper bodies should
@@ -2133,6 +2140,17 @@ EquippedPetal resolveEquippedPetal(const ContentRegistry& registry, int slot, Sl
                                   int activeSlots = kLoadoutActiveSlots) {
     EquippedPetal self = slotAt(slot);
     self.reloadRarity = self.rarity;
+    if (!self.empty() && registry.petal(self.configIndex).id == "magic_mimic" && activeSlots > 1) {
+        const int position = slot % kLoadoutActiveSlots;
+        if (position >= activeSlots) return self;
+        const EquippedPetal right = slotAt(slot - position + (position + 1) % activeSlots);
+        if (right.empty()) return self;
+        const auto magic = registry.petal(right.configIndex).id == "rose" && registry.petalIndex("mana_orb") != kInvalidIndex
+            ? registry.petalIndex("mana_orb") : registry.magicFormOf(right.configIndex);
+        if (magic != kInvalidIndex && registry.petal(magic).id != "magic_mimic" &&
+            petalComesAt(registry.petal(magic), self.rarity)) return {magic, self.rarity, self.rarity};
+        return self;
+    }
     if (self.empty() || !petalMimicsLeft(registry.petal(self.configIndex))) return self;
     const int rowStart = slot - slot % kLoadoutActiveSlots;
     if (slot - rowStart >= activeSlots) return self;
@@ -2273,6 +2291,11 @@ bool loadContent(const std::string& dataDir, std::string& errorOut);
 inline double mobBodyContactScale(const std::string& id) {
     if (id.find("centipede") != std::string::npos) return 1.0;
     return id.find("spider")!=std::string::npos ? 0.55 : 0.80;
+}
+
+// Allow a flower to interact just outside the solid nest, including snapshot rounding.
+inline double dungeonEntryReach(const MobConfig& nest, double radius, double flowerRadius) {
+    return radius * mobBodyContactScale(nest.id) + flowerRadius + 24.0;
 }
 
 } // namespace flix

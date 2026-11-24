@@ -589,8 +589,8 @@ public:
     /// before use, so a caller may hand over a point in a wall and still get a
     /// mob standing somewhere legal.
     ///
-    /// Wave bosses use their room's schedule and announcements.
-    enum class MobSpawnScope { World, Wave };
+    /// Wave and dungeon inhabitants spawn independently of outdoor boss clocks.
+    enum class MobSpawnScope { World, Wave, DungeonBrood };
     Entity spawnMob(World& world, const Terrain& terrain, const ContentRegistry& content,
                     std::uint16_t mobIndex, Rarity rarity, Vec2 position, Realm realm,
                     double nowMillis, Rng& rng, MobSpawnScope scope = MobSpawnScope::World);
@@ -1030,13 +1030,13 @@ private:
     /// every later spawn is rolled from.
     ///
     /// `clockGated` false lets a unique or apex past a cooling biome clock;
-    /// summonSacrifice is the only caller that asks.
+    /// dungeon brood may also inherit a tier below the species floor.
     Entity spawnMobAt(World& world, const Terrain& terrain, const ContentRegistry& content,
                       std::uint16_t mobIndex, Rarity rarity, Vec2 position, Realm realm,
                       double nowMillis, Rng& rng, int depth, std::uint16_t zone,
                       std::optional<double> facing = std::nullopt, bool clockGated = true,
                       bool announce = true, bool prestigePromotion = false,
-                      const WakeClearance* wakeClearance = nullptr);
+                      const WakeClearance* wakeClearance = nullptr, bool inheritNestTier = false);
 
     /// Lays a centipede's body out behind its head, each segment linked to the
     /// one in front. Driven from spawnMobAt so that every path to a head --

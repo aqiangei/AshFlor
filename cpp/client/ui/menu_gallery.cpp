@@ -437,7 +437,7 @@ std::vector<DropRow> computeMobDrops(std::uint16_t mobIndex, Rarity mobRarity,
     const int minTier = tier >= 3 ? tier - 2 : (tier == 2 ? 1 : 0);
 
     bool hyperEternalCell=false;
-    const auto push = [&](const DropDef& drop, Rarity rarity, double probability,
+    const auto push = [&](const DropDef& authored, Rarity rarity, double probability,
                           int floorTier = 0) {
         if (probability <= 0) return;
         const bool personalDrop = rarity == Rarity::Ascendant || rarity == Rarity::PermanentHyper;
@@ -448,6 +448,18 @@ std::vector<DropRow> computeMobDrops(std::uint16_t mobIndex, Rarity mobRarity,
         if (rarity == Rarity::Ascendant) column = kDropTiers + 1;
         if (column < 0) return;
         if (column < floorTier) column = floorTier;
+        const DropDef* displayed = &authored;
+        if (!personalDrop && authored.orbTier < kRarityCount && authored.petalIndex != kInvalidIndex) {
+            const auto& magic = content().petal(authored.petalIndex);
+            if (!magic.magicDropSource.empty() && column < rarityIndex(magic.minRarity)) {
+                const auto& ordinary = mobDropTable(mobIndex,kRarityCount);
+                const auto row = std::find_if(ordinary.begin(),ordinary.end(),[&](const DropDef& d) {
+                    return d.petalIndex == authored.sourcePetal;
+                });
+                if (row != ordinary.end()) displayed = &*row;
+            }
+        }
+        const DropDef& drop = *displayed;
         if (!personalDrop && drop.orbTier < kRarityCount)
             column = std::max(rarityIndex(content().petal(drop.petalIndex).minRarity),
                               std::min(column, drop.orbTier));

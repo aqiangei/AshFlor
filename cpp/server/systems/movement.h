@@ -372,7 +372,7 @@ private:
     /// solid to flowers, and they do not give way: the flower is moved, the
     /// NPC stays on its mark.
     void pushOutOfNpcs(const World& world, const Terrain& terrain, Transform& transform,
-                       double radius, bool underground = false) const;
+                       double radius, bool underground = false, BurrowState* burrow = nullptr) const;
     /// Rebuilds npcDiscs_. NPCs do not move between the two movement phases
     /// of one tick, but either phase may be the first to run in a test.
     void collectNpcDiscs();
@@ -403,7 +403,7 @@ private:
     void separateMobs(World& world, const Terrain& terrain, WorldPhaseTiming* timing);
     /// Flattens the eligible mobs into `separationSet_` and files them in
     /// `separationGrid_`.
-    void buildSeparationSet(World& world);
+    void buildSeparationSet(World& world, const Terrain& terrain);
     /// The LOD gate: false for a mob too far from every flower to be worth
     /// colliding this tick.
     bool activeForSeparation(World& world, Entity entity, Vec2 position, Realm realm, Rarity rarity) const;

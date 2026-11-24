@@ -109,7 +109,7 @@ struct Placement {
 /// False for a transform a bake cannot stand in for, or a size outside the
 /// range worth baking.
 inline bool place(const std::array<float, 6>& m, double penX, double baseline, double size,
-                  Placement& out) {
+                  Placement& out, double minDeviceSize = kMinDeviceSize) {
     // A uniform scale, a rotation and a translation -- a similarity, in other
     // words, which is exactly the family whose ink can be baked once and then
     // copied whole. `[a c; b d]` is one when a == d and c == -b: that leaves
@@ -128,7 +128,7 @@ inline bool place(const std::array<float, 6>& m, double penX, double baseline, d
     out.angle = static_cast<double>(out.angleQ) / kAngleBuckets;
 
     out.deviceSize = size * out.scale;
-    if (out.deviceSize < kMinDeviceSize || out.deviceSize > kMaxDeviceSize) return false;
+    if (out.deviceSize < minDeviceSize || out.deviceSize > kMaxDeviceSize) return false;
 
     // The pen in device pixels, snapped to the subpixel grid the bake uses.
     const double penDeviceX = a * penX + cc * baseline + m[4];

@@ -189,16 +189,13 @@ bool drawCached(Canvas& canvas, const void* owner, std::uint64_t variant, double
         }
         paint(bitmap, bakeW, bakeH);
         Entry entry{std::move(bitmap),
-                    static_cast<std::size_t>(bakeW + pad) * (bakeH + pad) * 4, 0};
+                    static_cast<std::size_t>(bakeW + pad) * (bakeH + pad) * 4, ++c.clock};
         c.bytes += entry.bytes;
         found = c.entries.emplace(key, std::move(entry)).first;
         evictIfNeeded();
-        // evictIfNeeded cannot have dropped what was just inserted: it stops at
-        // one entry, and this one is stamped as the most recent below.
-        found = c.entries.find(key);
-        if (found == c.entries.end()) return false;
+    } else {
+        found->second.lastUsed = ++c.clock;
     }
-    found->second.lastUsed = ++c.clock;
 
     if (snapToDevice) {
         // Onto whole device pixels, so the blit is a texel-for-pixel copy

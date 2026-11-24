@@ -1113,6 +1113,29 @@ TEST(burrowed_players_cross_training_dummies_and_still_stop_at_other_npcs) {
     CHECK(walkAcross("oracle", true) < 0.0);
 }
 
+TEST(surfacing_inside_a_training_dummy_preserves_position_until_exit) {
+    std::string error;
+    CHECK(loadContent(testsupport::dataDir(), error));
+    for (const char* id : {"target_dummy", "test_dummy"}) {
+        Fixture fx;
+        NpcSystem npcs;
+        const Vec2 centre{6000, 6000};
+        const auto dummy = npcs.spawnNpc(fx.world, fx.terrain, content(),
+            content().mobIndex(id), Rarity::Common, centre, Realm::Overworld, 0.0);
+        CHECK(dummy != NULL_ENTITY);
+        const auto player = fx.spawnPlayer(centre);
+        fx.world.add<BurrowState>(player, BurrowState{4000.0, true});
+        fx.step(120);
+        CHECK_NEAR(fx.positionOf(player).x, centre.x, 0.01);
+        fx.drive(player, 0, 1);
+        fx.step(100);
+        CHECK(fx.world.get<BurrowState>(player).overlappingTrainingDummy == NULL_ENTITY);
+        fx.drive(player, kPi, 1);
+        fx.step(160);
+        CHECK(fx.positionOf(player).x > centre.x);
+    }
+}
+
 TEST(guided_shots_use_an_eternal_training_dummys_edge_at_launch) {
     std::string error;
     if (!loadContent(testsupport::dataDir(), error)) { CHECK(false); return; }

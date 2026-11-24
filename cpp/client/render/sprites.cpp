@@ -657,6 +657,9 @@ bool SpriteCache::build(const ContentRegistry& content, const std::string& dataD
         const std::string& art = silverfish ? walkingLegArtwork(config.image, 3, kPi)
                              : walkingLegs ? walkingLegArtwork(config.image) : config.image;
         compile(art, config.colorRgba, "mob " + config.id, mobs_[i]);
+        if (silverfish) mobs_[i].smallDocumentFrames = 16;
+        if (config.id == "garbage" && mobs_[i].document && !mobs_[i].document->animated())
+            mobs_[i].smallDocumentFrames = 1;
         mobs_[i].distanceAnimated = walkingLegs || walksWithDistance(config.image);
         // These imported sprites face up-left; simulation heading zero is right.
         if (walkingLegs || config.id == "hel_wasp" || config.id == "nazar_beetle") {
@@ -758,6 +761,13 @@ void SpriteCache::draw(Canvas& canvas, const Sprite& sprite, double x, double y,
         } else {
             attr.clockMs = timeSeconds * 1000.0;
         }
+#ifdef __EMSCRIPTEN__
+        // The browser image path preserves arbitrary rotation and mirroring.
+        if (drawSmallMobPose(canvas, sprite.art, attr, sprite.smallPoseSheet)) {
+            canvas.restore();
+            return;
+        }
+#endif
         paintMobArt(canvas, sprite.art, attr);
         canvas.restore();
         return;
@@ -786,14 +796,38 @@ void SpriteCache::draw(Canvas& canvas, const Sprite& sprite, double x, double y,
     // width() instead is what made the artwork render at wildly wrong sizes --
     // these documents declare width="32" while drawing in a viewBox many times
     // that, and the two are unrelated.
-    document->renderFitted(canvas,
-                           static_cast<float>(-diameter * (0.5 + sprite.bodyCentreOffset.x)),
-                           static_cast<float>(-diameter * (0.5 + sprite.bodyCentreOffset.y)),
-                           static_cast<float>(diameter),
-                           static_cast<float>(diameter),
-                           static_cast<float>(sprite.distanceAnimated
-                               ? (motion ? motion->distance * kGaitRadiansPerUnitWalked : 0.0)
-                               : timeSeconds));
+    const float left = static_cast<float>(-diameter * (0.5 + sprite.bodyCentreOffset.x));
+    const float top = static_cast<float>(-diameter * (0.5 + sprite.bodyCentreOffset.y));
+    const float side = static_cast<float>(diameter);
+    const double phase = sprite.distanceAnimated
+        ? (motion ? motion->distance * kGaitRadiansPerUnitWalked : 0.0) : timeSeconds;
+#ifdef __EMSCRIPTEN__
+    const int frames = sprite.smallDocumentFrames;
+    if (frames && (!motion || !motion->pet) && document == sprite.document.get() &&
+        !sprite.articulatedEyes && canvas.globalAlpha() == 1.0f && canvas.colorTint().a == 0) {
+        const auto transform = canvas.currentTransform();
+        const double scale = std::max(std::hypot(transform[0], transform[1]),
+                                      std::hypot(transform[2], transform[3]));
+        if (side * scale <= 64.0) {
+            // walkingLegArtwork makes a single 2*pi cycle. Keep the viewBox and
+            // centre offset of the live SVG, with a gutter around each pose.
+            constexpr int tile = 128, body = 96, pad = (tile - body) / 2;
+            if (!sprite.smallPoseSheet) {
+                sprite.smallPoseSheet = std::make_shared<Canvas>(Canvas::createVirtual(frames * tile, tile));
+                for (int i = 0; i < frames; ++i)
+                    document->renderFitted(*sprite.smallPoseSheet, i * tile + pad, pad, body, body,
+                                            static_cast<float>(kTau * i / frames));
+            }
+            const int frame = frames == 1 ? 0 : walkPoseFrame(phase, frames);
+            const float margin = side * pad / body;
+            canvas.drawCanvas(*sprite.smallPoseSheet, frame * tile, 0, tile, tile,
+                              left - margin, top - margin, side + 2 * margin, side + 2 * margin);
+            canvas.restore();
+            return;
+        }
+    }
+#endif
+    document->renderFitted(canvas, left, top, side, side, static_cast<float>(phase));
     if (sprite.articulatedEyes) {
         const Vec2 eye = motion ? Vec2{gaze.x / 2.0, gaze.y / 4.4} : Vec2{};
         const float fit = static_cast<float>(diameter / 58.0);

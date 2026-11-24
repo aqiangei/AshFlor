@@ -291,6 +291,22 @@ TEST(arctic_cave_spider_holds_one_pose) {
     CHECK(standing == walkedPose(sprites, id, 0.0, 2.0));
 }
 
+#ifdef __EMSCRIPTEN__
+TEST(art_cache_keeps_the_newest_picture_when_it_reaches_its_byte_budget) {
+    Canvas target = Canvas::createVirtual(32, 32);
+    static const int owner = 0;
+    int bakes[8] = {};
+    for (const int variant : {0, 1, 2, 3, 4, 5, 6, 7, 7, 0}) {
+        CHECK(drawCachedPicture(target, &owner, variant, 0, 0, 2048, 2048, [&](Canvas& tile) {
+            ++bakes[variant];
+            tile.fillRect(0, 0, 8, 8);
+        }));
+    }
+    CHECK_EQ(bakes[7], 1);
+    CHECK_EQ(bakes[0], 2);
+}
+#endif
+
 TEST(art_cache_is_a_no_op_off_the_web) {
 #ifndef __EMSCRIPTEN__
     // Caching these tiles was measured four times SLOWER against the software

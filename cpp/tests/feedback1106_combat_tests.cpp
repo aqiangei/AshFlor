@@ -149,9 +149,9 @@ TEST(triangle_stacks_with_its_own_tier_before_talent) {
             if (petal.slot < targets.size())
                 targets[petal.slot] = r.mob(r.w.get<Transform>(e).position);
         });
-        const double bonus = tier == Rarity::Unique ? 32805 : tier == Rarity::Super ? 8748 : 4;
+        // Each additional active triangle of the same tier contributes 80% of its base hit.
         const double base = r.c.petalStats(r.c.petalIndex("triangle"), tier).damage;
-        const double expected = (base + bonus) * skills.effectScale(SkillId::Damage);
+        const double expected = (base * 1.8) * skills.effectScale(SkillId::Damage);
         r.hit(10000);
         for (const Entity target : targets) {
             CHECK(target != NULL_ENTITY);

@@ -126,7 +126,7 @@ private:
                   Entity entrance);
     Vec2 arrivalPoint(const Instance& instance, Rng& rng, const Terrain& terrain) const;
     Vec2 exitPoint(const Instance& instance, Rng& rng, double bodyRadius) const;
-    void evict(World& world, Instance& instance, Rng& rng);
+    bool evict(World& world, Instance& instance, Rng& rng);
     void release(World& world, Instance& instance, CommandBuffer& commands);
 
     struct WaveMember {

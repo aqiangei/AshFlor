@@ -222,6 +222,9 @@ public:
     static void ignite(World& world, Entity victim, Entity emitter, Entity owner,
                        double rate, double duration, double now, bool fraction = false);
     std::function<std::uint32_t()> allocateNetId;
+    static void spawnPetalShard(World& world, Entity owner, const Transform& at, std::uint16_t index,
+                                Rarity rarity, double damage, std::uint8_t children, bool elemental,
+                                std::uint32_t netId);
     static void createSpill(World& world, Entity owner, Vec2 at, Rarity rarity,
                             const SpillSpec& spill, double scale, std::uint32_t netId,
                             double durabilityScale = 1.0, Rng* rng = nullptr);
@@ -342,7 +345,7 @@ public:
     ///
     /// A flower is different on purpose: it carries exactly one bite, replaced
     /// outright by the next one even when that shortens it.
-    void applyPoison(World& world, Entity victim, Entity source, double perSecond,
+    static void applyPoison(World& world, Entity victim, Entity source, double perSecond,
                      double durationMillis, double nowMillis, bool stackByEmitter = false,
                      PoisonOrigin origin = PoisonOrigin::Ordinary);
 
@@ -950,6 +953,7 @@ private:
         /// a contiguous run, found with one binary search.
         std::uint64_t key = 0;
         std::uint32_t slot = 0;
+        std::uint32_t nextNonPeaceful = 0;
     };
     std::vector<ShotCell> shotCells_;
     // A homogeneous cell can be skipped before enumerating a flower's own

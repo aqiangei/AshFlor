@@ -394,6 +394,31 @@ TEST(spatial_grid_finds_what_was_inserted) {
     CHECK(!grid.empty());
 }
 
+TEST(spatial_grid_fits_only_the_occupied_map_before_separation) {
+    SpatialGrid grid(512);
+    const Realm realm = worldRealm(12), other = worldRealm(13);
+    const Entity across = makeEntity(1, 1), remote = makeEntity(2, 1);
+    grid.fitEmptyRealm(realm, 32768);
+    CHECK_EQ(grid.cols(realm), 64);
+    CHECK_EQ(grid.cols(other), 1);
+    grid.insert(across, realm, {512, 512}, 24);
+    grid.insert(remote, realm, {31000, 2800}, 24);
+    std::vector<Entity> out;
+    grid.query(realm, {500, 500}, 28, out);
+    CHECK_EQ(countOf(out, across), 1);
+    CHECK_EQ(countOf(out, remote), 0);
+
+    grid.clear();
+    grid.fitEmptyRealm(realm, 32768);
+    grid.query(realm, {512, 512}, 32, out);
+    CHECK(out.empty());
+    grid.fitEmptyRealm(realm, 1024);
+    CHECK_EQ(grid.cols(realm), 2);
+    grid.insert(across, realm, {512, 512}, 24);
+    grid.query(realm, {522, 522}, 2, out);
+    CHECK_EQ(countOf(out, across), 1);
+}
+
 TEST(spatial_grid_finds_a_fat_entity_from_every_cell_it_covers) {
     SpatialGrid grid(600.0);
     const Entity big = makeEntity(7, 1);

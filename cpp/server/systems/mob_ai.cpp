@@ -2074,15 +2074,16 @@ void MobAiSystem::steerMob(World& world, const Terrain& terrain, const SpatialGr
                     const double radius = body.radius;
                     const bool identified = static_cast<bool>(allocateNetId);
                     const std::uint32_t netId = identified ? allocateNetId() : 0;
-                    commands.defer([goal, realm, radius, identified, netId](World& deferred) {
+                    commands.defer([self, goal, realm, radius, identified, netId](World& deferred) {
+                        if (!isStanding(deferred, self)) return;
                         const Entity warning = deferred.create();
                         deferred.add<GroundEffectTag>(warning);
                         deferred.add<Transform>(warning, Transform{goal, 0.0, realm});
                         GroundEffect effect;
                         effect.kind = GroundEffectKind::BlinkLanding;
+                        effect.owner = self;
                         effect.radius = radius;
                         deferred.add<GroundEffect>(warning, effect);
-                        deferred.add<Lifetime>(warning, Lifetime{kBlinkWarningMillis / 1000.0});
                         deferred.add<Replicated>(warning, Replicated{net::EntityKind::Effect, 0,
                             static_cast<std::uint16_t>(GroundEffectKind::BlinkLanding), Rarity::Common, 0});
                         if (identified) deferred.add<NetId>(warning, NetId{netId});
@@ -2395,7 +2396,7 @@ void MobAiSystem::steerPet(World& world, const Terrain& terrain, const SpatialGr
                            CommandBuffer& commands, const PetTargetPlan* plan) {
     const double slow = slowFactorOf(world, self, nowMillis);
     const auto* modifiers = ownerAlive ? world.tryGet<PlayerModifiers>(owner) : nullptr;
-    const double paceScale = slow * (modifiers ? modifiers->petMoveSpeedScale : 1.0);
+    const double paceScale = slow * (modifiers ? modifiers->petMoveSpeedScale : 1.0) * world.get<Pet>(self).variantSpeed;
     const double speed = drive.speed * paceScale;
     const double chaseSpeed = drive.chaseSpeed * paceScale;
 

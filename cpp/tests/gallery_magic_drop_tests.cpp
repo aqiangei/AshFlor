@@ -48,7 +48,7 @@ TEST(gallery_magic_drop_preview_follows_all_authored_conversions_and_orb_cap) {
     double expected=0,shown=0;
     for(const auto& r:ratesFor(conditional,Rarity::Unique))expected+=r.probability*100;
     for(const auto& d:galleryDropPreview(content().mobIndex("golden_leafbug"),Rarity::Unique,5))
-        if(d.petalIndex==content().petalIndex("magic_leaf")){shown+=d.probability;CHECK(rarityIndex(d.rarity)<=5);}
+        if(d.petalIndex==content().petalIndex("magic_golden_leaf")){shown+=d.probability;CHECK(rarityIndex(d.rarity)<=5);}
     CHECK_NEAR(shown,expected,1e-7);
     for(const char* mob:{"ladybug","jungle_ladybug","desert_ladybug"}){
         bool found=false;

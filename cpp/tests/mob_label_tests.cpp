@@ -59,7 +59,7 @@ std::vector<std::uint8_t> frameOf(const char* id, bool pet,
                                   const WorldRenderer::Options* options,
                                   Rarity rarity = Rarity::Common, double zoom = 1.0,
                                   net::EntityKind kind = net::EntityKind::Mob,
-                                  Vec2 viewer = kMobAt) {
+                                  Vec2 viewer = kMobAt, int viewportWidth = kFrameSize) {
     // The plate's lines are TEXT, and text needs the font the game ships.
     // Without it the renderer paints no line at all, and a check that a line
     // is absent would pass for the wrong reason.
@@ -78,6 +78,8 @@ std::vector<std::uint8_t> frameOf(const char* id, bool pet,
     if (options != nullptr) renderer.options = *options;
     Camera camera = frameCamera();
     camera.loadoutZoom = zoom;
+    camera.setViewport(viewportWidth, kFrameSize);
+    camera.snapTo(kMobAt + Vec2{(viewportWidth - kFrameSize) / (2.0 * zoom), 0.0});
     renderer.draw(canvas, view, camera, viewer, 0.0);
 
     return canvas.getImageData(0, 0, kFrameSize, kFrameSize);
@@ -181,6 +183,50 @@ bool tierRowSplits(const char* id, Rarity rarity) {
 } // namespace
 
 // ---------------------------------------------------------------------------
+
+TEST(equipped_trident_hitboxes_show_the_oriented_mob_capsule_and_player_circle) {
+    constexpr auto centre = kFrameSize / 2;
+    for (double angle : {0.0, kPi / 2.0}) {
+        RemoteEntity trident;
+        trident.kind = net::EntityKind::Petal;
+        trident.netId = 42;
+        trident.typeIndex = shipped().petalIndex("void_trident");
+        trident.rarity = Rarity::Common;
+        trident.radius = 100;
+        trident.position = trident.targetPosition = kMobAt;
+        trident.angle = trident.targetAngle = angle;
+        trident.needsSnap = false;
+        WorldView view;
+        view.seedForTest(trident);
+        WorldRenderer renderer;
+        renderer.setContent(&shipped());
+        const Camera camera = frameCamera();
+        for (bool show : {false, true}) {
+            renderer.options.hitboxes = show;
+            Canvas canvas = Canvas::createVirtual(kFrameSize, kFrameSize);
+            renderer.draw(canvas, view, camera, kMobAt, 0.0);
+            const auto rgba = canvas.getImageData(0, 0, kFrameSize, kFrameSize);
+            const auto hasOutline = [&](int along, int across, bool blue) {
+                const int dx = angle == 0 ? along : -across;
+                const int dy = angle == 0 ? across : along;
+                const auto x = centre + static_cast<int>(std::round(dx * camera.zoom()));
+                const auto y = centre + static_cast<int>(std::round(dy * camera.zoom()));
+                for (int row = y - 1; row <= y + 1; ++row) {
+                    for (int col = x - 1; col <= x + 1; ++col) {
+                        const auto* pixel = &rgba[4 * (row * kFrameSize + col)];
+                        if (blue ? pixel[0] < 100 && pixel[1] > 190 && pixel[2] > 220
+                                 : pixel[0] > 200 && pixel[1] < 50 && pixel[2] < 50) return true;
+                    }
+                }
+                return false;
+            };
+            CHECK_EQ(hasOutline(60, 10, false), show);
+            CHECK_EQ(hasOutline(100, 0, false), show);
+            CHECK_EQ(hasOutline(0, 100, true), show);
+            CHECK(!hasOutline(0, 30, false));
+        }
+    }
+}
 
 TEST(only_the_head_of_a_leech_wears_a_health_bar) {
     // The head carries the animal's plate...
@@ -329,6 +375,46 @@ TEST(a_far_camera_skips_mythic_and_lower_mob_plates_only) {
     CHECK(plateIsVisible(Rarity::Mythic, 0.60));
     CHECK(plateIsVisible(Rarity::Ultra, 0.59));
     CHECK(plateIsVisible(Rarity::Common, 0.59, false, net::EntityKind::Npc));
+}
+
+TEST(extreme_view_width_hides_the_entire_mob_plate) {
+    WorldRenderer::Options hidden;
+    hidden.names = hidden.healthBars = false;
+    const auto visible = [&](int width, bool pet, net::EntityKind kind) {
+        const auto render = [&](const WorldRenderer::Options* options) {
+            return frameOf("ladybug", pet, options, Rarity::Ultra, 0.125, kind, kMobAt, width);
+        };
+        return render(nullptr) != render(&hidden);
+    };
+    CHECK(visible(1799, false, net::EntityKind::Mob));
+    CHECK(!visible(1800, false, net::EntityKind::Mob));
+    CHECK(!visible(1801, true, net::EntityKind::Mob));
+    CHECK(visible(1800, false, net::EntityKind::Npc));
+}
+
+TEST(subpixel_mob_bars_show_health_and_shield_at_antenna_range) {
+    const auto render = [](double health, double shield, bool bars) {
+        Canvas canvas = Canvas::createVirtual(kFrameSize, kFrameSize);
+        WorldView view;
+        view.setRealm(Realm::Overworld);
+        view.setContent(&shipped());
+        RemoteEntity mob = mobOfType("ladybug", Rarity::Ultra);
+        mob.healthFraction = health;
+        mob.shieldFraction = shield;
+        view.seedForTest(mob);
+        WorldRenderer renderer;
+        renderer.setContent(&shipped());
+        renderer.options.names = false;
+        renderer.options.healthBars = bars;
+        Camera camera = frameCamera();
+        camera.loadoutZoom = 0.07;
+        renderer.draw(canvas, view, camera, kMobAt, 0);
+        return canvas.getImageData(0, 0, kFrameSize, kFrameSize);
+    };
+    const auto half = render(0.5, 0.0, true);
+    CHECK(half != render(0.5, 0.0, false));
+    CHECK(half != render(0.85, 0.0, true));
+    CHECK(half != render(0.5, 0.5, true));
 }
 
 TEST(tiny_distant_mob_labels_keep_the_tier_and_respect_plate_settings) {

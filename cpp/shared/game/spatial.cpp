@@ -67,6 +67,12 @@ void SpatialGrid::sizeToRealms(const Terrain& terrain) {
     inserted_ = 0;
 }
 
+void SpatialGrid::fitEmptyRealm(Realm realm, double span) {
+    Layer& target = layer(realm);
+    fitLayer(target.cols, target.rows, target.buckets, target.bucketEpoch, span,
+             invCellSize_, kMaxAxisCells);
+}
+
 int SpatialGrid::cellIndex(double offset, double invCellSize, int axisCells) {
     const double c = std::floor(offset * invCellSize);
     // Written as failed comparisons so NaN lands in cell 0 instead of taking

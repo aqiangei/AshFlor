@@ -61,6 +61,7 @@
 // bestiary and a contact sheet all call it and get the same picture.
 
 #include <cmath>
+#include <memory>
 #include <cstdint>
 #include <string>
 
@@ -229,6 +230,15 @@ struct MobMotion {
 
 /// Paints `art` about the origin. `None` draws nothing.
 void paintMobArt(Canvas&, MobArt art, const MobArtAttributes&);
+
+/// Uniformly spaced poses in a repeating walk cycle, including the wrap at 2*pi.
+inline int walkPoseFrame(double radians, int frames) {
+    const long step = std::lround(std::remainder(radians, kTau) * frames / kTau);
+    return static_cast<int>((step + frames) % frames);
+}
+
+/// Stamp eligible small, opaque wild mobs from a sheet shared by instances of the sprite.
+bool drawSmallMobPose(Canvas&, MobArt, const MobArtAttributes&, std::shared_ptr<Canvas>& sheet);
 
 /// The outline every gardn body wears: its own fill at 0.8 HSV value, which
 /// for an opaque colour is the channels scaled. Also what a petal's

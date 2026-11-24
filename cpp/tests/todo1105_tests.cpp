@@ -48,7 +48,7 @@ TEST(todo1106_new_talents_preserve_indices_costs_and_refund) {
 
 TEST(todo1106_stick_summons_use_hyper_stats_and_talent_without_changing_count) {
     const auto& c = testsupport::shippedContent();
-    for (const char* id : {"mysterious_stick", "magic_stick"}) {
+    for (const char* id : {"mysterious_stick", "arctic_stick", "magic_stick"}) {
         double baseHealth = 0, baseDamage = 0;
         std::size_t baseCount = 0;
         for (int variant = 0; variant < 3; ++variant) {
@@ -61,7 +61,7 @@ TEST(todo1106_stick_summons_use_hyper_stats_and_talent_without_changing_count) {
             w.add<PlayerSkillTree>(p);
             if(variant == 2) w.get<PlayerSkillTree>(p).skills.set(SkillId::PetDamage,9);
             w.get<Loadout>(p).slots[0] = LoadoutSlot{c.petalIndex(id), variant ? Rarity::Apex : Rarity::Unique};
-            w.get<Loadout>(p).slots[1] = LoadoutSlot{c.petalIndex("mana_orb"), Rarity::Unique};
+            w.get<Loadout>(p).slots[1] = LoadoutSlot{c.petalIndex("mana_orb"), variant ? Rarity::Apex : Rarity::Unique};
             w.get<PlayerInput>(p).current.flags = net::InputAttack;
             petals.run(w,c,0,.05,commands); commands.flush();
             auto& mana = w.get<ManaPool>(p);
@@ -111,7 +111,7 @@ TEST(todo1106_stick_summons_use_hyper_stats_and_talent_without_changing_count) {
     }
 }
 
-TEST(hyper_stick_gets_its_squad_when_magic_stick_is_due_to_fill_the_cap) {
+static void checkPermanentStickAtCap(const char* stick) {
     const auto& content = testsupport::shippedContent();
     World world;
     PetalSystem petals;
@@ -136,7 +136,7 @@ TEST(hyper_stick_gets_its_squad_when_magic_stick_is_due_to_fill_the_cap) {
     world.get<Loadout>(player).slots[0] = {content.petalIndex("magic_stick"), Rarity::Apex};
     world.get<Loadout>(player).slots[2] = {content.petalIndex("mana_orb"), Rarity::Apex};
     tick(0);
-    world.get<Loadout>(player).slots[1] = {content.petalIndex("mysterious_stick"), Rarity::Apex};
+    world.get<Loadout>(player).slots[1] = {content.petalIndex(stick), Rarity::Apex};
     tick(1000);
     tick(2500);
     tick(3500);
@@ -182,6 +182,14 @@ TEST(hyper_stick_gets_its_squad_when_magic_stick_is_due_to_fill_the_cap) {
     CHECK_EQ(petCount(0), 30u);
     CHECK_EQ(petCount(1), 0u);
     CHECK(world.get<ManaPool>(player).current < world.get<ManaPool>(player).max);
+}
+
+TEST(hyper_stick_gets_its_squad_when_magic_stick_is_due_to_fill_the_cap) {
+    checkPermanentStickAtCap("mysterious_stick");
+}
+
+TEST(arctic_stick_gets_its_squad_when_magic_stick_is_due_to_fill_the_cap) {
+    checkPermanentStickAtCap("arctic_stick");
 }
 
 TEST(todo1106_totem_counter_tracks_active_stacks_and_clears_on_swap) {

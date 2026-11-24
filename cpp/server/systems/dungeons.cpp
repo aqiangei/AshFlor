@@ -54,9 +54,17 @@ bool DungeonSystem::exteriorForRealm(Realm realm, Realm& outRealm, Vec2& outPosi
 }
 
 DungeonSystem::Instance* DungeonSystem::claim(const std::string& mapId, Rarity rarity) {
+    int band = rarityIndex(rarity);
+    // Use the largest authored layout for a player-facing Apex mound.
+    if (rarity == Rarity::Ascendant && mapId == "termite_mound") {
+        band = -1;
+        for (const Instance& instance : instances_) {
+            if (instance.mapId == mapId) band = std::max(band, instance.rarityBand);
+        }
+    }
     for (Instance& instance : instances_) {
         if (!instance.live && instance.mapId == mapId &&
-            (instance.rarityBand < 0 || instance.rarityBand == rarityIndex(rarity))) return &instance;
+            (instance.rarityBand < 0 || instance.rarityBand == band)) return &instance;
     }
     return nullptr;
 }
@@ -93,9 +101,7 @@ bool DungeonSystem::populate(World& world, const Terrain& terrain, const Content
     const MapData* map = worldMaps != nullptr ? worldMaps->forRealm(instance.realm) : nullptr;
     if (type == nullptr || at == nullptr || body == nullptr || map == nullptr) return false;
     const DungeonSpec spec = content.mob(type->configIndex).dungeon;
-    // What a nest's brood comes out at everywhere else: the nest's own tier,
-    // held to ultra, so a super mound is the boss and not a dungeon of supers.
-    const Rarity rarity = minionRarity(type->rarity);
+    const Rarity nestTier = type->rarity;
 
     instance.live = true;
     instance.entrance = entrance;
@@ -139,6 +145,9 @@ bool DungeonSystem::populate(World& world, const Terrain& terrain, const Content
         for (auto& [door, points] : spots) {
             if (door == entry.door) doorSpots = &points;
         }
+        // The overmind alone inherits Hyper or Apex; its brood caps at Eternal.
+        const Rarity rarity = content.mob(entry.mobIndex).id == "termite_overmind"
+            ? nestTier : std::min(nestTier, Rarity::Unique);
         for (int i = 0; i < entry.count; ++i) {
             Vec2 where;
             if (doorSpots != nullptr && !doorSpots->empty()) {
@@ -148,7 +157,7 @@ bool DungeonSystem::populate(World& world, const Terrain& terrain, const Content
                 where = map->defaultSpawn(rng, terrain);
             }
             const Entity mob = spawning.spawnMob(world, terrain, content, entry.mobIndex, rarity,
-                                                 where, instance.realm, nowMillis, rng);
+                                                 where, instance.realm, nowMillis, rng, SpawnSystem::MobSpawnScope::DungeonBrood);
             if (mob == NULL_ENTITY) continue;
             if (const Health* health = world.tryGet<Health>(mob)) broodHealth += health->max;
             placed.push_back(mob);
@@ -169,7 +178,7 @@ bool DungeonSystem::populate(World& world, const Terrain& terrain, const Content
     return true;
 }
 
-void DungeonSystem::evict(World& world, Instance& instance, Rng& rng) {
+bool DungeonSystem::evict(World& world, Instance& instance, Rng& rng) {
     std::vector<std::pair<Entity, double>> inside;
     Query<PlayerTag, Transform> players{world};
     players.each([&](Entity e, PlayerTag&, Transform& transform) {
@@ -177,12 +186,13 @@ void DungeonSystem::evict(World& world, Instance& instance, Rng& rng) {
         const Body* body = world.tryGet<Body>(e);
         inside.emplace_back(e, body != nullptr ? body->radius : 25.0);
     });
-    if (!moveToRealm) return;
+    bool empty = true;
     for (const auto& [player, radius] : inside) {
-        // This copy is about to be released. A mark must not leave its
-        // occupant behind when the normal realm-transfer guard runs.
-        moveToRealm(player, instance.returnRealm, exitPoint(instance, rng, radius));
+        if (moveToRealm) moveToRealm(player, instance.returnRealm, exitPoint(instance, rng, radius));
+        const auto* at = world.tryGet<Transform>(player);
+        if (at && at->realm == instance.realm) empty = false;
     }
+    return empty;
 }
 
 void DungeonSystem::release(World& world, Instance& instance, CommandBuffer& commands) {
@@ -793,7 +803,9 @@ void DungeonSystem::run(World& world, const Terrain& terrain, const ContentRegis
         for (const Flower& flower : flowers) {
             if (flower.realm != transform.realm) continue;
             if(std::none_of(entryRequests_.begin(),entryRequests_.end(),[&](const auto& request){return request.first==flower.entity;}))continue;
-            const double reach = std::min(body.radius*0.3,120.0) + flower.radius;
+            const auto* type = world.tryGet<MobType>(nest);
+            if (!type || type->configIndex >= content.mobCount()) continue;
+            const double reach = dungeonEntryReach(content.mob(type->configIndex), body.radius, flower.radius);
             if (distanceSq(flower.position, transform.position) > reach * reach) continue;
             if (admits && !admits(flower.entity)) continue;
             const TeleporterState* pads = world.tryGet<TeleporterState>(flower.entity);
@@ -884,8 +896,7 @@ void DungeonSystem::run(World& world, const Terrain& terrain, const ContentRegis
             if (!nestStands) {
                 // The nest went some other way -- an operator, a reset. There
                 // is nothing to come out beside but where it stood.
-                evict(world, instance, rng);
-                release(world, instance, commands);
+                if (evict(world, instance, rng)) release(world, instance, commands);
                 continue;
             }
             if (instance.dwellers == 0) {
@@ -907,8 +918,7 @@ void DungeonSystem::run(World& world, const Terrain& terrain, const ContentRegis
                 continue;
             }
         } else if (nowMillis - instance.clearedAtMillis >= kDungeonClearedLingerMillis) {
-            evict(world, instance, rng);
-            release(world, instance, commands);
+            if (evict(world, instance, rng)) release(world, instance, commands);
             continue;
         }
 

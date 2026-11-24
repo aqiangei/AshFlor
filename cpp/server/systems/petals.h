@@ -32,6 +32,9 @@ class Terrain;
 class WorldMaps;
 class EventQueue;
 struct SquadEntityIndex;
+
+/// Debits one petal action atomically, including the wearer's sharing, shielding and deferral effects.
+bool spendPetalMana(World& world, Entity player, const SquadEntityIndex* squads, double cost);
 struct ShotLanding;
 
 inline constexpr double kToiletPaperBurstMillis = 8000.0;
@@ -64,6 +67,13 @@ inline constexpr int kMaxArmorStacks = 10;
 /// reloading -- and it is persisted. This is the simulation half, torn down and
 /// rebuilt whenever the slot's petal or rarity changes.
 struct PetalSlotState {
+    struct Recruit {
+        std::uint8_t slot;
+        std::uint16_t species;
+        Rarity rarity;
+        Transform origin;
+    };
+    std::vector<Recruit> scarRecruits;
     struct Slot {
         /// The slot's shared health pool, used by every slot whose instances
         /// are NOT independent. Each instance mirrors it so combat can hit
@@ -356,6 +366,9 @@ private:
         double elementalShieldPerSecond = 0.0;
         double summonRangeBonus = 0.0;
         double summonRangeManaDrain = 0.0;
+        double cutterDamage = 0, cutterUpkeep = 0;
+        double nitroManaPerSecond = 0.0;
+        Vec2 nitroBoost{};
         bool compassSteer = false;
     };
 
@@ -538,7 +551,7 @@ private:
     bool strikeLightning(World& world, Entity player, Vec2 at, double damage, Rarity rarity,
                          double nowMillis, int bounces = -1, double reachScale = 1.0,
                          bool magicEye = false, Entity firstTarget = NULL_ENTITY,
-                         bool fromBattery = false, double burnPerSecond = 0.0, bool multiHit = false);
+                         bool fromBattery = false, double burnPerSecond = 0.0, bool multiHit = false, double poisonPerSecond = 0.0);
     /// The strike's visual half: one event carrying the bolts' endpoints. The
     /// damage half is a field, and a field has nothing on the wire the client
     /// could draw a strike from.
@@ -664,6 +677,7 @@ private:
         Vec2 at;
         bool mimicked = false;
         double combinationStrength = 1.0;
+        bool splits = false;
     };
 
     World* bound_ = nullptr;

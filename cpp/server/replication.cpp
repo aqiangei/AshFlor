@@ -376,8 +376,14 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
     } else if (const PlayerLocation* location = world.tryGet<PlayerLocation>(viewer)) {
         viewport = location->viewport;
     }
+    Vec2 focus = flower;
+    const auto* mods = world.tryGet<PlayerModifiers>(viewer);
+    const auto* mana = world.tryGet<ManaPool>(viewer);
+    const auto* aim = world.tryGet<PlayerInput>(viewer);
+    if (mods && mods->magicAntennae && mana && mana->current >= 1 && aim)
+        focus += Vec2::fromAngle(aim->current.aimAngle, 80.0);
     const Vec2 centre = frame.terrain ?
-        boundedViewportCentre(flower, viewport, frame.terrain->cameraExtent(realm)) : flower;
+        boundedViewportCentre(focus, viewport, frame.terrain->cameraExtent(realm)) : focus;
     // A RECTANGLE, per axis, sized off the window the client says it is
     // drawing: the reference builds the same box every frame from the viewport
     // reported by the latest input packet, so a resize or a zoom widens what is

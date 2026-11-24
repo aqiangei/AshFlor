@@ -562,7 +562,7 @@ void MovementSystem::movePlayers(World& world, const Terrain& terrain,
         // keeps full speed. The one thing that does slow a flower is a MOB's
         // web, which is gardn's (speed_ratio 0.5 while the two overlap) and has
         // a field of its own.
-        const auto* burrow = world.tryGet<BurrowState>(e);
+        auto* burrow = world.tryGet<BurrowState>(e);
         const bool underground = burrow && burrow->active && nowMillis < burrow->untilMillis;
         if (const Afflictions* afflictions = world.tryGet<Afflictions>(e)) {
             const double web = !underground && afflictions->webbed(nowMillis)
@@ -616,7 +616,7 @@ void MovementSystem::movePlayers(World& world, const Terrain& terrain,
         if (!stationaryMobGrid_.empty() && (!visuals || !(visuals->equipFlags & EquipCutter))) {
             pushOutOfStationaryMobs(world, terrain, transform, body.radius, underground ? e : NULL_ENTITY);
         }
-        if (!npcDiscs_.empty()) pushOutOfNpcs(world, terrain, transform, body.radius, underground);
+        if (!npcDiscs_.empty() || burrow) pushOutOfNpcs(world, terrain, transform, body.radius, underground, burrow);
         // Discard velocity into a wall while retaining the achieved slide.
         // Otherwise turning away first has to cancel a full inward velocity.
         motion.velocity = velocityAfterStep(velocity, movement, dt, 1.0);
@@ -754,7 +754,9 @@ void MovementSystem::collideLooseBodies(World& world, const Terrain& terrain) {
 }
 
 void MovementSystem::pushOutOfNpcs(const World& world, const Terrain& terrain,
-                                  Transform& transform, double radius, bool underground) const {
+                                  Transform& transform, double radius, bool underground, BurrowState* burrow) const {
+    const Entity previous = burrow ? burrow->overlappingTrainingDummy : NULL_ENTITY;
+    if (burrow) burrow->overlappingTrainingDummy = NULL_ENTITY;
     bool moved = false;
     for (const ObstacleDisc& npc : npcDiscs_) {
         if (npc.realm != transform.realm) continue;
@@ -762,10 +764,13 @@ void MovementSystem::pushOutOfNpcs(const World& world, const Terrain& terrain,
         const double reach = npc.radius + radius;
         const double gapSq = offset.lengthSq();
         if (gapSq >= reach * reach) continue;
-        if (underground) {
+        if (burrow && (underground || npc.entity == previous)) {
             if (const auto* fixture = world.tryGet<Npc>(npc.entity)) {
                 const auto& id = content().mob(fixture->configIndex).id;
-                if (id == "target_dummy" || id == "test_dummy") continue;
+                if (id == "target_dummy" || id == "test_dummy") {
+                    burrow->overlappingTrainingDummy = npc.entity;
+                    continue;
+                }
             }
         }
         // Straight out along the line between the two centres, which is what
@@ -948,7 +953,11 @@ void MovementSystem::moveMobs(World& world, const Terrain& terrain,
         // Slow already scales the desired speed in MobAiSystem. Applying it
         // again here squares the factor (a 0.5 web becomes 0.25 speed).
 
-        const Vec2 attempted = velocity * envScale;
+        Vec2 attempted = velocity * envScale;
+        if (const auto* status = world.tryGet<Afflictions>(e); status && nowMillis < status->veerUntilMillis && velocity.lengthSq() > 0) {
+            const double bend = .7 * std::sin(nowMillis * .009);
+            attempted = Vec2::fromAngle(velocity.angle() + bend, attempted.length());
+        }
         const Vec2 from = transform.position;
         StepOutcome out = stepCollide(terrain, transform.realm, transform.position, attempted,
                                       wallRadius, dt, true, body.wideMobWallHull);
@@ -1275,7 +1284,7 @@ bool MovementSystem::activeForSeparation(World& world, Entity entity, Vec2 posit
     return separationObservers_.near(position, realm);
 }
 
-void MovementSystem::buildSeparationSet(World& world) {
+void MovementSystem::buildSeparationSet(World& world, const Terrain& terrain) {
     separationPlayers_.clear();
     queries_->playerPositions.each([&](Entity, PlayerTag&, Transform& transform) {
         if (!std::isfinite(transform.position.x) || !std::isfinite(transform.position.y)) return;
@@ -1291,6 +1300,7 @@ void MovementSystem::buildSeparationSet(World& world) {
     }
     separationSet_.clear();
     separationGrid_.clear();
+    std::array<bool, kMaxRealms> fitted{};
     waxRadiusPadding_.fill(0.0);
 
     const ContentRegistry& registry = content();
@@ -1343,6 +1353,11 @@ void MovementSystem::buildSeparationSet(World& world) {
         separationSlot_[index] = static_cast<std::uint32_t>(separationSet_.size());
         separationSet_.push_back(entry);
         if (!entry.noCollision) {
+            const auto realm = realmIndex(transform.realm);
+            if (!fitted[realm]) {
+                separationGrid_.fitEmptyRealm(transform.realm, terrain.realmSize(transform.realm));
+                fitted[realm] = true;
+            }
             separationGrid_.insert(e, transform.realm, position, entry.radius);
             auto& padding = waxRadiusPadding_[realmIndex(transform.realm)];
             padding = std::max(padding, entry.fullRadius - entry.radius);
@@ -1352,7 +1367,7 @@ void MovementSystem::buildSeparationSet(World& world) {
 
 void MovementSystem::separateMobs(World& world, const Terrain& terrain, WorldPhaseTiming* timing) {
     using Clock = std::chrono::steady_clock;
-    buildSeparationSet(world);
+    buildSeparationSet(world, terrain);
     if (separationSet_.empty()) return;
 
     // Jacobi, not in-place: every push is computed from the positions the pass

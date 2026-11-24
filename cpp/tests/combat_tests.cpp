@@ -1842,6 +1842,30 @@ TEST(a_shot_shoves_the_mob_it_hits_along_its_own_momentum) {
                                               a.world.get<Body>(mob).mass), 1e-9);
 }
 
+TEST(parallel_contact_plans_include_attackers_at_the_end_of_a_large_world) {
+    Arena arena;
+    ServerWorkers workers(2);
+    arena.combat.workers = &workers;
+    arena.combat.workerLimit = workers.count();
+    std::vector<ContactBodyPlacement> bodies;
+    const Entity player = arena.player({2000, 2000});
+    bodies.push_back({player, Realm::Overworld, {2000, 2000}, 20});
+    constexpr std::size_t count = 4200;
+    for (std::size_t i = 0; i < count; ++i) {
+        const Vec2 at = i + 1 == count ? Vec2{2015, 2000} : Vec2{100, 100};
+        const Entity mob = arena.mob(at, 100);
+        arena.world.add<ContactDamage>(mob, ContactDamage{5.0, 250.0});
+        bodies.push_back({mob, Realm::Overworld, at, 20});
+    }
+    arena.rebuildGrid();
+    arena.combat.beginTick(arena.world, arena.noContent, 1000, net::kTickSeconds, arena.events);
+    arena.combat.runContactPhase(arena.world, arena.grid, arena.noContent, 1000, &bodies, true);
+    CHECK(arena.health(player) < 100);
+    const std::size_t expectedPlans = workers.count() ? count : 0;
+    CHECK_EQ(arena.combat.contactTiming().planned, expectedPlans);
+    CHECK_EQ(arena.combat.contactTiming().fallback, count - expectedPlans);
+}
+
 TEST(parallel_projectile_sweeps_keep_live_shoves_and_hit_order) {
     struct Trace {
         std::vector<double> bodies;
@@ -4572,6 +4596,31 @@ TEST(crowded_melee_skips_peaceful_shots_but_preserves_pvp_and_corruption) {
     }
 }
 
+TEST(crowded_melee_finds_a_hostile_shot_anywhere_in_a_mixed_cell) {
+    const Fixture& f = fixture();
+    CHECK(f.ok);
+    if (!f.ok) return;
+    for (std::size_t hostile : {0u, 2u, 6u}) {
+        Arena a;
+        const Entity alice = a.player({800, 1000});
+        const Entity bob = a.player({1400, 1000});
+        const Vec2 contact{1100, 1000};
+        std::array<Entity, 7> shots{};
+        for (std::size_t i = 0; i < shots.size(); ++i) {
+            shots[i] = spawnDurableShot(a, contact, {}, 10, 500, bob, bob, 10000);
+            a.world.get<Faction>(shots[i]).friendlyFireEnabled = i == hostile;
+        }
+        equipPetal(a, alice, f.plank, Rarity::Common, contact);
+        a.rebuildGrid();
+        a.combat.beginTick(a.world, f.registry, 1000, net::kTickSeconds, a.events);
+        a.combat.runContactPhase(a.world, a.grid, f.registry, 1000);
+        for (std::size_t i = 0; i < shots.size(); ++i) {
+            const double damage = i == hostile ? 18.0 * kPlankShotDamageScale : 0.0;
+            CHECK_NEAR(a.health(shots[i]), 10000.0 - damage, 1e-9);
+        }
+    }
+}
+
 TEST(a_basil_and_a_mob_pass_through_each_other) {
     const Fixture& f = fixture();
     CHECK(f.ok);
@@ -4939,5 +4988,20 @@ TEST(breakable_liquid_fields_receive_enemy_projectiles_in_both_execution_modes) 
                         a.health(field), a.world.has<Dead>(field));
             CHECK(a.world.has<Dead>(field));
         }
+    }
+}
+TEST(blueberry_shot_lightning_talent_scales_actual_hit) {
+    const auto& registry = testsupport::shippedContent();
+    for (int level : {-1, 0, 1}) {
+        Arena a;
+        const auto player = a.player({500, 1000});
+        auto& skills = a.world.ensure<PlayerSkillTree>(player).skills;
+        skills.set(SkillId::Damage, 4);
+        skills.set(SkillId::LightningPower, level);
+        const auto mob = a.mob({1000, 1000}, 1000.0);
+        const auto shot = spawnShot(a, {1000, 1000}, {100, 0}, registry.petalStats(registry.petalIndex("magic_peas"), Rarity::Common).lightningDamagePerHit, 500.0, player, player);
+        a.world.get<Projectile>(shot).petalConfigIndex = registry.petalIndex("magic_peas");
+        a.step(0.0, registry);
+        CHECK_NEAR(1000.0 - a.health(mob), level < 0 ? 90.0 : level == 0 ? 96.75 : 103.5, 1e-7);
     }
 }

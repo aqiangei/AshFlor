@@ -651,7 +651,7 @@ bool ShopPanel::render(MenuContext& ctx) {
                 [link.style.left, link.style.top, link.style.width, link.style.height] =
                     geometry.map(value => value + 'px');
             }
-            link.hidden = false;
+            if (link.hidden) link.hidden = false;
             Module.ashflorShopVisible |= $6;
         }), id, offset.x + rect.x * fit, offset.y + rect.y * fit,
            rect.w * fit, rect.h * fit, ctx.window.width(), visibleBit);

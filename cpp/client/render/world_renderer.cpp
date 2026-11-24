@@ -522,6 +522,7 @@ constexpr double kPetalGlowAlpha = 76.0 / 255.0;
 /// 80 + 10 x tier long whatever the mob's size, stroked with round caps: a
 /// #222222 track kMobBarThickness wide, the red at 0.6 of that, the green at
 /// 0.7 and the shield's white at 0.5, each starting at the line's left end.
+constexpr double kMobPlateHideViewWidth = 14400.0;
 constexpr double kLowDetailMobLabelZoom = 0.6;
 constexpr double kSmallMobMarkerZoom = 0.08;
 constexpr double kSmallMobMarkerMaxPixels = 4.0;
@@ -3014,7 +3015,7 @@ void WorldRenderer::drawPetalSprite(Canvas& canvas, const RemoteEntity& entity,
     } else if (sprites_) {
         // Keep the equipped Trident readable without changing its combat
         // shape, its rotation, or the inventory and drop artwork.
-        const bool equippedTrident = playerPetal && config && config->id == "void_trident" &&
+        const bool equippedTrident = playerPetal && config && (config->id == "void_trident" || config->id == "magic_void_trident") &&
             sprites_->petalDrawable(entity.typeIndex);
         const double spriteDiameter = equippedTrident ? diameter * 1.15 : diameter;
         // The sprite cache falls back to a disc in the petal's own colour when
@@ -3443,12 +3444,31 @@ void WorldRenderer::drawHitbox(Canvas& canvas, const RemoteEntity& entity, const
         radius = kPlayerBaseRadius * playerSizeMultiplier(entity) * zoom;
         color = 0x46D9FFu;
     } else if (entity.kind == net::EntityKind::Petal && content_) {
+        const auto& config = content_->petal(entity.typeIndex);
+        if (!entity.isRingPetal() && !entity.isLoosePetal() && (config.id == "void_trident" || config.id == "magic_void_trident")) {
+            const float halfLength = static_cast<float>(radius);
+            const float halfWidth = std::min(halfLength, static_cast<float>(
+                referencePetalHalfWidth(config.id, entity.rarity) * zoom));
+            canvas.save();
+            canvas.translate(static_cast<float>(screen.x), static_cast<float>(screen.y));
+            canvas.rotate(static_cast<float>(entity.angle));
+            canvas.setLineWidth(static_cast<float>(2.0 * zoom));
+            // Player contact, where PvP is allowed, uses the full body circle.
+            ui::setStroke(canvas, 0x46D9FFu);
+            canvas.strokeCircle(0, 0, halfLength);
+            ui::setStroke(canvas, color);
+            canvas.beginPath();
+            canvas.roundRect(-halfLength, -halfWidth, 2 * halfLength, 2 * halfWidth, halfWidth);
+            canvas.stroke();
+            canvas.restore();
+            return;
+        }
         // A flower's petal collides at 10 units per size unit whatever its
         // artwork does; a mob's ring seed collides at the radius the server
         // gave it, which is scaled by the mob it grew on.
         radius = entity.isRingPetal() || entity.isLoosePetal()
                      ? entity.radius * zoom
-                     : kPetalHitSize * content_->petal(entity.typeIndex).size * zoom;
+                     : kPetalHitSize * config.size * zoom;
     } else if (entity.kind == net::EntityKind::Mob || entity.kind == net::EntityKind::Npc) {
         // A mob's circle is its COLLISION size, drawn in its own tier colour:
         // visual_scale moves the artwork and never the body. An NPC is a
@@ -3931,48 +3951,55 @@ void WorldRenderer::drawMobBody(Canvas& canvas, const Camera& camera, const MobD
         motion.distance = centipedeTrails_.at(mob.netId).distance;
     }
     if (id == "garbage") {
-        // Keep the original sack behind its deterministic visible contents.
-        // Stable poses and softened colours avoid a flashing pile of icons.
-        canvas.save();
-        canvas.translate(static_cast<float>(art.x), static_cast<float>(art.y));
-        canvas.scale(static_cast<float>(mirrored ? -zoom : zoom), static_cast<float>(zoom));
-        const double bagSize=mob.radius*2.0;
-        if(sprites_&&sprites_->mobDrawable(mob.typeIndex))
-            sprites_->drawMob(canvas,mob.typeIndex,mob.rarity,0,bagSize*.07,bagSize,0,0);
-        // Dark opening separates the soft-coloured contents from the sack.
-        ui::setFill(canvas,0x232323u,.86);canvas.beginPath();
-        canvas.ellipse(0,static_cast<float>(-bagSize*.10),static_cast<float>(bagSize*.36),static_cast<float>(bagSize*.29),0,0,static_cast<float>(kTau));canvas.fill();
-        // Let the bag face its direction while the item artwork stays readable.
-        canvas.save();
-        if (mirrored) canvas.scale(-1.0f, 1.0f);
-        const auto paintContents = [&](Canvas& target) {
-            drawGarbagePile(target, mob.position, bagSize, 0.0, mob.netId, mob.rarity);
+        const double size = mob.radius * 2.0;
+        const auto paintBag = [&](Canvas& target) {
+            target.save();
+            if (mirrored) target.scale(-1.0f, 1.0f);
+            if (sprites_ && sprites_->mobDrawable(mob.typeIndex))
+                sprites_->drawMob(target, mob.typeIndex, mob.rarity, 0, size * .07, size, 0, 0);
+            ui::setFill(target, 0x232323u, .86);
+            target.beginPath();
+            target.ellipse(0, -size * .10, size * .36, size * .29, 0, 0, kTau);
+            target.fill();
+            target.restore();
+
+            // Contents keep their reading direction even when the sack faces left.
+            drawGarbagePile(target, mob.position, size, 0.0, mob.netId, mob.rarity);
+            target.save();
+            if (mirrored) target.scale(-1.0f, 1.0f);
+            ui::setFill(target, 0x333333u);
+            ui::setStroke(target, 0x292929u);
+            target.setLineWidth(size * .025);
+            target.beginPath();
+            target.moveTo(-size * .36, size * .20);
+            target.quadraticCurveTo(0, size * .31, size * .36, size * .20);
+            target.lineTo(size * .28, size * .37);
+            target.lineTo(-size * .27, size * .37);
+            target.closePath();
+            target.fill();
+            target.stroke();
+            target.restore();
         };
+        canvas.save();
+        canvas.translate(art.x, art.y);
+        canvas.scale(zoom, zoom);
 #ifdef __EMSCRIPTEN__
-        // An individual bag's contents and poses are fixed by its server ID.
-        // Cache only small opaque previews. Fades use per-layer opacity.
-        const double side = 2.0 * bagSize;
-        const double deviceSide = side * canvas.currentTransform()[0];
-        const std::uint64_t variant = (static_cast<std::uint64_t>(mob.rarity) << 32) | mob.netId;
+        // Stable ID determines all item poses. Only opaque bags can flatten
+        // the shell, layered loot and front lip into one composited image.
+        const double side = 2.0 * size;
+        const double pixels = side * canvas.currentTransform()[0];
+        const std::uint64_t variant = (static_cast<std::uint64_t>(mirrored) << 40) |
+                                      (static_cast<std::uint64_t>(mob.rarity) << 32) | mob.netId;
         const bool cached = sprites_ && mob.netId && canvas.globalAlpha() == 1.0f &&
-            deviceSide >= 8.0 && deviceSide <= 128.0 &&
-            drawCachedPicture(canvas, config, variant, -bagSize, -bagSize, side, side,
-                [&](Canvas& bitmap) {
-                    bitmap.translate(static_cast<float>(bagSize), static_cast<float>(bagSize));
-                    paintContents(bitmap);
-                });
-        if (!cached) paintContents(canvas);
+            pixels >= 8.0 && pixels <= 128.0 &&
+            drawCachedPicture(canvas, config, variant, -size, -size, side, side, [&](Canvas& bitmap) {
+                bitmap.translate(size, size);
+                paintBag(bitmap);
+            });
+        if (!cached) paintBag(canvas);
 #else
-        paintContents(canvas);
+        paintBag(canvas);
 #endif
-        canvas.restore();
-        // Front lip wraps the lowest row without hiding its identifying shape.
-        ui::setFill(canvas,0x333333u);ui::setStroke(canvas,0x292929u);
-        canvas.setLineWidth(static_cast<float>(bagSize*.025));canvas.beginPath();
-        canvas.moveTo(static_cast<float>(-bagSize*.36),static_cast<float>(bagSize*.20));
-        canvas.quadraticCurveTo(0,static_cast<float>(bagSize*.31),static_cast<float>(bagSize*.36),static_cast<float>(bagSize*.20));
-        canvas.lineTo(static_cast<float>(bagSize*.28),static_cast<float>(bagSize*.37));
-        canvas.lineTo(static_cast<float>(-bagSize*.27),static_cast<float>(bagSize*.37));canvas.closePath();canvas.fill();canvas.stroke();
         canvas.restore();
     } else if (id == "digger") {
         // A flower carrying a cutter rather than a bug, the way gardn draws it.
@@ -4087,20 +4114,28 @@ void WorldRenderer::drawMobLabel(Canvas& canvas, const Camera& camera, const Mob
         const double lag = invulnerable ? 0.0 : clamp(mob.barLag, 0.0, 1.0);
         const double shield = invulnerable ? 0.0 : clamp(mob.barShield, 0.0, 1.0);
         const auto fade = [](double share) { return std::min(share * kMobBarFadeIn, 1.0); };
-        // One of florr's round-capped strokes along the line, from its left
-        // end, filled as the capsule it covers: the same pixels, with no line
-        // cap for the web canvas to carry (ui::healthBar does the same).
+        const double left = sx(-length * 0.5);
+        const double centreY = sy(lineY);
+        const auto transform = canvas.currentTransform();
+        const double scaleX = std::abs(transform[0]);
+        const double scaleY = std::abs(transform[3]);
+        const bool axisAligned = transform[1] == 0.0f && transform[2] == 0.0f;
         const auto stroke = [&](double share, double width, std::uint32_t colour, double alpha) {
             if (alpha <= 0.0) return;
-            const double w = width * zoom;
+            const double h = width * zoom;
+            const double span = length * share * zoom;
             canvas.setGlobalAlpha(static_cast<float>(base * opacity * alpha));
             ui::setFill(canvas, colour);
-            Path2D path;
-            path.roundRect(static_cast<float>(sx(-length * 0.5) - w * 0.5),
-                           static_cast<float>(sy(lineY) - w * 0.5),
-                           static_cast<float>(length * share * zoom + w), static_cast<float>(w),
-                           static_cast<float>(w * 0.5));
-            canvas.fill(path);
+            if (axisAligned && h * std::max(scaleX, scaleY) <= 0.75 && span * scaleX >= 2.0) {
+                // The two semicircles have area pi*h*h/4. At subpixel height
+                // keep their centre and ink area without tessellating a path.
+                const double caps = kPi * h * 0.25;
+                canvas.fillRect(left - caps * 0.5, centreY - h * 0.5, span + caps, h);
+            } else {
+                Path2D path;
+                path.roundRect(left - h * 0.5, centreY - h * 0.5, span + h, h, h * 0.5);
+                canvas.fill(path);
+            }
         };
         // Bottom to top, in florr's order. Each line is blended on its own at
         // the plate's opacity, as florr's are, rather than as one layer.
@@ -4469,6 +4504,7 @@ void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const
             // A Killed event arrives after the snapshot has already erased the
             // entity, so remember what the mob looked like while it is here.
             mobShadows_[entity.netId] = mob;
+            if (camera.viewportWidth() >= kMobPlateHideViewWidth * zoom) break;
             const bool iceDragonSummon = mob.pet && type && type->id == "arctic_ice_dragon";
             if (zoom < kLowDetailMobLabelZoom && mob.rarity <= Rarity::Mythic && !iceDragonSummon) break;
 
@@ -5249,6 +5285,34 @@ void WorldRenderer::draw(Canvas& canvas, const EntityMap& entities, const Camera
         if (entity.isRingPetal()) return net::EntityKind::Mob;
         return entity.kind;
     };
+    // Classify once. The fixed passes below can then visit only their own
+    // entities, retaining the order of overlapping bodies from the snapshot.
+    for (auto& layer : drawLayers_) layer.clear();
+    mobHoles_.clear();
+    mobRings_.clear();
+    sacrificedMobs_.clear();
+    for (const auto& entry : entities) {
+        const auto& entity = entry.second;
+        const auto kind = layerOf(entity);
+        if (kind == net::EntityKind::Mob) {
+            if (entity.spawnFlags & net::SpawnSacrificed) {
+                sacrificedMobs_.push_back(&entity);
+                continue;
+            }
+            if (entity.isRingPetal()) {
+                mobRings_.push_back(&entity);
+                continue;
+            }
+            if (isHole(entity.typeIndex)) {
+                mobHoles_.push_back(&entity);
+                continue;
+            }
+        }
+        const auto index = static_cast<std::size_t>(kind);
+        if (index >= drawLayers_.size()) continue;
+        if (kind == net::EntityKind::Drop && !onScreen(entity.position, entity.radius)) continue;
+        drawLayers_[index].push_back(&entity);
+    }
     const double distantMobMarkerLimit =
         camera.zoom() <= kSmallMobMarkerZoom && canvas.pixelWidth() > 0
             ? kSmallMobMarkerMaxPixels * canvas.width() / canvas.pixelWidth() : 0.0;
@@ -5388,33 +5452,16 @@ void WorldRenderer::draw(Canvas& canvas, const EntityMap& entities, const Camera
         }
 
         const bool mobs = kind == net::EntityKind::Mob;
-        // A sacrifice's own mob -- its body and its ring with it -- waits until
-        // the ritual's star has greyed everything else, and is drawn over it
-        // in colour (below).
-        const auto sacrificed = [](const RemoteEntity& entity) {
-            return (entity.spawnFlags & net::SpawnSacrificed) != 0;
-        };
+        auto& layer = drawLayers_[static_cast<std::size_t>(kind)];
         if (mobs) {
-            for (const auto& entry : entities) {
-                const RemoteEntity& entity = entry.second;
-                if (entity.kind == kind && isHole(entity.typeIndex) && !sacrificed(entity)) {
-                    drawLive(entity);
-                }
-            }
+            for (const auto* hole : mobHoles_) drawLive(*hole);
             for (const DyingMob& dying : dying_) {
                 if (isHole(dying.typeIndex)) drawDying(dying);
             }
-            for (const auto& entry : entities) {
-                if (entry.second.isRingPetal() && !sacrificed(entry.second)) drawLive(entry.second);
-            }
+            for (const auto* ring : mobRings_) drawLive(*ring);
         }
         if (kind == net::EntityKind::Drop) {
-            std::vector<const RemoteEntity*> visibleDrops;
-            for (const auto& entry : entities) {
-                const RemoteEntity& entity = entry.second;
-                if (entity.kind == kind && onScreen(entity.position, entity.radius))
-                    visibleDrops.push_back(&entity);
-            }
+            auto& visibleDrops = layer;
             if (visibleDrops.size() > static_cast<std::size_t>(kDetailedDropsPerFrame)) {
                 const auto nearest = [&](const RemoteEntity* a, const RemoteEntity* b) {
                     return distanceSq(a->position, selfDrawn) < distanceSq(b->position, selfDrawn);
@@ -5428,9 +5475,8 @@ void WorldRenderer::draw(Canvas& canvas, const EntityMap& entities, const Camera
             // hints share a marker without inventing a location between mobs.
             constexpr double kGhostHintCell = 10.0;
             std::unordered_map<std::uint64_t, const RemoteEntity*> ghostHints;
-            for (const auto& entry : entities) {
-                const RemoteEntity& entity = entry.second;
-                if (layerOf(entity) != kind) continue;
+            for (const auto* member : layer) {
+                const RemoteEntity& entity = *member;
                 if (entity.kind != net::EntityKind::Effect ||
                     entity.typeIndex != static_cast<std::uint16_t>(GroundEffectKind::GhostSparkle) ||
                     options.hitboxes) {
@@ -5450,14 +5496,7 @@ void WorldRenderer::draw(Canvas& canvas, const EntityMap& entities, const Camera
             }
             for (const auto& hint : ghostHints) drawLive(*hint.second);
         } else {
-            for (const auto& entry : entities) {
-                const RemoteEntity& entity = entry.second;
-                if (layerOf(entity) != kind) continue;
-                if (mobs && sacrificed(entity)) continue;
-                // A ring seed is a petal index, not a mob index.
-                if (mobs && (entity.isRingPetal() || isHole(entity.typeIndex))) continue;
-                drawLive(entity);
-            }
+            for (const auto* member : layer) drawLive(*member);
         }
         for (const DyingPetal& dying : dyingPetals_) {
             if (layerOf(dying.entity) == kind) drawDyingPetal(dying);
@@ -5527,21 +5566,18 @@ void WorldRenderer::draw(Canvas& canvas, const EntityMap& entities, const Camera
         // grey under a sacrifice's star; the flowers and petals that follow
         // keep their colour, and so does the mob the sacrifice summoned,
         // drawn now in the order the mob layer would have drawn it.
-        drawSacrificeRituals(canvas, entities, camera);
-        for (const auto& entry : entities) {
-            const RemoteEntity& entity = entry.second;
-            if (sacrificed(entity) && entity.kind == kind && isHole(entity.typeIndex)) {
-                drawLive(entity);
-            }
+        if (!drawLayers_[static_cast<std::size_t>(net::EntityKind::Effect)].empty() ||
+            !ritualSeen_.empty()) {
+            drawSacrificeRituals(canvas, entities, camera);
         }
-        for (const auto& entry : entities) {
-            if (sacrificed(entry.second) && entry.second.isRingPetal()) drawLive(entry.second);
+        for (const auto* member : sacrificedMobs_) {
+            if (member->kind == kind && isHole(member->typeIndex)) drawLive(*member);
         }
-        for (const auto& entry : entities) {
-            const RemoteEntity& entity = entry.second;
-            if (!sacrificed(entity) || layerOf(entity) != kind) continue;
-            if (entity.isRingPetal() || isHole(entity.typeIndex)) continue;
-            drawLive(entity);
+        for (const auto* member : sacrificedMobs_) {
+            if (member->isRingPetal()) drawLive(*member);
+        }
+        for (const auto* member : sacrificedMobs_) {
+            if (!member->isRingPetal() && !isHole(member->typeIndex)) drawLive(*member);
         }
         chargeOps(ops_.mobs);
         const bool tinyLabels = canvas.width() > 0 && canvas.pixelWidth() > 0 &&
