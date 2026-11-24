@@ -103,7 +103,7 @@ void GameServer::riftTeleport(Entity entity, Realm realm, Vec2 position) {
 }
 
 void GameServer::enterRift(Session& session, Vec2 position) {
-    if (riftPhase_ != RiftPhase::Open || wallClockMillis_ >= riftDeadline_ ||
+    if (activeMarkHold(session) || riftPhase_ != RiftPhase::Open || wallClockMillis_ >= riftDeadline_ ||
         riftEntrants_.size() >= kRiftCapacity || riftEntrants_.count(session.userId) ||
         !session.playing() || !isStanding(world_, session.entity) || session.inRift ||
         session.arena || session.split() || session.controlling != 0 || session.controlledBy != 0)
@@ -348,6 +348,7 @@ void GameServer::serviceRift(bool settle) {
 }
 
 Entity GameServer::enterRiftPrizeRoom(Session& session) {
+    if (activeMarkHold(session)) return NULL_ENTITY;
     bool found = false;
     const Realm victory = worldMaps_.realmOfId("rift_victory", found);
     if (!found || session.userId.empty()) return NULL_ENTITY;

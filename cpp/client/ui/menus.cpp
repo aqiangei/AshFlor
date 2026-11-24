@@ -820,6 +820,7 @@ bool ClientSettings::load(const std::string& path) {
         else if (key == "exactValues") showExactValues = number != 0;
         else if (key == "hideMobAnnouncements") hideMobAnnouncements = number != 0;
         else if (key == "hideCraftAnnouncements") hideCraftAnnouncements = number != 0;
+        else if (key == "hideOtherPhAnnouncements") hideOtherPhAnnouncements = number != 0;
         else if (key == "petalRarityGlow") render.rarityGlow = number != 0;
         else if (key == "debugButton") showDebugButton = number != 0;
         else if (key == "adminsOnBoard") showAdminsOnLeaderboard = number != 0;
@@ -900,6 +901,7 @@ bool ClientSettings::save(const std::string& path) const {
          << "exactValues " << (showExactValues ? 1 : 0) << '\n'
          << "hideMobAnnouncements " << (hideMobAnnouncements ? 1 : 0) << '\n'
          << "hideCraftAnnouncements " << (hideCraftAnnouncements ? 1 : 0) << '\n'
+         << "hideOtherPhAnnouncements " << (hideOtherPhAnnouncements ? 1 : 0) << '\n'
          << "petalRarityGlow " << (render.rarityGlow ? 1 : 0) << '\n'
          << "debugButton " << (showDebugButton ? 1 : 0) << '\n'
          << "adminsOnBoard " << (showAdminsOnLeaderboard ? 1 : 0) << '\n'
@@ -1708,10 +1710,12 @@ double slotHealthFraction(const NetClient& net, int index) {
 /// gauge: a sponge reading 0 is holding nothing right now, which is a thing
 /// worth saying, and a number that came and went with the damage read as a
 /// bar that only worked sometimes.
-std::string slotCounterLabel(const NetClient& net, int index) {
+std::string slotCounterLabel(const NetClient& net, int index, std::uint16_t petalIndex, bool showBoneBonus) {
     if (index < 0 || index >= kLoadoutActiveSlots) return {};
     const int counter = net.view().self().slotCounter[static_cast<std::size_t>(index)];
     if (counter < 0) return {};
+    if (petalIndex != kNoPetal && content().petal(petalIndex).id == "magic_bone")
+        return showBoneBonus ? "+" + std::to_string(counter) + "%" : "";
     return std::to_string(counter);
 }
 
@@ -2235,7 +2239,7 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
                           ? 0.0
                           : slotReloadProgress(net, entry.slot);
         tile.health = slotHealthFraction(net, entry.slot);
-        tile.counter = slotCounterLabel(net, entry.slot);
+        tile.counter = slotCounterLabel(net, entry.slot, tile.petalIndex, inGame_ && expectedLoadout_.empty());
         if (inGame_ && entry.slot < kLoadoutActiveSlots) {
             const double left = net.view().self().slotReloadRemainingMillis[static_cast<std::size_t>(entry.slot)];
             if (left > 0) tile.counter = std::to_string(static_cast<int>(std::ceil(left / 1000.0))) + "s";
@@ -2252,15 +2256,30 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
         // the title screen nothing is out there to be hit.
         if (inGame_) tile.flash = renderer.slotHitTint(entry.slot);
         const Rect box{anim.cx - anim.w * 0.5, anim.cy - anim.h * 0.5, anim.w, anim.h};
-        if (!entry.rock) {
-            drawItemTile(target, sprites, box, tile);
+        if (entry.rock) {
+            target.save();
+            target.translate(static_cast<float>(anim.cx), static_cast<float>(anim.cy));
+            target.rotate(static_cast<float>(wobble));
+            drawItemTile(target, sprites, {-anim.w * 0.5, -anim.h * 0.5, anim.w, anim.h}, tile);
+            target.restore();
             return;
         }
-        target.save();
-        target.translate(static_cast<float>(anim.cx), static_cast<float>(anim.cy));
-        target.rotate(static_cast<float>(wobble));
-        drawItemTile(target, sprites, {-anim.w * 0.5, -anim.h * 0.5, anim.w, anim.h}, tile);
-        target.restore();
+        drawItemTile(target, sprites, box, tile);
+        if (!inGame_ || tile.loadoutSlot < 0 || tile.petalIndex == kNoPetal ||
+            slotOutranked(net, entry.slot)) return;
+        const auto& stats = content().petalStats(tile.petalIndex, tile.rarity);
+        if (!stats.breakable || (stats.requiredMana > 0.0 && net.view().self().maxMana <= 0.0)) return;
+
+        const double fraction = std::clamp(tile.health, 0.0, 1.0);
+        const int percent = fraction == 1.0 ? 100
+            : fraction == 0.0 ? 0 : std::clamp(static_cast<int>(std::lround(fraction * 100)), 1, 99);
+        TextStyle label;
+        label.size = box.h * 0.18;
+        label.fill = kPaper;
+        label.stroke = kInk;
+        label.strokeWidth = label.size * 0.16;
+        label.align = Align::Centre;
+        text(target, std::to_string(percent) + "%", anim.cx, box.y + box.h * 0.23, label);
     };
     for (std::size_t drawn = 0; drawn < queued; ++drawn) {
         if (secondaryHidden && order[drawn].slot >= kLoadoutBarPrimary) continue;
@@ -2426,8 +2445,10 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
             triangleBonus = triangleBonusDamage(petalContactDamage(config, stats, equipped.rarity),
                                                 equipped.rarity, counts);
         }
+        const int slotCounter = inGame_ && expectedLoadout_.empty() && tipIndex < visibleSlots
+            ? net.view().self().slotCounter[static_cast<std::size_t>(tipIndex)] : -1;
         auto lines = equippedPetalTooltipLines(slot.petalIndex, equipped, profile.skills,
-                                                    reloadScale, tipIndex, triangleBonus);
+                                               reloadScale, tipIndex, triangleBonus, slotCounter);
         if (expectedLoadout_.empty() && slot.petalIndex == content().petalIndex("timed_mjolnir")) {
             showTimedHammerExpiry(lines, profile, tipIndex);
         }

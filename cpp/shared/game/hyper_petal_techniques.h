@@ -413,7 +413,7 @@ inline constexpr HyperTechniqueInfo kHyperTechniques[] = {
      "装填完成后的潜地准备时间缩短 15%。", 0.85},
     {"soil", HyperTechnique::SoilSettle,
      "Defending while stationary reduces the extra flower size from Soil by 15%.",
-     "停步防御时，土壤额外增加的花朵体积减少 15%。", 0.85},
+     "停步防御时，土额外增加的花朵体积减少 15%。", 0.85},
     {"spaceship", HyperTechnique::LongShip,
      "The carrier flies 30% farther before landing.",
      "飞船的飞行距离增加 30%。", 1.3},
@@ -659,7 +659,7 @@ inline const char* hyperMysteryHint(HyperTechnique technique, bool chinese) {
         case HyperTechnique::RubyEcho:
             return chinese ? "野怪血条过半之后，再数闪电回响。" : "When the mob is below half health, count the lightning echoes.";
         case HyperTechnique::SoilSettle:
-            return chinese ? "扎稳脚跟，观察土壤收紧花身。" : "Plant your feet and watch the soil settle around the flower.";
+            return chinese ? "扎稳脚跟，观察土收紧花身。" : "Plant your feet and watch the soil settle around the flower.";
         case HyperTechnique::EvasionWake:
             return chinese ? "收环躲开体撞后，看追兵的下一步。" : "Guard through a charge and watch the pursuer's next step.";
         case HyperTechnique::TriangleStrike:

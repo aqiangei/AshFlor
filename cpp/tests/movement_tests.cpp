@@ -1088,6 +1088,31 @@ TEST(a_guided_shot_re_aims_once_at_launch_and_then_flies_straight) {
     CHECK_NEAR(fx.velocityOf(dumb).y, 0.0, 1e-12);
 }
 
+TEST(burrowed_players_cross_training_dummies_and_still_stop_at_other_npcs) {
+    std::string error;
+    if (!loadContent(testsupport::dataDir(), error)) { CHECK(false); return; }
+    const auto walkAcross = [](const char* id, bool burrowing) {
+        Fixture fx;
+        NpcSystem npcs;
+        const Vec2 centre{6000, 6000};
+        const Entity npc = npcs.spawnNpc(fx.world, fx.terrain, content(),
+            content().mobIndex(id), Rarity::Common, centre, Realm::Overworld, 0.0);
+        CHECK(npc != NULL_ENTITY);
+        if (npc == NULL_ENTITY) return 0.0;
+        const double reach = fx.world.get<Body>(npc).radius + kPlayerBaseRadius;
+        const Entity player = fx.spawnPlayer(centre - Vec2{reach + 15.0, 0});
+        if (burrowing) fx.world.add<BurrowState>(player, BurrowState{4000.0, true});
+        fx.drive(player, 0, 1);
+        fx.step(45);
+        return fx.positionOf(player).x - centre.x;
+    };
+    for (const char* id : {"target_dummy", "test_dummy"}) {
+        CHECK(walkAcross(id, false) < 0.0);
+        CHECK(walkAcross(id, true) > 0.0);
+    }
+    CHECK(walkAcross("oracle", true) < 0.0);
+}
+
 TEST(guided_shots_use_an_eternal_training_dummys_edge_at_launch) {
     std::string error;
     if (!loadContent(testsupport::dataDir(), error)) { CHECK(false); return; }

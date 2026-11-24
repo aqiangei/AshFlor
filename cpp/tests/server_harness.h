@@ -829,6 +829,7 @@ struct GameServerPeer {
     }
     static EventQueue& snapshotEvents(GameServer& server) { return server.events_; }
     static void markClock(GameServer& server, double now) { server.clockMillis_ = now; }
+    static void markWallClock(GameServer& server, double now) { server.wallClockMillis_ = now; }
     static CombatSystem& practiceCombat(GameServer& server) { return *server.combat_; }
     static void bankKills(GameServer& server) { server.bankKills(); }
     static double practiceClock(const GameServer& server) { return server.clockMillis_; }

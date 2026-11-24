@@ -726,6 +726,8 @@ struct PlayerModifiers {
     double summonDamageScale = 1.0;
     double fireResistance = 0.0;
     double spillRadiusScale = 1.0;
+    double spillGrowthScale = 1.0;
+    double soapCoverageBonus = 0.0;
     double radiationRadiusScale = 1.0;
     double radiationDamageScale = 1.0;
     double missileSpeedScale = 1.0;
@@ -834,7 +836,7 @@ struct PlayerLocation {
 /// every pad -- suction included -- for five, so it does not bounce straight
 /// back through the one it arrived on.
 struct TeleporterState {
-    // Server-only; never persisted or renewed by another mark. Death clears it.
+    // Server-only wall clock deadline, restored from the active account hold on spawn.
     double markHoldUntilMillis = 0;
     bool markReturnAvailable = false;
     RealmPoint markOrigin;
@@ -1797,6 +1799,9 @@ struct GroundEffect {
     // Server-authoritative spreading. Zero target leaves non-fluid fields unchanged.
     double spreadTargetRadius = 0.0;
     double spreadAgeSeconds = 0.0;
+    double radialGrowthPerSecond = 0.0;
+    double spreadStartRadius = 0.0;
+    double gradualSpreadDistance = 0.0;
     Vec2 spillDrift{};
     // External white-hole acceleration; separate from the brief release drift.
     Vec2 spillGravityVelocity{};

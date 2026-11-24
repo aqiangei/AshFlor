@@ -16,6 +16,8 @@
 #include "shared/core/process_stats.h"
 
 #include <algorithm>
+#include <map>
+#include <tuple>
 #include <array>
 #include <bitset>
 #include <cctype>
@@ -1216,6 +1218,7 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     // the wire and a cleared view on the client. Only the connection layer can
     // do that, so the movement pass reports the jump and this carries it out.
     movement_->onTeleport = [this](Entity entity, Realm realm, Vec2 position) {
+        if (const auto* session = sessionForEntity(entity); session && activeMarkHold(*session)) return;
         // A dungeon copy's own pad leads back out beside the nest it was
         // entered through, wherever the pad's targetMap points: eight copies
         // of one map share one pad, and each belongs to a different nest.
@@ -1307,7 +1310,10 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     // against it: its flow field, its ray casts and its broadphase queries
     // all read that one map. A bot carried through a pad would steer around
     // walls it is not standing among, so pads simply do not take bots.
-    movement_->takesTeleporters = [this](Entity entity) { return botForEntity(entity) == nullptr; };
+    movement_->takesTeleporters = [this](Entity entity) {
+        const auto* pads = world_.tryGet<TeleporterState>(entity);
+        return (!pads || wallClockMillis_ >= pads->markHoldUntilMillis) && botForEntity(entity) == nullptr;
+    };
     loot_->terrain = terrain_.get();
     loot_->immutableWorldTerrain = true;
     loot_->protectDropScatter = [this](Realm realm) {
@@ -1763,6 +1769,15 @@ bool GameServer::step(double timerLagMillis) {
 
     const double tickNow = monotonicMillis();
     if (tickNow >= nextTickMillis_) {
+        for (auto& [id, session] : sessions_) {
+            if (session.stage != SessionStage::Authenticated || session.homeBonusPauseAt <= 0.0 ||
+                tickNow < session.homeBonusPauseAt) continue;
+            session.homeBonusPauseAt = 0.0;
+            if (setDropBonusEnabled(database_.progress(session.userId), dropBonusNow(), false)) {
+                database_.markDirty();
+                if (auto* connection = listener_.find(id)) sendDropBonus(session, *connection);
+            }
+        }
         const double tickLagMillis = tickNow - nextTickMillis_;
         const double worldNow = simulationPacing_.advance(tickNow);
         double raw = lastTickWorldMillis_ > 0
@@ -1960,12 +1975,65 @@ void GameServer::recordTickCadence(double nowMillis, double lagMillis, double wo
                     lastMeasuredTps_, simulationPacing_.ticksPerSecond(),
                     elapsedMillis / 1000.0, players, tickCadenceOverBudget_, tickCadenceSamples_,
                     tickCadenceMaxWorkMillis_, tickCadenceMaxLagMillis_);
+        const auto projectileCount = Query<ProjectileTag>{world_}.count();
         std::printf("[tick] load players=%zu, sessions=%zu, entities=%zu, mobs=%zu, pets=%zu, "
                     "drops=%zu, projectiles=%zu, archetypes=%zu, rss=%.1f MiB\n",
                     players, sessions_.size(), world_.size(), Query<MobTag>{world_}.count(),
                     Query<Pet>{world_}.count(), Query<DropTag>{world_}.count(),
-                    Query<ProjectileTag>{world_}.count(), world_.archetypeCount(),
+                    projectileCount, world_.archetypeCount(),
                     residentBytes() / (1024.0 * 1024.0));
+        if (config_.tickProbe && lastMeasuredTps_ < 15.0 && projectileCount >= 4000) {
+            struct ProjectileGroup {
+                std::size_t count = 0;
+                std::size_t stationary = 0;
+                std::size_t spent = 0;
+            };
+            using GroupKey = std::tuple<Realm, std::uint16_t, std::uint8_t, std::uint16_t>;
+            std::map<GroupKey, ProjectileGroup> groups;
+            // The current owner can differ from the original shooter after a
+            // reflection. An expired owner stays in "other" even if the shot
+            // still credits a player for kills.
+            std::array<std::size_t, 4> ownerCounts{};
+            Query<ProjectileTag, Projectile, Transform, Motion>{world_}.without<Dead>().each(
+                [&](Entity, ProjectileTag&, Projectile& shot, Transform& at, Motion& motion) {
+                    const auto* mob = world_.tryGet<MobType>(shot.owner);
+                    const auto kind = static_cast<std::uint8_t>(
+                        world_.has<PlayerTag>(shot.owner) ? 1 : mob ? (world_.has<Pet>(shot.owner) ? 2 : 3) : 0);
+                    ++ownerCounts[kind];
+                    auto& group = groups[{at.realm, shot.petalConfigIndex, kind,
+                                          mob ? mob->configIndex : kInvalidIndex}];
+                    ++group.count;
+                    if (motion.velocity.lengthSq() < 1e-9) ++group.stationary;
+                    if (shot.remainingDistance <= 0.0) ++group.spent;
+                });
+            std::vector<const decltype(groups)::value_type*> ranked;
+            ranked.reserve(groups.size());
+            for (const auto& group : groups) ranked.push_back(&group);
+            const auto end = ranked.begin() + std::min<std::size_t>(8, ranked.size());
+            std::partial_sort(ranked.begin(), end, ranked.end(), [](const auto* a, const auto* b) {
+                return a->second.count != b->second.count ? a->second.count > b->second.count
+                                                         : a->first < b->first;
+            });
+            std::size_t listed = 0;
+            for (auto it = ranked.begin(); it != end; ++it) {
+                const auto& [key, group] = **it;
+                listed += group.count;
+                const auto [realm, petalIndex, kind, mobIndex] = key;
+                const auto* map = worldMaps_.forRealm(realm);
+                constexpr const char* owners[] = {"other", "player", "pet", "mob"};
+                std::printf("[tick-probe-shots] realm=%zu map=%s ammo=%s owner=%s species=%s "
+                            "active=%zu stationary=%zu spent=%zu total=%zu\n",
+                            realmIndex(realm), map ? map->id().c_str() : "-",
+                            petalIndex < content().petalCount() ? content().petal(petalIndex).id.c_str() : "-",
+                            owners[kind], mobIndex < content().mobCount() ? content().mob(mobIndex).id.c_str() : "-",
+                            group.count, group.stationary, group.spent, projectileCount);
+            }
+            const auto active = ownerCounts[0] + ownerCounts[1] + ownerCounts[2] + ownerCounts[3];
+            std::printf("[tick-probe-shots-summary] total=%zu active=%zu listed=%zu unlisted=%zu "
+                        "player=%zu pet=%zu mob=%zu other=%zu\n",
+                        projectileCount, active, listed, active - listed,
+                        ownerCounts[1], ownerCounts[2], ownerCounts[3], ownerCounts[0]);
+        }
         std::fflush(stdout);
     }
     tickCadenceStartMillis_ = nowMillis;
@@ -2192,6 +2260,11 @@ void GameServer::tick(double nowMillis) {
 void GameServer::tick(double wallMillis, double nowMillis) {
     if (persistenceFrozen_ || (pendingLocalHyper_ && pendingLocalHyper_->publishing)) return;
     ++tick_;
+    // Movement advances wild projectiles by one fixed step. During sustained
+    // overload, advancing the launch timer by the entire wall-time gap would
+    // put extra volleys into the same distance of flight.
+    const double excessVolleyMillis = lastMeasuredTps_ > 0.0 && lastMeasuredTps_ < 15.0
+        ? std::max(0.0, nowMillis - clockMillis_ - net::kTickMillis) : 0.0;
     wallClockMillis_ = wallMillis;
     clockMillis_ = nowMillis;
     tickPhaseCount_ = 0;
@@ -2418,7 +2491,7 @@ void GameServer::tick(double wallMillis, double nowMillis) {
         return;
     }
 
-    runSystems(nowMillis, smoothedDeltaSeconds_);
+    runSystems(nowMillis, smoothedDeltaSeconds_, excessVolleyMillis);
     persistBossClocks();
     servicePyramidMaps(nowMillis);
     serviceSacrificeSpawn(nowMillis);
@@ -2540,7 +2613,7 @@ void GameServer::applyVoidGravity(double dt, bool mobsOnly) {
 
 }
 
-void GameServer::runSystems(double nowMillis, double dt) {
+void GameServer::runSystems(double nowMillis, double dt, double excessVolleyMillis) {
     if (!workers_) {
         const unsigned simulation = ServerWorkers::configuredLimit("FLIX_SIMULATION_WORKERS", 7);
         const unsigned snapshots = ServerWorkers::configuredLimit("FLIX_SNAPSHOT_WORKERS");
@@ -2681,7 +2754,7 @@ void GameServer::runSystems(double nowMillis, double dt) {
     }
 
     mobAi_->run(world_, *terrain_, mobTargetGrid_, activePlayers_, nowMillis,
-                net::kTickSeconds, commands_, &playerTargetGrid_);
+                net::kTickSeconds, commands_, &playerTargetGrid_, excessVolleyMillis);
     markTickPhase("mob ai");
     applyVoidGravity(net::kTickSeconds, true);
     movement_->runWorldPhase(world_, *terrain_, nowMillis, net::kTickSeconds, config_.tickProbe);
@@ -2902,7 +2975,6 @@ void GameServer::reapDead() {
         // over the body. That means this loop meets the same corpse on every
         // later tick, so everything below has to happen exactly once.
         if (isPlayer) {
-            if (auto* pads = world_.tryGet<TeleporterState>(e)) pads->markHoldUntilMillis = 0;
             if (session == nullptr && bot == nullptr) {
                 // Nobody is watching through this body and nothing owns it. It
                 // leaves no corpse and no death notice, and its ring goes with
@@ -3260,6 +3332,8 @@ void GameServer::onConnect(net::Connection& connection) {
     views_[connection.id()] = ClientView{};
 }
 
+static constexpr double kHomeBonusGraceMillis = 5 * 60 * 1000;
+
 void GameServer::onDisconnect(net::Connection& connection, const std::string&) {
     endSession(connection.id());
 }
@@ -3270,7 +3344,7 @@ void GameServer::endSession(net::ConnectionId id) {
         Json finish=Json::object();finish["action"]="finishAuth";finish["attempt"]=static_cast<double>(id);config_.authorityAuth(finish);
     }
     if (Session* session = sessionFor(id)) {
-        noteAccountLastSeen(*session);
+        recordSessionDeparture(*session);
         // Before the body is destroyed, so the line the squad is told still
         // knows what this flower was called.
         departSquad(*session, nullptr, squadDisplayName(squadIdOf(*session)));
@@ -3852,6 +3926,7 @@ void GameServer::beginNewAccount(Session& session, net::Connection& connection,
     grantStarterKit(database_.progress(session.userId), account.id);
     database_.markDirty();
     session.stage = SessionStage::Authenticated;
+    session.homeBonusPauseAt = monotonicMillis() + kHomeBonusGraceMillis;
     sendAuthResult(connection, net::AuthStatus::Ok, session.token, session.username, "");
     sendDailyStreak(session, connection);
     sendProfile(session, connection);
@@ -3920,6 +3995,7 @@ void GameServer::handleLogin(Session& session, net::Connection& connection, Byte
     session.adminTier = account->adminTier;
     session.token = database_.createSession(account->id, account->username);
     session.stage = SessionStage::Authenticated;
+    session.homeBonusPauseAt = monotonicMillis() + kHomeBonusGraceMillis;
     sendAuthResult(connection, net::AuthStatus::Ok, session.token, account->username, "");
     sendDailyStreak(session, connection);
     sendProfile(session, connection);
@@ -3960,6 +4036,7 @@ void GameServer::handleResume(Session& session, net::Connection& connection, Byt
     session.username = username;
     session.token = token;
     session.stage = SessionStage::Authenticated;
+    session.homeBonusPauseAt = monotonicMillis() + kHomeBonusGraceMillis;
     // Assigned whether or not the lookup lands, so a flag left on this socket
     // by whoever was signed in on it before can never ride along.
     Account* account = database_.findUser(username);
@@ -4312,8 +4389,10 @@ void GameServer::replaceOtherSessions(const Session& incoming, const std::string
     }
 }
 
-void GameServer::noteAccountLastSeen(const Session& session) {
+void GameServer::recordSessionDeparture(const Session& session) {
     if (!session.authenticated()) return;
+    if (setDropBonusEnabled(database_.progress(session.userId), dropBonusNow(), false))
+        database_.markDirty();
     if (Account* account = database_.findUserById(session.userId)) {
         const auto now = database_.nowMillis();
         if (now > account->lastActiveAtMillis) {
@@ -4324,7 +4403,7 @@ void GameServer::noteAccountLastSeen(const Session& session) {
 }
 
 void GameServer::signOut(Session& session) {
-    noteAccountLastSeen(session);
+    recordSessionDeparture(session);
     session.autoSquad = false;
     // The squad first, while the session still has the name the squad knows
     // it by: a squad is keyed by connection, and an anonymous socket left in
@@ -4649,9 +4728,14 @@ void GameServer::sendDropBonus(Session& session, net::Connection& connection) {
 void GameServer::handleDropBonus(Session& session, net::Connection& connection, ByteReader& reader) {
     const auto claim=reader.u8();if(!reader.ok()||!session.authenticated()||claim>6)return;
     auto& record=database_.progress(session.userId);
-    if(claim==1 && claimDropBonus(record,dropBonusNow())) database_.markDirty();
-    if ((claim == 3 || claim == 4) && setDropBonusEnabled(record, dropBonusNow(), claim == 4))
+    const auto now = dropBonusNow();
+    const bool changed = claim == 1 ? claimDropBonus(record, now) :
+        (claim == 3 || claim == 4) && setDropBonusEnabled(record, now, claim == 4);
+    if (changed) {
         database_.markDirty();
+        if (session.stage == SessionStage::Authenticated && claim != 3)
+            session.homeBonusPauseAt = monotonicMillis() + kHomeBonusGraceMillis;
+    }
     if (claim == 2 || claim == 5 || claim == 6) {
         toggleShopTierLock(record, claim == 5 ? 1 : (claim == 6 ? 2 : 3), shopRotation(shopClockNow()));
         database_.markDirty();
@@ -4799,7 +4883,7 @@ void GameServer::handleJoin(Session& session, net::Connection& connection, ByteR
         }
     }
 
-    if (session.prestige && !worldMaps_.isPrestige(spawnRealmFor(session))) {
+    if (session.prestige && !activeMarkHold(session) && !worldMaps_.isPrestige(spawnRealmFor(session))) {
         session.prestige = 0;
         sendNotice(connection, net::NoticeSeverity::Bad,
                    "This entrance has no Prestige map. Switch to Ordinary or choose another entrance.");
@@ -5554,23 +5638,62 @@ void GameServer::handleBulkCraft(Session& session, net::Connection& connection, 
         if (!reader.ok() || id >= excluded.size()) return;
         excluded[id] = true;
     }
-    if(!reader.ok() || !session.authenticated() || target<1 || target>static_cast<unsigned>(rarityIndex(Rarity::Super)))return;
-    if(wallClockMillis_<session.nextBulkCraftMillis)return;
-    session.nextBulkCraftMillis=wallClockMillis_+1500;
-    auto& record=liveRecord(session);int groups=0;
-    for(unsigned tier=0;tier<target;++tier) {
-        const auto rarity=static_cast<Rarity>(tier);if(!craftsOutOf(rarity))break;
-        for(std::uint16_t petal=0;petal<content().petalCount();++petal) {
-            if(excluded[petal] || content().petal(petal).id=="timed_mjolnir" || !petalComesAt(content().petal(petal),rarity))continue;
-            const auto owned=record.itemCount(rarity,inventoryKey(petal));
-            if(owned<kCraftBatch)continue;
-            ByteWriter request;request.u16(petal);request.u8(static_cast<std::uint8_t>(rarity));request.u32(static_cast<std::uint32_t>(std::min<std::int64_t>(owned,kMaxStackCount)));
-            ByteReader input(request.data(),request.size());handleCraft(session,connection,input,true);++groups;
+    const bool toApex = target == static_cast<unsigned>(rarityIndex(Rarity::Ascendant));
+    if (!session.authenticated() || target < 1 ||
+        (!toApex && target > static_cast<unsigned>(rarityIndex(Rarity::Super)))) return;
+    if (wallClockMillis_ < session.nextBulkCraftMillis) return;
+    session.nextBulkCraftMillis = wallClockMillis_ + 1500;
+
+    auto& record = liveRecord(session);
+    const unsigned firstTier = toApex ? rarityIndex(Rarity::PermanentHyper) : 0;
+    const unsigned endTier = toApex ? firstTier + 1 : target;
+    int groups = 0;
+    std::int64_t apexCrafted = 0;
+    std::int64_t phConsumed = 0;
+    for (unsigned tier = firstTier; tier < endTier; ++tier) {
+        const auto rarity = static_cast<Rarity>(tier);
+        for (std::uint16_t petal = 0; petal < content().petalCount(); ++petal) {
+            if (excluded[petal]) continue;
+            const auto& config = content().petal(petal);
+            if (toApex ? !petalCraftsToApex(content(), petal)
+                       : config.id == "timed_mjolnir" || !petalComesAt(config, rarity)) continue;
+            const auto key = inventoryKey(petal);
+            const auto owned = record.itemCount(rarity, key);
+            std::int64_t materials = std::min<std::int64_t>(owned, kMaxStackCount);
+            int previousApex = 0;
+            if (toApex) {
+                previousApex = record.itemCount(Rarity::Ascendant, key);
+                const auto room = static_cast<std::int64_t>(kMaxStackCount) - previousApex;
+                materials = std::min(materials, room * kCraftBatch);
+            }
+            if (materials < kCraftBatch) continue;
+
+            ByteWriter request;
+            request.u16(petal);
+            request.u8(static_cast<std::uint8_t>(rarity));
+            request.u32(static_cast<std::uint32_t>(materials));
+            ByteReader input(request.data(), request.size());
+            handleCraft(session, connection, input, true);
+            ++groups;
+
+            if (toApex) {
+                apexCrafted += record.itemCount(Rarity::Ascendant, key) - previousApex;
+                phConsumed += owned - record.itemCount(rarity, key);
+            }
         }
     }
-    if(groups>0)database_.markDirty();
-    sendProfile(session,connection);
-    sendNotice(connection,net::NoticeSeverity::Info,groups>0 ? "一键合成完成：已处理目标等级以下的可用材料，装备花瓣保留。" : "目标等级以下没有足够合成的材料。");
+    sendProfile(session, connection);
+    if (toApex) {
+        const std::string result = groups > 0
+            ? "Apex 一键合成完成：产出 " + std::to_string(apexCrafted) +
+                  "，消耗永久超凡 " + std::to_string(phConsumed) + "。"
+            : "没有可用于一键合成 Apex 的永久超凡材料，或对应 Apex 库存已满。";
+        sendNotice(connection, net::NoticeSeverity::Info, result);
+    } else {
+        sendNotice(connection, net::NoticeSeverity::Info,
+                   groups > 0 ? "一键合成完成：已处理目标等级以下的可用材料，装备花瓣保留。"
+                              : "目标等级以下没有足够合成的材料。");
+    }
 }
 
 void GameServer::handleBulkCraftMythicUltra(Session& session, net::Connection& connection,
@@ -9646,7 +9769,7 @@ void GameServer::serviceNearbyRevives(double nowMillis) {
         Session& corpse = entry.second;
         const Entity victim = corpse.entity;
         if (auto* pads = world_.tryGet<TeleporterState>(victim)) {
-            if (pads->markHoldUntilMillis > 0 && nowMillis >= pads->markHoldUntilMillis) {
+            if (pads->markHoldUntilMillis > 0 && wallClockMillis_ >= pads->markHoldUntilMillis) {
                 pads->markHoldUntilMillis = 0;
                 if (isStanding(world_, victim)) {
                     if (auto* connection = listener_.find(corpse.connection)) {
@@ -9834,8 +9957,16 @@ bool GameServer::canMarkPlayer(Entity target, Entity marker, Rarity rarity) {
                 petalTier(slot.rarity) > petalTier(rarity)) return false;
         }
     }
-    const auto found = markProtectedUntil_.find(victim->userId);
-    return found == markProtectedUntil_.end() || clockMillis_ >= found->second;
+    const auto found = markStatus_.find(victim->userId);
+    return found == markStatus_.end() ||
+           (clockMillis_ >= found->second.protectedUntilMillis &&
+            wallClockMillis_ >= found->second.holdUntilMillis);
+}
+
+const GameServer::MarkStatus* GameServer::activeMarkHold(const Session& session) const {
+    const auto found = markStatus_.find(session.userId);
+    return found != markStatus_.end() && wallClockMillis_ < found->second.holdUntilMillis
+        ? &found->second : nullptr;
 }
 
 bool GameServer::transportMarkedPlayer(Entity target, Entity marker, Rarity rarity, bool toVoid, bool frozen) {
@@ -9859,12 +9990,12 @@ bool GameServer::transportMarkedPlayer(Entity target, Entity marker, Rarity rari
     spawn = playerRespawnPosition(*terrain_, realm, spawn, body ? body->radius : 25.0);
     // Protection is per account, not per corpse/petal/caster. Expired rows are
     // discarded on application so the transient table stays bounded.
-    for (auto it = markProtectedUntil_.begin(); it != markProtectedUntil_.end();) {
-        if (clockMillis_ >= it->second) it = markProtectedUntil_.erase(it);
+    for (auto it = markStatus_.begin(); it != markStatus_.end();) {
+        if (clockMillis_ >= it->second.protectedUntilMillis &&
+            wallClockMillis_ >= it->second.holdUntilMillis) it = markStatus_.erase(it);
         else ++it;
     }
     Session* victim = sessionForEntity(target);
-    markProtectedUntil_[victim->userId] = clockMillis_ + kDarkMarkProtectionMillis;
     auto& hp = world_.get<Health>(target);
     hp.current = hp.max;
     hp.invulnerableUntilMillis = clockMillis_ + kRespawnInvulnerabilitySeconds * 1000.0;
@@ -9881,12 +10012,20 @@ bool GameServer::transportMarkedPlayer(Entity target, Entity marker, Rarity rari
     onPlayerRevived(target, NULL_ENTITY);
     moveEntityToRealm(target, realm, spawn);
     auto& pads = world_.ensure<TeleporterState>(target);
-    pads.markHoldUntilMillis = 0;  // transport only; no H lockout
+    const double holdUntil = markHoldsOnArrival(rarity) ? wallClockMillis_ + kApexMarkHoldMillis : 0.0;
+    pads.markHoldUntilMillis = holdUntil;
     pads.markOrigin = {origin.position, origin.realm};
     pads.markReturnAvailable = true;
+    markStatus_[victim->userId] = {clockMillis_ + kDarkMarkProtectionMillis, holdUntil,
+                                 pads.markOrigin, {world_.get<Transform>(target).position, realm}};
     victim->hasDeathSite = false;
     if (auto* connection = listener_.find(victim->connection)) {
-        if (toVoid) {
+        if (holdUntil > 0.0) {
+            const std::string destination = toVoid ? "虚空" : frozen ? "极地" : "地狱";
+            sendNotice(*connection, net::NoticeSeverity::Info,
+                "Apex 印记已将你送到" + destination +
+                "，2 分钟内无法离开。时间结束后可正常传送或使用 /mark-return；5 分钟内免疫其他印记。");
+        } else if (toVoid) {
             sendSystem(*connection,
                 "虚空之印：已传送至虚空，可用 /mark-return 返回原处。5分钟内免疫其他印记。");
         } else if (frozen) {
@@ -9901,7 +10040,6 @@ bool GameServer::transportMarkedPlayer(Entity target, Entity marker, Rarity rari
 }
 
 void GameServer::onPlayerRevived(Entity revived, Entity reviver) {
-    if (auto* pads = world_.tryGet<TeleporterState>(revived)) pads->markHoldUntilMillis = 0;
     Session* session = sessionForEntity(revived);
     if (session == nullptr) return;
 
@@ -10018,6 +10156,12 @@ Entity GameServer::spawnPlayerNear(Session& session, Realm realm, Vec2 around) {
 
 Entity GameServer::finishPlayerSpawn(Session& session, Realm realm, Vec2 spawn, bool resolveGround) {
     const Realm requestedRealm = realm;
+    const auto* hold = activeMarkHold(session);
+    if (hold && (!resolveGround || realm != hold->destination.realm)) {
+        realm = hold->destination.realm;
+        spawn = hold->destination.position;
+        resolveGround = true;
+    }
     routePyramidEntrance(realm, spawn);
     routeJurassicEntrance(realm, spawn);
     // The realm is settled on the session BEFORE the account is applied, and
@@ -10042,6 +10186,13 @@ Entity GameServer::finishPlayerSpawn(Session& session, Realm realm, Vec2 spawn, 
     Health& health = world_.get<Health>(entity);
     health.current = health.max;
     health.invulnerableUntilMillis = clockMillis_ + kRespawnInvulnerabilitySeconds * 1000.0;
+
+    if (hold) {
+        auto& pads = world_.ensure<TeleporterState>(entity);
+        pads.markHoldUntilMillis = hold->holdUntilMillis;
+        pads.markOrigin = hold->origin;
+        pads.markReturnAvailable = true;
+    }
 
     // Respawning in the same pyramid continues the current visit.
     if (session.pyramidMapRealm != realm) session.pyramidMapRevealed = false;
@@ -10285,6 +10436,7 @@ void GameServer::despawnPlayer(Session& session, bool persist) {
 
     session.entity = NULL_ENTITY;
     session.stage = SessionStage::Authenticated;
+    session.homeBonusPauseAt = monotonicMillis() + kHomeBonusGraceMillis;
     session.dummyDamage.clear();
     views_[session.connection].reset();
     // Same reason as the spawn: the id this member was known by is gone, and a
@@ -10332,6 +10484,9 @@ void GameServer::moveEntityToRealm(Entity entity, Realm realm, Vec2 position) {
         }
     }
     if (transform->realm == realm && distanceSq(transform->position, position) < 1.0) return;
+    if (transform->realm != realm && !markStatus_.empty()) {
+        if (const auto* session = sessionForEntity(entity); session && activeMarkHold(*session)) return;
+    }
 
     const Realm from = transform->realm;
     const bool sameRealm = from == realm;

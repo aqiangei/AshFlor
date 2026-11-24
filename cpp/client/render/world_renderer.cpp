@@ -3945,7 +3945,26 @@ void WorldRenderer::drawMobBody(Canvas& canvas, const Camera& camera, const MobD
         // Let the bag face its direction while the item artwork stays readable.
         canvas.save();
         if (mirrored) canvas.scale(-1.0f, 1.0f);
-        drawGarbagePile(canvas, mob.position, mob.radius * 2.0, 0.0, mob.netId, mob.rarity);
+        const auto paintContents = [&](Canvas& target) {
+            drawGarbagePile(target, mob.position, bagSize, 0.0, mob.netId, mob.rarity);
+        };
+#ifdef __EMSCRIPTEN__
+        // An individual bag's contents and poses are fixed by its server ID.
+        // Cache only small opaque previews. Fades use per-layer opacity.
+        const double side = 2.0 * bagSize;
+        const double deviceSide = side * canvas.currentTransform()[0];
+        const std::uint64_t variant = (static_cast<std::uint64_t>(mob.rarity) << 32) | mob.netId;
+        const bool cached = sprites_ && mob.netId && canvas.globalAlpha() == 1.0f &&
+            deviceSide >= 8.0 && deviceSide <= 128.0 &&
+            drawCachedPicture(canvas, config, variant, -bagSize, -bagSize, side, side,
+                [&](Canvas& bitmap) {
+                    bitmap.translate(static_cast<float>(bagSize), static_cast<float>(bagSize));
+                    paintContents(bitmap);
+                });
+        if (!cached) paintContents(canvas);
+#else
+        paintContents(canvas);
+#endif
         canvas.restore();
         // Front lip wraps the lowest row without hiding its identifying shape.
         ui::setFill(canvas,0x333333u);ui::setStroke(canvas,0x292929u);
@@ -4027,7 +4046,7 @@ void WorldRenderer::drawMobBody(Canvas& canvas, const Camera& camera, const MobD
 }
 
 void WorldRenderer::drawMobLabel(Canvas& canvas, const Camera& camera, const MobDraw& mob,
-                                 const WorldView* view) const {
+                                 const WorldView* view, bool compact) const {
     // The plate fades in with the mob and out once a chain bead heals: florr
     // multiplies everything on it, text included, by one eased opacity.
     if (mob.plateOpacity <= 0.0) return;
@@ -4094,6 +4113,23 @@ void WorldRenderer::drawMobLabel(Canvas& canvas, const Camera& camera, const Mob
         }
     }
 
+    // When the lettering is less than two device pixels high, identify distant
+    // ambient mobs by tier colour. Keep the regular plate for combat cues,
+    // summons and special mobs. Both paths use the same health and shield bars.
+    if (compact && labelled && config && !config->neverAmbient && !config->intangible &&
+        !config->hole && config->id != "target_dummy" && !mob.pet && !mob.npc && !mob.chasing) {
+        if (options.names) {
+            const double pixel = static_cast<double>(canvas.width()) / canvas.pixelWidth();
+            const double width = std::max(pixel, length * zoom * 0.5);
+            ui::setFill(canvas, rarityColor(mob.rarity));
+            canvas.setGlobalAlpha(static_cast<float>(base * opacity));
+            canvas.fillRect(static_cast<float>(screen.x - width * 0.5),
+                            static_cast<float>(sy(lineY + kMobTierDrop)),
+                            static_cast<float>(width), static_cast<float>(pixel));
+        }
+        canvas.restore();
+        return;
+    }
     canvas.setGlobalAlpha(static_cast<float>(base * opacity));
     // florr's Text pads a run by its outline -- 2 x int(2 x size x 0.12) --
     // and lays the padded box out, with the glyphs centred in it. Measured at
@@ -5508,7 +5544,13 @@ void WorldRenderer::draw(Canvas& canvas, const EntityMap& entities, const Camera
             drawLive(entity);
         }
         chargeOps(ops_.mobs);
-        for (const MobDraw& mob : mobLabels_) drawMobLabel(canvas, camera, mob, view);
+        const bool tinyLabels = canvas.width() > 0 && canvas.pixelWidth() > 0 &&
+            kMobNameSize * camera.zoom() * canvas.pixelWidth() / canvas.width() < 2.0;
+        for (const MobDraw& mob : mobLabels_) {
+            const bool compact = tinyLabels &&
+                distanceSq(mob.position, selfDrawn) > kSmallMobMarkerNearDistance * kSmallMobMarkerNearDistance;
+            drawMobLabel(canvas, camera, mob, view, compact);
+        }
         chargeOps(ops_.labels);
     }
 

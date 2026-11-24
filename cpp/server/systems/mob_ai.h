@@ -687,7 +687,7 @@ public:
     void run(World& world, const Terrain& terrain, const SpatialGrid& grid,
              const std::vector<RealmPoint>& activePlayers,
              double nowMillis, double dt, CommandBuffer& commands,
-             const SpatialGrid* playerGrid = nullptr);
+             const SpatialGrid* playerGrid = nullptr, double excessVolleyMillis = 0.0);
 
     /// Carries a mob's ring seeds on their seats, retires the ones that have
     /// been broken, and pays off the seeds it owes.

@@ -400,7 +400,7 @@ void MovementSystem::runWorldPhase(World& world, const Terrain& terrain,
         if (!pet) return;
         const Vec2 from = transform.position;
         const double radius = body.radius * mobBodyContactScale(content().mob(type.configIndex).id);
-        pushOutOfNpcs(terrain, transform, radius);
+        pushOutOfNpcs(world, terrain, transform, radius);
         stopMobAtMeteors(terrain, transform.realm, from, transform.position,
                          radius, kMobWallRadius, pet->owner);
     });
@@ -616,7 +616,7 @@ void MovementSystem::movePlayers(World& world, const Terrain& terrain,
         if (!stationaryMobGrid_.empty() && (!visuals || !(visuals->equipFlags & EquipCutter))) {
             pushOutOfStationaryMobs(world, terrain, transform, body.radius, underground ? e : NULL_ENTITY);
         }
-        if (!npcDiscs_.empty()) pushOutOfNpcs(terrain, transform, body.radius);
+        if (!npcDiscs_.empty()) pushOutOfNpcs(world, terrain, transform, body.radius, underground);
         // Discard velocity into a wall while retaining the achieved slide.
         // Otherwise turning away first has to cancel a full inward velocity.
         motion.velocity = velocityAfterStep(velocity, movement, dt, 1.0);
@@ -753,8 +753,8 @@ void MovementSystem::collideLooseBodies(World& world, const Terrain& terrain) {
     storeLooseDiscs(world);
 }
 
-void MovementSystem::pushOutOfNpcs(const Terrain& terrain, Transform& transform,
-                                   double radius) const {
+void MovementSystem::pushOutOfNpcs(const World& world, const Terrain& terrain,
+                                  Transform& transform, double radius, bool underground) const {
     bool moved = false;
     for (const ObstacleDisc& npc : npcDiscs_) {
         if (npc.realm != transform.realm) continue;
@@ -762,6 +762,12 @@ void MovementSystem::pushOutOfNpcs(const Terrain& terrain, Transform& transform,
         const double reach = npc.radius + radius;
         const double gapSq = offset.lengthSq();
         if (gapSq >= reach * reach) continue;
+        if (underground) {
+            if (const auto* fixture = world.tryGet<Npc>(npc.entity)) {
+                const auto& id = content().mob(fixture->configIndex).id;
+                if (id == "target_dummy" || id == "test_dummy") continue;
+            }
+        }
         // Straight out along the line between the two centres, which is what
         // lets a flower pressing into one slide round it rather than stick.
         // Dead centre has no line; any way out will do.
@@ -786,9 +792,6 @@ void MovementSystem::stepTeleporters(World& world, double nowMillis, double dt) 
         // pulled by one: the suction is the pad's first act, and a bot half
         // dragged onto a pad it can never take would stand there forever.
         if (takesTeleporters && !takesTeleporters(e)) continue;
-        if (const auto* pads = world.tryGet<TeleporterState>(e)) {
-            if (nowMillis < pads->markHoldUntilMillis && isStanding(world, e)) continue;
-        }
         Transform* transform = world.tryGet<Transform>(e);
         if (!transform) continue;
         // Every world map has its own pads. The arena and the maze have none:

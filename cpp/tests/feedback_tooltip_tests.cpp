@@ -25,6 +25,33 @@ TEST(laser_and_void_tooltips_explain_the_available_effects) {
     CHECK(std::string(ui::petalDescTr("void_gamma_ray", "")).find("攻击") != std::string::npos);
 }
 
+TEST(magic_bone_equipped_card_shows_the_server_multiplier_in_both_languages) {
+    std::string error;
+    CHECK(loadContent(testsupport::dataDir(), error));
+    const auto previous = ui::language();
+    const auto bone = content().petalIndex("magic_bone");
+    const auto mimic = content().petalIndex("mimic");
+    const EquippedPetal resolved{bone, Rarity::Apex, Rarity::Apex};
+    for (auto lang : {ui::Language::En, ui::Language::Zh}) {
+        ui::setLanguage(lang);
+        const std::string label = lang == ui::Language::En
+            ? "Current bone multiplier (wild mobs / training dummies): " : "当前骨头倍率（野怪／训练木桩）：";
+        for (auto original : {bone, mimic}) {
+            for (int bonus : {-1, 0, 50, 250, 300}) {
+                const auto lines = ui::equippedPetalTooltipLines(original, resolved, {}, 1.0, 1, 0.0, bonus);
+                const auto row = std::find_if(lines.begin(), lines.end(), [&](const auto& line) {
+                    return line.text.find(label) == 0;
+                });
+                if (bonus < 0) { CHECK(row == lines.end()); continue; }
+                CHECK(row != lines.end());
+                if (row != lines.end())
+                    CHECK_EQ(row->text, label + (bonus == 0 ? "1x" : bonus == 50 ? "1.5x" : bonus == 250 ? "3.5x" : "4x"));
+            }
+        }
+    }
+    ui::setLanguage(previous);
+}
+
 TEST(fang_and_tooth_tooltips_report_their_mana_refunds) {
     std::string error;
     CHECK(loadContent(testsupport::dataDir(), error));
@@ -286,5 +313,100 @@ TEST(palm_leaf_tooltip_matches_the_live_shield_rate_and_cap) {
             CHECK(cap);
         }
     }
+    ui::setLanguage(saved);
+}
+
+TEST(crystal_leaf_tooltips_report_pet_healing) {
+    std::string error;
+    CHECK(loadContent(testsupport::dataDir(), error));
+    const auto saved = ui::language();
+    const auto hasLine = [](const char* petal, Rarity rarity, const char* expected) {
+        const auto lines = ui::petalTooltipLines(content().petalIndex(petal), rarity, {}, 1.0);
+        for (const auto& line : lines) if (line.text == expected) return true;
+        return false;
+    };
+    ui::setLanguage(ui::Language::En);
+    CHECK(hasLine("crystal_leaf", Rarity::Common, "Healing per summon per second: 8"));
+    CHECK(hasLine("magic_crystal_leaf", Rarity::Common, "Healing per summon per second: 10"));
+    CHECK(!hasLine("leaf", Rarity::Common, "Healing per summon per second: 8"));
+    ui::setLanguage(ui::Language::Zh);
+    CHECK(hasLine("crystal_leaf", Rarity::Ascendant, "每只召唤物回血/秒：17496"));
+    ui::setLanguage(saved);
+}
+
+
+TEST(petal_effect_panels_show_precise_effects_and_caps) {
+    std::string error;
+    CHECK(loadContent(testsupport::dataDir(), error));
+    const auto saved = ui::language();
+    const auto hasLine = [](const char* petal, std::string_view expected, const SkillSet& skills = {}) {
+        const auto lines = ui::petalTooltipLines(content().petalIndex(petal), Rarity::Common, skills, 1.0);
+        for (const auto& line : lines) if (line.text == expected) return true;
+        return false;
+    };
+    ui::setLanguage(ui::Language::En);
+    CHECK(hasLine("magic_crystal_leaf", "Shield per summon: 4"));
+    CHECK(hasLine("magic_crystal_leaf", "Shield cap (% of summon max HP): 15%"));
+    CHECK(hasLine("magic_crystal_leaf", "Shield duration: 1.5s"));
+    CHECK(hasLine("magic_chromosome", "Shield per petal per charge: 2.2"));
+    CHECK(hasLine("magic_chromosome", "Mana per shield charge: 0.75"));
+    CHECK(hasLine("magic_chromosome", "Shield cap (% of petal max HP): 20%"));
+    CHECK(hasLine("chloroplast", "Shield gain: +5%"));
+    CHECK(hasLine("stem_cell", "Base heal chance per HP threshold: 2%"));
+    CHECK(hasLine("dna", "Base mutation chance per hatch with one DNA: 0.5%"));
+    CHECK(hasLine("oxygen", "Existing burn extension per hit: 0.1s"));
+    CHECK(hasLine("void_cyanide", "Existing poison extension per hit: 0.15s"));
+    CHECK(hasLine("fire", "Base burn damage per second: 9"));
+    CHECK(hasLine("fire", "Burn duration: 2.6s"));
+    CHECK(hasLine("acid", "Pool charge time: 1s"));
+    CHECK(hasLine("acid", "Pool lifetime: 2.1s"));
+    CHECK(!hasLine("acid_bomb", "Pool charge time: 1s"));
+    CHECK(hasLine("void_pipe_bomb", "Explosion chance: 50%"));
+    CHECK(hasLine("void_pipe_bomb", "Blast radius with talents: 60"));
+    SkillSet skills;
+    skills.set(SkillId::ExplosionReach, 0);
+    CHECK(hasLine("void_pipe_bomb", "Blast radius with talents: 135", skills));
+    ui::setLanguage(ui::Language::Zh);
+    CHECK(hasLine("void_knife", "每次有效接触的基础自伤：1"));
+    CHECK(hasLine("antler", "额外伤害（野怪有效护甲）：25%"));
+    CHECK(hasLine("arctic_snowball", "穿甲：直接命中无视护甲。"));
+    ui::setLanguage(saved);
+}
+
+TEST(petal_effect_panels_cover_the_shipped_catalog) {
+    std::string error;
+    CHECK(loadContent(testsupport::dataDir(), error));
+    const auto saved = ui::language();
+    constexpr Rarity rarities[]{Rarity::Common, Rarity::Uncommon, Rarity::Rare, Rarity::Epic,
+        Rarity::Legendary, Rarity::Mythic, Rarity::Ultra, Rarity::Super, Rarity::Unique,
+        Rarity::PermanentHyper, Rarity::Ascendant};
+    for (auto language : {ui::Language::Zh, ui::Language::En}) {
+        ui::setLanguage(language);
+        const bool en = language == ui::Language::En;
+        for (std::uint16_t index = 0; index < content().petalCount(); ++index) {
+            const auto& config = content().petal(index);
+            for (const auto rarity : rarities) {
+                const auto lines = ui::petalTooltipLines(index, rarity, {}, 1.0);
+                const auto count = [&](std::string_view label) {
+                    return std::count_if(lines.begin(), lines.end(), [&](const auto& line) {
+                        return line.text.compare(0, label.size(), label) == 0;
+                    });
+                };
+                CHECK(!lines.empty());
+                CHECK_EQ(count(en ? "Healing per summon per second: " : "每只召唤物回血/秒："),
+                         config.passivePetHeal > 0.0 ? 1 : 0);
+                CHECK_EQ(count(en ? "Base maximum pool radius: " : "基础最大半径："),
+                         config.spill.kind != SpillKind::None ? 1 : 0);
+                CHECK_EQ(count(en ? "Pool lifetime: " : "液池持续："),
+                         config.spill.kind != SpillKind::None ? 1 : 0);
+                CHECK_EQ(count(en ? "Base burn damage per second: " : "基础灼烧伤害/秒："),
+                         config.burnPerSecond > 0.0 && config.burnMillis > 0.0 ? 1 : 0);
+                CHECK_EQ(count(en ? "Base self-damage per landed contact: " : "每次有效接触的基础自伤："),
+                         config.contactSelfDamage > 0.0 ? 1 : 0);
+            }
+        }
+    }
+    std::printf("catalog petals=%zu tests=%zu\n", content().petalCount(),
+                content().petalCount() * std::size(rarities) * 2);
     ui::setLanguage(saved);
 }

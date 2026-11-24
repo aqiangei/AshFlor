@@ -567,7 +567,8 @@ double actionIntervalMillis(const PetalConfig& config, const PetalStats& stats,
     if(config.burrowDurationMillis>0)interval=config.burrowChargeMillis;
     if (config.spill.kind != SpillKind::None && !config.spill.onHit)
         interval = std::max(interval, config.spill.chargeMillis);
-    if (config.passivePetHeal > 0.0 || config.passivePetalHeal > 0.0 || config.id == "magic_chromosome")
+    if (config.passivePetHeal > 0.0) interval = std::max(interval, kPassivePetHealIntervalMillis);
+    if (config.passivePetalHeal > 0.0 || config.id == "magic_chromosome")
         interval = std::max(interval, 1000.0);
     if (config.id == "magic_fire") interval = std::max(interval, 200.0);
     if (config.id == "torch" || config.id == "magic_torch")
@@ -2338,22 +2339,20 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
                         1.0 + speedBonus[ladderIndex(equipped.rarity)] / 100.0);
                 }
                 if (worn.id == "void_soap") {
-                    aggregate.modifiers.spillRadiusScale = std::min(
-                        kSoapMaxSpillRadiusScale,
-                        aggregate.modifiers.spillRadiusScale + soapSpillRadiusBonus(equipped.rarity));
+                    aggregate.modifiers.spillGrowthScale += soapSpillRateBonus(equipped.rarity);
+                    aggregate.modifiers.soapCoverageBonus = std::min(kMaxSoapCoverageBonus,
+                        aggregate.modifiers.soapCoverageBonus + soapCoverageBonus(equipped.rarity));
                 }
                 if (worn.id == "rna") {
                     aggregate.modifiers.petMoveSpeedScale += rnaPetSpeedBonus(equipped.rarity);
                 }
                 if (worn.id == "chloroplast") {
-                    const int tier = std::min(petalTier(equipped.rarity), rarityIndex(Rarity::Apex));
-                    const double bonus = 5.0 + 15.0 * tier + 50.0 * std::max(0, tier - 7);
-                    aggregate.modifiers.chloroplastShieldScale =
-                        std::max(aggregate.modifiers.chloroplastShieldScale, 1.0 + bonus / 100.0);
+                    aggregate.modifiers.chloroplastShieldScale = std::max(
+                        aggregate.modifiers.chloroplastShieldScale, 1.0 + chloroplastShieldBonus(equipped.rarity));
                 }
                 if (worn.id == "stem_cell") {
                     const int tier = petalTier(equipped.rarity);
-                    const double chance = (2.0 + tier * tier / 4.0) / 100.0;
+                    const double chance = stemCellHealChance(equipped.rarity);
                     for (int petTier = 0; petTier <= tier; ++petTier) {
                         auto& combined = aggregate.modifiers.stemCellHealChance[petTier];
                         combined = 1.0 - (1.0 - combined) * (1.0 - chance);
@@ -4043,6 +4042,7 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
                 if (!terrain_ || (owner && !terrain_->segmentBlocked(owner->position, at, owner->realm))) {
                     SpillSpec blood;
                     blood.kind = SpillKind::Blood;
+                    blood.spreadPerSecond = bloodSpillRate(instance->rarity);
                     blood.strength = stats.armorReduction;
                     blood.durationMillis = 2000.0;
                     CombatSystem::createSpill(world, player, at, instance->rarity, blood, 1.0,
@@ -4428,8 +4428,8 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
             }
         } else if (config.id == "magic_chromosome" && isStanding(world, petal)) {
             const Realm realm = transform->realm;
-            const double amount = 2.2 * petalHealScale(rarity);
-            const double mana = .75 * petalManaScale(rarity);
+            const double amount = chromosomeShieldAmount(rarity);
+            const double mana = chromosomeShieldMana(rarity);
             const auto eligible = [&](Entity target) -> PetalInstance* {
                 auto* active = world.tryGet<PetalInstance>(target);
                 const auto* location = world.tryGet<Transform>(target);
@@ -4441,7 +4441,7 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
             const auto current = [&](const PetalInstance& active) {
                 return nowMillis < active.chromosomeShieldUntilMillis ? active.chromosomeShield : 0.0;
             };
-            const auto cap = [&](Entity target) { return .20 * world.get<Health>(target).max; };
+            const auto cap = [&](Entity target) { return kChromosomeShieldCap * world.get<Health>(target).max; };
             bool hasTarget = false;
             bool canAddShield = false;
             for (const Entity target : actionList_) {
@@ -4466,7 +4466,7 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
                     if (!refreshFull && shield >= limit) continue;
                     const double first = std::min(limit, shield + amount);
                     active->chromosomeShield = doubleGrant ? std::min(limit, first + amount) : first;
-                    active->chromosomeShieldUntilMillis = nowMillis + 1500.0;
+                    active->chromosomeShieldUntilMillis = nowMillis + kSupportShieldDurationMillis;
                 }
             }
         }
@@ -4534,7 +4534,7 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
             attractionGrid_.query(realm, at, radius, attractionCandidates_);
             Entity nearest = NULL_ENTITY;
             double nearestGap = radius * radius;
-            const double burnRate = config.burnPerSecond * referenceOffenseScale(config,rarity)*instance->combinationStrength;
+            const double burnRate = petalBaseBurnRate(config, rarity) * instance->combinationStrength;
             for (const Entity candidate : attractionCandidates_) {
                 if ((!world.has<MobTag>(candidate) &&
                      !CombatSystem::isPracticeDummy(world, registry, candidate)) ||
@@ -4560,6 +4560,7 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
         }
         if (config.passivePetHeal > 0.0 && isStanding(world, petal)) {
             const Realm realm = transform->realm;
+            const double heal = passivePetHealAmount(config, rarity);
             const bool canShield = petal == shieldLeaf;
             bool paidShield = false;
             bool attemptedShield = false;
@@ -4568,20 +4569,20 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
             pets.each([&](Entity target, Pet& ally, Health& health, Transform& location) {
                 if (ally.owner != player || location.realm != realm || !health.alive() ||
                     CombatSystem::healingBlocked(world, target, nowMillis)) return;
-                CombatSystem::landHeal(world, target, health, config.passivePetHeal * petalHealScale(rarity));
+                CombatSystem::landHeal(world, target, health, heal);
                 if (!canShield) return;
-                const double grant = std::min(health.max * .15, 4.0 * petalHealScale(rarity));
+                const double grant = std::min(health.max * kCrystalLeafShieldCap, crystalLeafShieldAmount(rarity));
                 const double current = nowMillis < ally.crystalLeafShieldUntilMillis
                     ? ally.crystalLeafShield : 0.0;
                 if (grant <= 0.0 || current > grant) return;
                 if (!attemptedShield) {
                     attemptedShield = true;
-                    paidShield = spendMana(world, player, 1.0 * petalManaScale(rarity));
+                    paidShield = spendMana(world, player, crystalLeafShieldMana(rarity));
                 }
                 if (!paidShield) return;
                 // Refill to the grant without adding a second shield.
                 ally.crystalLeafShield = grant;
-                ally.crystalLeafShieldUntilMillis = nowMillis + 1500.0;
+                ally.crystalLeafShieldUntilMillis = nowMillis + kSupportShieldDurationMillis;
             });
         }
         if (config.passivePetalHeal > 0.0) {
@@ -5974,7 +5975,7 @@ void PetalSystem::maintainPets(World& world, const ContentRegistry& registry, En
     const int missing = std::min(wanted - current, room - current);
     // Offset the Hyper promotion factor to preserve the existing contact damage
     // and health budget.
-    const double strength = configuredSummonStrength(config, rarity);
+    const double strength = configuredSummonStrength(config, rarity, tree ? &tree->skills : nullptr, slot);
     const auto* modifiers = world.tryGet<PlayerModifiers>(player);
     const int eggTier = petalTier(rarity);
     const int hatchTier = rarityIndex(petRarity);
@@ -5984,7 +5985,7 @@ void PetalSystem::maintainPets(World& world, const ContentRegistry& registry, En
     // ceiling: an Eternal hatchling can still mutate.
     if (modifiers && petalIsEgg(config) && eggTier <= rarityIndex(Rarity::Apex) &&
         hatchTier < rarityIndex(Rarity::Apex) && modifiers->eggMutationSources[eggTier] > 0) {
-        const double chance = std::min(.05, .005 * modifiers->eggMutationSources[eggTier] *
+        const double chance = std::min(kDnaChanceCap, kDnaChancePerSource * modifiers->eggMutationSources[eggTier] *
                                               std::max(1.0, modifiers->luck));
         for (int i = 0; i < missing; ++i) {
             const Rarity hatch = rng_.chance(chance) ? clampRarity(hatchTier + 1) : petRarity;
@@ -6126,7 +6127,7 @@ void PetalSystem::expireTimedPets(World& world, Entity player, double nowMillis)
                 auto* health = world.tryGet<Health>(pet);
                 const auto* type = world.tryGet<MobType>(pet);
                 if (health && health->alive() && type) {
-                    const double chance = std::min(.25,
+                    const double chance = std::min(kStemCellHealChanceCap,
                         modifiers->stemCellHealChance[petalTier(type->rarity)] * modifiers->luck);
                     double fraction = health->fraction();
                     for (const double threshold : {2.0 / 3.0, 1.0 / 3.0}) {
