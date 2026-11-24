@@ -126,19 +126,14 @@ TEST(damage_over_time_contact_copies_stack_and_count_on_the_dummy) {
 
         const Vec2 at{5300, 5300};
         const Entity dummy = rig.dummy(at);
-        const bool elemental = id == "void_elemental";
-        const auto packSize = elemental ? 3u : 1u;
-        if (first.size() < packSize || second.size() < packSize) { CHECK(false); continue; }
-        for (std::size_t i = 0; i < packSize; ++i) {
-            rig.world.get<Transform>(first[i]).position = at;
-            rig.world.get<Transform>(second[i]).position = at;
-        }
+        rig.world.get<Transform>(first.front()).position = at;
+        rig.world.get<Transform>(second.front()).position = at;
         rig.combatTick(25050);
         const auto* status = rig.world.tryGet<Afflictions>(dummy);
         CHECK(status);
         if (!status) continue;
-        CHECK_EQ(status->poisonStacks.size(), poison ? 2u * packSize : 0u);
-        CHECK_EQ(status->burns.size(), burn ? 2u * packSize : 0u);
+        CHECK_EQ(status->poisonStacks.size(), poison ? 2u : 0u);
+        CHECK_EQ(status->burns.size(), burn ? 2u : 0u);
 
         const auto configIndex = rig.registry.petalIndex(name);
         const auto& stats = rig.registry.petalStats(configIndex, Rarity::Common);
@@ -328,6 +323,43 @@ TEST(arctic_splitter_stacks_rightward_and_collapses_after_removal) {
     for (double now=9050; now<=11000; now+=net::kTickMillis) rig.tickPetals(now);
     CHECK_NEAR(reach(p2[0]),reach(p0[0]),0.1);
     CHECK_NEAR((reach(p4[0])-reach(p2[0]))/gain,32.05761,0.1);
+}
+
+TEST(magic_fang_with_and_without_an_equipped_mana_source) {
+    for (const auto tier : {Rarity::Common, Rarity::Rare}) {
+        for (const bool withOrb : {false, true}) {
+            ArcticBlast rig("magic_fang", tier, withOrb ? "mana_orb" : nullptr);
+            auto* pool = rig.world.tryGet<ManaPool>(rig.player);
+            CHECK((pool != nullptr) == withOrb);
+            if (pool) pool->current = 0.0;
+            const auto bites = rig.liveIn(0);
+            CHECK_EQ(bites.size(), std::size_t{1});
+            if (bites.empty()) continue;
+            const Entity mob = rig.mob(rig.world.get<Transform>(bites.front()).position);
+            rig.combatTick(5000);
+            CHECK(rig.world.get<Health>(mob).current < 1000.0);
+            if (withOrb && pool) {
+                CHECK_NEAR(pool->current, magicFangManaPerBite(tier), 1e-9);
+            } else {
+                CHECK(rig.world.tryGet<ManaPool>(rig.player) == nullptr);
+            }
+        }
+    }
+}
+
+TEST(magic_fang_tooltip_explains_the_mana_pool_requirement) {
+    std::string error;
+    CHECK(loadContent(testsupport::dataDir(), error));
+    const auto id = content().petalIndex("magic_fang");
+    const auto hasHint = [&](ui::Language language, const char* expected) {
+        ui::setLanguage(language);
+        const auto lines = ui::petalTooltipLines(id, Rarity::Common, {}, 1.0);
+        return std::any_of(lines.begin(), lines.end(), [&](const auto& line) {
+            return line.text == expected;
+        });
+    };
+    CHECK(hasHint(ui::Language::En, "Requires a petal that grants max mana, such as Mana Orb."));
+    CHECK(hasHint(ui::Language::Zh, "需要先装备提供最大法力的花瓣，例如魔力宝珠。"));
 }
 
 TEST(arctic_fission_splits_only_the_eligible_right_slot) {
@@ -544,8 +576,18 @@ TEST(arctic_permanent_hyper_egg_incubation_respects_reload_talent) {
         ui::setLanguage(ui::Language::En);
         const auto lines = ui::petalTooltipLines(index, Rarity::PermanentHyper, skills, scale);
         ui::setLanguage(priorLanguage);
-        CHECK(std::any_of(lines.begin(), lines.end(),
-            [](const auto& line) { return line.text == "Hatch delay: 13.4s"; }));
+        const std::string label = "Hatch delay: ";
+        const auto delay = std::find_if(lines.begin(), lines.end(), [&](const auto& line) {
+            return line.text.compare(0, label.size(), label) == 0;
+        });
+        CHECK(delay != lines.end());
+        if (delay != lines.end()) {
+            const std::string seconds = delay->text.substr(label.size());
+            std::size_t end = 0;
+            const double displayed = std::stod(seconds, &end);
+            CHECK_EQ(seconds.substr(end), std::string("s"));
+            CHECK_NEAR(displayed, incubation * scale / 1000.0, 0.000001);
+        }
         const auto livingPets = [&] { return Query<Pet>{rig.world}.without<Dead>().collect(); };
         const double firstHatch = shellReadyAt + incubation * scale;
         rig.tickPetals(firstHatch - 1.0);
@@ -565,63 +607,55 @@ TEST(arctic_permanent_hyper_egg_incubation_respects_reload_talent) {
 
 TEST(zorr_soap_expands_liquid_fields_without_scaling_damage) {
     ArcticBlast rig("basic");
-    const auto sample = [&](double now, double expectedRadius) {
-        now = 4050.0 + (now - 4050.0) * 8.0;
-        rig.tickPetals(now);
-        SpillSpec acid;
-        acid.kind = SpillKind::Acid;
-        acid.radius = 50.0;
-        acid.strength = 14.0;
-        acid.durationMillis = 2100.0;
-        CombatSystem::createSpill(rig.world, rig.player, {5000, 5000}, Rarity::Common, acid, 1.0, now);
-        const double fullRadius = expectedRadius * kFluidRadiusScale * 1.10;
-        Query<GroundEffect>{rig.world}.each([&](Entity, const GroundEffect& field) {
-            if (field.kind == GroundEffectKind::AcidSpill)
-                CHECK_NEAR(field.radius, fullRadius * 0.24, 1e-6);
-        });
-        for (int tick = 1; tick <= 7; ++tick)
-            rig.combatTick(now + tick * net::kTickMillis);
-        int acidFields = 0;
-        Query<GroundEffect>{rig.world}.each([&](Entity, GroundEffect& field) {
-            if (field.kind != GroundEffectKind::AcidSpill) return;
-            ++acidFields;
-            CHECK_NEAR(field.radius, fullRadius, 1e-6);
-            CHECK_NEAR(field.damagePerSecond, 14.0 * kFluidDamageScale, 1e-6);
-        });
-        CHECK(acidFields == 1);
-        std::vector<Entity> fields;
-        Query<GroundEffect>{rig.world}.collect(fields);
-        for (const Entity field : fields) rig.world.destroy(field);
+    const auto& acid = rig.registry.petal(rig.registry.petalIndex("acid")).spill;
+    double now = 4050;
+    const auto sample = [&](double growthScale, double coverage = 1.0, double reach = 1.0) {
+        rig.petals.foldModifiers(rig.world, rig.registry);
+        CombatSystem::createSpill(rig.world, rig.player, {5500, 5500}, Rarity::Common, acid, 1.0, 0);
+        auto fields = Query<GroundEffect>{rig.world}.collect();
+        CHECK_EQ(fields.size(), 1u);
+        if (fields.empty()) return;
+        const Entity pool = fields.front();
+        const double landingRadius = 75.9 * reach;
+        CHECK_NEAR(rig.world.get<GroundEffect>(pool).radius, landingRadius * 0.24, 1e-6);
+        for (int second = 1; second <= 2; ++second) {
+            for (int tick = 0; tick < net::kTicksPerSecond; ++tick) {
+                now += net::kTickMillis;
+                rig.combatTick(now);
+            }
+            const auto& field = rig.world.get<GroundEffect>(pool);
+            CHECK_NEAR(field.spreadTargetRadius, landingRadius * coverage, 1e-6);
+            CHECK_NEAR(field.radialGrowthPerSecond, 11.0 * growthScale * reach, 1e-6);
+            CHECK_NEAR(field.radius, landingRadius * coverage - std::max(0.0, 5.5 - second * 11.0 * growthScale) * reach, 1e-6);
+            CHECK_NEAR(field.damagePerSecond, 24.5, 1e-6);
+        }
+        rig.world.destroy(pool);
     };
-    sample(4050, 50.0);
+    sample(1.0);
     rig.equip(1, "void_soap");
-    sample(4100, 60.0);
+    sample(1.10, 1.20);
     rig.equip(2, "void_soap", Rarity::Rare);
-    sample(4150, 76.0);
+    sample(1.248, 1.52);
     rig.equip(3, "void_soap", Rarity::Super);
-    sample(4200, 107.0);  // +20%, +32%, +62%; the combined +114% remains below the cap.
+    sample(1.936, 2.14);
     auto& slots = rig.world.get<Loadout>(rig.player).slots;
     slots[1] = slots[2] = slots[3] = {};
-    sample(4250, 50.0);
+    sample(1.0);
     rig.equip(1, "void_soap", Rarity::Super);
-    sample(4300, 81.0);
+    sample(1.688, 1.62);
     rig.equip(1, "void_soap", Rarity::Unique);
-    sample(4350, 84.0);
-    rig.equip(1, "void_soap", Rarity::Apex);
-    sample(4400, 87.0);
-    rig.equip(1, "void_soap", Rarity::PermanentHyper);
-    sample(4450, 87.0);
-    rig.equip(1, "void_soap", Rarity::Ascendant);
-    sample(4500, 90.0);
+    sample(1.868, 1.68);
+    for (auto rarity : {Rarity::Apex, Rarity::PermanentHyper, Rarity::Ascendant}) {
+        rig.equip(1, "void_soap", rarity);
+        sample(2.072, rarity == Rarity::Ascendant ? 1.80 : 1.74);
+    }
     auto& skills = rig.world.add<PlayerSkillTree>(rig.player).skills;
-    skills.set(SkillId::FluidReach, 0);
-    sample(4550, 99.0);
-    skills.set(SkillId::FluidReach, 1);
-    sample(4600, 108.0);
-    skills.set(SkillId::FluidReach, 2);
-    sample(4650, 117.0);
+    for (int level = 0; level < 3; ++level) {
+        skills.set(SkillId::FluidReach, level);
+        sample(2.072, 1.80, 1.0 + 0.1 * (level + 1));
+    }
     skills.set(SkillId::FluidReach, -1);
-    sample(4700, 90.0);
+    sample(2.072, 1.80);
 }
 
 TEST(arctic_spider_cave_egg_apex_hatches_ten_hyper_spiders) {
@@ -864,11 +898,10 @@ TEST(offensive_fluid_buffs_reach_the_new_edge_and_raise_actual_damage) {
     const auto& acid = rig.registry.petal(rig.registry.petalIndex("acid")).spill;
     const Vec2 centre{5300, 5300};
     CombatSystem::createSpill(rig.world, rig.player, centre, Rarity::Common, acid, 1.0, 0);
-    // Range assertions below describe the fully spread pool, not its birth frame.
-    for(int spread=1;spread<=7;++spread)rig.combatTick(4000+spread*50);
+    for (int tick = 1; tick <= 21; ++tick) rig.combatTick(4000 + tick * 50);
     const Entity tested = rig.mob(centre + Vec2{78, 0});
     const Entity outside = rig.mob(centre + Vec2{0, 100});
-    rig.combatTick(4050);
+    rig.combatTick(5100);
     CHECK_NEAR(rig.world.get<Health>(tested).current, 1000.0 - 24.5 * net::kTickSeconds, 1e-8);
     CHECK_NEAR(rig.world.get<Health>(outside).current, 1000.0, 1e-8);
 }
@@ -1027,12 +1060,54 @@ TEST(spill_build_multiple_soaps_extend_radius_past_the_old_cap) {
     rig.petals.foldModifiers(rig.world, rig.registry);
     const Vec2 at{5300, 5300};
     CombatSystem::createSpill(rig.world, rig.player, at, Rarity::Common, acid, 1.0, 0);
-    for(int spread=1;spread<=7;++spread)rig.combatTick(4000+spread*50);
+    for (int tick = 1; tick <= 36; ++tick) rig.combatTick(4000 + tick * 50);
     const Entity target = rig.mob(at + Vec2{190, 0});
     const Entity outside = rig.mob(at + Vec2{250, 0});
-    rig.combatTick(4050);
+    rig.combatTick(5850);
     CHECK_NEAR(rig.world.get<Health>(target).current, 1000.0 - 24.5 * net::kTickSeconds, 1e-8);
     CHECK_NEAR(rig.world.get<Health>(outside).current, 1000.0, 1e-8);
+}
+
+TEST(soap_accelerates_edge_contact_while_center_damage_is_constant) {
+    const int expectedFirstTick[] = {6, 3, 2};
+    for (int soaps = 0; soaps <= 2; ++soaps) {
+        ArcticBlast rig("basic");
+        for (int slot = 1; slot <= soaps; ++slot) rig.equip(slot, "void_soap");
+        rig.petals.foldModifiers(rig.world, rig.registry);
+        const auto& acid = rig.registry.petal(rig.registry.petalIndex("acid")).spill;
+        const Vec2 at{5500, 5500};
+        CombatSystem::createSpill(rig.world, rig.player, at, Rarity::Common, acid, 1.0, 0);
+        const Entity center = rig.mob(at);
+        const Entity edge = rig.mob(at + Vec2{78, 0});
+        int first = 0;
+        for (int tick = 1; tick <= 40; ++tick) {
+            rig.combatTick(4000 + tick * net::kTickMillis);
+            if (!first && rig.world.get<Health>(edge).current < 1000.0) first = tick;
+        }
+        CHECK_EQ(first, expectedFirstTick[soaps]);
+        const double damage = 1000.0 - rig.world.get<Health>(center).current;
+        CHECK_NEAR(damage, 49.0, 1e-8);
+        std::printf("common acid with %d Soap: edge hit %.2fs, center %.2f damage in 2s\n",
+                    soaps, first * net::kTickSeconds, damage);
+    }
+}
+
+TEST(soap_and_acid_tooltips_display_original_rate_units_in_both_languages) {
+    std::string error;
+    if (!loadContent(testsupport::dataDir(), error)) { CHECK(false); return; }
+    const auto previous = ui::language();
+    for (auto language : {ui::Language::En, ui::Language::Zh}) {
+        ui::setLanguage(language);
+        const auto hasLine = [&](const char* id, const char* expected) {
+            const auto lines = ui::petalTooltipLines(content().petalIndex(id), Rarity::Super, SkillSet{}, 1.0);
+            return std::any_of(lines.begin(), lines.end(), [&](const auto& line) { return line.text == expected; });
+        };
+        const bool zh = language == ui::Language::Zh;
+        CHECK(hasLine("void_soap", zh ? "液池扩散速度：+68.8%" : "Liquid spread speed: +68.8%"));
+        CHECK(hasLine("hot_water", zh ? "基础扩散速度：61.84/s" : "Base radial growth: 61.84/s"));
+        CHECK(hasLine("acid", zh ? "基础扩散速度：46/s" : "Base radial growth: 46/s"));
+    }
+    ui::setLanguage(previous);
 }
 
 TEST(zorr_mechanic_soap_widens_a_single_lava_pool) {
@@ -1042,11 +1117,10 @@ TEST(zorr_mechanic_soap_widens_a_single_lava_pool) {
         rig.petals.foldModifiers(rig.world,rig.registry);
         const auto& lava=rig.registry.petal(rig.registry.petalIndex("lava")).spill;
         CombatSystem::createSpill(rig.world,rig.player,{5400,5400},Rarity::Common,lava,1,0);
-    // Range assertions below describe the fully spread pool, not its birth frame.
-    for(int spread=1;spread<=7;++spread)rig.combatTick(4000+spread*50);
-        const Entity edge=rig.mob({5495,5400});
+        for (int tick = 1; tick <= 29; ++tick) rig.combatTick(4000 + tick * 50);
+        const Entity edge=rig.mob({5503,5400});
         const Entity outside=rig.mob({5540,5400});
-        rig.combatTick(5000);
+        rig.combatTick(5500);
         const auto burned=[&](Entity e) {
             const auto* status=rig.world.tryGet<Afflictions>(e);
             return status && !status->burns.empty();
@@ -1069,7 +1143,7 @@ TEST(zorr_mechanic_soap_expands_blood_without_changing_shred) {
         Query<GroundEffect>{rig.world}.each([&](Entity, GroundEffect& field) {
             if (field.kind != GroundEffectKind::Blood) return;
             ++patches;
-            CHECK_NEAR(field.radius, (soap ? 44.16 : 36.8) * 1.20 * (talent ? 1.30 : 1.0), 1e-6);
+            CHECK_NEAR(field.radius, (36.8 * 1.20 * (soap ? 1.20 : 1.0) - 5.0 + 0.35 * 10.0 * (soap ? 1.10 : 1.0)) * (talent ? 1.30 : 1.0), 1e-6);
             CHECK_NEAR(field.armorReduction,
                        rig.registry.petalStats(rig.registry.petalIndex("blood"), Rarity::Common).armorReduction,
                        1e-6);
@@ -1096,8 +1170,15 @@ TEST(acid_spill_hits_the_new_radius_with_the_tuned_damage) {
 
 TEST(zorr_mechanic_soap_applies_to_all_configured_liquid_fields) {
     ArcticBlast rig("basic");
-    for (const char* id : {"acid", "lava", "oil", "hot_water", "elixir", "acid_bomb", "lava_bomb"}) {
-        const auto& spill = rig.registry.petal(rig.registry.petalIndex(id)).spill;
+    struct Rates { const char* id; double common; double super; double hyper; };
+    for (const Rates row : {Rates{"acid", 11, 46, 56}, {"lava", 11, 46, 56},
+                            {"oil", 11, 46, 71}, {"hot_water", 5, 61.84, 98.96},
+                            {"elixir", 15, 15, 15}, {"acid_bomb", 10, 41.5, 50.5},
+                            {"lava_bomb", 10, 41.5, 50.5}, {"latrine", 9, 40.5, 49.5},
+                            {"arctic_nitrogen", 10, 66, 82}}) {
+        const auto& spill = rig.registry.petal(rig.registry.petalIndex(row.id)).spill;
+        CHECK_NEAR(spill.growthPerSecond(Rarity::Super), row.super, 1e-6);
+        CHECK_NEAR(spill.growthPerSecond(Rarity::Apex), row.hyper, 1e-6);
         CHECK(spill.kind != SpillKind::None);
         CHECK(spill.radius > 0.0);
         for (bool soap : {false, true}) {
@@ -1105,14 +1186,16 @@ TEST(zorr_mechanic_soap_applies_to_all_configured_liquid_fields) {
             else rig.world.get<Loadout>(rig.player).slots[1] = {};
             rig.petals.foldModifiers(rig.world, rig.registry);
             CombatSystem::createSpill(rig.world, rig.player, {5000,5000}, Rarity::Common, spill, 1.0, 0);
-    // Range assertions below describe the fully spread pool, not its birth frame.
-    for(int spread=1;spread<=7;++spread)rig.combatTick(4000+spread*50);
+            for (int tick = 1; tick <= 7; ++tick) rig.combatTick(4000 + tick * 50);
             std::vector<Entity> fields;
             Query<GroundEffect>{rig.world}.collect(fields);
             CHECK(fields.size() == 1);
             for (const auto field : fields) {
                 const auto& effect = rig.world.get<GroundEffect>(field);
-                CHECK_NEAR(effect.radius, spill.radius * 1.20 * (isOffensiveSpill(spill.kind) ? 1.10 : 1.0) * (soap ? 1.2 : 1.0), 1e-6);
+                const double maximum = spillBaseRadius(spill, Rarity::Common) * (soap ? 1.20 : 1.0);
+                const double reserve = std::min(0.24 * maximum, row.common * 0.5);
+                CHECK_NEAR(effect.spreadTargetRadius, maximum, 1e-6);
+                CHECK_NEAR(effect.radius, maximum - std::max(0.0, reserve - 0.35 * row.common * (soap ? 1.10 : 1.0)), 1e-6);
                 CHECK_NEAR(effect.damagePerSecond, spill.strength * fluidDamageScale(spill.kind), 1e-6);
                 rig.world.destroy(field);
             }
@@ -1469,7 +1552,7 @@ TEST(fluid_spills_reach_buffed_range_and_record_training_damage) {
     if (field == NULL_ENTITY) return;
     for(int spread=1;spread<=7;++spread)rig.combatTick(5700+spread*50);
     const auto radius = rig.world.get<GroundEffect>(field).radius;
-    CHECK_NEAR(radius, 57.5 * 1.62 * 1.30 * 1.20 * 1.10, 1e-6);
+    CHECK_NEAR(radius, (57.5 * 1.20 * 1.10 * 1.62 - 5.5 + std::min(5.5, 0.35 * 11 * 1.688)) * 1.30, 1e-6);
     const auto centre = rig.world.get<Transform>(field).position;
     const auto wild = rig.mob(centre + Vec2{100, 0});
     const auto outside = rig.mob(centre + Vec2{0, 500});
@@ -1505,7 +1588,7 @@ TEST(fluid_spills_quality_grows_and_soap_stacks_with_talent) {
     CHECK(zone != NULL_ENTITY);
     if (zone == NULL_ENTITY) return;
     for(int spread=1;spread<=7;++spread)rig.combatTick(5700+spread*50);
-    CHECK_NEAR(rig.world.get<GroundEffect>(zone).radius, 92.5 * 2.24 * 1.30 * 1.20 * 1.10, 1e-6);
+    CHECK_NEAR(rig.world.get<GroundEffect>(zone).radius, (92.5 * 1.20 * 1.10 * 2.24 - 23.0 + std::min(23.0, 0.35 * 46 * 2.376)) * 1.30, 1e-6);
     const Vec2 at = rig.world.get<Transform>(zone).position;
     const auto near = rig.mob(at + Vec2{0, 200});
     const auto far = rig.mob(at + Vec2{0, 375});
@@ -1606,26 +1689,24 @@ TEST(reference_elemental_equipment_restores_resources_and_removes_bonuses_on_une
 }
 
 TEST(reference_elemental_contact_applies_both_poison_and_burn) {
-    for (const std::size_t hits : {1u, 3u}) {
-        ArcticBlast rig("void_elemental");
-        const auto petals = rig.liveIn(0);
-        CHECK_EQ(petals.size(), 3u);
-        if (petals.size() != 3u) return;
-        const Vec2 at{5300, 5300};
-        const Entity victim = rig.mob(at);
-        for (std::size_t i = 0; i < hits; ++i) rig.world.get<Transform>(petals[i]).position = at;
-        rig.combatTick(4050);
-        const auto* effects = rig.world.tryGet<Afflictions>(victim);
-        CHECK(effects);
-        if (!effects) return;
-        CHECK_EQ(effects->poisonStacks.size(), hits);
-        CHECK_EQ(effects->burns.size(), hits);
-        CHECK_NEAR(effects->poisonPerSecond, 10.0 * hits / 3.0, 1e-6);
-        double burnRate = 0.0;
-        for (const auto& burn : effects->burns) burnRate += burn.perSecond;
-        CHECK_NEAR(burnRate, 7.0 * hits / 3.0, 1e-6);
-        CHECK_NEAR(1000.0 - rig.world.get<Health>(victim).current, 47.0 * hits / 3.0, 1e-6);
-    }
+    ArcticBlast rig("void_elemental");
+    const auto petals = rig.liveIn(0);
+    CHECK_EQ(petals.size(), 1u);
+    if (petals.size() != 1u) return;
+    const Vec2 at{5300, 5300};
+    const Entity victim = rig.mob(at);
+    rig.world.get<Transform>(petals.front()).position = at;
+    rig.combatTick(4050);
+    const auto* effects = rig.world.tryGet<Afflictions>(victim);
+    CHECK(effects);
+    if (!effects) return;
+    CHECK_EQ(effects->poisonStacks.size(), 1u);
+    CHECK_EQ(effects->burns.size(), 1u);
+    CHECK_NEAR(effects->poisonPerSecond, 10.0, 1e-6);
+    if (!effects->burns.empty()) CHECK_NEAR(effects->burns.front().perSecond, 7.0, 1e-6);
+    CHECK(effects->frostSpeed(4050) < 1.0);
+    CHECK_EQ(effects->frostSpeed(5050), 1.0);
+    CHECK_NEAR(1000.0 - rig.world.get<Health>(victim).current, 47.0, 1e-6);
 }
 
 TEST(reference_scar_charges_before_teleporting_in_the_same_realm) {
@@ -2052,7 +2133,7 @@ TEST(reference_latrine_creates_breakable_stacking_poison_and_soap_applies) {
   CHECK_NEAR(r.world.get<Afflictions>(mob).poisonPerSecond,15.625,1e-6);
  }
  int fields=0;Query<GroundEffect,Health>{r.world}.each([&](Entity,GroundEffect& f,Health& hp){
-  if(f.kind!=GroundEffectKind::LatrineSpill)return;++fields;CHECK_NEAR(hp.max,5,1e-6);CHECK_NEAR(f.radius,31.68,1e-6);
+  if(f.kind!=GroundEffectKind::LatrineSpill)return;++fields;CHECK_NEAR(hp.max,5,1e-6);CHECK_NEAR(f.radius,31.68 - std::max(0.0, 4.5 - 9.9 * f.spreadAgeSeconds),1e-6);
  });CHECK_EQ(fields,2);
 }
 TEST(reference_silk_detaches_from_ring_tracks_one_target_and_frees_reload) {
@@ -2217,8 +2298,8 @@ TEST(reference_nitrogen_places_breakable_non_damaging_fluid_and_freezes_only_hos
  auto* status=r.world.tryGet<Afflictions>(mob);CHECK(status!=nullptr);if(status)CHECK_NEAR(status->frostSpeed(5000),.6,1e-6);
  CHECK_NEAR(r.world.get<Health>(mob).current,1000,1e-6);CHECK(!r.world.has<Afflictions>(r.player) || r.world.get<Afflictions>(r.player).frostSpeed(5000)==1);
  for(int tick=1;tick<=7;++tick)r.combatTick(5000+tick*50);
- CHECK_NEAR(r.world.get<GroundEffect>(pool).radius,24.0,1e-6);
- CHECK_NEAR(r.world.get<Body>(pool).radius,24.0,1e-6);
+ CHECK_NEAR(r.world.get<GroundEffect>(pool).radius,24.0 - 5.0 + 0.40 * 10.0,1e-6);
+ CHECK_NEAR(r.world.get<Body>(pool).radius,24.0 - 5.0 + 0.40 * 10.0,1e-6);
 }
 TEST(reference_banana_sticks_to_one_target_without_releasing_its_ring_slot) {
  ArcticBlast r("arctic_banana");auto live=r.liveIn(0);CHECK(!live.empty());if(live.empty())return;Entity petal=live.front();
@@ -2922,7 +3003,7 @@ TEST(fluid_motion_bomb_collision_pools_expand_without_repeated_birth) {
   const double target=r.world.get<GroundEffect>(pool).spreadTargetRadius;
   CHECK(r.world.get<GroundEffect>(pool).radius<target);
   for(int tick=1;tick<=8;++tick)r.combatTick(4050+tick*50);
-  CHECK_NEAR(r.world.get<GroundEffect>(pool).radius,target,1e-6);
+  CHECK_NEAR(r.world.get<GroundEffect>(pool).radius,target - 5.0 + 10.0 * r.world.get<GroundEffect>(pool).spreadAgeSeconds,1e-6);
   CHECK(r.world.get<Transform>(pool).position.y>origin.y);
   int count=0;Query<GroundEffect>{r.world}.without<Dead>().each([&](Entity,GroundEffect& f){if(isFluidField(f.kind))++count;});CHECK_EQ(count,1);
   r.world.get<Transform>(r.player).realm=Realm::Arena;r.combatTick(4500);CHECK(r.world.has<Dead>(pool)||!r.world.isAlive(pool));
@@ -3118,7 +3199,7 @@ TEST(fluid_motion_blood_spreads_before_shred_and_prunes_after_crossing) {
     rig.combatTick(6050);
     CHECK_NEAR(CombatSystem::effectiveArmor(rig.world, mob, 6050), 100.0, 1e-8);
     for (int now = 6100; now <= 6350; now += 50) rig.combatTick(now);
-    CHECK_NEAR(rig.world.get<GroundEffect>(pool).radius, radius, 1e-8);
+    CHECK_NEAR(rig.world.get<GroundEffect>(pool).radius, radius - 5.0 + 3.5, 1e-8);
     CHECK(rig.world.get<Transform>(pool).position.x > at.x);
     const double shred = rig.registry.petalStats(rig.registry.petalIndex("blood"),
                                                  Rarity::Common).armorReduction;

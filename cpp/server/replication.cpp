@@ -697,6 +697,7 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
                   "the wire caps the slot list at the number of orbiting slots");
     const Loadout* viewerLoadout = world.tryGet<Loadout>(viewer);
     const PetalSlotState* viewerSlots = world.tryGet<PetalSlotState>(viewer);
+    const PlayerModifiers* viewerModifiers = world.tryGet<PlayerModifiers>(viewer);
 
     // Self-hatching eggs can already be on the ring while their summons
     // are still charging. Expose that clock through the existing slot timer.
@@ -758,6 +759,14 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
             out.counter = static_cast<std::uint16_t>(
                 std::clamp(std::ceil(live->counter), 0.0,
                            static_cast<double>(net::kNoSlotCounter - 1)));
+        }
+
+        // The owner sees the same per-tier bonus used by contact damage, including
+        // resolved Mimics. A reloading bone cannot land that hit.
+        if (viewerModifiers && live && live->populated && !slot.broken && live->equippedIndex == slot.configIndex &&
+            live->configIndex < content().petalCount() && content().petal(live->configIndex).id == "magic_bone") {
+            out.counter = static_cast<std::uint16_t>(std::lround(
+                100.0 * viewerModifiers->magicBoneDamageBonus[ladderIndex(live->rarity)]));
         }
 
         // A slot with a counter is reported every snapshot, even sitting at

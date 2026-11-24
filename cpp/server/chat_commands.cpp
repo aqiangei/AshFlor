@@ -1103,9 +1103,9 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
             out("当前没有可用的Mark返程；死亡后可正常复活或返回菜单。");
             return true;
         }
-        if (clockMillis_ < pads->markHoldUntilMillis) {
+        if (const auto* hold = activeMarkHold(session)) {
             out("Mark 暂不可返回，还剩 " + std::to_string(static_cast<int>(std::ceil(
-                (pads->markHoldUntilMillis - clockMillis_) / 1000.0))) + " 秒。");
+                (hold->holdUntilMillis - wallClockMillis_) / 1000.0))) + " 秒。");
             return true;
         }
         const RealmPoint origin = pads->markOrigin;

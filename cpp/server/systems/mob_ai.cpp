@@ -3258,7 +3258,7 @@ void MobAiSystem::placeSilverfishLoads(World& world, const Terrain& terrain) {
 void MobAiSystem::run(World& world, const Terrain& terrain, const SpatialGrid& grid,
                       const std::vector<RealmPoint>& activePlayers,
                       double nowMillis, double dt, CommandBuffer& commands,
-                      const SpatialGrid* playerGrid) {
+                      const SpatialGrid* playerGrid, double excessVolleyMillis) {
     // Wild scans only read flowers. Use a view with the same positions,
     // footprints and bucket order but without the pets' prey candidates.
     trainingZones_ = refreshTrainingProtection(world, content());
@@ -3336,6 +3336,13 @@ void MobAiSystem::run(World& world, const Terrain& terrain, const SpatialGrid& g
         if (at == nullptr || type == nullptr) continue;
         const Drive drive = wildDriveFor(type->configIndex, type->rarity);
         auto& brain = world.get<MobAi>(self);
+        if (excessVolleyMillis > 0.0 && drive.shoots && brain.lastProjectileMillis != 0.0) {
+            brain.lastProjectileMillis += excessVolleyMillis;
+            // Replication compares this deadline against world time to draw
+            // the unloaded stinger. Only extend a reload that was pending.
+            if (brain.stingLoadedAtMillis > nowMillis - excessVolleyMillis - dt * 1000.0)
+                brain.stingLoadedAtMillis += excessVolleyMillis;
+        }
         const bool wasSleeping = brain.sleeping;
         brain.sleeping = false;
         const bool active = fullSimulation_ || alwaysSimulatesAsBoss(world, self, type->rarity) ||

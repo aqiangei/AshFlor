@@ -338,7 +338,7 @@ private:
     /// and removed, its temporary admin dropped, and nothing left that names
     /// the account. Touches no token -- revoking those is the caller's
     /// decision.
-    void noteAccountLastSeen(const Session&);
+    void recordSessionDeparture(const Session&);
     void signOut(Session&);
     /// Called by a login, a registration and a resume once the credential has
     /// checked out, before `incomingUserId`'s state is installed on the socket.
@@ -1528,7 +1528,7 @@ private:
     mutable int botMapCeiling_ = -1;
 
     // -- tick phases -------------------------------------------------------
-    void runSystems(double nowMillis, double dt);
+    void runSystems(double nowMillis, double dt, double excessVolleyMillis);
     void applyVoidGravity(double dt, bool mobsOnly = false);
 
     /// Moves what the loot system handed out into the owning accounts.
@@ -1679,8 +1679,15 @@ private:
     std::unordered_map<net::ConnectionId, Session> sessions_;
     std::uint64_t nextBulkCraftTicket_ = 0;
     double nextAutoSquadMillis_ = 0.0;
-    // Account-keyed protection survives bodies/reconnects; never persisted.
-    std::unordered_map<std::string, double> markProtectedUntil_;
+    struct MarkStatus {
+        double protectedUntilMillis = 0.0;
+        double holdUntilMillis = 0.0;
+        RealmPoint origin;
+        RealmPoint destination;
+    };
+    const MarkStatus* activeMarkHold(const Session&) const;
+    // Account-keyed during this server process, so leaving or dying cannot clear a hold.
+    std::unordered_map<std::string, MarkStatus> markStatus_;
     std::unordered_map<net::ConnectionId, ClientView> views_;
     std::unordered_map<net::ConnectionId, ClientView*> deferredPickupViews_;
 

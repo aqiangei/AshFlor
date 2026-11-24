@@ -69,6 +69,9 @@ struct NotificationLayout {
     double width = -1.0;
     std::uint32_t revision = 0;
     Language language = Language::En;
+    std::string username;
+    bool hideOtherPh = false;
+    std::vector<std::size_t> visible;
     std::vector<std::vector<std::string>> lines;
     double height = 0;
 };
@@ -88,6 +91,8 @@ struct FeedState {
     int unread = 0;
     std::uint32_t countedRevision = 0;
     std::size_t countedMarks = 0;
+    std::string countedUsername;
+    bool countedHideOtherPh = false;
     /// Whether `unread` has ever been computed. Revision 0 is a real value --
     /// it is what a client that has not yet been sent a page holds -- so the
     /// cache cannot key on it alone.
@@ -138,6 +143,13 @@ struct ThumbDrag {
 ThumbDrag& thumbDrag() {
     static ThumbDrag drag;
     return drag;
+}
+
+bool hidesNotification(const NotificationEntry& notice, const NetClient& net,
+                       const ClientSettings& settings) {
+    return settings.hideOtherPhAnnouncements &&
+           notice.kind == net::NotificationKind::PermanentHyperForge &&
+           isOtherPermanentHyperCraft(notice.message, net.profile().username);
 }
 
 std::uint32_t stripeColor(const NotificationEntry& notice, bool isRead) {
@@ -361,19 +373,26 @@ bool NotificationsPanel::render(MenuContext& ctx) {
 
     const auto measure = [&](NotificationLayout& layout, double width) {
         if (layout.width == width && layout.revision == ctx.net.notificationsRevision() &&
-            layout.language == language()) return;
+            layout.language == language() && layout.hideOtherPh == ctx.settings.hideOtherPhAnnouncements &&
+            layout.username == ctx.net.profile().username) return;
         layout.width = width;
         layout.revision = ctx.net.notificationsRevision();
         layout.language = language();
+        layout.hideOtherPh = ctx.settings.hideOtherPhAnnouncements;
+        layout.username = ctx.net.profile().username;
+        layout.visible.clear();
         layout.lines.clear();
         layout.lines.reserve(entries.size());
         layout.height = 2.0 * kPadding;
-        for (const NotificationEntry& notice : entries) {
+        for (std::size_t i = 0; i < entries.size(); ++i) {
+            const auto& notice = entries[i];
+            if (hidesNotification(notice, ctx.net, ctx.settings)) continue;
+            layout.visible.push_back(i);
             layout.lines.push_back(wrapMessage(localizeNotificationText(notice.message, notice.petalId), width));
             layout.height += cardHeight(layout.lines.back().size()) + kCardGap;
         }
         if (hasMore) layout.height += 30.0;
-        else if (!entries.empty()) layout.height -= kCardGap;
+        else if (!layout.visible.empty()) layout.height -= kCardGap;
     };
     measure(state.wide, wideText);
     const bool needsScrollbar = state.wide.height > viewport;
@@ -448,7 +467,7 @@ bool NotificationsPanel::render(MenuContext& ctx) {
     faint.fill = kPaper;
     faint.strokeWidth = 0;
 
-    if (entries.empty()) {
+    if (layout.visible.empty() && !hasMore) {
         TextStyle empty = faint;
         empty.align = Align::Centre;
         textAtAlpha(canvas, loading ? trEnZh("Loading...", "加载中…") :
@@ -459,8 +478,8 @@ bool NotificationsPanel::render(MenuContext& ctx) {
         // it was posted (NotificationEntry::timestampMillis), and "3 days ago"
         // is measured against that.
         const double now = static_cast<double>(wallClockMillis());
-        for (std::size_t i = 0; i < entries.size(); ++i) {
-            const NotificationEntry& notice = entries[i];
+        for (std::size_t i = 0; i < layout.visible.size(); ++i) {
+            const NotificationEntry& notice = entries[layout.visible[i]];
             const auto& lines = layout.lines[i];
             const double height = cardHeight(lines.size());
             const Rect card{view.x, contentY, entryWidth, height};
@@ -555,15 +574,18 @@ int notificationsUnread(const NetClient& net, const ClientSettings& settings) {
     // Both halves of the answer: a page landing changes the entries, and
     // reading a card changes the marks. Nothing else can move the count.
     if (state.counted && state.countedRevision == net.notificationsRevision() &&
-        state.countedMarks == read.size()) {
+        state.countedMarks == read.size() && state.countedHideOtherPh == settings.hideOtherPhAnnouncements &&
+        state.countedUsername == net.profile().username) {
         return state.unread;
     }
     state.counted = true;
     state.countedRevision = net.notificationsRevision();
     state.countedMarks = read.size();
+    state.countedHideOtherPh = settings.hideOtherPhAnnouncements;
+    state.countedUsername = net.profile().username;
     state.unread = 0;
     for (const NotificationEntry& notice : net.notifications()) {
-        if (read.count(notice.id) == 0) ++state.unread;
+        if (!hidesNotification(notice, net, settings) && read.count(notice.id) == 0) ++state.unread;
     }
     return state.unread;
 }

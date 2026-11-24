@@ -37,11 +37,28 @@ struct MarkFixture {
     void send(net::Connection& connection, ByteWriter& w) {
         ByteReader reader(w.data(), w.size()); server.onMessage(connection, reader); CHECK(reader.ok());
     }
+    void refreshTarget() {
+        Peer::flushCommands(server);
+        target = NULL_ENTITY;
+        Query<PlayerTag, PlayerAccount> players{server.world()};
+        players.each([&](Entity e, PlayerTag&, PlayerAccount& account) {
+            if (account.connection == victim.id()) target = e;
+        });
+        CHECK(target != NULL_ENTITY);
+    }
+    void command(net::ClientMessage action) {
+        ByteWriter request;
+        request.u8(static_cast<std::uint8_t>(action));
+        send(victim, request);
+    }
     void join(net::Connection& connection) {
         server.onConnect(connection);
         ByteWriter hello; hello.u8(static_cast<std::uint8_t>(net::ClientMessage::Hello));
         hello.u16(net::kProtocolVersion); hello.u32(content().contentHash()); send(connection, hello);
         ByteWriter guest; guest.u8(static_cast<std::uint8_t>(net::ClientMessage::RegisterGuest)); send(connection, guest);
+        enterGarden(connection);
+    }
+    void enterGarden(net::Connection& connection) {
         ByteWriter join; join.u8(static_cast<std::uint8_t>(net::ClientMessage::JoinGame));
         join.u16(1280); join.u16(720); join.str("garden:spawn"); join.str("Mark QA"); join.boolean(false); send(connection, join);
     }
@@ -79,7 +96,7 @@ TEST(dark_mark_normal_transports_revives_returns_and_preserves_progress) {
 }
 
 TEST(dark_mark_hyper_transports_without_imprisonment) {
-    // H Mark only teleports — no 30s lockout on /mark-return or door teleports.
+    // The legacy H tier still teleports without an Apex hold.
     MarkFixture f; if (!f.ready) return;
     auto& w = f.server.world(); const Transform before = w.get<Transform>(f.target);
     f.kill(); CHECK(Peer::applyMark(f.server, f.target, f.owner, Rarity::Apex));
@@ -93,6 +110,85 @@ TEST(dark_mark_hyper_transports_without_imprisonment) {
     Peer::markTeleport(f.server, f.target, before.realm, before.position);
     CHECK(w.get<Transform>(f.target).realm == before.realm);
     CHECK(hel != before.realm);
+}
+
+TEST(apex_marks_hold_all_destinations_for_two_wall_clock_minutes) {
+    struct Variant {
+        const char* petal;
+        const char* map;
+        double chargeMillis;
+    };
+    const Variant variants[] = {
+        {"dark_mark", "hel", 2000.0},
+        {"void_mark", "hel", 2000.0},
+        {"void_void_mark", "zorr_void", 2000.0},
+        {"arctic_frozen_mark", "zorr_arctic", 500.0},
+    };
+    for (const auto& variant : variants) {
+        MarkFixture f;
+        if (!f.ready) return;
+        auto& w = f.server.world();
+        auto& petals = Peer::markPetals(f.server);
+        CommandBuffer commands{w};
+        const auto index = content().petalIndex(variant.petal);
+        auto& slot = w.get<Loadout>(f.owner).slots[0];
+        slot.configIndex = index;
+        slot.rarity = Rarity::Ascendant;
+        petals.run(w, content(), 1000000, 0, commands);
+        petals.run(w, content(), 1021000, 0, commands);
+        Entity mark = NULL_ENTITY;
+        for (const Entity e : w.get<Loadout>(f.owner).spawned) {
+            if (w.get<PetalInstance>(e).configIndex == index) mark = e;
+        }
+        CHECK(mark != NULL_ENTITY);
+        if (!mark) continue;
+
+        f.kill();
+        const Transform dismissedFrom = w.get<Transform>(f.owner);
+        w.get<Transform>(f.target).position = dismissedFrom.position;
+        w.get<Transform>(mark).position = dismissedFrom.position;
+        w.get<PlayerInput>(f.owner).current.flags = net::InputAttack;
+        Peer::markClock(f.server, 1021000);
+        petals.run(w, content(), 1021000, 0, commands);
+        CHECK_EQ(w.get<PetalInstance>(mark).markTarget, f.target);
+        const double landingTime = 1021000 + variant.chargeMillis;
+        CHECK_NEAR(w.get<PetalInstance>(mark).markReadyAtMillis, landingTime, 0);
+        Peer::markClock(f.server, landingTime);
+        Peer::markWallClock(f.server, 2000000);
+        petals.run(w, content(), landingTime, 0, commands);
+        CHECK(isStanding(w, f.target));
+        const Realm destination = w.get<Transform>(f.target).realm;
+        const auto* map = f.server.worldMaps().forRealm(destination);
+        CHECK(map && map->id() == variant.map);
+        const auto* pads = w.tryGet<TeleporterState>(f.target);
+        CHECK(pads != nullptr);
+        if (!pads) continue;
+        CHECK_NEAR(pads->markHoldUntilMillis, 2120000, 0);
+
+        Peer::markWallClock(f.server, 2119999);
+        f.returnCommand();
+        Peer::markTeleport(f.server, f.target, dismissedFrom.realm, dismissedFrom.position);
+        CHECK(w.get<Transform>(f.target).realm == destination);
+
+        f.kill();
+        f.command(net::ClientMessage::Respawn);
+        f.refreshTarget();
+        CHECK(isStanding(w, f.target));
+        CHECK(w.get<Transform>(f.target).realm == destination);
+
+        f.command(net::ClientMessage::LeaveGame);
+        f.enterGarden(f.victim);
+        f.refreshTarget();
+        CHECK(w.get<Transform>(f.target).realm == destination);
+        CHECK_NEAR(w.get<TeleporterState>(f.target).markHoldUntilMillis, 2120000, 0);
+        f.returnCommand();
+        CHECK(w.get<Transform>(f.target).realm == destination);
+
+        Peer::markWallClock(f.server, 2120000);
+        f.returnCommand();
+        CHECK(w.get<Transform>(f.target).realm == dismissedFrom.realm);
+        CHECK(distanceSq(w.get<Transform>(f.target).position, dismissedFrom.position) < 1);
+    }
 }
 
 TEST(void_mark_can_target_a_corpse_near_the_flower_and_return_immediately) {

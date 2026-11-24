@@ -1342,6 +1342,7 @@ PetalConfig parsePetal(Ctx& ctx, const std::string& id, const Json& src,
         if (row["knockback"].isNumber()) target.knockback = ctx.range(row,"knockback",0.0,-1e30,1e30);
         if (row["overhealShield"].isNumber()) target.overhealShield = ctx.range(row,"overhealShield",0.0,0.0,1e30);
         if (row["healBonus"].isNumber()) target.healBonus = ctx.range(row,"healBonus",0.0,0.0,1e30);
+        if (row.contains("petCount")) target.petCount = ctx.integer(row, "petCount", 1, 1, 64);
         if (row["count"].isNumber()) target.count = ctx.range(row,"count",1.0,0.0,64.0);
         if (row["luck"].isNumber()) target.luck = ctx.range(row,"luck",0.0,0.0,1e30);
         if (row["magnetism"].isNumber()) target.magnetism = ctx.range(row,"magnetism",0.0,0.0,1e30);
@@ -1452,6 +1453,10 @@ PetalConfig parsePetal(Ctx& ctx, const std::string& id, const Json& src,
         else if (kind == "nitrogen") p.spill.kind = SpillKind::Nitrogen;
         else ctx.warn("unknown spill kind '" + kind + "'");
         p.spill.onHit = ctx.boolean(spill, "onHit");
+        p.spill.spreadPerSecond = ctx.range(spill, "spreadPerSecond", 0.0, 0.0, kMaxBaseStat);
+        p.spill.spreadPerTier = ctx.range(spill, "spreadPerTier", 0.0, 0.0, kMaxBaseStat);
+        p.spill.spreadPerTierSquared = ctx.range(spill, "spreadPerTierSquared", 0.0, 0.0, kMaxBaseStat);
+        p.spill.spreadAboveSuper = ctx.range(spill, "spreadAboveSuper", 0.0, 0.0, kMaxBaseStat);
         p.spill.health = ctx.range(spill,"health",0.0,0.0,kMaxBaseStat);
         p.spill.radius = ctx.range(spill, "radius", 0.0, 0.0, 600.0);
         p.spill.durationMillis = ctx.range(spill, "durationMs", 0.0, 0.0, 10000.0);
@@ -2067,6 +2072,7 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
         const auto boost = [](double& value, double factor) {
             if (value > 0.0) value *= factor;
         };
+        if (c.id == "golden_leaf") stats.reloadCut += 0.025;
         boost(stats.damage, kAscendantPetalDamageScale);
         boost(stats.bodyDamage, kAscendantPetalDamageScale);
         boost(stats.critDamage, kAscendantPetalDamageScale);

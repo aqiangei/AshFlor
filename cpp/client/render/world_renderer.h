@@ -484,7 +484,7 @@ private:
     /// the tier below it, and (for a dummy) DPS under that. A pet's tier row
     /// also says "Summon"; an NPC's bar is its invulnerable one; a chain's
     /// body bead wears the bar alone.
-    void drawMobLabel(Canvas&, const Camera&, const MobDraw&, const WorldView*) const;
+    void drawMobLabel(Canvas&, const Camera&, const MobDraw&, const WorldView*, bool compact) const;
     /// The digger: a grey flower carrying a spinning cutter, never its SVG.
     void drawDiggerMob(Canvas&, const MobDraw&, double radius, double timeSeconds) const;
     /// A mob that carries an orbiting ring of petals: the glitch flower, whose

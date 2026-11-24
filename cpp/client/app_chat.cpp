@@ -23,6 +23,7 @@
 // answered by the server.
 
 #include "client/app.h"
+#include "client/ui/chat_i18n.h"
 
 #include <algorithm>
 #include <cctype>
@@ -1291,16 +1292,19 @@ void App::drawChat(Canvas& canvas, double time) {
 
         const auto& settings = menus_.settings();
         const std::uint8_t shown = settings.chatChannels;
-        // The two unused bits also key the transcript's cached height.
         static_assert(kChatChannelsAll == 0x3f);
-        const std::uint8_t filters = shown | (settings.hideMobAnnouncements ? 0x40 : 0) |
-                                     (settings.hideCraftAnnouncements ? 0x80 : 0);
+        const std::uint16_t filters = shown | (settings.hideMobAnnouncements ? 0x40 : 0) |
+            (settings.hideCraftAnnouncements ? 0x80 : 0) | (settings.hideOtherPhAnnouncements ? 0x100 : 0);
+        const auto& username = net_.profile().username;
         const auto passes = [&](const ChatLine& line) {
             if (line.channel == net::ChatChannel::System && line.author.empty()) {
                 // These prefixes are attached by the server and survive localization.
                 if (settings.hideMobAnnouncements && line.text.rfind("<b data-mob='", 0) == 0)
                     return false;
-                if (settings.hideCraftAnnouncements && line.text.rfind("<b data-petal='", 0) == 0)
+                if (line.text.rfind("<b data-petal='", 0) == 0 &&
+                    (settings.hideCraftAnnouncements ||
+                     (settings.hideOtherPhAnnouncements &&
+                      ui::isOtherPermanentHyperCraft(line.text, username))))
                     return false;
             }
             const int tab = chatTabOf(line.channel);
@@ -1321,11 +1325,13 @@ void App::drawChat(Canvas& canvas, double time) {
                 return height;
             };
             if (chatHeightSequence_ != net_.chatSequence() || chatMeasuredCount_ != net_.chat().size() ||
-                chatMeasuredWidth_ != column.w || chatMeasuredFilters_ != filters) {
+                chatMeasuredWidth_ != column.w || chatMeasuredFilters_ != filters ||
+                chatMeasuredUsername_ != username) {
                 chatHeightSequence_ = net_.chatSequence();
                 chatMeasuredCount_ = net_.chat().size();
                 chatMeasuredWidth_ = column.w;
                 chatMeasuredFilters_ = filters;
+                chatMeasuredUsername_ = username;
                 chatMeasuredHeight_ = measure(column.w);
                 chatMeasuredNarrowHeight_.reset();
             }

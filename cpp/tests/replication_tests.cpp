@@ -1804,6 +1804,63 @@ TEST(an_untouched_loadout_costs_the_snapshot_one_byte) {
     CHECK_EQ(withOne - bare, std::size_t(6));
 }
 
+TEST(magic_bone_owner_snapshot_tracks_ready_slots_and_resolved_mimics) {
+    std::string error;
+    CHECK(loadContent(testsupport::dataDir(), error));
+    Fixture f;
+    const auto bone = content().petalIndex("magic_bone");
+    const auto mimic = content().petalIndex("mimic");
+    const auto orb = content().petalIndex("mana_orb");
+    f.world.add<Faction>(f.viewer, Faction{Team::Players, true});
+    f.world.add<PetalRing>(f.viewer);
+    f.world.add<PlayerModifiers>(f.viewer);
+    auto& slots = f.world.add<Loadout>(f.viewer).slots;
+    slots[0] = {orb, Rarity::Apex};
+    for (int i = 1; i <= 6; ++i) slots[i] = {bone, Rarity::Common};
+    slots[7] = {mimic, Rarity::Common};
+    slots[kLoadoutActiveSlots] = {bone, Rarity::Common};
+
+    CommandBuffer commands{f.world};
+    PetalSystem petals;
+    WorldView client;
+    const auto step = [&](double now) {
+        petals.run(f.world, content(), now, net::kTickSeconds, commands);
+        commands.flush();
+    };
+    step(1000);
+    f.tick(client, 1, 1000);
+    CHECK_EQ(client.self().slotCounter[1], -1);
+    for (int tick = 1; tick <= 160; ++tick) {
+        auto& mana = f.world.get<ManaPool>(f.viewer);
+        mana.current = mana.max;
+        step(1000 + tick * 50);
+    }
+    f.tick(client, 2, 9000);
+    for (int i = 1; i <= 7; ++i) CHECK_EQ(client.self().slotCounter[i], 300);
+    CHECK_EQ(client.self().slotCounter[0], -1);
+    const auto& state = f.world.get<PetalSlotState>(f.viewer);
+    CHECK_EQ(state.slots[7].configIndex, bone);
+    Query<PetalInstance, Health>{f.world}.each([&](Entity, PetalInstance& p, Health& hp) {
+        if (p.owner == f.viewer && p.slot == 1) hp.current = 0;
+    });
+    step(9050);
+    f.tick(client, 3, 9050);
+    CHECK_EQ(client.self().slotCounter[1], -1);
+    CHECK_EQ(client.self().slotCounter[7], 250);
+    for (int i = 2; i < 7; ++i) f.world.get<Loadout>(f.viewer).slots[i] = {};
+    f.world.get<Loadout>(f.viewer).slots[7] = {bone, Rarity::Common};
+    // Let just the last actual bone form.
+    f.world.get<Loadout>(f.viewer).slots[1] = {};
+    for (int tick = 1; tick <= 160; ++tick) {
+        auto& mana = f.world.get<ManaPool>(f.viewer);
+        mana.current = mana.max;
+        step(9050 + tick * 50);
+    }
+    f.tick(client, 4, 17050);
+    CHECK_EQ(client.self().slotCounter[7], 0);
+    CHECK_EQ(client.self().slotCounter[1], -1);
+}
+
 TEST(a_sponge_reports_the_damage_it_is_still_holding) {
     // The number the bar prints inside the slot's top border. The petal system
     // derives it; the snapshot only carries it, rounded UP so a sliver of a

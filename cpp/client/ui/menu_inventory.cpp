@@ -304,6 +304,17 @@ std::string exactNumber(double value) {
     return buffer;
 }
 
+std::string tooltipStatNumber(double value) {
+    char buffer[96];
+    std::snprintf(buffer, sizeof buffer, "%.6f", value);
+    std::string number = buffer;
+    if (const auto decimal = number.find('.'); decimal != std::string::npos) {
+        const auto last = number.find_last_not_of('0');
+        number.resize(last == decimal ? decimal : last + 1);
+    }
+    return number == "-0" ? "0" : number;
+}
+
 /// A fraction as a percentage to a tenth, the tenth dropped when it is zero:
 /// a golden leaf's 17.5% would round to a figure florr never prints.
 std::string percentNumber(double fraction) {
@@ -366,13 +377,20 @@ void showTimedHammerExpiry(std::vector<TooltipLine>& lines, const Profile& profi
 /// `reloadScale` -- the Reload talent and the bar's golden leaves -- for the
 /// same reason.
 std::vector<TooltipLine> equippedPetalTooltipLines(std::uint16_t originalIndex,
-        const EquippedPetal& equipped, const SkillSet& skills, double reloadScale, int slot, double triangleBonus) {
+        const EquippedPetal& equipped, const SkillSet& skills, double reloadScale, int slot, double triangleBonus, int slotCounter) {
     const auto effectiveStats = equippedPetalStats(content(), equipped);
     const bool copiedSawblade = originalIndex != equipped.configIndex &&
         content().petal(equipped.configIndex).id == "sawblade";
     const bool showHyperTechnique = samePetalTier(equipped.reloadRarity, equipped.rarity) && !copiedSawblade;
     auto lines = petalTooltipLines(equipped.configIndex, equipped.rarity, skills, reloadScale,
                                    slot, triangleBonus, showHyperTechnique, effectiveStats.reloadMillis);
+    if (slotCounter >= 0 && content().petal(equipped.configIndex).id == "magic_bone") {
+        TooltipLine bonus{trEnZh("Current bone multiplier (wild mobs / training dummies): ",
+                                "当前骨头倍率（野怪／训练木桩）：") +
+                          oneDecimal(1.0 + slotCounter / 100.0) + "x", 12.0};
+        bonus.maxWidth = kTooltipWrapWidth;
+        lines.push_back(std::move(bonus));
+    }
     if (originalIndex != equipped.configIndex && !lines.empty()) {
         const auto& original = content().petal(originalIndex);
         const std::string enName = titleCase(original.name);
@@ -653,8 +671,10 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     // effects that do not belong to the petal's contact damage or HP.
     const bool chinese = language() == Language::Zh;
     const auto special = [&](const char* zhLabel, const char* enLabel, double value,
-                             const std::string& suffix = "") {
-        TooltipLine line{std::string(chinese ? zhLabel : enLabel) + exactNumber(value) + suffix, 12.0};
+                             const std::string& suffix = "", const char* format = nullptr) {
+        char number[32];
+        if (format) std::snprintf(number, sizeof number, format, value);
+        TooltipLine line{std::string(chinese ? zhLabel : enLabel) + (format ? std::string(number) : tooltipStatNumber(value)) + suffix, 12.0};
         line.alpha = 0.72;line.labelColor = kStatGeneric;lines.push_back(line);
     };
     if (stats.flowerHealthBonus > 0) special("增加花朵生命：+", "Flower health: +", stats.flowerHealthBonus);
@@ -672,6 +692,47 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         lines.push_back(line);
         special("回盾上限（最大生命）：", "Shield recovery cap (% of max health): ",
                 100.0 * kPalmLeafShieldCapFraction, "%");
+    }
+    if (config.passivePetHeal > 0.0) {
+        special("每只召唤物回血/秒：", "Healing per summon per second: ",
+                passivePetHealAmount(config, rarity) * 1000.0 / kPassivePetHealIntervalMillis);
+    }
+    if (config.id == "magic_crystal_leaf") {
+        special("每只召唤物护盾：", "Shield per summon: ", crystalLeafShieldAmount(rarity));
+        special("护盾上限（召唤物最大生命）：", "Shield cap (% of summon max HP): ",
+                kCrystalLeafShieldCap * 100.0, "%");
+        special("每次补盾耗蓝：", "Mana per shield refresh: ", crystalLeafShieldMana(rarity));
+        special("护盾持续：", "Shield duration: ", kSupportShieldDurationMillis / 1000.0, "s");
+    }
+    if (config.id == "magic_chromosome") {
+        special("每片花瓣单份护盾：", "Shield per petal per charge: ", chromosomeShieldAmount(rarity));
+        special("每份护盾耗蓝：", "Mana per shield charge: ", chromosomeShieldMana(rarity));
+        special("每次最多发放份数：", "Maximum charges per pulse: ", 2);
+        special("护盾上限（花瓣最大生命）：", "Shield cap (% of petal max HP): ",
+                kChromosomeShieldCap * 100.0, "%");
+        special("护盾持续：", "Shield duration: ", kSupportShieldDurationMillis / 1000.0, "s");
+    }
+    if (config.id == "chloroplast")
+        special("护盾补充量：+", "Shield gain: +", chloroplastShieldBonus(rarity) * 100.0, "%");
+    if (config.id == "stem_cell") {
+        special("每次跨生命阈值的基础回血概率：", "Base heal chance per HP threshold: ",
+                stemCellHealChance(rarity) * 100.0, "%");
+        special("回血概率上限：", "Heal chance cap: ", kStemCellHealChanceCap * 100.0, "%");
+    }
+    if (config.id == "dna") {
+        special("单片每次孵化基础突变概率：", "Base mutation chance per hatch with one DNA: ",
+                kDnaChancePerSource * 100.0, "%");
+        special("孵化突变概率上限：", "Hatch mutation chance cap: ", kDnaChanceCap * 100.0, "%");
+    }
+    if (config.id == "oxygen" || config.id == "void_cyanide") {
+        if (config.id == "oxygen")
+            special("每次延长已有灼烧：", "Existing burn extension per hit: ",
+                    oxygenBurnExtensionMillis(rarity) / 1000.0, "s");
+        else
+            special("每次延长已有中毒：", "Existing poison extension per hit: ",
+                    cyanidePoisonExtensionMillis(rarity) / 1000.0, "s");
+        special("延长后的剩余时间上限：", "Extension cap on remaining time: ",
+                kAfflictionExtensionCapMillis / 1000.0, "s");
     }
     if (config.id == "monstera") {
         special("范围治疗（每秒）：", "Area healing per second: ",
@@ -701,6 +762,21 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         special("整套爆炸基础总预算：", "Total base blast budget: ",210.0 * referenceOffenseScale(config, rarity));
         lines.push_back({chinese?"主爆炸约占总伤害的64%，其余由外围子爆炸平分。子爆炸数量增加时，整套总伤害不变。":"The main blast deals about 64% of the total damage. The sub-blasts share the rest. More sub-blasts leave the total damage unchanged.",12.0});
     }
+    const double explosionReach = skills.statScale(SkillId::ExplosionReach);
+    if (config.blastRadiusPerTier > 0.0) {
+        special("单次爆炸基础伤害：", "Base damage per blast: ",
+                config.blastDamage * referenceOffenseScale(config, rarity));
+        if (config.blastChance < 1.0)
+            special("爆炸概率：", "Explosion chance: ", config.blastChance * 100.0, "%");
+        if (!isFireBomb(config)) {
+            const double radius = config.blastRadiusPerTier * (1 + ladderIndex(rarity));
+            special("爆炸半径（含天赋）：", "Blast radius with talents: ", radius + explosionReach);
+        }
+    }
+    if (config.burnPerSecond > 0.0 && config.burnMillis > 0.0) {
+        special("基础灼烧伤害/秒：", "Base burn damage per second: ", petalBaseBurnRate(config, rarity));
+        special("灼烧持续：", "Burn duration: ", config.burnMillis / 1000.0, "s");
+    }
     if (isFireBomb(config)) {
         char burnRate[32];
         std::snprintf(burnRate, sizeof burnRate, "%.8g",
@@ -711,16 +787,25 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         burn.labelColor = kStatGeneric;
         lines.push_back(burn);
         special("燃烧持续时间：", "Burn duration: ", kFireBombBurnMillis / 1000.0, "s");
-        special("燃烧半径：", "Burn radius: ", fireBombRadius(config, rarity));
+        special("燃烧半径：", "Burn radius: ", fireBombRadius(config, rarity) + explosionReach);
         special("同一玩家对单个目标的叠火上限：", "Max stacks per player on one target: ",
                 kFireBombBurnLayers);
     }
     if (config.spill.kind != SpillKind::None) {
-        special("流体基础半径：", "Base spill radius: ", spillBaseRadius(config.spill, rarity));
+        special("基础最大半径：", "Base maximum pool radius: ", spillBaseRadius(config.spill, rarity), "", "%.8g");
+        if (config.spill.growthPerSecond(rarity) > 0.0)
+            special("基础扩散速度：", "Base radial growth: ", config.spill.growthPerSecond(rarity), "/s", "%.8g");
+        const double radius = spillBaseRadius(config.spill, rarity);
+        if (const double reach = skills.effectScale(SkillId::FluidReach); reach > 1.0)
+            special("流体半径（仅计天赋）：", "Spill radius with talent only: ", radius * reach);
+        special("液池持续：", "Pool lifetime: ", config.spill.durationMillis / 1000.0, "s");
+        if (!config.spill.onHit && config.spill.chargeMillis > 0.0) {
+            const double rate = skills.effectScale(SkillId::SpillRate) * skills.effectScale(SkillId::SecondaryReload);
+            special("铺池准备时间：", "Pool charge time: ",
+                    std::max(config.spill.chargeMillis / rate, net::kTickMillis) / 1000.0, "s");
+        }
         if (config.id == "acid" || config.id == "lava" ||
             config.id == "acid_bomb" || config.id == "lava_bomb") {
-            if (!config.spill.onHit)
-                special("铺池准备时间：", "Pool charge time: ", config.spill.chargeMillis / 1000.0, "s");
             TooltipLine trigger{config.spill.onHit
                 ? (chinese ? "有效命中野怪时，在其脚下铺池。"
                            : "Landing a hit on a wild mob creates a pool at its position.")
@@ -730,8 +815,8 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
             trigger.maxWidth = kTooltipWrapWidth;
             lines.push_back(trigger);
             TooltipLine reach{chinese
-                ? "虚空肥皂和流体范围天赋只扩大池的半径，花瓣的碰撞距离不变。"
-                : "Void Soap and Fluid Reach expand the pool radius only. Petal contact range stays the same.",
+                ? "虚空肥皂加快液池向外扩散。流体范围天赋扩大覆盖。"
+                : "Void Soap speeds up spreading. Fluid Reach scales the pool coverage.",
                 12.0};
             reach.maxWidth = kTooltipWrapWidth;
             lines.push_back(reach);
@@ -756,11 +841,11 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         }
     }
     if (config.id == "void_soap") {
-        special("流体半径：+", "Spill radius: +", soapSpillRadiusBonus(rarity) * 100.0, "%");
-        special("流体半径叠加上限：+", "Spill radius bonus cap: +",
-                (kSoapMaxSpillRadiusScale - 1.0) * 100.0, "%");
-        lines.push_back({chinese ? "多块肥皂的半径加成相加，再与流体范围天赋相乘。"
-                                 : "Soap bonuses add together, then multiply with the Fluid Reach talent.", 12.0});
+        special("液池最大半径：+", "Maximum pool radius: +", soapCoverageBonus(rarity) * 100.0, "%");
+        special("最大半径叠加上限：+", "Maximum radius bonus cap: +", kMaxSoapCoverageBonus * 100.0, "%");
+        special("液池扩散速度：+", "Liquid spread speed: +", soapSpillRateBonus(rarity) * 100.0, "%", "%.8g");
+        lines.push_back({chinese ? "多块肥皂的速度加成相加。"
+                                 : "Spread speed bonuses from equipped soaps add together.", 12.0});
     }
     if (stats.flowerRadiusBonus > 0) special("增加花朵半径：+", "Flower radius: +", stats.flowerRadiusBonus);
     if (stats.summonRangeBonus > 0) special("召唤物追击范围：+", "Summon pursuit range: +", stats.summonRangeBonus);
@@ -813,7 +898,7 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         const auto& summon=content().mob(config.petMobIndex);
         const bool apex=ladderRarity(rarity)==Rarity::Apex;
         const auto summonRarity = configuredSummonRarity(config, rarity);
-        const double summonScale = petalStatScale(summonRarity) * configuredSummonStrength(config, rarity) *
+        const double summonScale = petalStatScale(summonRarity) * configuredSummonStrength(config, rarity, &skills, slot) *
             eggSummonCombatScale(config) * hyperSummonPromotionScale(config, summonRarity);
         TooltipLine pet{std::string(chinese ? "召唤：" : "Summons: ") +
             mobNameTr(content().mob(config.petMobIndex).id, content().mob(config.petMobIndex).name.c_str()) +
@@ -826,12 +911,12 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         if(apex && petalIsEgg(config))lines.push_back({chinese?"H护甲：己方召唤物受到不高于蛋稀有度的野怪体伤时，单次最多损失35%最大生命；不抵挡玩家、毒素或技能。":"H escort armour: wild body hits up to the egg tier deal at most 35% of summon max health per hit; no protection from players, poison or abilities.",12.0});
         if(config.id=="egg"||config.id=="beetle_egg")lines.push_back({chinese?"蛋壳不造成接触伤害；蛋壳破碎不会收回已孵化召唤物。":"The shell deals no contact damage; breaking it does not recall hatched pets.",12.0});
         if (config.petLifetimeMillis > 0) special("召唤持续：", "Summon lifetime: ", config.petLifetimeMillis / 1000.0, "s");
-        if (config.petSummonTiers) {
-            const double hatchDelay = std::max(stats.reloadMillis * skills.reloadScale(), net::kTickMillis);
-            lines.push_back({std::string(chinese ? "孵化等待：" : "Hatch delay: ") +
-                             oneDecimal(hatchDelay / 1000.0) + "s", 12.0});
+        if (config.petSummonTiers || config.id == "egg" || config.id == "beetle_egg") {
+            const double authoredDelay = config.petSummonTiers ? baseReloadMillis.value_or(stats.reloadMillis) : 1000.0;
+            const double incubation = authoredDelay * (config.petSummonTiers ? skills.reloadScale() : 1.0);
+            const double rate = petalIsEgg(config) ? skills.effectScale(SkillId::SecondaryReload) : 1.0;
+            special("孵化等待：", "Hatch delay: ", std::max(incubation / rate, net::kTickMillis) / 1000.0, "s");
         }
-        if (config.id == "egg" || config.id == "beetle_egg") special("孵化等待：", "Hatch delay: ", 1.0, "s");
         if (summon.ai != AiKind::Sandstorm) lines.push_back({chinese
             ? "自动索敌优先主人 600 范围内的高阶怪。主人侧上限 1250，灯泡可提高。空闲离主人 900、战斗中 1650 后回跟。光标指挥优先。"
             : "Prioritises high-tier mobs within 600 of the owner. The owner's range cap is 1250 before Bulb. Returns beyond 900 while idle or 1650 in combat. Cursor commands take priority.",12.0});
@@ -866,7 +951,12 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         lines.push_back({chinese ? "双方需20级；不作用于更高阶装备、分身、副本或已在地狱的玩家。成功后目标5分钟免疫印记。" : "Both flowers must be level 20+. Cannot target higher-tier equipment, split flowers, dungeon runs or flowers in Hel. Target gains 5 minutes of Mark immunity.",12.0});
     }
     if (darkMark || voidMark || config.id == "arctic_frozen_mark") {
-        lines.push_back({chinese ? "传送后可立即使用 /mark-return 返回原处。" : "Use /mark-return immediately after transport to go back.",12.0});
+        if (markHoldsOnArrival(rarity)) {
+            lines.push_back({chinese ? "Apex：传送后目标在目的地滞留 2 分钟，之后可传送或使用 /mark-return。"
+                                     : "Apex: holds the target on the destination map for 2 minutes. Portals and /mark-return unlock afterward.", 12.0});
+        } else {
+            lines.push_back({chinese ? "传送后可立即使用 /mark-return 返回原处。" : "Use /mark-return immediately after transport to go back.",12.0});
+        }
     }
     if (config.id == "magic_bubble") {
         lines.push_back({chinese ? "按住防御并移动时向该方向冲刺，攻击与防御可以同时按住。" : "Hold defend and move to dash in that direction. You can hold attack at the same time.",12.0});
@@ -898,6 +988,17 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         special("护甲层数上限：", "Armor stack limit: ", 10);
     }
     if (stats.noHealDurationMillis > 0) special("禁止治疗持续：", "Healing suppression: ", stats.noHealDurationMillis / 1000.0, "s");
+    if (config.armorPiercing && !config.lightningDamage)
+        lines.push_back({chinese ? "穿甲：直接命中无视护甲。" : "Armor piercing: direct hits ignore armor.", 12.0});
+    if (config.armorDamageFraction > 0.0)
+        special("额外伤害（野怪有效护甲）：", "Bonus damage (% of effective wild-mob armor): ",
+                config.armorDamageFraction * 100.0, "%");
+    if (config.contactSelfDamage > 0.0)
+        special("每次有效接触的基础自伤：", "Base self-damage per landed contact: ",
+                petalContactSelfDamage(config, rarity));
+    if (stats.damageIntervalMillis != kPetalHitIntervalMillis)
+        special("同一目标接触伤害间隔：", "Contact damage interval per target: ",
+                stats.damageIntervalMillis / 1000.0, "s");
     if (stats.knockback != 0) special("击退强度：", "Knockback: ", stats.knockback);
     if (stats.attractionForce > 0) special("花瓣吸引强度：", "Petal attraction strength: ", stats.attractionForce);
     if (stats.modifiers.damage != 1) special("伤害变化：", "Damage bonus: ", (stats.modifiers.damage - 1) * 100, "%");
@@ -920,8 +1021,8 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     }
     if (config.id == "magic_bone") {
         TooltipLine stacking{chinese
-            ? "每多装备一个未破损的魔法骨头，所有已装备的魔法骨头对野怪伤害加算 +50%（无递减、无上限）。"
-            : "Each additional unbroken Magic Bone adds +50% wild-mob damage to every equipped Magic Bone (additive, no diminishing returns).", 12.0};
+            ? "每多一根就绪的魔法骨头，每根对野怪和训练木桩的接触伤害加算 50%。"
+            : "Each additional ready Magic Bone adds 50% contact damage to every Magic Bone against wild mobs and training dummies.", 12.0};
         stacking.maxWidth = 290.0;
         lines.push_back(std::move(stacking));
     }
@@ -989,10 +1090,15 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         special("最多连锁目标：", "Maximum lightning targets: ",
                 std::clamp(std::min(rarityIndex(rarity), rarityIndex(Rarity::Unique)) - 3, 1, 5));
     }
-    if (config.spill.kind != SpillKind::None)
-        special("基础流体半径：", "Base spill radius: ", spillBaseRadius(config.spill, rarity));
-    if (config.id == "blood")
-        special("基础血池半径：", "Base blood pool radius: ", bloodPoolRadius(rarity));
+    if (config.id == "blood") {
+        special("血池基础最大半径：", "Base maximum blood pool radius: ", bloodPoolRadius(rarity), "", "%.8g");
+        special("基础扩散速度：", "Base radial growth: ", bloodSpillRate(rarity), "/s", "%.8g");
+        const double rate = skills.effectScale(SkillId::SpillRate) * skills.effectScale(SkillId::SecondaryReload);
+        if (const double reach = skills.effectScale(SkillId::FluidReach); reach > 1.0)
+            special("血池半径（仅计天赋）：", "Blood pool radius with talent only: ", bloodPoolRadius(rarity) * reach);
+        special("血池准备时间：", "Blood pool charge time: ", std::max(1000.0 / rate, net::kTickMillis) / 1000.0, "s");
+        special("血池持续：", "Blood pool lifetime: ", 2.0, "s");
+    }
     if (fireScale > 1.0 && (config.burnPerSecond > 0.0 || config.radiation.burnDamage > 0.0))
         special("火伤天赋倍率：", "Fire talent multiplier: ", fireScale, "x");
     if (config.radiation.present) {
@@ -1223,6 +1329,10 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         refund.alpha = 0.72;
         refund.labelColor = kStatGeneric;
         lines.push_back(refund);
+        if (fang) {
+            lines.push_back({chinese ? "需要先装备提供最大法力的花瓣，例如魔力宝珠。"
+                                     : "Requires a petal that grants max mana, such as Mana Orb.", 12.0});
+        }
     }
 
     if (stats.petalEvasion > 0.0) {

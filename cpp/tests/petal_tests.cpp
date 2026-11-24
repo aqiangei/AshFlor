@@ -1892,6 +1892,18 @@ TEST(a_golden_leaf_cuts_the_reload_of_the_rest_of_its_bar) {
     rig.settleEquips();
     CHECK_NEAR(breakSlot(rig, 0), 1200.0 * 0.825 * kPetalReloadFeelScale, 1e-9);
 
+    const int leaf = petalId("golden_leaf");
+    CHECK_NEAR(registry.petalStats(leaf, Rarity::Unique).reloadCut, 0.225, 1e-9);
+    CHECK_NEAR(registry.petalStats(leaf, Rarity::PermanentHyper).reloadCut, 0.25, 1e-9);
+    CHECK_NEAR(registry.petalStats(leaf, Rarity::Ascendant).reloadCut, 0.275, 1e-9);
+
+    Rig copied;
+    copied.equip(0, "basic");
+    copied.equip(1, "golden_leaf", Rarity::PermanentHyper);
+    copied.equip(2, "mimic", Rarity::Ascendant);
+    copied.settleEquips();
+    CHECK_NEAR(breakSlot(copied, 0), 1200.0 * 0.75 * 0.725 * kPetalReloadFeelScale, 1e-9);
+
     // Its own reload too.
     const double leafReload =
         registry.petalStats(petalId("golden_leaf"), Rarity::Ultra).reloadMillis;
@@ -5321,6 +5333,37 @@ TEST(a_mirror_turns_a_missile_back_on_its_shooter_up_to_one_tier_above_it) {
             CHECK_EQ(after.owner, mob);
             CHECK_NEAR(outward, -400.0, 1e-9);
         }
+    }
+}
+
+TEST(zorr_momy_egg_hatches_the_reference_brood_at_each_tier) {
+    if (!contentLoaded()) return;
+    const auto& registry = testsupport::shippedContent();
+    const auto momy = registry.mobIndex("void_momy");
+    const auto egg = registry.petalIndex("void_momy_egg");
+    constexpr int hatchSeconds[] = {35, 7, 8, 9, 10, 12, 15, 19, 35, 35};
+    for (int tier = 0; tier < kLadderRarityCount; ++tier) {
+        Rig rig(registry);
+        const auto rarity = static_cast<Rarity>(tier);
+        rig.equip(0, "void_momy_egg", rarity);
+        CHECK_EQ(registry.petalStats(egg, rarity).reloadMillis, hatchSeconds[tier] * 1000.0);
+        const int expected = tier < rarityIndex(Rarity::Unique) ? 2 : 3;
+        CHECK_EQ(configuredSummonCount(registry.petal(egg), rarity, nullptr, 0), expected);
+        CHECK(rig.tickUntil([&] { return rig.petCount() >= static_cast<std::size_t>(expected); }, 4000));
+        int hatched = 0;
+        double health = 0.0, contact = 0.0;
+        Query<Pet, MobType>{rig.world}.each([&](Entity e, Pet& pet, MobType& type) {
+            if (pet.owner != rig.player) return;
+            CHECK_EQ(type.configIndex, momy);
+            CHECK_EQ(rarityIndex(type.rarity), std::max(0, tier - 1));
+            ++hatched;
+            health += rig.world.get<Health>(e).max;
+            contact += rig.world.get<ContactDamage>(e).amount;
+        });
+        CHECK_EQ(hatched, expected);
+        const double localScale = tier < 9 ? std::pow(3.0, tier) : 27064.125;
+        CHECK_NEAR(health / localScale, 5972.7, 1e-6);
+        CHECK_NEAR(contact / localScale, 60.144, 1e-6);
     }
 }
 

@@ -346,7 +346,7 @@ constexpr Pair kPetals[] = {
     {"shell_egg", "贝壳蛋"},
     {"shield", "护盾花瓣"},
     {"shiny_ladybug_egg", "闪光瓢虫蛋"},
-    {"soil", "土壤"},
+    {"soil", "土"},
     {"soldier_ant_egg", "兵蚁蛋"},
     {"soldier_fire_ant_egg", "火兵蚁蛋"},
     {"soldier_termite_egg", "白兵蚁蛋"},
@@ -462,7 +462,7 @@ constexpr Pair kPetals[] = {
     {"magic_palm_leaf", "魔法棕榈叶"},
     {"magic_poo", "魔法便便"},
     {"magic_rock", "魔法石头"},
-    {"magic_soil", "魔法土壤"},
+    {"magic_soil", "魔法土"},
     {"magic_tomato", "魔法番茄"},
     {"magic_tooth", "魔法牙齿"},
     {"magic_torch", "魔法火把"},
@@ -961,7 +961,7 @@ constexpr Pair kPetalDescs[] = {
     {"void_dark_matter", "产自虚空的花瓣。"},
     {"void_dizzy", "提高其他花瓣的直接接触伤害。与伤口同时装备时取较高增益。"},
     {"void_dvd", "带护甲，接触敌人时使其燃烧 3 秒。普通每秒 3 点，品质每高一档乘 3，超凡为永恒的 1.5 倍。多个花瓣可叠火。"},
-    {"void_elemental", "三个花瓣分摊本槽的接触、毒伤和燃烧伤害。装备被动按槽生效。"},
+    {"void_elemental", "命中施加中毒、燃烧和冰霜。装备时恢复生命、护盾与魔力，提升移速和花瓣伤害。"},
     {"void_fan", "降低受到的持续燃烧伤害，多件风扇只取最高减伤。"},
     {"void_fire", "接触野怪时使其燃烧 3 秒：普通品质每秒 10 点燃烧伤害，品质每高一档乘 3，超凡为永恒的 1.5 倍。本身没有接触伤害，伤害全部来自燃烧。"},
     {"void_gunpowder", "装备时提高导弹飞行速度，取最高加成。火药命中燃烧的野怪时造成五倍接触伤害。"},
@@ -980,7 +980,7 @@ constexpr Pair kPetalDescs[] = {
     {"void_scar", "命中已不死的敌方花朵或野怪时，同级或更高品质可缩短其剩余不死时间 25%。每次不死最多生效一次。虚空伤疤出现 6.66 秒后，会尝试把你随机传送到当前地图可落脚的位置。"},
     {"void_scythe", "产自虚空的花瓣。"},
     {"void_slime", "两枚花瓣，命中时击退敌人。"},
-    {"void_soap", "装备时扩大自己产生的溢液范围，包括血池。"},
+    {"void_soap", "加快液池扩散并扩大最大半径，对血池同样有效。多块肥皂的最大半径加成最多叠到 +200%。"},
     {"void_zodiac", "产自虚空的花瓣。"},
     {"void_alien_egg", "孵化出外星人协助战斗。"},
     {"void_alien_digger_egg", "孵化出外星掘地者协助战斗。"},
@@ -992,7 +992,7 @@ constexpr Pair kPetalDescs[] = {
     {"void_grave_digger_egg", "孵化出掘墓者协助战斗。"},
     {"void_gravestone_egg", "孵化出墓碑协助战斗。"},
     {"void_illuminati_egg", "孵化出光照会协助战斗。"},
-    {"void_momy_egg", "孵化出妈咪协助战斗。"},
+    {"void_momy_egg", "永恒以下每枚蛋基础孵出两只妈咪，永恒及以上孵出三只。"},
     {"void_rain_frog_egg", "孵化出雨蛙协助战斗。"},
     {"void_tesla_coil_egg", "孵化出特斯拉线圈协助战斗。"},
     {"void_troll_egg", "孵化出巨魔协助战斗。"},
@@ -1189,6 +1189,42 @@ constexpr Pair kMobDescs[] = {
 };
 
 const char* petalDescTr(const std::string& id, const char* fallback) {
+    if (!zh()) {
+        static constexpr Pair kEnglishFallbacks[] = {
+            {"ankh", "Teleports your flower to its position when destroyed."},
+            {"bean", "Deals 1.5 times damage when no allied flowers are nearby."},
+            {"blood_stinger", "Hurts your flower when it forms."},
+            {"broccoli", "Bursts into missiles when destroyed."},
+            {"card", "The four suits have different damage and durability."},
+            {"clay", "Grows larger and deals more damage the farther it travels."},
+            {"cogwheel", "Periodically stops your petals from rotating while equipped."},
+            {"dead_leaf", "Increases all petal durability and makes reloads 5% slower."},
+            {"dice", "Has a 5% chance to deal 35 times damage."},
+            {"domino", "Rolls its damage randomly from zero to the maximum."},
+            {"dust", "Made of three dust particles."},
+            {"electric_web", "Fires a projectile that deals lightning damage and slows on hit."},
+            {"fragment", "Titan material. Trade 15 Super Fragments for a one-hour Eternal Hammer that cannot enter Hyper contests. Forge a Hyper Hammer with 10 Eternal Fragments. Losing it returns 9 fragments. Its first protection lasts 15 hours and decreases after each loss."},
+            {"heavy", "Reloads very slowly, deals strong knockback, and slows petal rotation."},
+            {"laser", "Fires a continuous straight beam and deals contact damage."},
+            {"mecha_missile", "Fires straight along your aim when attacking, even without a targeting antenna."},
+            {"mjolnir", "Costs 10 Eternal Fragments to forge and returns 9 when lost in a contest. The first protection lasts 15 hours, then drops by one hour per loss to a minimum of one hour. Strikes a single target with lightning on contact, deals more damage to wild mobs, and reduces contact retaliation."},
+            {"monstera", "Heals every flower within range once per second."},
+            {"moon_rock", "Other petals orbit it while it barely moves."},
+            {"mysterious_powder", "Increases movement speed."},
+            {"mysterious_relic", "Its wearers share damage. In single-player mode, only the maximum health bonus applies."},
+            {"nazar_amulet", "Greatly reduces damage taken from a single hit."},
+            {"paranormal_goggles", "Lets you see and damage ghosts. Reduces view range by 20%."},
+            {"poker_chip", "The chip independently has a 90% chance to dodge ordinary damage. It does not protect your flower or dodge lightning, and is immune to poison."},
+            {"ruby", "Lightning can strike the same target again. Each extra strike rolls separately, with a limit. Only the strongest Ruby applies."},
+            {"shovel", "Defend once ready to burrow for four seconds. One Super or higher shovel can keep burrowing while you defend. Desert Centipedes can still hit you."},
+            {"talisman_of_evasion", "Has a chance to dodge enemy attacks."},
+            {"timed_mjolnir", "Trade 15 Super Fragments for a Timed Eternal Hammer. It expires one hour after redemption, including time offline. Each copy has its own timer. It cannot enter Hyper contests."},
+            {"totem", "Killing a mob grants health regeneration for ten seconds."},
+            {"uranium", "Periodically irradiates nearby enemies, poisoning them and your flower. Self-poison damage is capped at 4% of your maximum health per second."},
+        };
+        for (const auto& entry : kEnglishFallbacks)
+            if (id == entry.id) return entry.zh;
+    }
     if (!zh() && id == "coordinate")
         return "Directs pets of its rarity or lower with movement keys or the touch stick. With no directional input, they follow an available pointer. Reduces your movement speed.";
     if (id == "meteor")

@@ -26,6 +26,19 @@ http.createServer = function (...args) {
   const index = args.length - 1;
   const handler = args[index];
   if (typeof handler === 'function') args[index] = function (req, res) {
+    if (req.url.split('?')[0] === '/api/server-status') {
+      const snapshot = process.flixPublicStatus || null;
+      const fresh = snapshot && Date.now() - snapshot.updatedAt < 10000;
+      res.writeHead(fresh ? 200 : 503, {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-store',
+        'Access-Control-Allow-Origin': '*'
+      });
+      res.end(JSON.stringify(fresh
+        ? {players: snapshot.players, updatedAt: snapshot.updatedAt}
+        : {error: 'status_unavailable'}));
+      return;
+    }
     if (req.url === '/api/health') {
       res.writeHead(200, {'Content-Type':'application/json','Cache-Control':'no-store'});
       res.end(JSON.stringify({ok:true,implementation:'cpp-wasm',uptimeSeconds:process.uptime()}));

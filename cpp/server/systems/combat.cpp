@@ -3176,7 +3176,14 @@ void CombatSystem::createSpill(World& world, Entity owner, Vec2 at, Rarity rarit
         field.armorReduction = rate;
         field.damagePerSecond = 0.0;
     }
-    field.spreadTargetRadius = radius;
+    field.spreadStartRadius = field.radius;
+    field.spreadTargetRadius = radius * (1.0 + (modifiers ? modifiers->soapCoverageBonus : 0.0));
+    const double baseGrowth = spill.growthPerSecond(rarity) * (modifiers ? modifiers->spillRadiusScale : 1.0);
+    field.radialGrowthPerSecond = baseGrowth * (modifiers ? modifiers->spillGrowthScale : 1.0);
+    // Reserve up to the initial footprint's fraction of the local range for gradual growth.
+    // Let unboosted pools reach the old hit boundary within half a second (or half their life).
+    field.gradualSpreadDistance = std::min(field.spreadTargetRadius * 0.24,
+                                          baseGrowth * std::min(0.5, spill.durationMillis / 2000.0));
     if (const auto* motion = world.tryGet<Motion>(owner)) {
         field.spillDrift = motion->velocity * 0.35;
         const double speed = field.spillDrift.length();
@@ -3203,17 +3210,21 @@ void CombatSystem::tickGroundEffects(World& world, const SpatialGrid& grid,
                                      bool bodyGridOnly) {
     struct FluidRepeller { Entity source; Realm realm; Vec2 at; double force, radius; };
     std::vector<FluidRepeller> repellers;
-    Query<MobTag, MobType, Transform>{world}.without<Dead>().each(
-        [&](Entity e, MobTag&, MobType& type, Transform& at) {
-            const auto& mob = content.mob(type.configIndex);
-            if (mob.id == "void_white_hole" && mob.gravityForce < 0.0 &&
-                mob.gravityRadius > 0.0 && isStanding(world, e))
-                repellers.push_back({e, at.realm, at.position, mob.gravityForce, mob.gravityRadius});
-        });
+    bool gatheredRepellers = false;
     fields_.clear();
     queries_->fields.each([&](Entity e, GroundEffect& effect, Transform& transform) {
         if (effect.kind == GroundEffectKind::BlinkLanding) return;
         if (isFluidField(effect.kind) && effect.spreadTargetRadius > 0.0) {
+            if (!gatheredRepellers) {
+                Query<MobTag, MobType, Transform>{world}.without<Dead>().each(
+                    [&](Entity e, MobTag&, MobType& type, Transform& at) {
+                        const auto& mob = content.mob(type.configIndex);
+                        if (mob.id == "void_white_hole" && mob.gravityForce < 0.0 &&
+                            mob.gravityRadius > 0.0 && isStanding(world, e))
+                            repellers.push_back({e, at.realm, at.position, mob.gravityForce, mob.gravityRadius});
+                    });
+                gatheredRepellers = true;
+            }
             // 0.34 s is the former visual expansion duration, now authoritative.
             constexpr double spreadSeconds = 0.34;
             const double before = std::min(effect.spreadAgeSeconds, spreadSeconds);
@@ -3243,8 +3254,10 @@ void CombatSystem::tickGroundEffects(World& world, const SpatialGrid& grid,
                 transform.position = next;
             else { effect.spillDrift = {}; effect.spillGravityVelocity = {}; }
             const double fraction = after / spreadSeconds;
-            effect.radius = effect.spreadTargetRadius *
-                (1.0 - 0.76 * std::pow(1.0 - fraction, 3.0));
+            const double landingRadius = effect.spreadTargetRadius - effect.gradualSpreadDistance;
+            const double growth = std::min(effect.gradualSpreadDistance, effect.radialGrowthPerSecond * effect.spreadAgeSeconds);
+            effect.radius = landingRadius + (effect.spreadStartRadius - landingRadius) *
+                std::pow(1.0 - fraction, 3.0) + growth;
             if (auto* body = world.tryGet<Body>(e)) body->radius = effect.radius;
         }
         // In-flight or disabled fields still age; zero radius must not make
@@ -3309,10 +3322,14 @@ void CombatSystem::tickGroundEffects(World& world, const SpatialGrid& grid,
         if (field.damagePerSecond <= 0.0 && field.damagePerHit <= 0.0 &&
             field.slowFactor >= 1.0 && field.burnDamage <= 0.0 && field.armorReduction <= 0.0 &&
             field.burnPerSecond <= 0.0) continue;
+        const bool fluid = isFluidField(field.kind);
+        const bool damagingFluid = fluid && field.kind != GroundEffectKind::ElixirSpill;
         queryBodies(grid, field.realm, field.position, field.radius + kBroadphasePad, candidates_,
                     NULL_ENTITY, false, std::nullopt, nullptr, bodyGridOnly);
         for (const Entity victim : candidates_) {
             if (world.has<Dead>(field.effect)) break;
+            if (damagingFluid && !isWildMob(world, victim) &&
+                !isPracticeDummy(world, content, victim)) continue;
             const Transform* transform = world.tryGet<Transform>(victim);
             if (transform == nullptr) continue;
             // Circle overlap, not centre-in-radius: every one of the three
@@ -3335,7 +3352,7 @@ void CombatSystem::tickGroundEffects(World& world, const SpatialGrid& grid,
             const bool inside = radiation ? gapSq <= reach * reach
                                     : gapSq < reach * reach;
             if (!inside) continue;
-            if (isFluidField(field.kind) && terrain &&
+            if (fluid && terrain &&
                 terrain->segmentBlocked(field.position, transform->position, field.realm)) continue;
             if (field.kind == GroundEffectKind::ElixirSpill) {
                 const auto* squad = squads ? squads->membersOf(field.owner) : nullptr;
@@ -3350,9 +3367,7 @@ void CombatSystem::tickGroundEffects(World& world, const SpatialGrid& grid,
                 continue;
             }
             if (!canHit(world, victim, field.effect, nowMillis)) continue;
-            if (isFluidField(field.kind)) {
-                const bool practiceTarget = isPracticeDummy(world, content, victim);
-                if (!isWildMob(world, victim) && !practiceTarget) continue;
+            if (damagingFluid) {
                 if(field.kind==GroundEffectKind::NitrogenSpill) {
                     const Entity target=poolOwner(world,victim);
                     const double factor=1.0-(1.0-field.slowFactor)*stallPower(field.rarity,rarityOf(world,target));
@@ -3761,13 +3776,13 @@ void CombatSystem::gatherPetals(World& world, const ContentRegistry& content, do
         source.poisonDurationMillis = stats.poisonDurationMillis;
         source.slowFactor = stats.slowFactor;
         source.slowDurationMillis = stats.slowDurationMillis;
-        source.inflictsFrost = config.id == "arctic_frost";
+        source.inflictsFrost = config.id == "arctic_frost" || config.id == "void_elemental";
         source.inflictsFreeze = config.id == "arctic_icicle";
         source.noHealDurationMillis = stats.noHealDurationMillis;
         source.armorReduction = config.id == "blood" ? 0.0 : stats.armorReduction;
         source.armorDamageFraction = config.armorDamageFraction;
         if (config.id != "magic_fire")
-            source.burnPerSecond = config.burnPerSecond * referenceOffenseScale(config,petal.rarity) * offenseScale;
+            source.burnPerSecond = petalBaseBurnRate(config, petal.rarity) * offenseScale;
         if (config.id == "void_fire") {
             if (const auto* mods = world.tryGet<PlayerModifiers>(petal.owner))
                 source.burnPerSecond *= mods->petalDamageScale;
@@ -3794,7 +3809,7 @@ void CombatSystem::gatherPetals(World& world, const ContentRegistry& content, do
         }
         if (config.id == "domino") source.damage *= dominoDamageMultiplier(petal.dominoPips, petal.rarity);
         source.lifesteal = stats.lifesteal;
-        source.selfDamage = config.contactSelfDamage * petalStrengthScale(petal.rarity);
+        source.selfDamage = petalContactSelfDamage(config, petal.rarity);
         source.owner = petal.owner;
         source.rarity = petal.rarity;
         source.isPetal = true;
@@ -4347,8 +4362,8 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
                     const auto& id = registry.petal(petal->configIndex).id;
                     if (id == "oxygen" && !hit.killed) {
                         const Entity target=poolOwner(world,victim);
-                        const double extension=100.0*(1+ladderIndex(source.rarity));
-                        const double limit=nowMillis+6000.0;
+                        const double extension = oxygenBurnExtensionMillis(source.rarity);
+                        const double limit = nowMillis + kAfflictionExtensionCapMillis;
                         if(auto* status=world.tryGet<Afflictions>(target)) {
                             if(status->burnPerSecond>0 && status->burnUntilMillis>nowMillis && status->burnUntilMillis<limit)
                                 status->burnUntilMillis=std::min(limit,status->burnUntilMillis+extension);
@@ -4361,8 +4376,8 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
                             burn->untilMillis=std::min(limit,burn->untilMillis+extension);
                     } else if (id == "void_cyanide" && !hit.killed) {
                         if (auto* status = world.tryGet<Afflictions>(poolOwner(world, victim))) {
-                            const double extension = 150.0 * (1 + ladderIndex(source.rarity));
-                            const double limit = nowMillis + 6000.0;
+                            const double extension = cyanidePoisonExtensionMillis(source.rarity);
+                            const double limit = nowMillis + kAfflictionExtensionCapMillis;
                             for (auto& poison : status->poisonStacks) {
                                 if (poison.untilMillis > nowMillis && poison.untilMillis < limit)
                                     poison.untilMillis = std::min(limit, poison.untilMillis + extension);
@@ -4973,7 +4988,17 @@ std::optional<CombatSystem::ShotImpact> CombatSystem::sweepShotTarget(
         const ShotSource& shot, const ShotTarget& target) {
     if(target.capsuleHalfWidth>0) {
         const double width=target.capsuleHalfWidth;
-        const Vec2 span=Vec2::fromAngle(target.angle,std::max(0.0,target.radius-width));
+        const double halfSpan = std::max(0.0, target.radius - width);
+        // Use a loose bound so hits near the capsule edge always reach the
+        // existing swept-segment calculation and keep its contact position.
+        const double bound = 2.0 * (shot.radius + width + halfSpan);
+        const Vec2 fromTarget = target.position - shot.from;
+        const Vec2 toTarget = target.position - shot.position;
+        if (std::min(fromTarget.x, toTarget.x) > bound ||
+            std::max(fromTarget.x, toTarget.x) < -bound ||
+            std::min(fromTarget.y, toTarget.y) > bound ||
+            std::max(fromTarget.y, toTarget.y) < -bound) return std::nullopt;
+        const Vec2 span=Vec2::fromAngle(target.angle,halfSpan);
         const Vec2 a=shot.from,b=shot.position,c=target.position-span,d=target.position+span;
         const Vec2 u=b-a,v=d-c,w=a-c;
         const auto dot=[](Vec2 x,Vec2 y){return x.x*y.x+x.y*y.y;};
@@ -5029,6 +5054,8 @@ void CombatSystem::collectShotCandidates(const World& world, const SpatialGrid& 
                                         std::vector<ShotCandidate>& hits,
                                         SpatialGrid::QueryScratch* scratch) const {
     const auto* filed = filedShot(shot.entity);
+    const auto* faction = world.tryGet<Faction>(shot.entity);
+    const bool hostile = faction && faction->team == Team::Hostiles;
     const Vec2 midpoint = shot.from + shot.flown * 0.5;
     queryBodies(grid, shot.realm, midpoint,
                 shot.radius + shot.flownLength * 0.5 + shot.travelled + kBroadphasePad,
@@ -5037,6 +5064,12 @@ void CombatSystem::collectShotCandidates(const World& world, const SpatialGrid& 
 
     for (const Entity victim : entities) {
         if (victim == shot.entity) continue;
+        // An explicit hostile faction takes precedence over ownership and
+        // never damages another hostile. Mirror reflection already ran.
+        if (hostile) {
+            const auto* victimFaction = world.tryGet<Faction>(victim);
+            if (victimFaction && victimFaction->team == Team::Hostiles) continue;
+        }
         if (!frozen) {
             if (!isShootable(world, victim) || (wildOnly && !isWildMob(world, victim))) continue;
             if (auto impact = sweepLiveShotTarget(world, shot, victim))
@@ -5126,9 +5159,24 @@ void CombatSystem::reflectShotsOffMirrors(World& world, const ContentRegistry& c
     });
     if (mirrors_.empty()) return;
 
+    // Keep the first matching mirror within each map in the original order.
+    std::stable_sort(mirrors_.begin(), mirrors_.end(), [](const MirrorGuard& a, const MirrorGuard& b) {
+        return realmIndex(a.realm) < realmIndex(b.realm);
+    });
+    struct MirrorRange { std::size_t begin = 0; std::size_t end = 0; };
+    std::array<MirrorRange, kMaxRealms> ranges{};
+    for (std::size_t begin = 0; begin < mirrors_.size();) {
+        const Realm realm = mirrors_[begin].realm;
+        std::size_t end = begin + 1;
+        while (end < mirrors_.size() && mirrors_[end].realm == realm) ++end;
+        ranges[realmIndex(realm)] = {begin, end};
+        begin = end;
+    }
+
     queries_->projectiles.each([&](Entity e, Projectile& projectile, Transform& at, Body& body,
                                    Motion& motion) {
-        if (world.has<Dead>(e)) return;
+        const auto range = ranges[realmIndex(at.realm)];
+        if (range.begin == range.end || world.has<Dead>(e)) return;
         const int tier = rarityIndex(projectile.rarity);
         // Only missiles: a shot lying still (a mine, a web) is not turned.
         if (motion.velocity.lengthSq() < 1e-9) return;
@@ -5137,8 +5185,9 @@ void CombatSystem::reflectShotsOffMirrors(World& world, const ContentRegistry& c
         const Vec2 from = projectile.lastPosition;
         const Vec2 path = at.position - from;
         const double span = path.lengthSq();
-        for (const MirrorGuard& mirror : mirrors_) {
-            if (mirror.realm != at.realm || tier > mirror.tier + 1) continue;
+        for (std::size_t i = range.begin; i < range.end; ++i) {
+            const MirrorGuard& mirror = mirrors_[i];
+            if (tier > mirror.tier + 1) continue;
             const Vec2 toMirror = mirror.position - from;
             const double along = span > 1e-12
                 ? std::clamp((toMirror.x * path.x + toMirror.y * path.y) / span, 0.0, 1.0)
@@ -5230,6 +5279,7 @@ void CombatSystem::tickProjectiles(World& world, const SpatialGrid& grid,
         const auto& candidates = planned ? shotScratch_[plan->lane].planned : liveShotCandidates_;
         const auto first = planned ? plan->begin : std::size_t{0};
         const auto last = planned ? plan->end : candidates.size();
+        if (first == last) continue;
 
         // Resolve solid cover along the swept path before touching players behind it.
         const auto entryDistance = [&](Entity victim) {

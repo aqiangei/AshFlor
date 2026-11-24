@@ -2542,6 +2542,34 @@ TEST(a_hornets_missile_inherits_the_hornets_size) {
     CHECK(sim.world.has<HitCooldowns>(shot));
 }
 
+TEST(wild_volley_reload_advances_one_flight_step_under_sustained_overload) {
+    CHECK(contentReady());
+    const auto shotsAfter = [](double interval, double excess) {
+        Sim sim;
+        sim.spawnMob("arctic_snowman", kOrigin);
+        sim.spawnPlayer(kOrigin + Vec2{160.0, 0.0});
+        sim.tickIntent(100);
+        Query<ProjectileTag> shots(sim.world);
+        const auto before = shots.count();
+        for (int i = 0; i < 160; ++i) {
+            sim.now += interval - net::kTickMillis;
+            sim.rebuildGrid();
+            sim.refreshActive();
+            CommandBuffer commands(sim.world);
+            sim.ai.run(sim.world, sim.terrain, sim.grid, sim.active, sim.now, sim.dt,
+                       commands, nullptr, excess);
+            commands.flush();
+            sim.now += net::kTickMillis;
+        }
+        return shots.count() - before;
+    };
+    const auto normal = shotsAfter(50.0, 0.0);
+    CHECK(normal >= 3);
+    CHECK_EQ(normal % 3, 0u);
+    CHECK(shotsAfter(225.0, 0.0) > normal * 2);
+    CHECK_EQ(shotsAfter(225.0, 175.0), normal);
+}
+
 TEST(a_stinger_shooter_comes_round_before_it_fires) {
     CHECK(contentReady());
     Sim sim;

@@ -58,7 +58,8 @@ RemoteEntity mobOfType(const char* id, Rarity rarity = Rarity::Common) {
 std::vector<std::uint8_t> frameOf(const char* id, bool pet,
                                   const WorldRenderer::Options* options,
                                   Rarity rarity = Rarity::Common, double zoom = 1.0,
-                                  net::EntityKind kind = net::EntityKind::Mob) {
+                                  net::EntityKind kind = net::EntityKind::Mob,
+                                  Vec2 viewer = kMobAt) {
     // The plate's lines are TEXT, and text needs the font the game ships.
     // Without it the renderer paints no line at all, and a check that a line
     // is absent would pass for the wrong reason.
@@ -77,7 +78,7 @@ std::vector<std::uint8_t> frameOf(const char* id, bool pet,
     if (options != nullptr) renderer.options = *options;
     Camera camera = frameCamera();
     camera.loadoutZoom = zoom;
-    renderer.draw(canvas, view, camera, kMobAt, 0.0);
+    renderer.draw(canvas, view, camera, viewer, 0.0);
 
     return canvas.getImageData(0, 0, kFrameSize, kFrameSize);
 }
@@ -328,6 +329,24 @@ TEST(a_far_camera_skips_mythic_and_lower_mob_plates_only) {
     CHECK(plateIsVisible(Rarity::Mythic, 0.60));
     CHECK(plateIsVisible(Rarity::Ultra, 0.59));
     CHECK(plateIsVisible(Rarity::Common, 0.59, false, net::EntityKind::Npc));
+}
+
+TEST(tiny_distant_mob_labels_keep_the_tier_and_respect_plate_settings) {
+    const auto frame = [](const WorldRenderer::Options& options, bool far, bool pet = false) {
+        const Vec2 viewer = far ? kMobAt + Vec2{1300, 0} : kMobAt;
+        return frameOf("ladybug", pet, &options, Rarity::Ultra, 0.10, net::EntityKind::Mob, viewer);
+    };
+    WorldRenderer::Options off;
+    off.names = false;
+    off.healthBars = false;
+    auto names = off;
+    names.names = true;
+    auto health = off;
+    health.healthBars = true;
+    CHECK(frame(names, true) != frame(off, true));
+    CHECK(frame(names, true) != frame(names, false));
+    CHECK(frame(health, true) == frame(health, false));
+    CHECK(frame(names, true, true) == frame(names, false, true));
 }
 
 // ---------------------------------------------------------------------------

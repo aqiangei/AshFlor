@@ -608,15 +608,25 @@ bool CraftingPanel::render(MenuContext& ctx) {
     const Rect bulkTarget{bulkPrev.right()+5,bulkPrev.y,170,30};
     const Rect bulkNext{bulkTarget.right()+5,bulkPrev.y,32,30};
     const Rect bulkRun{bulkNext.right()+10,bulkPrev.y,std::max(100.0,panel.right()-12-bulkNext.right()-10),30};
-    static const char* bulkZh[]={"普通","罕见","稀有","史诗","传说","神话","究极","超级","永恒","Hyper"};
-    const bool bulkChinese=language()==Language::Zh;
+    static constexpr std::array<Rarity, 8> bulkTargets{
+        Rarity::Uncommon, Rarity::Rare, Rarity::Epic, Rarity::Legendary,
+        Rarity::Mythic, Rarity::Ultra, Rarity::Super, Rarity::Ascendant};
+    static constexpr std::array<const char*, bulkTargets.size()> bulkZh{
+        "罕见", "稀有", "史诗", "传说", "神话", "究极", "超级", "Apex"};
+    const auto bulkIndex = static_cast<std::size_t>(bulkTarget_ - 1);
+    const Rarity bulkRarity = bulkTargets[bulkIndex];
+    const bool bulkToApex = bulkRarity == Rarity::Ascendant;
+    const bool bulkChinese = language() == Language::Zh;
     drawSlotButton(canvas,bulkPrev,"<",std::nullopt,!inRift && bulkPrev.contains(mouse),false);
-    const std::string bulkTargetLabel=std::string(bulkChinese?"合成至：":"Craft to: ")+(bulkChinese?bulkZh[bulkTarget_]:rarityLabel(static_cast<Rarity>(bulkTarget_)));
-    drawSlotButton(canvas,bulkTarget,bulkTargetLabel.c_str(),rarityColor(static_cast<Rarity>(bulkTarget_)),false,false);
+    const std::string bulkTargetLabel = std::string(bulkChinese ? "合成至：" : "Craft to: ") +
+        (bulkChinese ? bulkZh[bulkIndex] : rarityLabel(bulkRarity));
+    drawSlotButton(canvas,bulkTarget,bulkTargetLabel.c_str(),rarityColor(bulkRarity),false,false);
     drawSlotButton(canvas,bulkNext,">",std::nullopt,!inRift && bulkNext.contains(mouse),false);
     const char* bulkRunLabel = inRift ? (bulkChinese ? "裂隙内无法合成" : "Crafting unavailable in Rift")
-        : bulkArmed_ ? (bulkChinese ? "确认消耗低阶材料" : "Confirm consuming lower tiers")
-                     : (bulkChinese ? "一键合成全部低阶花瓣" : "Craft all lower tiers");
+        : bulkToApex ? (bulkArmed_ ? trEnZh("Confirm spending PH (2.5%)", "确认消耗永久超凡（2.5%）")
+                                  : trEnZh("Bulk craft PH to Apex", "一键合成永久超凡 → Apex"))
+        : bulkArmed_ ? trEnZh("Confirm consuming lower tiers", "确认消耗低阶材料")
+                     : trEnZh("Craft all lower tiers", "一键合成全部低阶花瓣");
     const auto bulkRunTint = inRift ? std::nullopt
         : std::optional<std::uint32_t>{bulkArmed_ ? 0xCC6644u : 0x5A9FDBu};
     drawSlotButton(canvas, bulkRun, bulkRunLabel, bulkRunTint, !inRift && bulkRun.contains(mouse), false);
@@ -854,7 +864,7 @@ bool CraftingPanel::render(MenuContext& ctx) {
         return true;
     }
     if(phase_==Phase::Idle && (bulkPrev.contains(mouse)||bulkNext.contains(mouse))) {
-        const int last = rarityIndex(Rarity::Super);
+        const int last = static_cast<int>(bulkTargets.size());
         bulkTarget_ = 1 + (bulkTarget_ - 1 + (bulkNext.contains(mouse) ? 1 : last - 1)) % last;
         bulkArmed_ = false;
         return true;
@@ -864,7 +874,11 @@ bool CraftingPanel::render(MenuContext& ctx) {
         if(!bulkArmed_){bulkArmed_=true;return true;}
         std::vector<std::uint16_t> excluded;
         for (std::uint16_t i = 0; i < content().petalCount(); ++i) if (isExcluded(i)) excluded.push_back(i);
-        ctx.net.requestBulkCraft(static_cast<Rarity>(bulkTarget_), excluded);bulkArmed_=false;stagedPetal_=kNoPetal;stagedCount_=0;return true;
+        ctx.net.requestBulkCraft(bulkRarity, excluded);
+        bulkArmed_ = false;
+        stagedPetal_ = kNoPetal;
+        stagedCount_ = 0;
+        return true;
     }
     if (craftRect.contains(mouse)) {
         if (canSkipRoll) {

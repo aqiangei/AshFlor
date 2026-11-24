@@ -461,6 +461,16 @@ struct SpillSpec {
     double lingerMillis = 0.0;
     double frostFactor = 1.0;
     double health = 0;
+    double spreadPerSecond = 0.0;
+    double spreadPerTier = 0.0;
+    double spreadPerTierSquared = 0.0;
+    double spreadAboveSuper = 0.0;
+
+    double growthPerSecond(Rarity rarity) const {
+        const int tier = ladderIndex(rarity);
+        return spreadPerSecond + tier * spreadPerTier + tier * tier * spreadPerTierSquared +
+            std::max(0, tier - rarityIndex(Rarity::Super)) * spreadAboveSuper;
+    }
 };
 
 struct RadiationSpec {
@@ -917,6 +927,7 @@ struct PetalRarityOverrides {
     std::optional<double> collisionResist;
     std::optional<double> knockback;
     std::optional<double> luck, magnetism, count;
+    std::optional<int> petCount;
     std::optional<double> overhealShield, healBonus;
 };
 
@@ -1626,6 +1637,43 @@ inline double iodineHealRadius(Rarity rarity) {
 }
 inline double iodineHealAmount(Rarity rarity) { return 0.6 * petalHealScale(rarity); }
 
+inline constexpr double kPassivePetHealIntervalMillis = 1000.0;
+inline double passivePetHealAmount(const PetalConfig& config, Rarity rarity) {
+    return config.passivePetHeal * petalHealScale(rarity);
+}
+
+inline double chloroplastShieldBonus(Rarity rarity) {
+    const int tier = std::min(petalTier(rarity), rarityIndex(Rarity::Apex));
+    return (5.0 + 15.0 * tier + 50.0 * std::max(0, tier - 7)) / 100.0;
+}
+inline double stemCellHealChance(Rarity rarity) {
+    const int tier = petalTier(rarity);
+    return (2.0 + tier * tier / 4.0) / 100.0;
+}
+inline constexpr double kStemCellHealChanceCap = .25;
+inline constexpr double kDnaChancePerSource = .005;
+inline constexpr double kDnaChanceCap = .05;
+inline constexpr double kAfflictionExtensionCapMillis = 6000.0;
+inline double oxygenBurnExtensionMillis(Rarity rarity) { return 100.0 * (1 + ladderIndex(rarity)); }
+inline double cyanidePoisonExtensionMillis(Rarity rarity) { return 150.0 * (1 + ladderIndex(rarity)); }
+
+inline constexpr double kSupportShieldDurationMillis = 1500.0;
+inline constexpr double kCrystalLeafShieldCap = .15;
+inline constexpr double kChromosomeShieldCap = .20;
+
+inline double crystalLeafShieldAmount(Rarity rarity) { return 4.0 * petalHealScale(rarity); }
+inline double crystalLeafShieldMana(Rarity rarity) { return petalManaScale(rarity); }
+inline double chromosomeShieldAmount(Rarity rarity) { return 2.2 * petalHealScale(rarity); }
+inline double chromosomeShieldMana(Rarity rarity) { return .75 * petalManaScale(rarity); }
+
+inline double petalContactSelfDamage(const PetalConfig& config, Rarity rarity) {
+    return config.contactSelfDamage * petalStrengthScale(rarity);
+}
+
+inline double petalBaseBurnRate(const PetalConfig& config, Rarity rarity) {
+    return config.burnPerSecond * referenceOffenseScale(config, rarity);
+}
+
 /// Additive movement bonus for each equipped RNA, as a fraction of pet speed.
 inline double rnaPetSpeedBonus(Rarity rarity) {
     // Apex RNA has an extra petal tier beyond the natural mob ladder's Hyper.
@@ -1659,11 +1707,19 @@ inline double spillBaseRadius(const SpillSpec& spill, Rarity rarity) {
            std::min(spill.radius + 5.0 * ladderIndex(rarity), std::max(spill.radius, 100.0));
 }
 
-// Soap boosts the radius of the wearer's liquid fields. The bonus is additive
-// across active slots and limited independently of per-target effect strength.
-inline constexpr double kSoapMaxSpillRadiusScale = 3.0;
-inline constexpr double soapSpillRadiusBonus(Rarity rarity) {
+// Local maximum coverage per equipped Soap, shared with the inventory panel.
+inline constexpr double kMaxSoapCoverageBonus = 2.0;
+inline double soapCoverageBonus(Rarity rarity) {
     return rarity == Rarity::Ascendant ? 0.80 : (20 + 6 * ladderIndex(rarity)) / 100.0;
+}
+
+inline double soapSpillRateBonus(Rarity rarity) {
+    const int tier = ladderIndex(rarity);
+    return (10.0 + 1.2 * tier * tier) / 100.0;
+}
+
+inline double bloodSpillRate(Rarity rarity) {
+    return 10.0 + 3.75 * ladderIndex(rarity);
 }
 
 /// Summons eligible for the Duplicator talent's extra copies.
@@ -1682,9 +1738,10 @@ inline int summonSquadSize(int count, Rarity rarity) {
 inline int configuredSummonCount(const PetalConfig& config, Rarity rarity,
                                  const SkillSet* skills, int slot) {
     if (config.petLifetimeMillis > 0.0) return summonSquadSize(config.petCount, rarity);
+    const int brood = config.rarityOverrides[ladderIndex(rarity)].petCount.value_or(config.petCount);
     const int copies = summonUsesDuplicator(config)
-        ? petalCopies(config.petCount, skills, slot, petalTier(rarity), config.stackable)
-        : config.petCount;
+        ? petalCopies(brood, skills, slot, petalTier(rarity), config.stackable)
+        : brood;
     return config.petSummonTiers ? copies : summonSquadSize(copies, rarity);
 }
 
@@ -1730,17 +1787,25 @@ inline double hyperSummonScale(const PetalConfig& config, Rarity rarity) {
     return config.id == "magic_stick" || config.id == "mysterious_stick" ? 1.5 : 1.25;
 }
 
-// Preserve the Eternal-tier health and damage budget when hatching Hyper bodies.
-inline double configuredSummonStrength(const PetalConfig& config, Rarity rarity) {
-    const double promotionOffset = apexEggHatchesHyper(config, rarity) ? 1.0 / 1.1 : 1.0;
-    return strengthBoost(rarity) * hyperSummonScale(config, rarity) * promotionOffset;
-}
-
 // Promoting previously Eternal-capped escorts to actual Hyper bodies should
 // not also apply the full rarity stat jump. Existing Hyper eggs keep theirs.
 inline double hyperSummonPromotionScale(const PetalConfig& config, Rarity rarity) {
     if (ladderRarity(rarity) != Rarity::Apex || config.id == "egg" || config.id == "beetle_egg") return 1.0;
     return 1.1 / 1.5;
+}
+
+// Split the local per-slot health and damage budget across the reference brood.
+inline double configuredSummonStrength(const PetalConfig& config, Rarity rarity,
+                                       const SkillSet* skills, int slot) {
+    const double strength = strengthBoost(rarity) * hyperSummonScale(config, rarity);
+    if (config.id == "void_momy_egg") {
+        const int localCount = summonSquadSize(petalCopies(1, skills, slot, petalTier(rarity), config.stackable), rarity);
+        const int brood = configuredSummonCount(config, rarity, skills, slot);
+        const Rarity hatch = configuredSummonRarity(config, rarity);
+        const double slotBudget = localCount * petalStatScale(rarity) * hyperSummonPromotionScale(config, rarity);
+        return strength * slotBudget / (brood * petalStatScale(hatch) * hyperSummonPromotionScale(config, hatch));
+    }
+    return apexEggHatchesHyper(config, rarity) ? strength / 1.1 : strength;
 }
 
 /// Apex's petals are Permanent Hyper's with +25% damage and +30% health

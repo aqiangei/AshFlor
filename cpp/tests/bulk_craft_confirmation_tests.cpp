@@ -248,3 +248,109 @@ TEST(craftable_filter_skips_understocked_rows_and_crafts_an_eligible_batch) {
     CHECK(server.stepUntil({&client}, [&]{ return client.craftOutcome().pending; }, 250));
     CHECK(client.profile().stackCount(fragment, Rarity::PermanentHyper) < 5u);
 }
+
+TEST(apex_bulk_craft_confirmation_only_spends_eligible_permanent_hyper_inventory) {
+    constexpr std::uint32_t batchSize = 5;
+    Harness h("apex-bulk-ui", [](const std::string& path) {
+        seedUser(path, "apexbulk", "Fixture42!");
+        Database db;
+        std::string error;
+        if (!db.load(path, error)) return;
+        const auto* account = db.findUser("apexbulk");
+        if (!account) return;
+        auto& bag = db.progress(account->id);
+        bag.loadout.resize(kLoadoutSlots);
+        bag.loadout[0] = StoredItem{"petal", Rarity::PermanentHyper, "rose"};
+        bag.addItem(Rarity::Common, "petal_rose", 20);
+        bag.addItem(Rarity::Unique, "petal_rose", 100);
+        bag.addItem(Rarity::PermanentHyper, "petal_rose", 5000);
+        bag.addItem(Rarity::PermanentHyper, "petal_leaf", 200);
+        bag.addItem(Rarity::PermanentHyper, "petal_mjolnir", 200);
+        bag.addItem(Rarity::PermanentHyper, "petal_rock", 21);
+        bag.addItem(Rarity::Ascendant, "petal_rock", kMaxStackCount - 1);
+        bag.addItem(Rarity::PermanentHyper, "petal_basic", 50);
+        bag.addItem(Rarity::Ascendant, "petal_basic", kMaxStackCount);
+        db.markDirty();
+        db.save();
+    }, dataDir(), 0);
+    CHECK(h.ready);
+    if (!h.ready) return;
+
+    NetClient client;
+    const bool loggedIn = loginAs(h, client, "apexbulk", "Fixture42!");
+    CHECK(loggedIn);
+    if (!loggedIn) return;
+    const auto rose = content().petalIndex("rose");
+    const auto leaf = content().petalIndex("leaf");
+    const auto hammer = content().petalIndex("mjolnir");
+    const auto rock = content().petalIndex("rock");
+    const auto basic = content().petalIndex("basic");
+    CHECK(awaitProfile(h, client, [&](const Profile& profile) {
+        return profile.stackCount(rose, Rarity::PermanentHyper) == 5000;
+    }));
+
+    Window window;
+    std::string error;
+    const bool opened = window.open(1000, 760, "Bulk Apex craft", error, false);
+    CHECK(opened);
+    if (!opened) return;
+    CHECK(ui::Fonts::init(dataDir(), error));
+    ui::setLanguage(ui::Language::En);
+    SpriteCache sprites;
+    WorldRenderer renderer;
+    DragState drag;
+    ClientSettings settings;
+    settings.craftBlacklist = {"leaf"};
+    CraftingPanel panel;
+    const Rect bounds{28, 20, CraftingPanel::size(client.profile()).x, 560};
+    MenuContext ctx{window.canvas(), window, client, sprites, renderer, settings, drag,
+                    1.0, 0.016, bounds};
+    const auto layout = drawSlotCard(ctx.canvas, bounds, ui::kCraftingSkin, "Craft", "Craft", {});
+    const auto click = [&](double x, double y) {
+        const double scale = window.uiScaleMultiplier();
+        SDL_Event move{};
+        move.type = SDL_MOUSEMOTION;
+        move.motion.x = static_cast<int>(std::lround(x * scale));
+        move.motion.y = static_cast<int>(std::lround(y * scale));
+        CHECK_EQ(SDL_PushEvent(&move), 1);
+        SDL_Event button{};
+        button.button.button = SDL_BUTTON_LEFT;
+        for (const auto type : {SDL_MOUSEBUTTONDOWN, SDL_MOUSEBUTTONUP}) {
+            button.type = type;
+            CHECK_EQ(SDL_PushEvent(&button), 1);
+            CHECK(window.pump());
+            ctx.timeSeconds += 0.016;
+            CHECK(panel.render(ctx));
+        }
+    };
+
+    const double buttonY = layout.listView.y + 19;
+    click(bounds.x + 28, buttonY); // Rare to Uncommon.
+    click(bounds.x + 28, buttonY); // Uncommon wraps to Apex.
+    click(bounds.right() - 55, buttonY); // Arm only.
+    h.step(4, {&client});
+    CHECK_EQ(client.profile().stackCount(rose, Rarity::PermanentHyper), 5000u);
+    click(bounds.right() - 55, buttonY); // Confirm the actual request.
+    CHECK(awaitProfile(h, client, [&](const Profile& profile) {
+        return profile.stackCount(rose, Rarity::PermanentHyper) < batchSize;
+    }));
+    const auto& profile = client.profile();
+    CHECK(profile.stackCount(rose, Rarity::Ascendant) > 0);
+    CHECK_EQ(profile.stackCount(rose, Rarity::Common), 20u);
+    CHECK_EQ(profile.stackCount(rose, Rarity::Unique), 100u);
+    CHECK_EQ(profile.loadout[0].petalIndex, rose);
+    CHECK(profile.loadout[0].rarity == Rarity::PermanentHyper);
+    CHECK_EQ(profile.stackCount(leaf, Rarity::PermanentHyper), 200u);
+    CHECK_EQ(profile.stackCount(hammer, Rarity::PermanentHyper), 200u);
+    CHECK_EQ(profile.stackCount(basic, Rarity::PermanentHyper), 50u);
+    CHECK_EQ(profile.stackCount(basic, Rarity::Ascendant), static_cast<unsigned>(kMaxStackCount));
+    CHECK(profile.stackCount(rock, Rarity::PermanentHyper) >= 16u);
+    CHECK(profile.stackCount(rock, Rarity::PermanentHyper) < 21u);
+    CHECK(profile.stackCount(rock, Rarity::Ascendant) >= static_cast<unsigned>(kMaxStackCount - 1));
+
+    h.step(36, {&client});
+    client.requestBulkCraft(Rarity::Uncommon, {});
+    CHECK(awaitProfile(h, client, [&](const Profile& updated) {
+        return updated.stackCount(rose, Rarity::Common) < batchSize;
+    }));
+}
