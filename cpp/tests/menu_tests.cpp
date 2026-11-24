@@ -524,9 +524,11 @@ TEST(a_magic_petal_is_drawn_at_the_size_of_the_petal_it_is_the_form_of) {
     std::string error;
     CHECK(loadContent(dataDir(), error));
 
-    for (const char* id : {"leaf", "stick", "cactus", "missile", "bubble", "rose"}) {
+    for (const char* id : {"leaf", "mysterious_stick", "cactus", "missile", "bubble", "rose"}) {
         const std::uint16_t base = content().petalIndex(id);
-        const std::uint16_t magic = content().magicFormOf(base);
+        const std::string name(id);
+        const auto magic = name == "rose" ? content().petalIndex("mana_orb") :
+            name == "mysterious_stick" ? content().petalIndex("magic_stick") : content().magicFormOf(base);
         if (base == kInvalidIndex || magic == kInvalidIndex) { CHECK(false); continue; }
 
         // Measured at the BASE petal's own size stat. `size` is not what the

@@ -448,8 +448,8 @@ inline constexpr HyperTechniqueInfo kHyperTechniques[] = {
      "The recovery earned by a kill lasts 11 seconds.",
      "击杀触发的图腾恢复持续 11 秒。", 11000},
     {"triangle", HyperTechnique::TriangleStrike,
-     "With another Hyper Triangle on the active bar, this one hits wild mobs 6% harder on attack.",
-     "主槽还有另一枚超凡三角时，这枚超凡三角主动攻击野怪的伤害提高 6%。", 1.25},
+     "With another Hyper Triangle on the active bar, this one hits wild mobs 25% harder on attack.",
+     "主槽还有另一枚超凡三角时，这枚超凡三角主动攻击野怪的伤害提高 25%。", 1.25},
     {"uranium", HyperTechnique::WideRadiation,
      "Radiation reaches 25% farther at the same self-damage.",
      "辐射半径增加 25%，自伤规则相同。", 1.25},
@@ -490,6 +490,7 @@ inline constexpr HyperTechniqueInfo kHyperTechniques[] = {
 inline const HyperTechniqueInfo* hyperTechniqueInfo(std::string_view id, Rarity rarity,
                                                      bool copiedFromOtherTier = false) {
     if (!isHyperPetal(rarity) || copiedFromOtherTier) return nullptr;
+    if (id == "arctic_stick") id = "mysterious_stick";
     if (id == kAcidBombTechnique.id) return &kAcidBombTechnique;
     const auto* end = kHyperTechniques + sizeof(kHyperTechniques) / sizeof(*kHyperTechniques);
     const auto* entry = std::lower_bound(kHyperTechniques, end, id,

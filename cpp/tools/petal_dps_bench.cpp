@@ -88,7 +88,7 @@ Result measure(std::uint16_t index, Rarity rarity, double separation,
         ai.tickPetalRings(world,commands);
         rebuild();
         combat.runWorldPhase(world,grid,content(),now,net::kTickSeconds);
-        petals.landShots(world,content(),combat.shotLandings(),&terrain);
+        petals.landShots(world,content(),combat.shotLandings(),&terrain,now,&events);
         if (tick >= warmTicks) for (const auto& event : events.events()) {
             if (event.kind == net::EventKind::Damage && event.struck == dummy &&
                 event.dealtBy == player && !(event.flag & net::DamageFlashOnly)) {

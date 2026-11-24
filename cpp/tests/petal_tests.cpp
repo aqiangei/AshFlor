@@ -3136,6 +3136,7 @@ TEST(an_orb_charges_homes_and_restores_mana_only_while_the_pool_is_short) {
 TEST(a_magic_missile_is_paid_for_when_it_spawns_and_fires_for_free) {
     if (!contentLoaded()) return;
     Rig rig;
+    rig.world.ensure<ManaPool>(rig.player) = ManaPool{100.0,100.0};
     rig.equip(0, "vessel");
     rig.equip(1, "magicmissile");
     const auto mana = [&] { return rig.world.get<ManaPool>(rig.player).current; };
@@ -3250,6 +3251,7 @@ TEST(bubbles_pop_while_the_attack_ring_and_projectiles_stay_active) {
 TEST(a_magic_bubble_is_paid_for_when_it_spawns_not_when_it_pops) {
     if (!contentLoaded()) return;
     Rig rig;
+    rig.world.ensure<ManaPool>(rig.player) = ManaPool{100.0,100.0};
     rig.equip(0, "vessel");
     rig.equip(1, "magic_bubble");
     const auto mana = [&] { return rig.world.get<ManaPool>(rig.player).current; };
@@ -3326,6 +3328,7 @@ TEST(a_magic_bubble_throws_the_flower_the_way_it_is_asking_to_go) {
 TEST(a_magic_bubble_with_no_direction_asked_for_is_held_not_spent) {
     if (!contentLoaded()) return;
     Rig rig;
+    rig.world.ensure<ManaPool>(rig.player) = ManaPool{100.0,100.0};
     rig.equip(0, "vessel");
     rig.equip(1, "magic_bubble");
     rig.settleEquips();
@@ -5336,6 +5339,46 @@ TEST(a_mirror_turns_a_missile_back_on_its_shooter_up_to_one_tier_above_it) {
     }
 }
 
+TEST(arctic_stick_matches_mysterious_stick_in_the_ring_at_every_rarity) {
+    const auto& registry = testsupport::shippedContent();
+    const auto branch = registry.petalIndex("arctic_stick");
+    const auto stick = registry.petalIndex("mysterious_stick");
+    const auto snow = registry.petalIndex("arctic_snow_stick");
+    CHECK(branch != stick && branch != snow);
+    CHECK_EQ(registry.petal(snow).petMobIndex, registry.mobIndex("arctic_snowstorm"));
+    CHECK_EQ(registry.petal(snow).petCount, 3);
+    for (int i = 0; i < kRarityCount; ++i) {
+        const Rarity rarity = static_cast<Rarity>(i);
+        const auto& a = registry.petalStats(branch, rarity);
+        const auto& b = registry.petalStats(stick, rarity);
+        CHECK_EQ(a.damage, b.damage);
+        CHECK_EQ(a.health, b.health);
+        CHECK_EQ(a.radius, b.radius);
+        CHECK_EQ(a.reloadMillis, b.reloadMillis);
+        CHECK_EQ(a.breakable, b.breakable);
+        Rig rig(registry);
+        rig.equip(0, "arctic_stick", rarity);
+        rig.equip(1, "mysterious_stick", rarity);
+        const auto expected = static_cast<std::size_t>(summonSquadSize(2, rarity));
+        CHECK(rig.tickUntil([&] { return rig.petCount() >= 2 * expected; }));
+        const auto& slots = rig.world.get<PetalSlotState>(rig.player).slots;
+        CHECK_EQ(slots[0].pets.size(), expected);
+        CHECK_EQ(slots[1].pets.size(), expected);
+        if (slots[1].pets.empty()) continue;
+        const Entity reference = slots[1].pets.front();
+        for (Entity pet : slots[0].pets) {
+            CHECK_EQ(rig.world.get<MobType>(pet).configIndex, registry.mobIndex("sandstorm"));
+            CHECK_EQ(rig.world.get<MobType>(pet).rarity, rig.world.get<MobType>(reference).rarity);
+            CHECK_EQ(rig.world.get<Health>(pet).max, rig.world.get<Health>(reference).max);
+            CHECK_EQ(rig.world.get<ContactDamage>(pet).amount, rig.world.get<ContactDamage>(reference).amount);
+            CHECK_EQ(rig.world.get<Pet>(pet).expiresAtMillis, rig.world.get<Pet>(reference).expiresAtMillis);
+        }
+        std::printf("stick parity %s: %zu per slot, health %.2f, contact %.2f, reload %.0f ms\n",
+                    rarityLabel(rarity), expected, rig.world.get<Health>(reference).max,
+                    rig.world.get<ContactDamage>(reference).amount, a.reloadMillis);
+    }
+}
+
 TEST(zorr_momy_egg_hatches_the_reference_brood_at_each_tier) {
     if (!contentLoaded()) return;
     const auto& registry = testsupport::shippedContent();
@@ -6878,7 +6921,7 @@ TEST(wiki_mechanism_lightning_bypasses_armor_and_dodge) {
 TEST(wiki_mechanism_blueberry_projectiles_use_lightning_instead_of_zero_physical_damage){
     CHECK(contentLoaded());Rig rig;rig.equip(0,"magic_peas");rig.freezeRing();rig.settleEquips();rig.settleRing();
     rig.setFlags(net::InputAttack);rig.tick();int seen=0;
-    Query<ProjectileTag,Projectile> shots{rig.world};shots.each([&](Entity,ProjectileTag&,Projectile& shot){++seen;CHECK_NEAR(shot.damage,120,1e-8);});
+    Query<ProjectileTag,Projectile> shots{rig.world};shots.each([&](Entity,ProjectileTag&,Projectile& shot){++seen;CHECK_NEAR(shot.damage,90,1e-8);});
     CHECK_EQ(seen,1);
 }
 TEST(wiki_mechanism_mecha_missile_fires_straight_with_or_without_antennae){
@@ -7264,7 +7307,7 @@ TEST(mobile_summons_use_a_safe_fallback_inside_a_wall_bounded_pocket) {
     map["tilesets"][0]["tiles"][0]["objectgroup"]["objects"] = std::move(shapes);
     CHECK(testsupport::writeText(path, map.dump()));
 
-    for (const char* stick : {"mysterious_stick", "magic_stick"}) {
+    for (const char* stick : {"mysterious_stick", "arctic_stick", "magic_stick"}) {
         Rig rig(registry);
         CHECK(rig.terrain.loadTiledMap(path, error));
         rig.useHatchTerrain = true;
@@ -7784,8 +7827,8 @@ TEST(hyper_technique_magic_leaf_and_orb_fill_the_wearers_mana_without_draining_i
 TEST(high_tier_blueberries_deal_less_damage_at_the_original_volley_rate) {
     const auto& registry = testsupport::shippedContent();
     for (const auto rarity : {Rarity::Super, Rarity::Unique, Rarity::Apex, Rarity::PermanentHyper}) {
-        const double damagePerBerry = rarity == Rarity::Super ? 262440.0 :
-            rarity == Rarity::Unique ? 372009.0 : 744018.0;
+        const double damagePerBerry = rarity == Rarity::Super ? 196830.0 :
+            rarity == Rarity::Unique ? 279006.75 : 837020.25;
         Rig rig(registry);
         rig.equip(0, "magic_peas", rarity);
         rig.equip(1, "magic_leaf", rarity);
@@ -8243,8 +8286,8 @@ TEST(magic_cotton_spends_only_the_mana_needed_and_passes_overflow_to_health) {
     const auto reserve = equip(kLoadoutActiveSlots, Rarity::Apex);
     CombatSystem combat;
     CHECK_NEAR(combat.applyDamage(world, flower, mob, 4.0, 1000.0).applied, 0.0, 1e-8);
-    CHECK_NEAR(world.get<ManaPool>(flower).current, 12.0, 1e-8);
-    CHECK_NEAR(combat.applyDamage(world, flower, mob, 10.0, 2000.0, DamageKind::Poison).applied, 4.0, 1e-8);
+    CHECK_NEAR(world.get<ManaPool>(flower).current, 20.0 - 4.0 / magicCottonDamagePerMana(Rarity::Common), 1e-8);
+    CHECK_NEAR(combat.applyDamage(world, flower, mob, 10.0, 2000.0, DamageKind::Poison).applied, 14.0 - 20.0 * magicCottonDamagePerMana(Rarity::Common), 1e-8);
     CHECK_EQ(world.get<ManaPool>(flower).current, 0.0);
     CHECK_NEAR(combat.applyDamage(world, flower, mob, 10.0, 3000.0).applied, 10.0, 1e-8);
 
@@ -8257,7 +8300,7 @@ TEST(magic_cotton_spends_only_the_mana_needed_and_passes_overflow_to_health) {
     CHECK(!world.has<Dead>(second));
     CHECK(!world.has<Dead>(reserve));
     world.add<Dead>(second);
-    CHECK_NEAR(combat.applyDamage(world, flower, mob, 5.0, 5000.0).applied, 1.0, 1e-8);
+    CHECK_NEAR(combat.applyDamage(world, flower, mob, 1.0 + 8.0 * magicCottonDamagePerMana(Rarity::Common), 5000.0).applied, 1.0, 1e-8);
     CHECK_EQ(world.get<ManaPool>(flower).current, 0.0);
 }
 
@@ -8688,7 +8731,7 @@ TEST(hyper_final_triangle_counts_only_other_hyper_triangles) {
     CHECK_NEAR(damage(2), stats.damage * 1.8, 1e-6);
     CHECK_NEAR(damage(10), stats.damage * 8.2, 1e-6);
     // The existing Hyper attack technique applies after the same-tier bonus.
-    CHECK_NEAR(damage(2, true), stats.damage * 1.8 * 1.06, 1e-6);
+    CHECK_NEAR(damage(2, true), stats.damage * 1.8 * 1.25, 1e-6);
 }
 
 TEST(permanent_hyper_uses_the_same_stats_and_techniques_as_contested_hyper) {

@@ -11,6 +11,7 @@
 // the strip the grid leaves free on the right.
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -215,13 +216,20 @@ Grid buildGrid(const Profile& profile, double innerWidth, bool stacked,
         // catalogue of what you own, not where it sits on the ladder. Petal
         // indices are assigned in sorted-id order, which is the canonical
         // ordering this mode is sorted by in the browser too.
+        std::vector<std::array<std::uint32_t, kRarityCount>> counts(content().petalCount());
+        // Reverse order preserves stackCount's first-match semantics.
+        for (auto it = profile.inventory.rbegin(); it != profile.inventory.rend(); ++it) {
+            const int tier = rarityIndex(it->rarity);
+            if (it->petalIndex < counts.size() && tier >= 0 && tier < kRarityCount)
+                counts[it->petalIndex][tier] = it->count;
+        }
         std::vector<Cell> entries;
         for (std::size_t i = 0; i < content().petalCount(); ++i) {
             const auto petalIndex = static_cast<std::uint16_t>(i);
             if (!visible(petalIndex)) continue;
             for (int tier = kRarityCount - 1; tier >= 0; --tier) {
                 const Rarity rarity = clampRarity(tier);
-                const std::uint32_t count = profile.stackCount(petalIndex, rarity);
+                const std::uint32_t count = counts[i][tier];
                 if (count == 0) continue;
                 entries.push_back({Rect{}, petalIndex, rarity, count});
                 break;
@@ -414,7 +422,8 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     const double damageScale = skills.effectScale(SkillId::Damage);
     const double fireScale = skills.effectScale(SkillId::FirePower);
     const double baseDamage = petalContactDamage(config, stats, rarity);
-    const double damage = std::round((baseDamage + triangleBonus) * damageScale);
+    const double lightningScale = config.lightningDamage ? skills.effectScale(SkillId::LightningPower) : 1.0;
+    const double damage = std::round((baseDamage + triangleBonus) * damageScale * lightningScale);
 
     std::vector<TooltipLine> lines;
     // florr's header: on the name's right, what bringing the petal out costs
@@ -807,8 +816,8 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         if (config.id == "acid" || config.id == "lava" ||
             config.id == "acid_bomb" || config.id == "lava_bomb") {
             TooltipLine trigger{config.spill.onHit
-                ? (chinese ? "有效命中野怪时，在其脚下铺池。"
-                           : "Landing a hit on a wild mob creates a pool at its position.")
+                ? (chinese ? "命中野怪或训练木桩时，在目标脚下铺池。"
+                           : "Hitting a wild mob or practice dummy creates a pool at its feet.")
                 : (chinese ? "花瓣出现并准备完成后，按攻击或防御在花瓣所在处铺池。提前破损时没有池。"
                            : "After the petal spawns and charges, attack or defend to place a pool at the petal. Breaking early leaves no pool."),
                 12.0};
@@ -1161,8 +1170,10 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         if (config.id == "magic_peas") {
             lines.push_back({chinese ? "四颗蓝莓分别造成闪电伤害，不会连锁跳跃。" :
                 "Four blueberries deal lightning damage individually, with no chain jumps.", 12.0});
-            special("单颗发射伤害：", "Projectile damage per berry: ",
-                    stats.lightningDamagePerHit * skills.effectScale(SkillId::PetDamage));
+            const double berryDamage = stats.lightningDamagePerHit * skills.effectScale(SkillId::PetDamage) *
+                skills.effectScale(SkillId::LightningPower);
+            special("单颗发射伤害：", "Projectile damage per berry: ", berryDamage);
+            lines.back().altText = std::string(chinese ? "单颗发射伤害：" : "Projectile damage per berry: ") + exactNumber(berryDamage);
         }
         lines.push_back({chinese ? "闪电无视护甲和闪避。" : "Lightning bypasses armor and dodge.",12.0});
         special("基础闪电伤害：", "Base lightning damage: ", stats.lightningDamagePerHit);
@@ -1322,7 +1333,7 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     if (config.id == "magic_fang" || config.id == "magic_tooth") {
         const bool fang = config.id == "magic_fang";
         const char* label = fang
-            ? (chinese ? "每次有效咬中野怪回复法力：" : "Mana per damaging bite on a wild mob: ")
+            ? (chinese ? "有效咬中野怪／训练木桩回魔：" : "Mana per damaging wild mob / dummy bite: ")
             : (chinese ? "每次重装至多回复法力：" : "Mana restored at most once per reload: ");
         const double amount = fang ? magicFangManaPerBite(rarity) : magicToothManaPerReload(rarity);
         TooltipLine refund{label + oneDecimal(amount), 12.0};
@@ -1446,6 +1457,38 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
 }
 
 } // namespace ui
+
+struct InventoryPanel::LayoutCache {
+    Grid grid;
+    const WorldMaps* dropMapSource = nullptr;
+    std::vector<const MapData*> dropMaps;
+    std::vector<Profile::Stack> stacks;
+    std::string search;
+    double width = -1;
+    bool stacked = false;
+    Language lang = Language::Zh;
+    const std::vector<bool>* drops = nullptr;
+
+    const Grid& get(const Profile& profile, double nextWidth, bool nextStacked,
+                    const std::string& nextSearch, const std::vector<bool>* nextDrops) {
+        const auto sameStack = [](const Profile::Stack& a, const Profile::Stack& b) {
+            return a.petalIndex == b.petalIndex && a.rarity == b.rarity && a.count == b.count;
+        };
+        if (width == nextWidth && stacked == nextStacked && search == nextSearch &&
+            lang == language() && drops == nextDrops &&
+            std::equal(stacks.begin(), stacks.end(), profile.inventory.begin(),
+                       profile.inventory.end(), sameStack)) return grid;
+
+        grid = buildGrid(profile, nextWidth, nextStacked, trimmed(lowerCase(nextSearch)), nextDrops);
+        stacks = profile.inventory;
+        width = nextWidth;
+        stacked = nextStacked;
+        search = nextSearch;
+        lang = language();
+        drops = nextDrops;
+        return grid;
+    }
+};
 
 double InventoryPanel::preferredWidth() {
     // Five cells, their gaps, and the two unequal margins. The panel is sized
@@ -1614,9 +1657,9 @@ bool InventoryPanel::render(MenuContext& ctx) {
     if (!canViewRunLoot) showRunLoot_ = false;
     if (showRunLoot_) return renderRunLoot(ctx);
     // Leave the drag live while the bag is hidden so the loadout can still
-    // receive it. Returning to the bag or releasing restores the same view.
+    // receive it, including when a desktop slot overlaps the bag.
     if (ctx.drag.source == DragState::Source::Inventory &&
-        ctx.window.mouseDown(MouseButton::Left) && !panel.contains(mouse)) {
+        ((!ctx.window.pointerIsTouch() && ctx.drag.inventoryDragMoved(mouse)) || !panel.contains(mouse))) {
         return true;
     }
 
@@ -1684,16 +1727,21 @@ bool InventoryPanel::render(MenuContext& ctx) {
                &searchField_);
     panelClose(canvas, closeRect, closeRect.contains(mouse));
 
-    std::vector<const MapData*> dropMaps;
-    const WorldMaps* maps = ctx.renderer.worldMaps();
-    if (maps && !riftBag) {
-        for (const auto& map : maps->maps()) {
+    if (!layout_) layout_ = std::make_shared<LayoutCache>();
+    const WorldMaps* maps = riftBag ? nullptr : ctx.renderer.worldMaps();
+    if (layout_->dropMapSource != maps) {
+        layout_->dropMapSource = maps;
+        layout_->dropMaps.clear();
+        mapDrops_.clear();
+        layout_->width = -1;
+        if (maps) for (const auto& map : maps->maps()) {
             if (map.id() != map.templateId() || map.id().rfind("rift_", 0) == 0) continue;
             if (std::none_of(map.elements().begin(), map.elements().end(),
                              [](const MapElement& e) { return e.isSpawnBand(); })) continue;
-            dropMaps.push_back(&map);
+            layout_->dropMaps.push_back(&map);
         }
     }
+    const auto& dropMaps = layout_->dropMaps;
     const std::vector<bool>* dropTypes = nullptr;
     if (!dropMaps.empty()) {
         if (dropMap_ > dropMaps.size()) dropMap_ = 0;
@@ -1738,8 +1786,8 @@ bool InventoryPanel::render(MenuContext& ctx) {
     // empty. The shared trim takes spaces, tabs, CRs and LFs, which is every
     // blank this field can hold -- editText lets no other control byte into a
     // single-line field.
-    const Grid grid = buildGrid(ctx.craftInventory ? *ctx.craftInventory : profile,
-                                innerWidth, stacked_, trimmed(lowerCase(search_)), dropTypes);
+    const Grid& grid = layout_->get(ctx.craftInventory ? *ctx.craftInventory : profile,
+                                    innerWidth, stacked_, search_, dropTypes);
     if (dropTypes && grid.cells.empty()) {
         TextStyle hint;
         hint.size = 14.0;
@@ -1864,10 +1912,13 @@ bool InventoryPanel::render(MenuContext& ctx) {
         canvas.setLineCap("butt");
     }
 
-    for (std::size_t i = 0; i < grid.cells.size(); ++i) {
-        const Cell& cell = grid.cells[i];
+    const auto firstVisible = std::lower_bound(grid.cells.begin(), grid.cells.end(), view.y - originY,
+        [](const Cell& cell, double top) { return cell.rect.bottom() < top; });
+    for (auto it = firstVisible; it != grid.cells.end(); ++it) {
+        const Cell& cell = *it;
         const Rect rect{originX + cell.rect.x, originY + cell.rect.y, cell.rect.w, cell.rect.h};
-        if (rect.bottom() <= view.y || rect.y >= viewBottom) continue;
+        if (rect.y >= viewBottom) break;
+        if (rect.bottom() <= view.y) continue;
 
         ItemTile tile;
         tile.petalIndex = cell.petalIndex;
@@ -1975,6 +2026,7 @@ bool InventoryPanel::render(MenuContext& ctx) {
             const Cell& cell = grid.cells[static_cast<std::size_t>(hovered)];
             if (ctx.craftInventory != nullptr && ctx.craftInventory != &profile &&
                 profile.stackCount(cell.petalIndex, cell.rarity) == 0) return true;
+            ctx.drag.inventoryPress = mouse;
             ctx.drag.source = DragState::Source::Inventory;
             ctx.drag.petalIndex = cell.petalIndex;
             ctx.drag.rarity = cell.rarity;

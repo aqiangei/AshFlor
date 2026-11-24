@@ -154,6 +154,7 @@ private:
     struct Sprite {
         std::shared_ptr<SvgDocument> document;
         bool distanceAnimated = false;
+        int smallDocumentFrames = 0;
         bool articulatedEyes = false;
         double facingOffset = 0.0; ///< Align the source art's head with the game's +X bearing.
         Vec2 bodyCentreOffset; ///< Source body centre relative to the middle of the fitted square.
@@ -170,6 +171,7 @@ private:
         /// Set when the mob's `image` names a painter instead of declaring a
         /// document; `document` is then null and never consulted.
         MobArt art = MobArt::None;
+        mutable std::shared_ptr<Canvas> smallPoseSheet;
         /// Set when the mob's `image` is `$petal:<id>`: it is drawn as that
         /// petal is, at the mob's tier, and nothing else here is consulted.
         std::optional<std::uint16_t> petal;

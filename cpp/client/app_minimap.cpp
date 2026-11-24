@@ -588,29 +588,38 @@ void App::drawMinimap(Canvas& canvas, bool expanded) {
         else paintMapDot(canvas, marker);
         if (!label.empty()) labels.push_back({{dx, dy - radius - 2.0}, label, priority});
     };
-    if (const MapData* map = worldMaps_.forRealm(realm)) {
-        for (const auto& element : map->elements()) {
-            if (element.kind != MapElementKind::Teleporter || element.targetMap.empty()) continue;
-            // Admission changes without changing maps. Draw this marker with
-            // the live overlays so neither view needs to rebake on opening.
-            if (element.padId == "rift") {
-                const bool open = net_.riftOpen();
-                dot(element.centre(), open ? 5.0 : 4.0, open ? 0xDAA7FFu : 0xA6A8B0u,
-                    true, open ? trEnZh("Rift Entrance", "裂隙入口") : "",
-                    MapLabelPriority::RiftEntrance);
-                continue;
+    const MapData* map = worldMaps_.forRealm(realm);
+    if (minimapPortalMap_ != map || minimapPortalLanguage_ != ui::language()) {
+        minimapPortals_.clear();
+        minimapPortalMap_ = map;
+        minimapPortalLanguage_ = ui::language();
+        if (map) {
+            for (const auto& element : map->elements()) {
+                if (element.kind != MapElementKind::Teleporter || element.targetMap.empty()) continue;
+                if (element.padId == "rift") {
+                    minimapPortals_.push_back({element.centre(), "", true, false});
+                    continue;
+                }
+                bool found = false;
+                const Realm target = worldMaps_.realmOfId(element.targetMap, found);
+                const MapData* dest = found ? worldMaps_.forRealm(target) : nullptr;
+                if (!dest) continue;
+                const auto& fallback = dest->displayName().empty() ? dest->id() : dest->displayName();
+                const bool arcane = element.targetMap == "zorr_void" ||
+                                    element.targetMap == "zorr_astral" || element.targetMap == "zorr_null";
+                minimapPortals_.push_back({element.centre(), ui::biomeTr(dest->templateId(), fallback.c_str()),
+                                           false, arcane});
             }
-            bool found = false;
-            const Realm target = worldMaps_.realmOfId(element.targetMap, found);
-            const MapData* targetMap = found ? worldMaps_.forRealm(target) : nullptr;
-            if (targetMap == nullptr) continue;
-            const std::string& fallback = targetMap->displayName().empty()
-                ? targetMap->id() : targetMap->displayName();
-            const std::string destination = ui::biomeTr(targetMap->templateId(), fallback.c_str());
-            const bool arcane = element.targetMap == "zorr_void" || element.targetMap == "zorr_astral" ||
-                                element.targetMap == "zorr_null";
-            dot(element.centre(), arcane ? 4.0 : 3.0, arcane ? 0xBE9CEAu : 0x00FF00u,
-                true, destination, MapLabelPriority::Portal);
+        }
+    }
+    for (const auto& portal : minimapPortals_) {
+        if (portal.rift) {
+            const bool open = net_.riftOpen();
+            dot(portal.centre, open ? 5.0 : 4.0, open ? 0xDAA7FFu : 0xA6A8B0u, true,
+                open ? trEnZh("Rift Entrance", "裂隙入口") : "", MapLabelPriority::RiftEntrance);
+        } else {
+            dot(portal.centre, portal.arcane ? 4.0 : 3.0, portal.arcane ? 0xBE9CEAu : 0x00FF00u,
+                true, portal.name, MapLabelPriority::Portal);
         }
     }
 

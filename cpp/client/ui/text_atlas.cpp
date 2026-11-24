@@ -294,11 +294,16 @@ bool paintRunFromAtlas(Canvas& canvas, const std::string& s, double penX, double
     // a whole that would have applied to each pass on its own. A blend mode or
     // a shadow would be; globalAlpha would be too, which is why it is baked in
     // and the copy made at full alpha.
-    if (!canvas.isPlainComposite()) return false;
+    if (!canvas.isPlainComposite() || canvas.colorTint().a != 0) return false;
     const double ambient = canvas.globalAlpha();
     if (!(ambient > 0.0) || ambient > 1.0) return false;
     textrun::Placement at;
-    if (!textrun::place(canvas.currentTransform(), penX, baseline, style.size, at)) return false;
+    // At extreme camera range hundreds of identical sub-5px labels still pay
+    // for two browser text calls each. The usual second-miss rule and bake
+    // budget also bound admission for these small runs.
+    constexpr double kMinBrowserTextPixels = 0.5;
+    if (!textrun::place(canvas.currentTransform(), penX, baseline, style.size, at,
+                        kMinBrowserTextPixels)) return false;
 
     Key key;
     key.text = s;

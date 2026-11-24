@@ -163,6 +163,8 @@ bool TradePanel::render(MenuContext& ctx) {
     coinTile.petalIndex = resultPetal_;
     coinTile.rarity = resultRarity_;
     coinTile.timeSeconds = now;
+    if (coin && knownPetal(offeredPetal_) && content().petal(offeredPetal_).id == "magic_aztec_coin")
+        coinTile.badge = "4";
     motion_.drawSlotScene(canvas, ctx.sprites, card, kTraderSkin, (now - phaseStarted_) * 1000.0,
                           dtMs, !coin && knownPetal(shown) ? &shownTile : nullptr,
                           tileKey(shown, shownRarity), coin ? &coinTile : nullptr,
@@ -191,7 +193,9 @@ bool TradePanel::render(MenuContext& ctx) {
     if (waiting) {
         drawSlotLine(canvas, card, traderCooldownText(cooldown), kSlotCardWaitInk);
     } else if (confirming) {
-        drawSlotLine(canvas, card, trEnZh("Trade 1 petal for 1 coin? Tap the slot to cancel.",
+        if (knownPetal(stagedPetal_) && content().petal(stagedPetal_).id == "magic_aztec_coin")
+            drawSlotLine(canvas, card, trEnZh("Trade this petal for 4 coins? Tap the slot to cancel.", "兑换四枚同品质硬币？点花瓣槽取消。"));
+        else drawSlotLine(canvas, card, trEnZh("Trade 1 petal for 1 coin? Tap the slot to cancel.",
                                         "用 1 个花瓣兑换 1 枚硬币？点花瓣槽取消。"));
     } else {
         drawSlotLine(canvas, card, trEnZh("Trade a petal for a coin of the same rarity (contested Hyper excluded)",

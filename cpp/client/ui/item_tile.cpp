@@ -193,6 +193,7 @@ constexpr GardnIcon kGardnIcon[] = {
     {"square",           23.5,   15,  0,  1.7854, 0.969},   // art fills 97% of its box
     {"starfish",           26,    8,  0,       -1, 0.797},   // art fills 80% of its box
     {"stick",              27,   15,  0,       1,     1},
+    {"mysterious_stick",   27,   15,  0,       1,     1},
     {"stinger",          15.5,    7,  0,       0,     1},
     // gardn's drawing of this one hard-codes `ctx.scale(0.5)` and ignores the
     // radius, so its picture is a 10.75-unit speck -- the one place the

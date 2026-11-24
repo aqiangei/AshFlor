@@ -25,6 +25,44 @@ TEST(laser_and_void_tooltips_explain_the_available_effects) {
     CHECK(std::string(ui::petalDescTr("void_gamma_ray", "")).find("攻击") != std::string::npos);
 }
 
+TEST(void_cross_and_copper_rod_cards_explain_defense_and_lightning_in_both_languages) {
+    std::string error;
+    if (!loadContent(testsupport::dataDir(), error)) { CHECK(false); return; }
+    const auto previous = ui::language();
+    for (auto language : {ui::Language::En, ui::Language::Zh}) {
+        ui::setLanguage(language);
+        const bool zh = language == ui::Language::Zh;
+        const auto hasText = [](const char* id, const char* text) {
+            const auto lines = ui::petalTooltipLines(content().petalIndex(id), Rarity::Common, {}, 1.0);
+            for (const auto& line : lines)
+                if (line.text.find(text) != std::string::npos) return true;
+            return false;
+        };
+        CHECK(hasText("void_cross", zh ? "防御时会将你传送" : "defending teleports you"));
+        CHECK(hasText("void_copper_rod", zh ? "雷电伤害" : "lightning hit"));
+        CHECK(hasText("void_copper_rod", zh ? "取最高值" : "strongest equipped rod"));
+    }
+    ui::setLanguage(previous);
+}
+
+TEST(void_halo_card_explains_which_flowers_receive_healing) {
+    std::string error;
+    if (!loadContent(testsupport::dataDir(), error)) { CHECK(false); return; }
+    const auto previous = ui::language();
+    for (auto lang : {ui::Language::En, ui::Language::Zh}) {
+        ui::setLanguage(lang);
+        const auto lines = ui::petalTooltipLines(content().petalIndex("void_halo"), Rarity::Common, {}, 1.0);
+        const bool zh = lang == ui::Language::Zh;
+        for (const char* text : {zh ? "视野内的友方花朵" : "allied flowers in your view",
+                                 zh ? "最强光环" : "only your strongest"}) {
+            CHECK(std::any_of(lines.begin(), lines.end(), [&](const auto& line) {
+                return line.text.find(text) != std::string::npos;
+            }));
+        }
+    }
+    ui::setLanguage(previous);
+}
+
 TEST(magic_bone_equipped_card_shows_the_server_multiplier_in_both_languages) {
     std::string error;
     CHECK(loadContent(testsupport::dataDir(), error));
@@ -144,9 +182,11 @@ TEST(cpp_uses_42_damage_28_health_and_2500ms_reload_on_every_ladder_tier){
     for(int tier=0;tier<kLadderRarityCount;++tier){const auto rarity=static_cast<Rarity>(tier);
         const auto stats=content().petalStats(cpp,rarity),blade=content().petalStats(saw,rarity);
         const double damageScale = rarity == Rarity::Apex
-            ? 2.0 * petalStrengthScale(Rarity::Unique) : petalStrengthScale(rarity);
+            ? 3.0 * petalStrengthScale(Rarity::Unique) : petalStrengthScale(rarity);
         CHECK_NEAR(stats.damage,42 * damageScale,1e-6);
-        CHECK_NEAR(stats.health,28*petalStrengthScale(rarity),1e-6);CHECK_NEAR(stats.reloadMillis,2500,1e-8);
+        const double healthScale = rarity == Rarity::Apex
+            ? 2.0 * petalStrengthScale(Rarity::Unique) : petalStrengthScale(rarity);
+        CHECK_NEAR(stats.health,28*healthScale,1e-6);CHECK_NEAR(stats.reloadMillis,2500,1e-8);
         CHECK_NEAR(stats.health/blade.health,28.0/25,1e-9);
         const auto lines=ui::petalTooltipLines(cpp,rarity,{},1);bool reload=false;
         for(const auto& badge:lines.front().badges)reload|=badge.icon==ui::TooltipIcon::Reload && badge.text=="1.3s";CHECK(reload);

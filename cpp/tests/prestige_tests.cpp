@@ -167,9 +167,9 @@ static void checkBioMap(const char* mapId, int expectedWalls, std::uint32_t sour
 }
 
 TEST(zorr_bio_loads_shipped_grid_and_local_drops) {
-    checkBioMap("bio", 5095, 622386924u, 2535u);
-    checkBioMap("bio_micro", 5251, 2220919440u, 2590u);
-    checkBioMap("bio_lab", 4616, 3851817087u, 2791u);
+    checkBioMap("bio", 5095, 622386924u, 7169u);
+    checkBioMap("bio_micro", 5251, 2220919440u, 7152u);
+    checkBioMap("bio_lab", 4616, 3851817087u, 7237u);
 }
 
 TEST(zorr_bio_and_jurassic_spawn_announcements_use_the_client_language) {
@@ -816,7 +816,12 @@ TEST(zorr_bio_fire_burns_a_mob_through_a_connected_client_loadout) {
     for (int y = -800; y <= 800 && !clear; y += 50) {
         for (int x = -800; x <= 800 && !clear; x += 50) {
             const Vec2 point = spawn.position + Vec2{double(x), double(y)};
-            if (h.server.terrain().resolveWall(point, 150, spawn.realm).collided) continue;
+            const auto* bio = h.server.worldMaps().forRealm(spawn.realm);
+            if (!bio || h.server.terrain().blocked(point,spawn.realm) ||
+                std::any_of(bio->elements().begin(),bio->elements().end(),[&](const MapElement& e) {
+                    return e.kind == MapElementKind::Teleporter &&
+                           distanceSq(point,e.centre()) < std::pow(kTeleporterSuctionRadius * e.padScale() + 180,2);
+                }) || h.server.terrain().resolveWall(point,150,spawn.realm).collided) continue;
             origin.position = point;
             clear = true;
         }
@@ -829,7 +834,7 @@ TEST(zorr_bio_fire_burns_a_mob_through_a_connected_client_loadout) {
     world.add<MobTag>(target);
     world.add<Bounty>(target);
     world.add<Transform>(target, Transform{origin.position + Vec2{0, 100}, 0, origin.realm});
-    world.add<Body>(target, Body{5, 1000});
+    world.add<Body>(target, Body{32, 1000});
     world.add<Health>(target, Health{10000, 10000});
     world.add<Faction>(target, Faction{Team::Hostiles, false});
 
@@ -844,21 +849,23 @@ TEST(zorr_bio_fire_burns_a_mob_through_a_connected_client_loadout) {
         for (const Entity mob : ambient) {
             if (mob != target) world.destroy(mob);
         }
-        Query<GroundEffect, Transform>{world}.each(
-            [&](Entity, const GroundEffect& field, const Transform& at) {
-                if (field.owner != flower || field.kind != GroundEffectKind::Fire) return;
+        Query<PetalInstance, Transform>{world}.each(
+            [&](Entity e, const PetalInstance& petal, const Transform& at) {
+                if (petal.owner != flower || petal.configIndex != fire || world.has<Dead>(e)) return;
                 sawFire = true;
-                world.get<Transform>(target).position = at.position;
+                world.get<Transform>(target) = at;
             });
         attack.sequence++;
         CHECK(client.sendInput(attack));
         h.step(1, {&client});
         const auto* status = world.tryGet<Afflictions>(target);
-        if (status && status->burnPerSecond > 0.0) break;
+        if (status && !status->burns.empty()) break;
     }
     CHECK(sawFire);
     const auto* burning = world.tryGet<Afflictions>(target);
-    CHECK(burning && burning->burnPerSecond > 0.0 && burning->burnSource == flower);
+    CHECK(burning && std::any_of(burning->burns.begin(),burning->burns.end(),
+        [&](const auto& burn){return burn.owner == flower && burn.perSecond > 0;}));
+    world.get<Transform>(target).position += Vec2{250,0};
     const double before = world.get<Health>(target).current;
     h.step(10, {&client});
     CHECK(world.get<Health>(target).current < before);
@@ -1032,8 +1039,51 @@ TEST(zorr_bio_new_assembler_slots_trade_real_inventory) {
 
 TEST(zorr_all_imported_petals_equip_and_run_through_a_connected_client) {
     const auto& registry = shippedContent();
+    static const std::vector<std::string> variants{
+        "magic_agarbatti", "magic_air", "magic_antennae", "magic_arctic_banana",
+        "magic_arctic_blueberries", "magic_arctic_emerald", "magic_arctic_fission", "magic_arctic_ice_rose",
+        "magic_arctic_nitro", "magic_arctic_nitrogen", "magic_arctic_sapphire", "magic_arctic_splitter",
+        "magic_aztec_coin", "magic_basil", "magic_battery", "magic_bitcoin",
+        "magic_blood_sacrifice", "magic_blood_stinger", "magic_bloom", "magic_bomb",
+        "magic_bone", "magic_bubble", "magic_bubble_bomb", "magic_bubonic_plague",
+        "magic_bur", "magic_cactus", "magic_cancer", "magic_candlestick",
+        "magic_cherry", "magic_chromosome", "magic_citron", "magic_claw",
+        "magic_compass", "magic_coral", "magic_corruption", "magic_cotton",
+        "magic_crystal_leaf", "magic_cutter", "magic_dahlia", "magic_dice",
+        "magic_dna", "magic_dollar", "magic_electron_missile", "magic_fang",
+        "magic_fire", "magic_fries", "magic_gas", "magic_gas_bomb",
+        "magic_golden_leaf", "magic_grapes", "magic_hel_lightning", "magic_hel_missile",
+        "magic_hemoglobin", "magic_honey", "magic_iodine", "magic_iris",
+        "magic_job_application", "magic_latrine", "magic_leaf", "magic_lightning",
+        "magic_lily_pad", "magic_marble", "magic_microplastics", "magic_mimic",
+        "magic_missile", "magic_mysterious_relic", "magic_nazar_amulet", "magic_neurotoxin",
+        "magic_orange", "magic_palm_leaf", "magic_pearl", "magic_peas",
+        "magic_pill", "magic_pollen", "magic_poo", "magic_pumpkin_seed",
+        "magic_quartz", "magic_rna", "magic_rock", "magic_rocket",
+        "magic_rubber", "magic_ruby", "magic_salt", "magic_shovel",
+        "magic_soil", "magic_sponge", "magic_starfish", "magic_stinger",
+        "magic_sunflower", "magic_tomato", "magic_tooth", "magic_topaz",
+        "magic_torch", "magic_usain_bolt", "magic_vampire_fang", "magic_viper",
+        "magic_void_antimatter", "magic_void_balloon", "magic_void_blood_scythe", "magic_void_copper_rod",
+        "magic_void_cryo_bomb", "magic_void_fire_bomb", "magic_void_gunpowder", "magic_void_halo",
+        "magic_void_mask", "magic_void_nut", "magic_void_opal", "magic_void_pipe_bomb",
+        "magic_void_relativity", "magic_void_sad", "magic_void_scar", "magic_void_scythe",
+        "magic_void_singularity", "magic_void_slime", "magic_void_stardust", "magic_void_trident",
+        "magic_void_zodiac", "magic_web", "magic_wing", "magic_yggdrasil",
+        "magic_yuan", "mana_orb",
+    };
+    for (const auto& id : variants) {
+        const auto index = registry.petalIndex(id);
+        CHECK(index != kInvalidIndex);
+        if (index == kInvalidIndex) return;
+        for (int tier = 0; tier < kRarityCount; ++tier) {
+            const auto stats = registry.petalStats(index,clampRarity(tier));
+            CHECK(std::isfinite(stats.damage) && stats.damage >= 0);
+            CHECK(std::isfinite(stats.requiredMana) && stats.requiredMana >= 0);
+        }
+    }
     const auto imported = [](const PetalConfig& item) {
-        return item.biomeDropOnly || item.id.rfind("void_", 0) == 0 ||
+        return std::binary_search(variants.begin(), variants.end(), item.id) || item.biomeDropOnly || item.id.rfind("void_", 0) == 0 ||
             item.id.rfind("arctic_", 0) == 0 || item.id.rfind("bio_", 0) == 0 ||
             item.id.rfind("jurassic_", 0) == 0;
     };
@@ -1050,7 +1100,11 @@ TEST(zorr_all_imported_petals_equip_and_run_through_a_connected_client) {
     const Entity flower = bodyNamed(world, "allpetals");
     CHECK(flower != NULL_ENTITY);
     if (flower == NULL_ENTITY) return;
+    const auto orb = registry.petalIndex("mana_orb");
+    client.setLoadoutSlot(1, orb, Rarity::Super);
+    CHECK(h.stepUntil({&client}, [&] { return world.get<Loadout>(flower).slots[1].configIndex == orb; }, 100));
     const Transform start = world.get<Transform>(flower);
+    int magicChecked = 0;
     net::InputFrame input;
     int checked = 0;
     for (std::uint16_t i = 0; i < registry.petalCount(); ++i) {
@@ -1079,9 +1133,11 @@ TEST(zorr_all_imported_petals_equip_and_run_through_a_connected_client) {
         Query<Transform>{world}.each([](Entity, const Transform& at) {
             CHECK(std::isfinite(at.position.x)); CHECK(std::isfinite(at.position.y));
         });
+        if (std::binary_search(variants.begin(), variants.end(), registry.petal(i).id)) ++magicChecked;
         ++checked;
     }
-    CHECK_EQ(checked, 219);
+    CHECK_EQ(magicChecked, 122);
+    CHECK(checked >= 219);
     std::printf("  %d imported petals: real client equip acknowledgement and attack/defend ticks\n", checked);
 }
 

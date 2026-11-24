@@ -2930,6 +2930,17 @@ void GameServer::bankPickups(std::size_t first) {
         // Into the bag the body is playing with: an arena pickup is the run's,
         // not the account's, until the run ends.
         auto& record = liveRecord(*session);
+        const auto* mods = world_.tryGet<PlayerModifiers>(pickup.player);
+        if (mods && petalTier(pickup.rarity) <= mods->autoAbsorbTier && !session->inRift &&
+            !absorbRequiresPassword(pickup.rarity) && absorbable(content().petal(pickup.petalIndex), pickup.rarity)) {
+            const auto& tree = session->realm == Realm::Maze ? record.mazeSkills : record.skills;
+            const double xp = absorbXpTotal(pickup.quantity * absorbUnits(pickup.rarity), tree);
+            CombatSystem::grantXp(world_, pickup.player, xp);
+            persistPlayer(*session);
+            database_.markDirty();
+            session->profileDue = true;
+            continue;
+        }
         const auto key = inventoryKey(pickup.petalIndex);
         const int previous = record.itemCount(pickup.rarity, key);
         const auto credited = std::min(pickup.quantity, static_cast<std::uint32_t>(
@@ -5609,7 +5620,7 @@ void GameServer::handleCraft(Session& session, net::Connection& connection, Byte
     database_.markDirty();
 
     const Rarity made = upgradeRarity(rarity);
-    if (upgrades > 0 && (!quiet || made == Rarity::Super))
+    if (upgrades > 0 && (!quiet || made == Rarity::Ascendant))
         announceRareCraft(session, petalIndex, made, upgrades, count - petalsReturned);
 
     w.boolean(upgrades > 0);
@@ -6002,7 +6013,7 @@ void GameServer::handleTrade(Session& session, net::Connection& connection, Byte
         resyncProfile(session, connection);
         return;
     }
-    giveToInventory(record, coin, rarity, 1);
+    giveToInventory(record, coin, rarity, content().petal(petalIndex).id == "magic_aztec_coin" ? 4 : 1);
     traderReadyAt_[session.userId] = wallClockMillis_ + kTraderCooldownMillis;
     database_.markDirty();
 

@@ -388,6 +388,10 @@ struct DragState {
     std::uint16_t petalIndex = kNoPetal;
     Rarity rarity = Rarity::Common;
     int slot = -1;              ///< the loadout slot a LoadoutSlot drag left
+    Vec2 inventoryPress{};
+    bool inventoryDragMoved(Vec2 pointer) const {
+        return source == Source::Inventory && (pointer - inventoryPress).lengthSq() > 16.0 * 16.0;
+    }
     bool active() const { return source != Source::None; }
     void clear() { *this = DragState{}; }
 };
@@ -515,6 +519,8 @@ public:
     bool expanded() const { return expanded_; }
 
 private:
+    struct LayoutCache;
+    std::shared_ptr<LayoutCache> layout_;
     bool expanded_ = false;
     ui::Scroller scroll_;
     /// One slot per item TYPE at its best tier, instead of one per tier.

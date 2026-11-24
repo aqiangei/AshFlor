@@ -1348,6 +1348,7 @@ PetalConfig parsePetal(Ctx& ctx, const std::string& id, const Json& src,
         if (row["magnetism"].isNumber()) target.magnetism = ctx.range(row,"magnetism",0.0,0.0,1e30);
     }
     p.name = ctx.text(src, "name", id);
+    p.magicDropSource = ctx.text(src, "magicDropSource");
     p.description = ctx.text(src, "description");
     p.image = ctx.text(src, "image");
     p.colorRgba = readColor(ctx, src, "color", p.color);
@@ -1450,6 +1451,7 @@ PetalConfig parsePetal(Ctx& ctx, const std::string& id, const Json& src,
         else if (kind == "blood") p.spill.kind = SpillKind::Blood;
         else if (kind == "elixir") p.spill.kind = SpillKind::Elixir;
         else if (kind == "latrine") p.spill.kind = SpillKind::Latrine;
+        else if (kind == "pacifyingNitrogen") p.spill.kind = SpillKind::PacifyingNitrogen;
         else if (kind == "nitrogen") p.spill.kind = SpillKind::Nitrogen;
         else ctx.warn("unknown spill kind '" + kind + "'");
         p.spill.onHit = ctx.boolean(spill, "onHit");
@@ -1465,7 +1467,7 @@ PetalConfig parsePetal(Ctx& ctx, const std::string& id, const Json& src,
         p.spill.lingerMillis = ctx.range(spill, "lingerMs", 0.0, 0.0, 10000.0);
         p.spill.frostFactor = ctx.range(spill, "frostFactor", 1.0, 0.0, 1.0);
         if (p.spill.radius <= 0.0 || p.spill.durationMillis <= 0.0 ||
-            (p.spill.strength <= 0.0 && p.spill.kind != SpillKind::Nitrogen))
+            (p.spill.strength <= 0.0 && p.spill.kind != SpillKind::Nitrogen && p.spill.kind != SpillKind::PacifyingNitrogen))
             p.spill.kind = SpillKind::None;
     }
 
@@ -1905,6 +1907,11 @@ bool ContentRegistry::loadFiles(const std::string& mobsPath, const std::string& 
         const std::string prefix = "magic_";
         for (std::size_t i = 0; i < petals_.size(); ++i) {
             const std::string& id = petals_[i].id;
+            if (!petals_[i].magicDropSource.empty()) {
+                const auto source = petalIds_.find(petals_[i].magicDropSource);
+                if (source != petalIds_.end()) magicSource_[i] = source->second;
+                continue; // Only the named mob's drop row converts this source.
+            }
             if (id.compare(0, prefix.size(), prefix) != 0) continue;
             // See ContentRegistry::magicFormOf for why the orb is the one
             // pairing that is spelled out instead of derived.
@@ -2116,6 +2123,10 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
         s.lightningDamagePerHit = baseDamage * strength;
         s.lightningBounces = 0;
     }
+    if (c.id == "magic_lightning" || c.id == "magic_usain_bolt" || c.id == "magic_hel_lightning") {
+        s.lightningDamagePerHit = 10.0 * strength;
+        s.lightningBounces = 10 + 2 * ladderIndex(r);
+    }
     if (c.id == "battery" || c.id == "lightning") {
         s.lightningDamagePerHit = 12.0 * strength;
         s.lightningBounces = 2 + ladderIndex(r);
@@ -2211,7 +2222,7 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
         s.knockback = kJellyKnockback[static_cast<std::size_t>(rarityIndex(tier))];
     }
     // Rubber: florr's Flower Knockback, +0.3 at common and +0.3 more a tier.
-    if (petalSoaksLightning(c)) s.flowerKnockback = 0.3 * (rarityIndex(tier) + 1);
+    if (c.id == "rubber") s.flowerKnockback = 0.3 * (rarityIndex(tier) + 1);
     // Amulet: florr's Overheal Conversion, 5% at common and 5% more a tier.
     if (petalConvertsOverheal(c)) s.overhealShield = 0.05 * (rarityIndex(tier) + 1);
     // Basil: florr's Heal Bonus, 20% at common and 5% more a tier -- 45% at
@@ -2338,6 +2349,8 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
         s.modifiers.maxHealth = 1.0;
         s.modifiers.playerRadius = 1.0;
         s.modifiers.speed = 0.9;
+    } else if (c.id == "magic_air") {
+        s.modifiers.playerRadius = 1.045 + .01 * ti;
     } else if (c.id == "air") {
         static constexpr std::array<double, kLadderRarityCount> values = {
             1.1, 1.2, 1.6, 1.8, 2.0, 2.2, 2.4, 2.6, 2.8, 3.0,

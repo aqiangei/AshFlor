@@ -18,6 +18,7 @@
 #include <cstring>
 #include <fstream>
 
+#include "client/render/art_cache.h"
 #include "client/ui/item_tile.h"
 #include "client/ui/menu_icons.h"
 #include "client/ui/menu_theme.h"
@@ -1534,48 +1535,63 @@ void MenuSystem::drawIconStrip(Canvas& canvas, Window& window, double timeSecond
             rim = kAssemblerSkin.border;
         }
 
-        // Two filled rects rather than a stroke: the face keeps the frame's own
-        // rounding one step tighter, where a centred stroke would blow the
-        // outer radius out by half its width. A BUTTON, so its face is rounded
-        // -- the square inner body is the panels' shape, not the controls'.
-        setFill(canvas, rim);
-        canvas.beginPath();
-        canvas.roundRect(static_cast<float>(r.x), static_cast<float>(r.y),
-                         static_cast<float>(r.w), static_cast<float>(r.h),
-                         static_cast<float>(style.radius));
-        canvas.fill();
-        setFill(canvas, face);
-        canvas.beginPath();
-        canvas.roundRect(static_cast<float>(r.x + style.border),
-                         static_cast<float>(r.y + style.border),
-                         static_cast<float>(r.w - style.border * 2),
-                         static_cast<float>(r.h - style.border * 2),
-                         static_cast<float>(std::max(0.0, style.radius - style.border * 0.5)));
-        canvas.fill();
-
-        // Press wins over hover, and it follows the button the press began on
-        // even once the cursor has left it.
-        if (hovered || pressedSlot_ == i) {
-            setFill(canvas, pressedSlot_ == i ? kInk : kPaper, 0.15);
-            canvas.beginPath();
-            canvas.roundRect(static_cast<float>(r.x), static_cast<float>(r.y),
-                             static_cast<float>(r.w), static_cast<float>(r.h),
+        const SvgDocument* glyph = slot.action == StripAction::Qq ? nullptr : icon(ui::menuIconIndex(slot.icon));
+        const auto paintButton = [&](Canvas& target, Rect button) {
+            // Two filled rects rather than a stroke: the face keeps the frame's own
+            // rounding one step tighter, where a centred stroke would blow the
+            // outer radius out by half its width. A BUTTON, so its face is rounded
+            // -- the square inner body is the panels' shape, not the controls'.
+            setFill(target, rim);
+            target.beginPath();
+            target.roundRect(static_cast<float>(button.x), static_cast<float>(button.y),
+                             static_cast<float>(button.w), static_cast<float>(button.h),
                              static_cast<float>(style.radius));
-            canvas.fill();
-        }
+            target.fill();
+            setFill(target, face);
+            target.beginPath();
+            target.roundRect(static_cast<float>(button.x + style.border),
+                             static_cast<float>(button.y + style.border),
+                             static_cast<float>(button.w - style.border * 2),
+                             static_cast<float>(button.h - style.border * 2),
+                             static_cast<float>(std::max(0.0, style.radius - style.border * 0.5)));
+            target.fill();
 
-        // After the tint, so the glyph is never washed out by it.
-        // QQ uses the official penguin logo (same asset as ashflor), not the
-        // white SVG glyph the other strip buttons share.
-        if (slot.action == StripAction::Qq) {
-            drawRemoteImage(canvas, QQ_LOGO_DATA, r.x + (r.w - style.glyph) * 0.5,
-                            r.y + (r.h - style.glyph) * 0.5, style.glyph, style.glyph);
+            // Press wins over hover, and it follows the button the press began on
+            // even once the cursor has left it.
+            if (hovered || pressedSlot_ == i) {
+                setFill(target, pressedSlot_ == i ? kInk : kPaper, 0.15);
+                target.beginPath();
+                target.roundRect(static_cast<float>(button.x), static_cast<float>(button.y),
+                                 static_cast<float>(button.w), static_cast<float>(button.h),
+                                 static_cast<float>(style.radius));
+                target.fill();
+            }
 
-        } else if (const SvgDocument* glyph = icon(ui::menuIconIndex(slot.icon))) {
-            glyph->renderFitted(canvas, static_cast<float>(r.x + (r.w - style.glyph) * 0.5),
-                                static_cast<float>(r.y + (r.h - style.glyph) * 0.5),
-                                static_cast<float>(style.glyph), static_cast<float>(timeSeconds));
+            // After the tint, so the glyph is never washed out by it.
+            // QQ uses the official penguin logo (same asset as ashflor), not the
+            // white SVG glyph the other strip buttons share.
+            if (slot.action == StripAction::Qq) {
+                drawRemoteImage(target, QQ_LOGO_DATA, button.x + (button.w - style.glyph) * 0.5,
+                                button.y + (button.h - style.glyph) * 0.5, style.glyph, style.glyph);
+
+            } else if (glyph) {
+                glyph->renderFitted(target, static_cast<float>(button.x + (button.w - style.glyph) * 0.5),
+                                    static_cast<float>(button.y + (button.h - style.glyph) * 0.5),
+                                    static_cast<float>(style.glyph), static_cast<float>(timeSeconds));
+            }
+        };
+        // Keep the hotkey, notification badge and feedback caption live. Only
+        // the resting button's opaque face and static glyph share a bitmap.
+        bool painted = false;
+#ifdef __EMSCRIPTEN__
+        if (glyph && !glyph->animated() && !hovered && pressedSlot_ != i &&
+            slideStart_[at] < 0 && canvas.globalAlpha() == 1.0f) {
+            const std::uint64_t colors = (static_cast<std::uint64_t>(face) << 32) | rim;
+            painted = drawCachedPicture(canvas, &slot, colors, r.x, r.y, r.w, r.h,
+                [&](Canvas& bitmap) { paintButton(bitmap, {0, 0, r.w, r.h}); });
         }
+#endif
+        if (!painted) paintButton(canvas, r);
 
         // Feedback only: ashflor-style caption under the button (11px on a
         // 46px face → same ratio on this strip's side).
@@ -1956,7 +1972,8 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
     if (metrics.secondaryPicker && hovered < 0 && insideInclusive(layout.trash, mouse)) {
         hovered = kLoadoutTrashSlot;
     }
-    if (panelRect_.w > 0 && panelRect_.contains(mouse)) hovered = -1;
+    if (panelRect_.w > 0 && panelRect_.contains(mouse) &&
+        (window.pointerIsTouch() || !drag_.inventoryDragMoved(mouse))) hovered = -1;
     loadoutHovered_ = hovered;
     // The bar owns the click for every owned slot -- empty ones included -- so
     // a tap on an empty primary/secondary still column-swaps instead of firing
@@ -2265,7 +2282,7 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
             return;
         }
         drawItemTile(target, sprites, box, tile);
-        if (!inGame_ || tile.loadoutSlot < 0 || tile.petalIndex == kNoPetal ||
+        if (!settings_.showExactValues || !inGame_ || tile.loadoutSlot < 0 || tile.petalIndex == kNoPetal ||
             slotOutranked(net, entry.slot)) return;
         const auto& stats = content().petalStats(tile.petalIndex, tile.rarity);
         if (!stats.breakable || (stats.requiredMana > 0.0 && net.view().self().maxMana <= 0.0)) return;
@@ -2583,7 +2600,8 @@ void MenuSystem::updateLoadoutInput(Window& window, NetClient& net, double timeS
             adjustRotation({window.mouseX(), window.mouseY()})) return;
     }
     const Vec2 mouse{window.mouseX(), window.mouseY()};
-    if (panelRect_.w > 0 && panelRect_.contains(mouse)) {
+    if (panelRect_.w > 0 && panelRect_.contains(mouse) &&
+        (window.pointerIsTouch() || !drag_.inventoryDragMoved(mouse))) {
         // The popup and the bar read the same input edges. A release on the
         // popup cancels a bar gesture instead of swapping or unequipping.
         if (window.mouseReleased(MouseButton::Left)) {
@@ -2603,8 +2621,11 @@ void MenuSystem::updateLoadoutInput(Window& window, NetClient& net, double timeS
     const int hovered = loadoutHovered_;
     const bool mouseDown = window.mouseDown(MouseButton::Left);
 
-    if (unequipSlot >= 0 && unequipSlot == hovered && hovered < owned &&
-        !drag_.active() && !mouseDown && !window.pointerIsTouch() &&
+    const bool shiftClick = window.mousePressed(MouseButton::Left) &&
+        (window.keyDown(Key::LeftShift) || window.keyDown(Key::RightShift));
+    const bool deletePressed = unequipSlot >= 0 && unequipSlot == hovered && !mouseDown;
+    if ((shiftClick || deletePressed) && hovered >= 0 && hovered < owned &&
+        !drag_.active() && !window.pointerIsTouch() &&
         (loadoutPresetBank_ < 0 || hovered < kLoadoutBarPrimary) &&
         !shown[static_cast<std::size_t>(hovered)].empty()) {
         clearLoadoutSlot(net, timeSeconds, hovered);
@@ -3541,10 +3562,12 @@ void MenuSystem::render(Canvas& canvas, Window& window, NetClient& net, const Sp
     // standing on: the chip hangs where the corner cards do.
     if(inGame_ && open_==MenuId::None && !net.dead()) {
         bool near=false;
+        const auto mine = net.view().entities().find(net.view().self().netId);
+        const double flowerRadius = mine == net.view().entities().end() ? kPlayerBaseRadius : mine->second.radius;
         for(const auto& pair:net.view().entities()) {const auto& entity=pair.second;
             if(entity.kind!=net::EntityKind::Mob || entity.typeIndex>=content().mobCount())continue;
             if(!content().mob(entity.typeIndex).dungeon.present)continue;
-            if(distance(entity.targetPosition,net.view().self().position)<=std::min(entity.radius*.3,120.0)+25)near=true;
+            if(distance(entity.targetPosition,net.view().self().position)<=dungeonEntryReach(content().mob(entity.typeIndex), entity.radius, flowerRadius))near=true;
         }
         if(near){const Rect entry{canvas.width()*.5-120.0,canvas.height()*.65,240,44};
             dungeonEntryRect_=entry;

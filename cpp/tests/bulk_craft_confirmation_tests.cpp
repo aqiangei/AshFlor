@@ -336,6 +336,30 @@ TEST(apex_bulk_craft_confirmation_only_spends_eligible_permanent_hyper_inventory
     }));
     const auto& profile = client.profile();
     CHECK(profile.stackCount(rose, Rarity::Ascendant) > 0);
+    // One public announcement per successful pool, including the actual totals.
+    const auto announcements = [&](const std::string& petal, unsigned made, unsigned spent) {
+        const auto details = "(crafted x" + std::to_string(made) + ", consumed x" +
+                             std::to_string(spent) + ")";
+        unsigned count = 0;
+        for (const auto& line : client.chat()) {
+            if (line.channel != net::ChatChannel::System ||
+                line.text.find("data-petal='" + petal + "'") == std::string::npos) continue;
+            CHECK(line.text.find(details) != std::string::npos);
+            ++count;
+        }
+        return count;
+    };
+    CHECK_EQ(announcements("rose", profile.stackCount(rose, Rarity::Ascendant),
+                           5000 - profile.stackCount(rose, Rarity::PermanentHyper)), 1u);
+    const unsigned rocksMade = profile.stackCount(rock, Rarity::Ascendant) - (kMaxStackCount - 1);
+    CHECK_EQ(announcements("rock", rocksMade, 21 - profile.stackCount(rock, Rarity::PermanentHyper)),
+             rocksMade > 0 ? 1u : 0u);
+    CHECK_EQ(announcements("leaf", 0, 0), 0u);
+
+    client.requestNotifications(20, 0);
+    CHECK(h.stepUntil({&client}, [&] { return !client.notifications().empty(); }, 200));
+    CHECK_EQ(client.notifications().size(), rocksMade > 0 ? 2u : 1u);
+
     CHECK_EQ(profile.stackCount(rose, Rarity::Common), 20u);
     CHECK_EQ(profile.stackCount(rose, Rarity::Unique), 100u);
     CHECK_EQ(profile.loadout[0].petalIndex, rose);

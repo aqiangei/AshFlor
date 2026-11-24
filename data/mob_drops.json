@@ -1111,6 +1111,7 @@
       {
         "type": "petal",
         "itemType": "corn",
+        "magicItemType": "magic_pumpkin_seed",
         "rarity": "common",
         "probability": 1,
         "minQuantity": 1,
@@ -4233,6 +4234,7 @@
       {
         "type": "petal",
         "itemType": "privet_berry",
+        "magicItemType": "magic_cherry",
         "rarity": "common",
         "probability": 1,
         "minQuantity": 1,
@@ -9791,6 +9793,7 @@
       {
         "type": "petal",
         "itemType": "bulb",
+        "magicItemType": "magic_candlestick",
         "rarity": "common",
         "probability": 1,
         "minQuantity": 1,
@@ -12982,6 +12985,7 @@
       {
         "type": "petal",
         "itemType": "computer_chip",
+        "magicItemType": "magic_bitcoin",
         "rarity": "common",
         "probability": 1,
         "minQuantity": 1,
@@ -18377,6 +18381,7 @@
       {
         "type": "petal",
         "itemType": "spaceship",
+        "magicItemType": "magic_rocket",
         "rarity": "common",
         "probability": 1,
         "minQuantity": 1,
@@ -19453,6 +19458,7 @@
       {
         "type": "petal",
         "itemType": "ankh",
+        "magicItemType": "magic_aztec_coin",
         "rarity": "common",
         "probability": 1,
         "minQuantity": 1,
@@ -21704,6 +21710,7 @@
       {
         "type": "petal",
         "itemType": "dark_mark",
+        "magicItemType": "magic_hel_lightning",
         "rarity": "common",
         "probability": 1,
         "minQuantity": 1,
@@ -23646,6 +23653,7 @@
       {
         "type": "petal",
         "itemType": "poker_chip",
+        "magicItemType": "magic_dollar",
         "rarity": "common",
         "probability": 1,
         "minQuantity": 1,
@@ -23785,6 +23793,7 @@
       {
         "type": "petal",
         "itemType": "domino",
+        "magicItemType": "magic_yuan",
         "rarity": "common",
         "probability": 1,
         "minQuantity": 1,
@@ -25911,6 +25920,7 @@
       {
         "type": "petal",
         "itemType": "electric_web",
+        "magicItemType": "magic_usain_bolt",
         "rarity": "common",
         "probability": 1,
         "minQuantity": 1,
@@ -27557,6 +27567,7 @@
       {
         "type": "petal",
         "itemType": "corn",
+        "magicItemType": "magic_fries",
         "rarity": "common",
         "probability": 1,
         "minQuantity": 1,
@@ -28113,6 +28124,7 @@
       {
         "type": "petal",
         "itemType": "totem",
+        "magicItemType": "magic_agarbatti",
         "rarity": "common",
         "probability": 1,
         "minQuantity": 1,
@@ -29660,6 +29672,7 @@
       {
         "type": "petal",
         "itemType": "flower",
+        "magicItemType": "magic_bloom",
         "rarity": "common",
         "probability": 1,
         "minQuantity": 1,
@@ -32539,6 +32552,7 @@
       {
         "type": "petal",
         "itemType": "amethyst",
+        "magicItemType": "magic_quartz",
         "rarity": "common",
         "probability": 1,
         "minQuantity": 1,
@@ -37563,6 +37577,7 @@
       {
         "type": "petal",
         "itemType": "void_cross",
+        "magicItemType": "magic_blood_sacrifice",
         "rarity": "common",
         "probability": 0,
         "minQuantity": 1,
@@ -39989,6 +40004,7 @@
       {
         "type": "petal",
         "itemType": "void_cyanide",
+        "magicItemType": "magic_neurotoxin",
         "rarity": "common",
         "probability": 0,
         "minQuantity": 1,
@@ -45405,6 +45421,7 @@
       {
         "type": "petal",
         "itemType": "amber",
+        "magicItemType": "magic_citron",
         "rarity": "common",
         "probability": 1,
         "minQuantity": 1,
@@ -47760,6 +47777,7 @@
       {
         "type": "petal",
         "itemType": "flower",
+        "magicItemType": "magic_sunflower",
         "rarity": "common",
         "probability": 1,
         "minQuantity": 1,
@@ -47865,6 +47883,7 @@
       {
         "type": "petal",
         "itemType": "azalea",
+        "magicItemType": "magic_lily_pad",
         "rarity": "common",
         "probability": 1,
         "minQuantity": 1,
@@ -53365,6 +53384,7 @@
       {
         "type": "petal",
         "itemType": "glass",
+        "magicItemType": "magic_microplastics",
         "rarity": "common",
         "probability": 1,
         "minQuantity": 1,
@@ -56327,6 +56347,7 @@
       {
         "type": "petal",
         "itemType": "antibody",
+        "magicItemType": "magic_bubonic_plague",
         "rarity": "common",
         "probability": 1,
         "minQuantity": 1,
@@ -59227,6 +59248,7 @@
       {
         "type": "petal",
         "itemType": "arctic_amethyst",
+        "magicItemType": "magic_topaz",
         "rarity": "common",
         "probability": 0,
         "minQuantity": 1,

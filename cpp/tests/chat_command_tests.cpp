@@ -3242,6 +3242,58 @@ TEST(a_fire_ant_hole_springs_on_a_flower_and_falls_with_its_brood) {
     CHECK(brood().empty());
 }
 
+TEST(an_apex_termite_mound_accepts_entry_and_returns_its_party) {
+    Harness h("apex-mound-transit", [](const std::string& path) {
+        seedUser(path, "moundtester", "password7", true);
+    }, dataDir(), 0);
+    CHECK(h.ready);
+    if (!h.ready) return;
+    NetClient client;
+    CHECK(loginAs(h, client, "moundtester", "password7"));
+    client.joinGame(1920, 1080, {}, "Digger");
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; }, 200));
+    CHECK(say(h, client, "/admin god on"));
+    World& world = h.server.world();
+    const Entity player = onlyPlayer(world);
+    CHECK(player != NULL_ENTITY);
+    if (player == NULL_ENTITY) return;
+    const auto realmOf = [&] { return world.get<Transform>(player).realm; };
+    const Realm home = realmOf();
+    SpawnSystem fixtureSpawner;
+    Rng rng{73};
+    const Entity nest = fixtureSpawner.spawnMob(world, h.server.terrain(), content(),
+        content().mobIndex("termite_mound"), Rarity::Ascendant, world.get<Transform>(player).position,
+        home, 0, rng, SpawnSystem::MobSpawnScope::Wave);
+    CHECK(nest != NULL_ENTITY);
+    if (nest == NULL_ENTITY) return;
+    CHECK(world.get<MobType>(nest).rarity == Rarity::Ascendant);
+    const Vec2 door = world.get<Transform>(nest).position;
+    const auto enter = [&] {
+        world.get<Transform>(player).position = door;
+        client.requestDungeonEntry();
+        return h.stepUntil({&client}, [&] { return realmOf() != home && client.view().realm() == realmOf(); }, 60);
+    };
+    CHECK(enter());
+    if (realmOf() == home) return;
+    const Realm inside = realmOf();
+    CHECK_EQ(h.server.worldMaps().forRealm(inside)->templateId(), "termite_mound_t11");
+    client.sendChat("/dungeon-leave");
+    CHECK(h.stepUntil({&client}, [&] { return realmOf() == home && client.view().realm() == home; }, 100));
+    CHECK(distance(world.get<Transform>(player).position, door) < world.get<Body>(nest).radius + 400);
+    h.step(160, {&client});
+    CHECK(enter());
+    CHECK(realmOf() == inside);
+    std::vector<Entity> brood;
+    Query<DungeonDweller> dwellers{world};
+    dwellers.each([&](Entity e, DungeonDweller& member) {
+        if (member.entrance == nest) brood.push_back(e);
+    });
+    CHECK_EQ(brood.size(), 31u);
+    for (Entity mob : brood) world.destroy(mob);
+    CHECK(h.stepUntil({&client}, [&] { return realmOf() == home && client.view().realm() == home; }, 180));
+    CHECK(distance(world.get<Transform>(player).position, door) < 4000);
+}
+
 TEST(a_termite_mound_leads_into_its_own_dungeon_and_falls_when_it_is_cleared) {
     // The whole dungeon through the shipping loop: in by standing on the
     // mound, out by the copy's pad (beside the mound, not wherever the pad's

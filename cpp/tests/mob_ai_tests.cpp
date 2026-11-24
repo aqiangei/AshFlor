@@ -294,8 +294,8 @@ TEST(blinking_void_mobs_mark_the_fixed_landing_before_moving) {
         CHECK_NEAR(sim.brainOf(mob).blinkLandingMillis, start + 600.0, 0.001);
         int markers = 0;
         Vec2 mark;
-        Query<GroundEffect, Transform, Lifetime, Replicated, NetId>{sim.world}.each(
-            [&](Entity, GroundEffect& effect, Transform& at, Lifetime&, Replicated& rep, NetId&) {
+        Query<GroundEffect, Transform, Replicated, NetId>{sim.world}.each(
+            [&](Entity, GroundEffect& effect, Transform& at, Replicated& rep, NetId&) {
                 if (effect.kind != GroundEffectKind::BlinkLanding) return;
                 ++markers;
                 mark = at.position;
@@ -313,6 +313,44 @@ TEST(blinking_void_mobs_mark_the_fixed_landing_before_moving) {
         sim.tickIntent();
         CHECK_NEAR(sim.positionOf(mob).x, mark.x, 0.001);
         CHECK_NEAR(sim.positionOf(mob).y, mark.y, 0.001);
+    }
+}
+
+TEST(blinking_void_mobs_clear_the_landing_marker_on_timeout_death_or_realm_change) {
+    CHECK(contentReady());
+    enum class End { Landing, Killed, Removed, ChangedRealm };
+    for (const char* id : {"void_momy", "void_zatan"}) {
+        for (End end : {End::Landing, End::Killed, End::Removed, End::ChangedRealm}) {
+            Sim sim;
+            CombatSystem combat;
+            EventQueue events;
+            const Entity mob = sim.spawnMob(id, kOrigin);
+            const Entity flower = sim.spawnPlayer(kOrigin + Vec2{240.0, 0.0});
+            sim.brainOf(mob).target = flower;
+            const double start = sim.now;
+            sim.brainOf(mob).nextBlinkMillis = start;
+            sim.tickIntent();
+            Entity marker = NULL_ENTITY;
+            Query<GroundEffect>{sim.world}.each([&](Entity e, GroundEffect& field) {
+                if (field.kind == GroundEffectKind::BlinkLanding) marker = e;
+            });
+            CHECK(marker != NULL_ENTITY);
+            if (marker == NULL_ENTITY) continue;
+            const auto runFields = [&](double now) {
+                combat.beginTick(sim.world, content(), now, sim.dt, events);
+                combat.runWorldPhase(sim.world, sim.grid, content(), now, sim.dt);
+            };
+            runFields(start + 550);
+            CHECK(!sim.world.has<Dead>(marker));
+            switch (end) {
+                case End::Landing: break;
+                case End::Killed: sim.world.add<Dead>(mob); break;
+                case End::Removed: sim.world.destroy(mob); break;
+                case End::ChangedRealm: sim.world.get<Transform>(mob).realm = Realm::Arena; break;
+            }
+            runFields(start + (end == End::Landing ? 600.0 : 575.0));
+            CHECK(sim.world.has<Dead>(marker));
+        }
     }
 }
 

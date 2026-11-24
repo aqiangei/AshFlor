@@ -62,6 +62,10 @@ public:
     /// rebuild allocation-free.
     void sizeToRealms(const Terrain& terrain);
 
+    /// Fit an empty layer before its first insert of the tick. This lets a
+    /// scratch grid allocate map-sized storage only for realms it actually uses.
+    void fitEmptyRealm(Realm realm, double span);
+
     /// Retires every bucket in O(1) by bumping an epoch. The bucket vectors
     /// keep their capacity, which is what makes the steady-state rebuild
     /// allocation-free.

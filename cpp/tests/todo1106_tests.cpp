@@ -10,6 +10,7 @@
 #include "server/systems/npcs.h"
 #include "server/systems/spawning.h"
 #include "client/ui/menu_widgets.h"
+#include "client/ui/i18n.h"
 #include <map>
 #include "server/systems/combat.h"
 
@@ -736,7 +737,7 @@ TEST(todo1107_berry_ranges_and_blueberry_tooltip_use_current_stats) {
     SkillSet skills;
     skills.set(SkillId::Damage, 2);
     skills.set(SkillId::PetDamage, 3);
-    const auto damageText = std::to_string(std::llround(base * 0.5 * skills.effectScale(SkillId::Damage)));
+    const auto damageText = std::to_string(std::llround(base * skills.effectScale(SkillId::PetDamage) * skills.effectScale(SkillId::LightningPower)));
     const auto lines = ui::petalTooltipLines(blueberry, Rarity::Unique, skills, 1.0);
     CHECK(std::any_of(lines.begin(), lines.end(), [&](const auto& line) {
         auto actual = line.altText;
@@ -998,4 +999,21 @@ TEST(feedback3718_bulk_super_craft_records_results_privately) {
     CHECK(!sawText(observer,"超级 玫瑰 已被"));
     CHECK(!sawText(observer,"color: yellow;\">@smith"));
     CHECK(client.notifications().empty());
+}
+TEST(blueberry_tooltip_shows_lightning_talent_on_each_projectile) {
+    std::string error;
+    CHECK(loadContent(dataDir(), error));
+    const auto index = content().petalIndex("magic_peas");
+    const auto lang = ui::language();
+    ui::setLanguage(ui::Language::En);
+    for (int level : {-1, 0, 1}) {
+        SkillSet skills;
+        skills.set(SkillId::Damage, 4);
+        skills.set(SkillId::LightningPower, level);
+        const auto lines = ui::petalTooltipLines(index, Rarity::Common, skills, 1.0);
+        const std::string expected = std::string("Projectile damage per berry: ") +
+            (level < 0 ? "90" : level == 0 ? "96.75" : "103.5");
+        CHECK(std::any_of(lines.begin(), lines.end(), [&](const auto& line){return line.text == expected;}));
+    }
+    ui::setLanguage(lang);
 }

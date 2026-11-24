@@ -522,7 +522,7 @@ void App::drawShardSwitch(Canvas& canvas) {
     canvas.restore();
     nameField_.blur();focusedField_=-1;
 #ifdef __EMSCRIPTEN__
-    EM_ASM({const links=document.getElementById('lobby-links');if(links)links.hidden=true;});
+    EM_ASM({const links=document.getElementById('lobby-links');if(links && !links.hidden)links.hidden=true;});
 #endif
 }
 

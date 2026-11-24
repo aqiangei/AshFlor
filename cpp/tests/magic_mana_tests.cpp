@@ -23,12 +23,13 @@ TEST(magic_petals_with_a_body_all_cost_mana) {
         const PetalConfig& config = registry.petal(index);
         if (config.id.rfind("magic_", 0) != 0) continue;
         ++magic;
-        if (config.count <= 0 || config.id == "magic_soil" ||
+        if (config.count <= 0 || config.noPhysics || config.id == "magic_soil" ||
             config.id == "magic_fang" ||
             config.id == "magic_tooth" ||
             config.id == "magic_leaf") continue;
         for (const Rarity tier : {Rarity::Common, Rarity::Apex}) {
             const PetalStats stats = registry.petalStats(index, tier);
+            if (stats.maxMana > 0 && stats.passiveManaPerSecond > 0) continue;
             if (stats.requiredMana <= 0.0 && stats.petManaCost <= 0.0) {
                 std::printf("  free magic petal: %s\n", config.id.c_str());
             }

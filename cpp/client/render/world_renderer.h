@@ -753,6 +753,10 @@ private:
     /// later can never cover an earlier one's name.
     mutable std::vector<MobDraw> mobLabels_;
     mutable std::vector<const RemoteEntity*> playerPlates_;
+    // Scratch lists, refilled in snapshot iteration order before each draw.
+    using EntityList = std::vector<const RemoteEntity*>;
+    mutable std::array<EntityList, static_cast<std::size_t>(net::EntityKind::Npc) + 1> drawLayers_;
+    mutable EntityList mobHoles_, mobRings_, sacrificedMobs_;
 
     /// Advanced by update(), so the parts of the draw and ingest paths that
     /// need a clock (the invulnerability fade, the damage-number throttle) do

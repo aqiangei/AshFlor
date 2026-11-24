@@ -651,7 +651,8 @@ Entity SpawnSystem::spawnMob(World& world, const Terrain& terrain, const Content
     // there is no band to hold.
     const bool worldBoss = scope == MobSpawnScope::World;
     return spawnMobAt(world, terrain, content, mobIndex, rarity, position, realm, nowMillis, rng, 0,
-                      kInvalidIndex, std::nullopt, worldBoss, worldBoss);
+                      kInvalidIndex, std::nullopt, worldBoss, worldBoss, false, nullptr,
+                      scope == MobSpawnScope::DungeonBrood);
 }
 
 SpawnSystem::Sacrifice SpawnSystem::planSacrifice(World& world, const ContentRegistry& content,
@@ -766,21 +767,19 @@ Entity SpawnSystem::spawnMobAt(World& world, const Terrain& terrain, const Conte
                                std::uint16_t mobIndex, Rarity rarity, Vec2 position, Realm realm,
                                double nowMillis, Rng& rng, int depth, std::uint16_t zone,
                                std::optional<double> facing, bool clockGated, bool announce, bool prestigePromotion,
-                               const WakeClearance* wakeClearance) {
+                               const WakeClearance* wakeClearance, bool inheritNestTier) {
     if (mobIndex >= content.mobCount()) return NULL_ENTITY;
 
     const MobConfig& config = content.mob(mobIndex);
     if (isWorldRealm(realm) && config.segmentCount > 0 &&
         config.segmentBodyIndex != kInvalidIndex &&
         1 + config.segmentCount > mobCap - census_.mobs) return NULL_ENTITY;
-    // A mob does not exist below its min_rarity, whoever asked for it -- nor
-    // above apex: universal is a petal tier, and a console `spawn bee
-    // universal` or a nest's offset past the top comes out an apex. Enforced
-    // here rather than at each call site so a nest, a script and the ambient
-    // roll cannot disagree about it.
-    const bool nestedQueen=depth>0&&config.id=="queen_ant";
-    if (rarity != Rarity::Ascendant)
-        rarity = clampLadderRarity(nestedQueen?rarityIndex(rarity):std::max(rarityIndex(rarity), rarityIndex(config.minRarity)));
+    // Wild mobs respect their species floor. Dungeon brood and nested queens
+    // inherit the parent tier even below that floor.
+    const bool useParentTier = inheritNestTier || (depth > 0 && config.id == "queen_ant");
+    if (rarity != Rarity::Ascendant) {
+        rarity = ladderRarity(useParentTier ? rarity : std::max(rarity, config.minRarity));
+    }
 
     if (config.id=="termite_mound" && zone!=kInvalidIndex) {
         bool occupied=false;
@@ -2532,7 +2531,7 @@ bool SpawnSystem::topBossTaken(World& world, Rarity rarity, Realm realm, bool in
         const Rarity tier = type.rarity == Rarity::Ascendant && rarity == Rarity::Apex &&
             ambient.zone != kInvalidIndex ? Rarity::Apex : type.rarity;
         if (tier != rarity || !isWholeAnimal(world, e) ||
-            world.has<HoleTether>(e) || world.has<WaveEnemy>(e) ||
+            world.has<HoleTether>(e) || world.has<WaveEnemy>(e) || world.has<DungeonDweller>(e) ||
             world.has<StemCellOffspring>(e)) return;
         if (isWorldRealm(transform.realm) && biomeKey(transform.realm) == key) ++standing;
     });
@@ -2560,7 +2559,7 @@ void SpawnSystem::noteStandingBosses(World& world, const CommandBuffer& commands
                        AmbientMob& ambient) {
         if (type.rarity != Rarity::Unique && type.rarity != Rarity::Apex &&
             !(type.rarity == Rarity::Ascendant && ambient.zone != kInvalidIndex)) return;
-        if (world.has<HoleTether>(e) || world.has<WaveEnemy>(e) ||
+        if (world.has<HoleTether>(e) || world.has<WaveEnemy>(e) || world.has<DungeonDweller>(e) ||
             world.has<StemCellOffspring>(e)) return;
         const auto* map = worldMaps ? worldMaps->forRealm(transform.realm) : nullptr;
         if (map && map->prestigeLevel() == 2 && !ambient.managedPopulation) return;

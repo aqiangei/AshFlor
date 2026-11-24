@@ -588,8 +588,8 @@ void App::frame(double dt) {
             EM_ASM({
                 const anchor = document.getElementById('ashflor-shop-link');
                 const redeem = document.getElementById('ashflor-petal-redeem-link');
-                if (anchor && !(Module.ashflorShopVisible & 1)) anchor.hidden = true;
-                if (redeem && !(Module.ashflorShopVisible & 2)) redeem.hidden = true;
+                if (anchor && !anchor.hidden && !(Module.ashflorShopVisible & 1)) anchor.hidden = true;
+                if (redeem && !redeem.hidden && !(Module.ashflorShopVisible & 2)) redeem.hidden = true;
             });
         }
     } hideInactiveShopLink;
@@ -805,7 +805,17 @@ void App::frame(double dt) {
         const MapData* map = worldMaps_.forRealm(realm);
         const bool wave = map && map->templateId() == "wave";
         camera_.setWorldExtent(net_.terrain().cameraExtent(realm), wave, map && !wave);
-        camera_.snapTo(selfDrawn);
+        Vec2 focus = selfDrawn;
+        if (screen_ == Screen::Playing && net_.view().self().mana >= 1) {
+            const auto& profile = net_.profile();
+            for (int i = 0; i < profile.skills.loadoutSlots(); ++i) {
+                const auto item = profile.equipped(content(),i);
+                if (item.empty() || content().petal(item.configIndex).id != "magic_antennae") continue;
+                focus += Vec2::fromAngle(lastAimAngle_,80.0);
+                break;
+            }
+        }
+        camera_.snapTo(focus);
         return selfDrawn;
     };
     if (screen_ == Screen::Playing || screen_ == Screen::Dead) {
@@ -885,6 +895,7 @@ void App::frame(double dt) {
     // The renderer's switches live in the settings menu, so they are copied
     // across every frame rather than the menu reaching into the renderer.
     renderer_.options = menus_.settings().render;
+    if (config_.lowMemoryGraphics) renderer_.options.simplifyCombatEffects = true;
     // ALT toggles exact HUD numbers and spawn bands. Skip while typing.
     if (!chatOpen_ && !menus_.wantsText() &&
         (window_.keyPressed(Key::LeftAlt) || window_.keyPressed(Key::RightAlt) ||
@@ -1126,8 +1137,8 @@ void App::frame(double dt) {
         const feedback=document.getElementById("lobby-feedback");
         const feedbackLink=document.getElementById("lobby-feedback-link");
         if(!links||!council||!guide||!canvas)return;
-        links.hidden=!$0;
-        if(feedback)feedback.hidden=!$0;
+        if(links.hidden !== !$0) links.hidden=!$0;
+        if(feedback && feedback.hidden !== !$0) feedback.hidden=!$0;
         if(!$0)return;
         const box=canvas.getBoundingClientRect();const scale=box.width/$1;
         const left=$2+12;const right=$1-($4?252:16);const space=right-left;
