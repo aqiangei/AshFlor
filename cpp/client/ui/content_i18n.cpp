@@ -62,7 +62,7 @@ constexpr Pair kPetals[] = {
     {"magic_grapes", "魔法葡萄"},
     {"magic_arctic_blueberries", "魔法极地蓝莓"},
     {"magic_shovel", "魔法铁铲"},
-    {"magic_latrine", "魔法旱厕"},
+    {"magic_latrine", "魔法污水"},
     {"magic_void_stardust", "魔法星尘"},
     {"magic_pollen", "魔法花粉"},
     {"magic_job_application", "魔法求职信"},
@@ -121,7 +121,7 @@ constexpr Pair kPetals[] = {
     {"fractal", "分形闪电"},
     {"bloom", "复苏花"},
     {"gas", "毒气"},
-    {"latrine", "毒泥池"},
+    {"latrine", "污水"},
     {"silk", "丝线"},
     {"marble", "弹珠"},
     {"magic_marble", "魔法弹珠"},
@@ -743,7 +743,7 @@ constexpr Pair kPetalDescs[] = {
     {"arctic_electron_missile", "攻击时发射导弹，命中后使敌人减速。"},
     {"arctic_cryo_bomb", "碰撞或破碎时爆开，短暂冻结范围内的敌人。"},
     {"arctic_plutonium", "放射范围内的敌人会受到持续灼烧。"},
-    {"arctic_fission", "将紧邻右侧且稀有度不高于自身的适用花瓣分裂成多个较弱的个体：超级及以下分 3 份，永恒分 4 份，超凡及以上分 6 份。\n每份的生命、伤害、护甲、暴击伤害、毒伤和雷电伤害只有原来的 1/3、1/4 或 1/6（与份数对应），总量不变。\n法力上限等花朵加成按一份计算。"},
+    {"arctic_fission", "将紧邻右侧且稀有度不高于自身的适用花瓣分裂成多个较弱的个体：超级及以下分 3 份，永恒分 4 份，超凡及以上分 6 份。\n每份的生命、伤害、护甲、暴击伤害、毒伤和雷电伤害只有原来的 1/3、1/4 或 1/6（与份数对应），总量不变。\n金叶会分裂，整栏装填加速仍按一片计算。法力上限等花朵加成也只算一份。"},
     {"arctic_fusion", "装备后，临时合并右侧连续、同种同档且不高于融合品质的适用花瓣。超级及以下最多 3 片，永恒最多 6 片，超凡及以上不限。合并后部分战斗属性按片数累加，库存材料不会消耗。"},
     {"arctic_corium", "使放射范围内的敌人中毒并灼烧。"},
     {"arctic_nuke", "碰撞或破碎时引爆，随后在周围触发多次子爆炸。"},
@@ -781,17 +781,17 @@ constexpr Pair kPetalDescs[] = {
     {"blood", "充能后洒下血液。接触血池的野怪会降低护甲。"},
     {"cancer", "命中同阶或低阶野怪时标记。幽灵和挑战怪免疫。目标死亡后分裂一次，分裂体不提供额外奖励。在花环上停留十秒会被自身吸收，降低最大生命值，药片可治疗。"},
     {"chloroplast", "提高护盾花瓣和溢出治疗补充的护盾量。多个叶绿体取最高效果。"},
-    {"chromosome", "修复自己在同一地图上已经展开的花瓣。"},
+    {"chromosome", "每秒修复已展开的花瓣。同槽多粒按缺失耐久分摊，多枚染色体可叠加。"},
     {"coordinate", "用方向键或摇杆指挥同阶及以下的宠物。未输入方向时，宠物跟随可用的指针。装备会降低自身移速。"},
     {"diamond", "破裂时向六个方向射出碎片。"},
-    {"dna", "装备后，同阶或更低阶的蛋孵化时有 0.5% 基础概率让召唤物升一阶，最高超凡。幸运可提高概率。"},
+    {"dna", "装备后，同阶或更低阶的蛋孵化时有机会让召唤物升一阶，超凡召唤物可升为 Apex。多枚 DNA 的概率相加，幸运进一步提高概率。"},
     {"electron_missile", "导弹击中敌人后，会向附近目标释放连锁闪电。"},
-    {"hemoglobin", "提高自身受到的花瓣治疗量。多枚按递减收益叠加，总加成最多 115%。"},
+    {"hemoglobin", "提高自身受到的花瓣治疗量。装备多枚时取最高加成。"},
     {"iodine", "每秒治疗范围内的友方花朵。"},
     {"job_application", "使同阶或低阶野怪失去目标五秒。"},
     {"fission", "将右侧紧邻、同级或更低稀有度的兼容花瓣裂变成三份，每份保持原有强度（不削弱）。\n只对有伤害、治疗或发射物的花瓣生效，蛋和法力宝珠等不会被裂变。\n法力上限等花朵加成按一份计算。"},
     {"magic_chromosome", "消耗法力，为自己在同一地图上已经展开的花瓣提供临时护盾。"},
-    {"opal", "使同阶及以下花瓣的直接攻击有概率暴击，概率与倍率按被强化花瓣的阶位计算。"},
+    {"opal", "使同阶及以下花瓣的直接攻击有概率暴击。进攻液池生成时判定一次，暴击持续到该池及其残留伤害结束。"},
     {"oxygen", "延长野怪已有的燃烧时间。氧气本身不会造成伤害或点燃目标。"},
     {"pill", "恢复生命并治疗癌变。稀有度越高，每片治疗的癌变越多。"},
     {"rna", "提高宠物的移动速度。多个 RNA 的加速可叠加。"},
@@ -822,7 +822,7 @@ constexpr Pair kPetalDescs[] = {
     {"bandage", "临死时，花朵会在有限时间内变为<c val=\"#83B05D\">不死</c>状态。\n延迟死亡直到时间结束。\n在此期间，花朵的<c val=\"#FF6666\">身体伤害</c>会降低。\n使用后在一定时间内无法被复活。"},
     {"basic", "不错的花瓣，不是很强也不是很弱。"},
     {"basil", "提高所有受到的治疗效果。"},
-    {"magic_basil", "被动恢复魔力，并提高自身受到的治疗。"},
+    {"magic_basil", "被动恢复法力，并提高自身受到的治疗。法力低于 25% 时，自身的回魔速度翻倍。"},
     {"battery", "在花朵受到伤害时释放闪电。"},
     {"bee_egg", "孵化一个蜜蜂宠物"},
     {"beetle_egg", "孵化一个甲虫宠物"},
@@ -1066,7 +1066,7 @@ constexpr Pair kPetalDescs[] = {
     {"void_mask", "装备时抵消部分中毒伤害。"},
     {"void_mirror", "把至多比自己高一阶的敌方导弹反弹回发射者；高一阶的导弹反弹后伤害减半。带护甲，装填时间短。"},
     {"void_nut", "产自虚空的花瓣。"},
-    {"void_opal", "使同级或更低稀有度的花瓣直接命中时有机会暴击。"},
+    {"void_opal", "使同阶及以下花瓣的直接攻击有概率暴击。进攻液池生成时判定一次，暴击持续到该池及其残留伤害结束。"},
     {"void_orb", "产自虚空的花瓣。"},
     {"void_powder", "装备时提高花朵移速。"},
     {"void_quantum", "产自虚空的花瓣。"},
@@ -1075,7 +1075,7 @@ constexpr Pair kPetalDescs[] = {
     {"void_scar", "命中已不死的敌方花朵或野怪时，同级或更高品质可缩短其剩余不死时间 25%。每次不死最多生效一次。虚空伤疤出现 6.66 秒后，会尝试把你随机传送到当前地图可落脚的位置。"},
     {"void_scythe", "产自虚空的花瓣。"},
     {"void_slime", "两枚花瓣，命中时击退敌人。"},
-    {"void_soap", "加快液池扩散并扩大最大半径，对血池同样有效。多块肥皂的最大半径加成最多叠到 +200%。"},
+    {"void_soap", "加快液池扩散并扩大最大半径，对血池同样有效。每块都能扩大覆盖，最强的两块贡献完整的半径加成。"},
     {"void_zodiac", "产自虚空的花瓣。"},
     {"void_alien_egg", "孵化出外星人协助战斗。"},
     {"void_alien_digger_egg", "孵化出外星掘地者协助战斗。"},
@@ -1147,6 +1147,13 @@ const char* petalNameZh(const std::string& id) {
     for (const auto& entry : kPetals) if (id == entry.id) return entry.zh;
     return "";
 }
+const char* petalSearchAliases(const std::string& id) {
+    if (id == "arctic_stick") return "极地木棍 arctic stick arctic branch";
+    if (id == "mysterious_stick") return "神秘树枝 mysterious stick";
+    if (id == "arctic_snow_stick") return "雪树枝 snow branch";
+    return "";
+}
+
 const char* petalNameTr(const std::string& id, const char* fallback) {
     if (!zh() && id == "arctic_corium") return "Arctic Corium";
     if (!zh() && id == "void_corium") return "Void Corium";
@@ -1291,6 +1298,7 @@ const char* petalDescTr(const std::string& id, const char* fallback) {
             {"blood_stinger", "Hurts your flower when it forms."},
             {"broccoli", "Bursts into missiles when destroyed."},
             {"card", "The four suits have different damage and durability."},
+            {"chromosome", "Repairs deployed petals every second. Pieces in a slot share repair in proportion to their missing durability. Multiple Chromosomes stack."},
             {"clay", "Grows larger and deals more damage the farther it travels."},
             {"cogwheel", "Periodically stops your petals from rotating while equipped."},
             {"dead_leaf", "Increases all petal durability and makes reloads 5% slower."},
@@ -1332,7 +1340,7 @@ const char* petalDescTr(const std::string& id, const char* fallback) {
         {"blood_rose", "吸收时回复生命并补充护盾，同时短暂限制视野。"},
         {"bloom", "装备时持续回血。蓄力完成后攻击，可复活同地图的倒地队友。"},
         {"bugatti", "提高最高移速，但起步和转向变慢。"},
-        {"latrine", "蓄力后铺出可被打掉的毒泥池。多个毒泥池可叠加毒伤。"},
+        {"latrine", "蓄力后铺出可被打掉的污水。多滩污水可叠加毒伤。"},
         {"spikeball", "碰撞或破碎时向九个方向射出尖刺，九枚共用一次爆裂的伤害。"},
         {"vampire_fang", "花朵本体碰撞成功造成伤害时回血。禁疗期间无法回复。"},
         {"ring", "接触野怪时点燃目标，燃烧持续 5 秒。"},
@@ -1347,7 +1355,7 @@ const char* petalDescTr(const std::string& id, const char* fallback) {
         {"toilet_paper", "基础伤害 75。装备时生命曾达到 90% 后，若一次受伤使生命降至 10% 或以下且自然存活，卫生纸自身伤害变为 10 倍，持续 8 秒。治疗、卸下或之后的救护不会中断爆发。再次达到 90% 生命可重新武装。单件即可生效。"},
         {"fractal", "爆裂时释放分叉闪电，同次闪电不会重复选择目标。"},
         {"marble", "攻击时放出弹珠。弹珠撞墙反弹，对同一目标最多每秒命中一次。"},
-        {"magic_marble", "消耗法力形成，遇墙反弹，破碎时放出三枚玻璃碎片。"},
+        {"magic_marble", "消耗法力形成，遇墙反弹。命中会磨损弹珠，破碎时放出三枚玻璃碎片。"},
         {"silk", "接触野怪后脱环黏附，只持续伤害被黏住的目标，原装备槽可重新装填。"},
     };
     for (const auto& description : importedRecipeDescriptions)
@@ -1355,7 +1363,9 @@ const char* petalDescTr(const std::string& id, const char* fallback) {
     if (id == "honey" && !zh())
         return "Throws honey forward when attacking. Nearby baby ants, other passive creatures and mobile neutral creatures prefer visible honey.";
     if (id == "hemoglobin" && !zh())
-        return "Increases healing received from petals. Additional copies give diminishing returns, up to 115% total.";
+        return "Increases healing received from petals. The strongest equipped copy sets the bonus.";
+    if (id == "magic_basil" && !zh())
+        return "Passively restores mana and increases healing received. This petal restores twice as much mana below 25% mana.";
     if (id == "cancer" && !zh())
         return "Marks wild mobs of the same or lower tier. Ghosts and challenge enemies are immune. Marked mobs divide once on death, and copies grant no extra rewards. After ten seconds on the ring, Cancer is absorbed and reduces maximum health until treated with a Pill.";
     static constexpr struct { const char* id; const char* chinese; const char* english; } bilingualDescs[] = {
@@ -1381,8 +1391,8 @@ const char* petalDescTr(const std::string& id, const char* fallback) {
          "Attacking launches a saucer that aims at a target ahead on launch and can summon a Glitch Flower."},
         {"glitch", "防御时启用，碰到野怪会为其回复生命。超凡的减速效果见下方技能说明。",
          "Active while defending. Contact heals wild mobs. See the Hyper technique below for its slowing effect."},
-        {"magic_blood_stinger", "生成时消耗法力，碰撞时造成伤害。",
-         "Costs mana to form and deals contact damage."},
+        {"magic_blood_stinger", "生成时消耗法力并对自己的花朵造成自伤。",
+         "Costs mana and hurts your flower when it forms."},
         {"bomb", "碰撞或破碎时爆炸，造成范围伤害，随后进入重装。",
          "Explodes on collision or break, dealing area damage before reloading."},
         {"iris", "它毒性很强，但需要一点时间才能发挥作用。\n对其他花朵造成的伤害减少50%。重瓣天赋不会增加鸢尾的数量。",
@@ -1441,8 +1451,8 @@ const char* petalDescTr(const std::string& id, const char* fallback) {
          "A cluster of armored magenta oranges. Each fruit costs mana to form."},
         {"magic_dahlia", "法力未满时，花瓣蓄力后飞回花朵回复法力。",
          "Its cluster dives back to your flower to deliver mana when your pool is below full."},
-        {"magic_arctic_banana", "法力未满时飞回花朵回魔，生成时消耗法力。",
-         "Returns to your flower to restore mana. Forming the banana also costs mana."},
+        {"magic_arctic_banana", "法力未满时飞回花朵回复法力。",
+         "Returns to your flower to restore mana."},
         {"magic_arctic_ice_rose", "飞回花朵回复法力，抵达时会使自己短暂霜冻。",
          "Returns to restore mana, briefly chilling your flower on delivery."},
         {"magic_mimic", "以自身品质模仿右侧下一主栏花瓣的魔法形态。右侧花瓣必须能转换。",
@@ -1475,8 +1485,8 @@ const char* petalDescTr(const std::string& id, const char* fallback) {
          "Restores mana to you and friendly flowers visible in your viewport."},
         {"magic_iodine", "攻击或防御时，周期性为附近友方花朵回复法力。",
          "Pulses mana to nearby friendly flowers while attacking or defending."},
-        {"magic_air", "增大花朵，并按比例提高已有法力上限。",
-         "Enlarges your flower and increases the capacity of its existing mana pool."},
+        {"magic_air", "增大花朵。",
+         "Enlarges your flower."},
         {"magic_honey", "缩小普通蜂蜜抛出的诱饵，需与普通蜂蜜同时装备。",
          "Makes the honey baits you throw with ordinary Honey smaller. Equip both together."},
         {"magic_battery", "生成时消耗法力，三秒后返还本颗实际消耗的五倍并重新装填。",
@@ -1521,8 +1531,8 @@ const char* petalDescTr(const std::string& id, const char* fallback) {
          "Fires chilled berries that slow on impact and chain burning lightning."},
         {"magic_shovel", "按住防御可钻入地下。魔法铁铲蓄力更快，生成时消耗法力。",
          "Hold defend to burrow under the ground. The magic shovel arms faster and costs mana to form."},
-        {"magic_latrine", "持续释放带毒的污水，在地面停留并扩散。",
-         "Continuously releases poisonous spills that linger on the ground."},
+        {"magic_latrine", "持续释放在地面扩散的污水。多滩污水可叠加毒伤。",
+         "Continuously releases poisonous wastewater. Overlapping pools stack their poison."},
         {"magic_void_stardust", "发射三颗星尘，飞行中对附近敌人施加辐射毒伤和灼烧。",
          "Fires three fragments that irradiate nearby enemies with poison and fire."},
         {"magic_pollen", "攻击或防御时落下长效花粉，到达场上数量上限后替换最旧的花粉。",
@@ -1545,8 +1555,8 @@ const char* petalDescTr(const std::string& id, const char* fallback) {
          "Consumes the mana available when it forms and converts it into contact damage for that life."},
         {"magic_void_blood_scythe", "造成高额接触伤害，每次生成时佩戴者都会中毒并灼烧。",
          "Deals heavy contact damage. Each time it forms, its owner receives poison and burn."},
-        {"magic_arctic_emerald", "将同阶及以下可吸收的掉落按吸收天赋折算成经验。需密码确认的品质仍进入背包。",
-         "Automatically absorbs eligible lower or equal tier drops for experience using the Absorb talent. Protected tiers stay in your inventory."},
+        {"magic_arctic_emerald", "生成时扣蓝。祖母绿完好时，将同阶及以下可吸收掉落折算成经验。需密码确认的品质仍进入背包。",
+         "Costs mana to form. While intact, absorbs eligible lower or equal tier drops for experience. Protected tiers enter your inventory."},
         {"magic_arctic_sapphire", "按住攻击，将同阶或更低阶的花瓣放在地上。松开后回到环上。",
          "While attacking, grounds petals of its rarity or below. Release attack to bring them back."},
         {"magic_void_mask", "装备后抵抗中毒，并缩短受到的致盲效果。",
@@ -1603,8 +1613,8 @@ const char* petalDescTr(const std::string& id, const char* fallback) {
          "Converts part of healing and petal mana payments to shielding. Additional copies give diminishing returns."},
         {"magic_coral", "破碎时分裂成小碎片，每片有 20% 的概率获得火焰和毒素。",
          "Breaks into smaller shards. Each shard has a 20% chance to gain fire and poison."},
-        {"magic_blood_sacrifice", "在稀有或更高难度的刷怪区完成蓄力后按攻击，可召唤两只当地生态的短时宠物。",
-         "Attack after charging in a Rare or harder spawn zone to summon two temporary pets from the local biome."},
+        {"magic_blood_sacrifice", "在稀有或更高难度的刷怪区完成蓄力后按攻击。每片召唤两只与花瓣同品质的当地宠物，持续 15 秒。裂变增加片数。",
+         "Attack after charging in a Rare or harder spawn zone. Each copy summons two pets of its rarity from the local roster for 15 seconds. Fission adds copies."},
         {"magic_claw", "生成时消耗法力。接触伤害随当前法力比例变化：空蓝为零，半蓝为基础伤害的 2.5 倍，满蓝为 5 倍。",
          "Costs mana to form. Contact damage scales with your current mana: zero at empty, 2.5 times base at half mana and 5 times base at full mana."},
         {"void_antimatter", "你死亡时在原地爆炸，对附近的敌人造成伤害。",
@@ -1639,7 +1649,9 @@ const char* petalDescTr(const std::string& id, const char* fallback) {
     }
     static constexpr Pair kArcticEnglish[] = {
         {"magic_tomato", "Spends mana once to ripen, increasing contact damage until this petal breaks."},
-        {"opal", "Gives petals of its rarity or lower a chance to critically hit with direct attacks. Their rarity sets the chance and multiplier."},
+        {"void_soap", "Speeds up and widens liquid pools, including blood pools. Every equipped soap widens the pool, with the two strongest contributing their full radius bonus."},
+        {"void_opal", "Grants a critical hit chance to petals of its rarity or lower. Offensive pools roll once on creation, and a critical roll boosts the pool and its lingering damage."},
+        {"opal", "Grants a critical hit chance to petals of its rarity or lower. Offensive pools roll once on creation, and a critical roll boosts the pool and its lingering damage."},
         {"electron_missile", "Fires a missile that releases chain lightning on impact."},
         {"arctic_stick", "Summons sandstorms that follow you. Their strength and cooldown match Mysterious Stick of the same rarity."},
         {"arctic_spider_cave_egg", "Hatches ten Arctic Spiders."},
@@ -1657,7 +1669,7 @@ const char* petalDescTr(const std::string& id, const char* fallback) {
         {"arctic_electron_missile", "Fires a missile that slows enemies on hit."},
         {"arctic_cryo_bomb", "Bursts on contact or break and briefly freezes nearby enemies."},
         {"arctic_plutonium", "Irradiates nearby enemies and leaves them burning."},
-        {"arctic_fission", "Splits the eligible petal immediately to its right into weaker copies: 3 up to Super, 4 at Eternal, 6 at Hyper and above. Each copy has a third, a quarter or a sixth of its health, damage, armour, crit damage, poison and lightning, so the total is unchanged. Bonuses to the flower itself, such as maximum mana, count once. The target cannot be a higher rarity."},
+        {"arctic_fission", "Splits the eligible petal immediately to its right into weaker copies: 3 up to Super, 4 at Eternal, 6 at Hyper and above. Each copy has a third, a quarter or a sixth of its health, damage, armour, crit damage, poison and lightning, so the total is unchanged. Golden Leaf splits, but its reload bonus applies once. Flower bonuses such as maximum mana also count once. The target cannot be a higher rarity."},
         {"arctic_fusion", "While equipped, temporarily merges consecutive eligible petals to its right if they share a type and gameplay tier and are no higher than Fusion. Up to 3 at Super and below, up to 6 at Eternal, and as many as fit at Hyper and above. Selected combat stats stack without consuming inventory."},
         {"arctic_corium", "Poisons and burns nearby enemies exposed to its radiation."},
         {"arctic_nuke", "Detonates on contact or break, then triggers several blasts around the first."},

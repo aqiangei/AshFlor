@@ -4447,6 +4447,7 @@ TEST(a_dead_player_picks_nothing_up) {
 TEST(ground_drop_caps_keep_the_best_stacks_and_preserve_special_drops) {
     World world;
     LootSystem loot;
+    EventQueue events;
     const Entity claimant = world.create();
     const auto put = [&](Realm realm, Rarity rarity) {
         return loot.spawnDrop(world, 0, rarity, {100.0, 100.0}, realm, {claimant});
@@ -4462,7 +4463,7 @@ TEST(ground_drop_caps_keep_the_best_stacks_and_preserve_special_drops) {
     world.get<DropItem>(ritual).singleCopy = true;
     world.get<DropItem>(ritual).humansOnly = true;
 
-    CHECK_EQ(loot.pruneGroundDrops(world), std::size_t{1});
+    CHECK_EQ(loot.pruneGroundDrops(world, events), std::size_t{1});
     CHECK(!world.isAlive(oldest));
     CHECK(world.isAlive(rare));
     CHECK(world.isAlive(ritual));
@@ -4472,12 +4473,34 @@ TEST(ground_drop_caps_keep_the_best_stacks_and_preserve_special_drops) {
     for (const auto realm : {worldRealm(1), worldRealm(2), worldRealm(3)})
         for (std::size_t i = 0; i < kMaxGroundDropsPerRealm; ++i)
             put(realm, Rarity::Super);
-    CHECK_EQ(loot.pruneGroundDrops(world), kMaxGroundDropsPerRealm);
+    CHECK_EQ(loot.pruneGroundDrops(world, events), kMaxGroundDropsPerRealm);
     CHECK_EQ(all.count(), kMaxGroundDrops + 1);
     CHECK(world.isAlive(rare));
     CHECK(world.isAlive(ritual));
     CHECK_EQ(world.get<DropItem>(rare).eligible.front().body, claimant);
-    CHECK_EQ(loot.pruneGroundDrops(world), std::size_t{0});
+    CHECK_EQ(loot.pruneGroundDrops(world, events), std::size_t{0});
+}
+
+TEST(ground_drop_cap_banks_an_eligible_ring_pickup_before_retiring_it) {
+    World world;
+    LootSystem loot;
+    EventQueue events;
+    const Entity owner = makePlayer(world, kCentre);
+    const Entity outsider = makePlayer(world, kCentre);
+    for (Entity player : {owner, outsider})
+        world.get<PlayerModifiers>(player).ringMagnetism = 1500.0;
+    for (std::size_t i = 0; i < kMaxGroundDropsPerRealm; ++i)
+        loot.spawnDrop(world, 0, Rarity::Unique, kCentre + Vec2{3500, 0}, Realm::Overworld, {owner});
+    const Entity stack = loot.spawnDrop(world, 0, Rarity::Ultra, kCentre + Vec2{1000, 0},
+                                        Realm::Overworld, {owner});
+    world.get<DropItem>(stack).quantity = 100;
+    CHECK_EQ(loot.pruneGroundDrops(world, events), std::size_t{1});
+    CHECK(!world.isAlive(stack));
+    CHECK_EQ(loot.pickups().size(), std::size_t{1});
+    if (!loot.pickups().empty()) {
+        CHECK_EQ(loot.pickups().front().player, owner);
+        CHECK_EQ(loot.pickups().front().quantity, 100u);
+    }
 }
 
 TEST(drops_expire) {

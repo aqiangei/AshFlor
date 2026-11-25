@@ -378,7 +378,7 @@ bool TitanPanel::render(MenuContext& ctx) {
                 constexpr std::array<const char*, 3> rules = {
                     "5 个未装备的 Apex 碎片 → 1 把 Apex 雷神之锤",
                     "Apex 碎片：普通合成 5 个永久超凡碎片（2.5%），或海洋神使 120 个必换 1 个",
-                    "首保15小时，每次争夺减1小时，最低1小时。被夺返还4个碎片。"
+                    "锤无到期时间。首保15小时，逐次减至1小时；被夺返4个Apex碎片。"
                 };
                 drawSlotLine(canvas, line, rules[i]);
                 continue;

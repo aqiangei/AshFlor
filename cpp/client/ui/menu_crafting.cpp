@@ -185,7 +185,7 @@ double cloverBonus(const Profile& profile, Rarity rarity) {
 } // namespace
 
 Vec2 CraftingPanel::size(const Profile& profile) {
-    constexpr auto tiers = SlotGridTiers::PermanentHyper;
+    constexpr auto tiers = SlotGridTiers::Absorption;
     return {slotCardWidth(tiers), slotCardHeight(SlotGrid::rows(profile, tiers), kBulkControlsHeight)};
 }
 
@@ -677,7 +677,7 @@ bool CraftingPanel::render(MenuContext& ctx) {
                    craftableTint, craftableHover, craftablePressed);
     SlotGrid::Pick inspected;
     const std::optional<SlotGrid::Pick> hovered = grid_.render(
-        ctx, bulkCard, kCraftingSkin, SlotGridTiers::PermanentHyper,
+        ctx, bulkCard, kCraftingSkin, SlotGridTiers::Absorption,
         [&](std::uint16_t petalIndex, Rarity rarity, std::uint32_t owned) {
             SlotCell cell;
             cell.count = owned;

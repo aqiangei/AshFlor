@@ -1,5 +1,6 @@
 #include "test.h"
 #include "shared/game/berry_projectile.h"
+#include "shared/game/zorr_mana.h"
 
 #include "server/replication.h"
 #include "server/hyper_petal_loadout.h"
@@ -3016,15 +3017,15 @@ TEST(a_shell_stacks_its_shield_like_a_rose_heals_up_to_max_health) {
 // Mana
 // ---------------------------------------------------------------------------
 
-TEST(a_bar_with_no_magic_petal_has_no_mana_pool_at_all) {
+TEST(a_bar_with_no_magic_petal_has_the_innate_mana_pool) {
     if (!contentLoaded()) return;
     Rig rig;
     rig.equip(0, "basic");
     rig.settleEquips();
     rig.tick(20);
-    // Not a pool reading zero -- no pool. Every flower in the world would
-    // otherwise carry a component that only magic builds ever look at.
-    CHECK(rig.world.tryGet<ManaPool>(rig.player) == nullptr);
+    const auto& pool = rig.world.get<ManaPool>(rig.player);
+    CHECK_NEAR(pool.max, kFlowerBaseMana, 1e-9);
+    CHECK_NEAR(pool.current, kFlowerBaseMana * 0.4, 1e-9);
 }
 
 TEST(a_worn_vessel_grants_a_partial_pool_and_doubles_capacity_per_tier) {
@@ -3034,27 +3035,27 @@ TEST(a_worn_vessel_grants_a_partial_pool_and_doubles_capacity_per_tier) {
     rig.settleEquips();
     rig.tick();
     const ManaPool& pool = rig.world.get<ManaPool>(rig.player);
-    CHECK_NEAR(pool.max, 100.0, 1e-9);
-    CHECK_NEAR(pool.current, 40.0, 1e-9);
+    CHECK_NEAR(pool.max, kFlowerBaseMana + 100.0, 1e-9);
+    CHECK_NEAR(pool.current, (kFlowerBaseMana + 100.0) * 0.4, 1e-9);
 
     // Two vessels are two grants: the pool is summed over the bar, unlike the
     // lotus threshold beside it.
     rig.equip(1, "vessel");
     rig.settleEquips();
     rig.tick();
-    CHECK_NEAR(rig.world.get<ManaPool>(rig.player).max, 200.0, 1e-9);
+    CHECK_NEAR(rig.world.get<ManaPool>(rig.player).max, kFlowerBaseMana + 200.0, 1e-9);
 
     // Doubling per tier, all the way up: rare is four times common.
     Rig rare;
     rare.equip(0, "vessel", Rarity::Rare);
     rare.settleEquips();
     rare.tick();
-    CHECK_NEAR(rare.world.get<ManaPool>(rare.player).max, 400.0, 1e-9);
+    CHECK_NEAR(rare.world.get<ManaPool>(rare.player).max, kFlowerBaseMana + 400.0, 1e-9);
     Rig apex;
     apex.equip(0, "vessel", Rarity::Apex);
     apex.settleEquips();
     apex.tick();
-    CHECK_NEAR(apex.world.get<ManaPool>(apex.player).max, 100.0 * 512.0, 1e-9);
+    CHECK_NEAR(apex.world.get<ManaPool>(apex.player).max, kFlowerBaseMana + 100.0 * 512.0, 1e-9);
 }
 
 TEST(taking_the_pool_off_spills_the_mana_rather_than_banking_it) {
@@ -3063,22 +3064,22 @@ TEST(taking_the_pool_off_spills_the_mana_rather_than_banking_it) {
     rig.equip(0, "vessel");
     rig.settleEquips();
     rig.tick();
-    CHECK_NEAR(rig.world.get<ManaPool>(rig.player).current, 40.0, 1e-9);
+    CHECK_NEAR(rig.world.get<ManaPool>(rig.player).current, (kFlowerBaseMana + 100.0) * 0.4, 1e-9);
 
     rig.world.get<Loadout>(rig.player).slots[0] = LoadoutSlot{};
     rig.settleEquips();
     rig.tick();
     const ManaPool& empty = rig.world.get<ManaPool>(rig.player);
-    CHECK_NEAR(empty.max, 0.0, 1e-9);
-    CHECK_NEAR(empty.current, 0.0, 1e-9);
+    CHECK_NEAR(empty.max, kFlowerBaseMana, 1e-9);
+    CHECK_NEAR(empty.current, kFlowerBaseMana, 1e-9);
 
     // And putting it back on is not a refill: the once-ever seeding is what
     // keeps unequip/re-equip from being a free potion.
     rig.equip(0, "vessel");
     rig.settleEquips();
     rig.tick();
-    CHECK_NEAR(rig.world.get<ManaPool>(rig.player).max, 100.0, 1e-9);
-    CHECK_NEAR(rig.world.get<ManaPool>(rig.player).current, 0.0, 1e-9);
+    CHECK_NEAR(rig.world.get<ManaPool>(rig.player).max, kFlowerBaseMana + 100.0, 1e-9);
+    CHECK_NEAR(rig.world.get<ManaPool>(rig.player).current, kFlowerBaseMana, 1e-9);
 }
 
 TEST(a_magic_leaf_refills_the_pool_per_second_and_stops_at_the_ceiling) {
@@ -3104,7 +3105,7 @@ TEST(a_magic_leaf_refills_the_pool_per_second_and_stops_at_the_ceiling) {
 
     // And it stops at the ceiling rather than banking past it.
     rig.tick(600);
-    CHECK_NEAR(rig.world.get<ManaPool>(rig.player).current, 100.0, 1e-9);
+    CHECK_NEAR(rig.world.get<ManaPool>(rig.player).current, kFlowerBaseMana + 100.0, 1e-9);
 }
 
 TEST(an_orb_charges_homes_and_restores_mana_only_while_the_pool_is_short) {
@@ -3127,7 +3128,7 @@ TEST(an_orb_charges_homes_and_restores_mana_only_while_the_pool_is_short) {
     // A full pool never calls it home: an orb that spent itself for nothing
     // would be a petal missing from the ring for no gain.
     CHECK(rig.tickUntil([&] { return !rig.slot(1).broken; }));
-    rig.world.get<ManaPool>(rig.player).current = 100.0;
+    rig.world.get<ManaPool>(rig.player).current = rig.world.get<ManaPool>(rig.player).max;
     rig.tick(80);
     CHECK(!rig.slot(1).broken);
     CHECK_EQ(rig.petals(1).size(), std::size_t(1));
@@ -4179,6 +4180,7 @@ TEST(a_timed_summoner_hatches_one_per_reload_until_the_mana_runs_out) {
     rig.equip(0, "vessel");
     rig.equip(1, "stormcaller");
     rig.settleEquips();
+    rig.world.get<ManaPool>(rig.player).current = 100.0;
     CHECK(rig.tickUntil([&] { return rig.petCount() == 1; }));
     // No squad cap: the next reload hatches another beside the first.
     const double first = rig.now;
@@ -7330,6 +7332,19 @@ TEST(mobile_summons_use_a_safe_fallback_inside_a_wall_bounded_pocket) {
             CHECK_NEAR(distance(owner, at.position), 0.0, 1e-9);
             CHECK(!rig.terrain.resolveWall(at.position, kMobWallRadius, at.realm).collided);
         });
+        // The flower has entered this pocket, with its existing storm on
+        // the far side of the portal. Losing it must not consume its slot.
+        const auto storms = rig.world.get<PetalSlotState>(rig.player).slots[0].pets;
+        CHECK(!storms.empty());
+        if (storms.empty()) continue;
+        const Entity storm = storms.front();
+        auto& previous = rig.world.get<Transform>(storm);
+        previous.realm = worldRealm(1);
+        previous.position = {};
+        rig.tick();
+        CHECK(rig.world.isAlive(storm));
+        CHECK_EQ(rig.world.get<Transform>(storm).realm, Realm::Overworld);
+        CHECK_NEAR(distance(rig.world.get<Transform>(storm).position, owner), 0.0, 1e-9);
     }
     Rig crowded(registry);
     CHECK(crowded.terrain.loadTiledMap(path, error));
@@ -7439,11 +7454,16 @@ TEST(pharaoh_crown_permanent_hyper_promotes_tier_without_increasing_combat_budge
     CHECK(type.rarity == Rarity::Apex);
     CHECK(rig.world.get<Replicated>(pet).rarity == Rarity::Apex);
     const auto& mummy = registry.mob(type.configIndex);
-    const double scale = petalStatScale(Rarity::Unique);
-    CHECK_NEAR(rig.world.get<Health>(pet).max,
-               kSummonedMobHealthScale * mummy.health * mummy.petHealthScale * scale, 1e-6);
+    // Health and contact match the ordinary Hyper crown; undead duration
+    // still uses the Eternal body tier.
+    Rig ordinary(registry);
+    ordinary.equip(0, "pharaoh_s_crown", Rarity::Apex);
+    CHECK(ordinary.tickUntil([&] { return ordinary.petCount() == 1; }, 140));
+    const auto peers = Query<Pet>{ordinary.world}.collect();
+    if (peers.empty()) return;
+    CHECK_NEAR(rig.world.get<Health>(pet).max, ordinary.world.get<Health>(peers.front()).max, 1e-6);
     CHECK_NEAR(rig.world.get<ContactDamage>(pet).amount,
-               mummy.damage * mummy.petDamageScale * scale, 1e-6);
+               ordinary.world.get<ContactDamage>(peers.front()).amount, 1e-6);
     CHECK_NEAR(rig.world.get<RisesUndead>(pet).millis, mobUndeadMillis(mummy, Rarity::Unique), 1e-6);
     CHECK_NEAR(rig.world.get<Pet>(pet).expiresAtMillis, rig.now + 6000.0, 1e-6);
 

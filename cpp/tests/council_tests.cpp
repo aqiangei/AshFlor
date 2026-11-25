@@ -13,7 +13,7 @@ TEST(council_weights_votes_snapshot_and_persistence) {
     a.account->admin=false;b.account->admin=false;admin.account->admin=true;
     const auto aid=a.account->id,bid=b.account->id;
     db.progress(aid).totalXp=1000;db.progress(bid).totalXp=1000;
-    db.progress(aid).setItemCount(Rarity::Apex,"petal_basic",1);
+    db.progress(aid).setItemCount(Rarity::Ascendant,"petal_basic",1);
     auto& kills = db.progress(aid).mobKills;
     kills["ant"][rarityName(Rarity::Apex)] = 30;
     kills["ant"][rarityName(Rarity::Ascendant)] = 3;
@@ -55,7 +55,7 @@ TEST(council_weights_votes_snapshot_and_persistence) {
     CHECK_NEAR(out["polls"][0]["endsAt"].asDouble()-out["polls"][0]["createdAt"].asDouble(),86400000.0,1);
     Json vote=Json::object();vote["action"]="vote";vote["id"]=out["polls"][0]["id"];vote["choice"]="yes";
     const auto pollId=vote["id"].asString();
-    CHECK_EQ(db.storedTable("councilPolls")[pollId]["weightRule"].asInt(),3);
+    CHECK_EQ(db.storedTable("councilPolls")[pollId]["weightRule"].asInt(),5);
     const std::string frozenSnapshot=db.storedTable("councilPolls")[pollId]["weights"].dump();
     // Simulate an existing v2 poll. Changing rankings or casting votes must not migrate it.
     db.rawTable("councilPolls")[pollId]["weightRule"]=2;
@@ -148,7 +148,7 @@ TEST(council_hyper_details_keep_history_without_presets_or_extra_copies) {
 }
 
 
-TEST(council_counts_permanent_hyper_and_apex_holdings_but_not_admin_items) {
+TEST(council_counts_only_bag_and_equipped_apex_once) {
     Database db;
     db.setPasswordCost(4);
     auto account = db.createUser("holdingRanks", "password123");
@@ -157,6 +157,7 @@ TEST(council_counts_permanent_hyper_and_apex_holdings_but_not_admin_items) {
     auto& record = db.progress(account.account->id);
     record.totalXp = 1000;
     record.setItemCount(Rarity::PermanentHyper, "petal_rose", 2);
+    record.setItemCount(Rarity::Ascendant, "petal_basic", 3);
     record.setItemCount(Rarity::Admin, "petal_rose", 20);
     StoredItem worn;
     worn.petalType = "egg";
@@ -166,21 +167,21 @@ TEST(council_counts_permanent_hyper_and_apex_holdings_but_not_admin_items) {
 
     auto rows = council::weightInputs(db);
     CHECK_EQ(rows.size(), 1u);
-    CHECK_NEAR(rows[0]["petals"].asDouble(), 13 * std::log(3.0) + 14 * std::log(2.0), 0.000001);
+    CHECK_EQ(rows[0]["apexCount"].asInt(), 4);
 }
 
-TEST(council_equal_level_time_budgets_and_low_inventory_budget) {
+TEST(council_level_time_and_apex_budgets) {
     Database db;std::string error;const std::string path="/tmp/florr-council-equal.json";std::remove(path.c_str());CHECK(db.load(path,error));db.setPasswordCost(4);
     auto a=db.createUser("equalA","password123"),b=db.createUser("equalB","password123");a.account->admin=false;b.account->admin=false;
     db.progress(a.account->id).totalXp=10000000;db.progress(b.account->id).totalXp=1000000;
-    db.progress(b.account->id).setItemCount(Rarity::Apex,"petal_basic",1000);
+    db.progress(b.account->id).setItemCount(Rarity::Ascendant,"petal_basic",1000);
     db.rawTable("councilActivity")[a.account->id]=3600;db.rawTable("councilActivity")[b.account->id]=3600;
     double level=0,time=0,petals=0;int total=0;
     const auto ranked=council::weights(db);for(const auto& row:ranked.items()) {
-        level+=row["levelContribution"].asDouble();time+=row["activityContribution"].asDouble();petals+=row["petalContribution"].asDouble();total+=row["units"].asInt();
+        level+=row["levelContribution"].asDouble();time+=row["activityContribution"].asDouble();petals+=row["apexContribution"].asDouble();total+=row["units"].asInt();
         CHECK_NEAR(row["levelScore"].asDouble(),row["level"].asInt()-1,0.00001);
     }
-    CHECK_NEAR(level,.45,0.000001);CHECK_NEAR(time,.45,0.000001);CHECK_NEAR(petals,.10,0.000001);CHECK_EQ(total,1000000);
+    CHECK_NEAR(level,.20,0.000001);CHECK_NEAR(time,.50,0.000001);CHECK_NEAR(petals,.30,0.000001);CHECK_EQ(total,1000000);
 }
 
 TEST(council_activity_credits_real_seconds_at_twenty_tps_and_stops_when_idle) {

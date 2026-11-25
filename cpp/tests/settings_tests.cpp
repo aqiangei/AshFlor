@@ -29,40 +29,18 @@ ControlAction action(int i) { return static_cast<ControlAction>(i); }
 
 } // namespace
 
-TEST(ph_announcements_setting_round_trips_and_keeps_own_crafts) {
-    ClientSettings settings;
-    CHECK(!settings.hideOtherPhAnnouncements);
-    settings.hideOtherPhAnnouncements = true;
-    const auto path = tempPath("hide_other_ph.txt");
-    CHECK(settings.save(path));
+TEST(retired_ph_preference_does_not_interrupt_loading_other_settings) {
+    const auto path = tempPath("retired_ph_setting.txt");
+    std::ofstream(path) << "hideOtherPhAnnouncements 1\nhideCraftAnnouncements 1\n";
     ClientSettings loaded;
     CHECK(loaded.load(path));
-    CHECK(loaded.hideOtherPhAnnouncements);
-    CHECK(!loaded.hideCraftAnnouncements);
+    CHECK(loaded.hideCraftAnnouncements);
+    CHECK(loaded.save(path));
+    std::ifstream file(path);
+    const std::string contents{std::istreambuf_iterator<char>(file), {}};
+    CHECK(contents.find("hideOtherPhAnnouncements") == std::string::npos);
+    file.close();
     std::remove(path.c_str());
-
-    constexpr auto marked = "<b data-petal='leaf' style=\"color: #123456;\">"
-        "A Permanent Hyper Leaf has been forged by <b style=\"color: #00ff00;\">"
-        "@Crafter</b> [<b style=\"color: yellow;\">Viewer</b>]</b> (forged x1)";
-    constexpr auto plain = "A Permanent Hyper Leaf has been forged by @Crafter [Viewer] (forged x1)";
-    CHECK(ui::isOtherPermanentHyperCraft(marked, "viewer"));
-    CHECK(ui::isOtherPermanentHyperCraft(plain, "viewer"));
-    CHECK(!ui::isOtherPermanentHyperCraft(marked, "crafter"));
-    CHECK(!ui::isOtherPermanentHyperCraft(plain, "CRAFTER"));
-    CHECK(!ui::isOtherPermanentHyperCraft("The Apex Leaf has been forged by @Crafter [Viewer]", "viewer"));
-    CHECK(!ui::isOtherPermanentHyperCraft("A Permanent Hyper Leaf has been forged by @Crafter", "viewer"));
-
-    NetClient net;
-    const_cast<Profile&>(net.profile()).username = "viewer";
-    const_cast<std::vector<NotificationEntry>&>(net.notifications()) = {
-        {"other", net::NotificationKind::PermanentHyperForge, plain},
-        {"own", net::NotificationKind::PermanentHyperForge,
-            "A Permanent Hyper Leaf has been forged by @viewer [Crafter]"},
-        {"apex", net::NotificationKind::ApexCraft, "An Apex Leaf has been crafted by @Crafter [Viewer]"},
-    };
-    CHECK_EQ(notificationsUnread(net, loaded), 2);
-    loaded.hideOtherPhAnnouncements = false;
-    CHECK_EQ(notificationsUnread(net, loaded), 3);
 }
 
 TEST(every_control_starts_on_the_default_its_row_advertises) {

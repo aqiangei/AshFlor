@@ -708,19 +708,42 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
     // Self-hatching eggs can already be on the ring while their summons
     // are still charging. Expose that clock through the existing slot timer.
     std::array<double, kLoadoutActiveSlots> hatchRemaining{};
+    std::array<int, kLoadoutActiveSlots> stormsPresent;
+    stormsPresent.fill(-1);
     if (viewerLoadout && viewerSlots) {
+        const auto* tree = world.tryGet<PlayerSkillTree>(viewer);
+        std::array<int, kLoadoutActiveSlots> stormsWanted{};
+        for (int i = 0; i < std::min(viewerLoadout->activeSlots, kLoadoutActiveSlots); ++i) {
+            const auto equipped = equippedPetal(content(), *viewerLoadout, i);
+            if (equipped.empty()) continue;
+            const auto& config = content().petal(equipped.configIndex);
+            if (!isPermanentSandstormStick(config) && config.id != "arctic_snow_stick") continue;
+            stormsWanted[i] = configuredSummonCount(config, equipped.rarity, tree ? &tree->skills : nullptr, i);
+            const auto& slot = viewerSlots->slots[i];
+            stormsPresent[i] = 0;
+            if (slot.configIndex != equipped.configIndex || slot.rarity != equipped.rarity) continue;
+            for (Entity summon : slot.pets) {
+                const auto* pet = world.tryGet<Pet>(summon);
+                const auto* type = world.tryGet<MobType>(summon);
+                const auto* at = world.tryGet<Transform>(summon);
+                if (pet && pet->owner == viewer && type && type->configIndex == config.petMobIndex &&
+                    at && at->realm == realm && isStanding(world, summon)) ++stormsPresent[i];
+            }
+        }
         for (const Entity petal : viewerLoadout->spawned) {
             const auto* egg = world.tryGet<PetalInstance>(petal);
             if (!egg || egg->slot >= kLoadoutActiveSlots ||
                 egg->nextActionMillis <= frame.nowMillis || world.has<Dead>(petal)) continue;
             const auto& config = content().petal(egg->configIndex);
-            if (!config.petSummonTiers || config.petMobIndex == kInvalidIndex) continue;
+            if (config.petMobIndex == kInvalidIndex) continue;
             const auto& brood = viewerSlots->slots[egg->slot].pets;
-            if (config.petLifetimeMillis <= 0.0 &&
+            if (stormsPresent[egg->slot] >= 0) {
+                if (stormsPresent[egg->slot] >= stormsWanted[egg->slot]) continue;
+            } else if (!config.petSummonTiers || (config.petLifetimeMillis <= 0.0 &&
                 std::any_of(brood.begin(), brood.end(), [&](Entity pet) {
                     const auto* mob = world.tryGet<MobType>(pet);
                     return mob && mob->configIndex == config.petMobIndex && !world.has<Dead>(pet);
-                })) continue;
+                }))) continue;
             const double remaining = egg->nextActionMillis - frame.nowMillis;
             double& next = hatchRemaining[egg->slot];
             next = next > 0.0 ? std::min(next, remaining) : remaining;
@@ -731,10 +754,10 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         double reloadRemaining = 0;
         double health = 1.0;
         /// The whole number the bar prints inside the slot's top border, or
-        /// net::kNoSlotCounter for a petal that has none. Rounded UP, so a
+        /// a negative value for a petal that has none. Rounded UP, so a
         /// sponge still holding a sliver of a hit reads as 1 rather than
         /// dropping to 0 a moment early.
-        std::uint16_t counter = net::kNoSlotCounter;
+        double counter = -1.0;
     };
     const auto report = [&](int i, SlotReport& out) {
         if (viewerLoadout == nullptr) return false;
@@ -761,25 +784,24 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         }
         out.reloadRemaining = std::max(hatchRemaining[index], out.reloadRemaining);
         if (live != nullptr) out.health = live->healthFraction;
-        if (live != nullptr && live->counter >= 0.0) {
-            out.counter = static_cast<std::uint16_t>(
-                std::clamp(std::ceil(live->counter), 0.0,
-                           static_cast<double>(net::kNoSlotCounter - 1)));
-        }
+        if (live != nullptr && live->counter >= 0.0 && std::isfinite(live->counter))
+            out.counter = std::ceil(live->counter);
 
         // The owner sees the same per-tier bonus used by contact damage, including
         // resolved Mimics. A reloading bone cannot land that hit.
         if (viewerModifiers && live && live->populated && !slot.broken && live->equippedIndex == slot.configIndex &&
             live->configIndex < content().petalCount() && content().petal(live->configIndex).id == "magic_bone") {
-            out.counter = static_cast<std::uint16_t>(std::lround(
-                100.0 * viewerModifiers->magicBoneDamageBonus[ladderIndex(live->rarity)]));
+            out.counter = std::round(100.0 *
+                viewerModifiers->magicBoneDamageBonus[ladderIndex(live->rarity)]);
         }
+        if (stormsPresent[index] >= 0)
+            out.counter = static_cast<std::uint16_t>(stormsPresent[index]);
 
         // A slot with a counter is reported every snapshot, even sitting at
         // zero with a whole petal: the number is a gauge, and a gauge that
         // vanishes while it reads empty is one the player learns to distrust.
         return out.reloadRemaining > 0.0 || out.health < 1.0 ||
-               out.counter != net::kNoSlotCounter;
+               out.counter >= 0.0;
     };
     // Counted before it is written: the count leads the list, and ten slots is
     // cheaper to walk twice than a patch-back is to add to the writer.
@@ -797,7 +819,13 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         // anyway; clamping keeps the field two bytes.
         out.u16(static_cast<std::uint16_t>(std::min(slotReport.reloadRemaining, 65535.0)));
         out.unitByte(slotReport.health);
-        out.u16(slotReport.counter);
+        if (slotReport.counter >= net::kWideSlotCounter) {
+            out.u16(net::kWideSlotCounter);
+            out.f64(slotReport.counter);
+        } else {
+            out.u16(slotReport.counter < 0.0 ? net::kNoSlotCounter
+                                            : static_cast<std::uint16_t>(slotReport.counter));
+        }
     }
 
     const std::size_t wireSpawnsAt = out.size();

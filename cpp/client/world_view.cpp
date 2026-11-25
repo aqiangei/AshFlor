@@ -302,19 +302,21 @@ bool WorldView::applySnapshot(ByteReader& reader, double receivedMillis, bool ke
     // stranding the bar's wedge or its drained tile.
     std::array<double, kLoadoutActiveSlots> slotReload{};
     std::array<double, kLoadoutActiveSlots> slotHealth = fullSlotHealth();
-    std::array<int, kLoadoutActiveSlots> slotCounter = noSlotCounters();
+    std::array<double, kLoadoutActiveSlots> slotCounter = noSlotCounters();
     const std::uint8_t reportCount = reader.u8();
     for (std::uint8_t i = 0; i < reportCount && i < net::kMaxReportedSlots; ++i) {
         const std::uint8_t slot = reader.u8();
         const double remaining = reader.u16();
         const double health = reader.unitByte();
-        const std::uint16_t counter = reader.u16();
+        const std::uint16_t tag = reader.u16();
+        const double counter = tag == net::kWideSlotCounter ? reader.f64()
+                             : tag == net::kNoSlotCounter ? -1.0 : tag;
         if (slot >= kLoadoutActiveSlots) continue;
         slotReload[slot] = remaining;
         slotHealth[slot] = health;
         // The sentinel is the petal saying it has no number at all; every
         // other value, zero included, is one the bar prints.
-        slotCounter[slot] = counter == net::kNoSlotCounter ? -1 : static_cast<int>(counter);
+        slotCounter[slot] = std::isfinite(counter) ? counter : -1.0;
     }
 
     // Snapshots are ordered by TCP, but a reconnect can replay an older tick.

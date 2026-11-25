@@ -343,7 +343,7 @@ MobArt mobArtFor(const std::string& image) {
 void paintMobArt(Canvas& canvas, MobArt art, const MobArtAttributes& attr) {
     if (attr.radius <= 0.0) return;
 
-    // The bee's feelers, which the bumble bee and the moth share outright: a
+    // The bee-style feelers that the moth wears: a
     // stalk hooked out from the front of the head on each side with a ball on
     // its tip. The -y one first, as florr lays them.
     const auto clubbedFeelers = [&canvas]() {
@@ -1899,9 +1899,8 @@ void paintMobArt(Canvas& canvas, MobArt art, const MobArtAttributes& attr) {
         }
 
         case MobArt::BumbleBee: {
-            // Drawn for a radius of 27.5: the bee's plan on a rounder body, no
-            // sting, and a golden rim. Its bands are plain rectangles the full
-            // height of the body, trimmed to it by a clip. Nothing on it moves.
+            // Round, stingless body. Curved bands follow its volume, and the
+            // thinner rim and feelers leave the gold silhouette legible at distance.
             static const Path2D body = [] {
                 Path2D oval;
                 oval.ellipse(0.0f, 0.0f, 30.0f, 25.0f, 0.0f, 0.0f, static_cast<float>(kTau));
@@ -1910,22 +1909,51 @@ void paintMobArt(Canvas& canvas, MobArt art, const MobArtAttributes& attr) {
             canvas.save();
             const double s = attr.radius / 27.5;
             canvas.scale(static_cast<float>(s), static_cast<float>(s));
-            roundStrokes(canvas, 5.0);
+            roundStrokes(canvas, 3.0);
 
-            ui::setFill(canvas, bodyColor(attr, 0xFFD363u));
+            const std::uint32_t gold = bodyColor(attr, 0xFFD363u);
+            ui::setFill(canvas, gold);
             canvas.fill(body);
             canvas.save();
             canvas.clip(body);
-            ui::setFill(canvas, 0x333333u);
-            // The left edge of each band, ten wide.
-            for (const float left : {10.0f, -10.0f, -30.0f}) {
-                canvas.fillRect(left, -25.0f, 10.0f, 50.0f);
+            ui::setFill(canvas, shadeOf(gold, 0.76), 0.42);
+            canvas.beginPath();
+            canvas.moveTo(-31, 10);
+            canvas.quadraticCurveTo(-9, 24, 12, 17);
+            canvas.quadraticCurveTo(27, 14, 32, 1);
+            canvas.lineTo(32, 28);
+            canvas.lineTo(-31, 28);
+            canvas.closePath();
+            canvas.fill();
+
+            ui::setStroke(canvas, 0x674934u);
+            canvas.setLineWidth(7.0f);
+            canvas.beginPath();
+            for (const float x : {-25.0f, -7.0f, 12.0f}) {
+                canvas.moveTo(x - 2.0f, -27.0f);
+                canvas.quadraticCurveTo(x + 8.0f, 0.0f, x - 2.0f, 27.0f);
             }
+            canvas.stroke();
             canvas.restore();
-            ui::setStroke(canvas, rimColor(attr, 0xCFAB50u));
+            ui::setStroke(canvas, rimColor(attr, 0xAF8145u));
+            canvas.setLineWidth(3.0f);
             canvas.stroke(body);
 
-            clubbedFeelers();
+            ui::setFill(canvas, 0xFFF6C9u, 0.44);
+            canvas.beginPath();
+            canvas.ellipse(9, -13, 5.5f, 2.0f, 0.32f, 0, static_cast<float>(kTau));
+            canvas.fill();
+
+            ui::setStroke(canvas, 0x624233u);
+            ui::setFill(canvas, 0x624233u);
+            canvas.setLineWidth(2.25f);
+            for (const float side : {-1.0f, 1.0f}) {
+                canvas.beginPath();
+                canvas.moveTo(26.0f, 5.0f * side);
+                canvas.quadraticCurveTo(33.0f, 5.0f * side, 38.0f, 13.0f * side);
+                canvas.stroke();
+                canvas.fillCircle(38.0f, 13.0f * side, 3.15f);
+            }
             canvas.restore();
             break;
         }

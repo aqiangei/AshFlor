@@ -532,6 +532,49 @@ TEST(a_maze_run_is_played_one_rarity_down_on_the_mazes_own_track) {
     CHECK_EQ(client.profile().level, outsideLevel);
 }
 
+TEST(feedback_4416_a_corpse_does_not_keep_a_band_awake) {
+    using namespace flix::testsupport;
+    const double cell = kTileSize;
+    const std::string doors = fixtureDoor("meadow", "Meadow", 9 * cell, 9 * cell,
+                                          2 * cell, 2 * cell, true, 0.0);
+    const std::string band =
+        R"({"id":1,"type":"spawn","x":300,"y":300,"width":3600,"height":3600,"properties":[
+             {"name":"difficulty","type":"int","value":0},
+             {"name":"mobs","type":"string","value":"baby_ant 100%"}]})";
+    const std::string dir = stageDataDir("corpse-wake", {{"meadow", fixtureMap(24, 24, doors, {}, band)}});
+    CHECK(!dir.empty());
+    if (dir.empty()) return;
+    Harness h("band-standing-players", {}, dir, 0);
+    removeDataDir(dir);
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient first;
+    CHECK(joinAs(h, first, "scout", "meadow"));
+    World& world = h.server.world();
+    const Entity body = bodyNamed(world, "scout");
+    CHECK(body != NULL_ENTITY);
+    if (body == NULL_ENTITY) return;
+
+    const auto awakeMobs = [&] {
+        std::vector<Entity> result;
+        Query<MobTag, AmbientMob>{world}.without<Dead, Pet>().collect(result);
+        return result;
+    };
+    CHECK(h.stepUntil({&first}, [&] { return !awakeMobs().empty(); }));
+    for (const Entity mob : awakeMobs()) world.destroy(mob);
+    world.get<Health>(body).current = 0.0;
+    world.add<Dead>(body, Dead{NULL_ENTITY});
+    CHECK(h.stepUntil({&first}, [&] { return first.dead(); }));
+    h.step(90, {&first});
+    CHECK(world.has<Dead>(body));
+    CHECK(awakeMobs().empty());
+
+    NetClient second;
+    CHECK(joinAs(h, second, "rescuer", "meadow"));
+    CHECK(h.stepUntil({&first, &second}, [&] { return !awakeMobs().empty(); }));
+    CHECK(world.has<Dead>(body));
+}
+
 TEST(an_arena_run_never_touches_the_account_it_is_played_from) {
     // The run is a scratch copy of the account: what is looted, crafted or
     // lost in the ring belongs to the run, and a quarter of what survives it

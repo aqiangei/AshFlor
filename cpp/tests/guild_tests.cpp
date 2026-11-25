@@ -186,7 +186,7 @@ TEST(notification_feed_hides_retired_crafts_before_paging) {
         notices[1]["petalId"] = "light";
         notices[2]["id"] = "n0";
         notices[3]["type"] = "super_craft";
-        notices[4]["type"] = "super_craft";
+        notices[4]["type"] = "permanent_hyper_forge";
         notices[5]["type"] = "super_craft";
         notices[6]["type"] = "unique_craft";
         notices[6]["message"] = "The Eternal Rose has been forged by @smith";

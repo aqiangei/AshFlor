@@ -315,3 +315,126 @@ TEST(arctic_frozen_mark_charges_and_transports_through_the_live_petal) {
     f.returnCommand();
     CHECK(w.get<Transform>(f.target).realm == originalRealm);
 }
+
+namespace {
+Entity equipRescueTestMark(MarkFixture& f, const char* id, CommandBuffer& commands) {
+    auto& w = f.server.world();
+    auto& petals = Peer::markPetals(f.server);
+    const auto index = content().petalIndex(id);
+    auto& slot = w.get<Loadout>(f.owner).slots[0];
+    slot.configIndex = index;
+    slot.rarity = Rarity::Rare;
+    petals.run(w, content(), 1000000, 0, commands);
+    petals.run(w, content(), 1021000, 0, commands);
+    for (const Entity e : w.get<Loadout>(f.owner).spawned) {
+        if (w.get<PetalInstance>(e).configIndex == index) return e;
+    }
+    return NULL_ENTITY;
+}
+
+void startRescueBeforeMark(MarkFixture& f, CommandBuffer& commands) {
+    auto& w = f.server.world();
+    f.kill();
+    w.get<Transform>(f.target) = w.get<Transform>(f.owner);
+    Peer::rescueNearby(f.server, 1021000);
+    w.get<PlayerInput>(f.owner).current.flags = net::InputAttack;
+    Peer::markClock(f.server, 1021500);
+    Peer::markPetals(f.server).run(w, content(), 1021500, 0, commands);
+    Peer::rescueNearby(f.server, 1021500);
+}
+}
+
+TEST(placed_marks_take_priority_over_their_casters_nearby_rescue) {
+    const std::pair<const char*, const char*> variants[] = {
+        {"dark_mark", "hel"}, {"void_mark", "hel"},
+        {"void_void_mark", "zorr_void"}, {"arctic_frozen_mark", "zorr_arctic"}
+    };
+    for (const auto& [id, destination] : variants) {
+        MarkFixture f;
+        if (!f.ready) return;
+        auto& w = f.server.world();
+        CommandBuffer commands{w};
+        const Entity mark = equipRescueTestMark(f, id, commands);
+        CHECK(mark != NULL_ENTITY);
+        if (!mark) return;
+        startRescueBeforeMark(f, commands);
+        CHECK_EQ(w.get<PetalInstance>(mark).markTarget, f.target);
+        const double ready = w.get<PetalInstance>(mark).markReadyAtMillis;
+        CHECK(ready > 1025000);
+        Peer::rescueNearby(f.server, 1025000);
+        CHECK(w.has<Dead>(f.target));
+        Peer::markClock(f.server, ready);
+        Peer::markPetals(f.server).run(w, content(), ready, 0, commands);
+        CHECK(isStanding(w, f.target));
+        const auto* map = f.server.worldMaps().forRealm(w.get<Transform>(f.target).realm);
+        CHECK(map && map->id() == destination);
+    }
+}
+
+TEST(nearby_rescue_still_works_when_a_mark_is_held_broken_or_cast_by_someone_else) {
+    for (int scenario = 0; scenario < 3; ++scenario) {
+        MarkFixture f;
+        if (!f.ready) return;
+        auto& w = f.server.world();
+        CommandBuffer commands{w};
+        const Entity mark = equipRescueTestMark(f, "dark_mark", commands);
+        CHECK(mark != NULL_ENTITY);
+        if (!mark) return;
+        const Realm origin = w.get<Transform>(f.owner).realm;
+        net::Connection helper{-1, 83, "127.0.0.3"};
+        if (scenario == 0) {
+            f.kill();
+            w.get<Transform>(f.target) = w.get<Transform>(f.owner);
+        } else {
+            startRescueBeforeMark(f, commands);
+            CHECK_EQ(w.get<PetalInstance>(mark).markTarget, f.target);
+            if (scenario == 1) {
+                w.get<Health>(mark).current = 0;
+            } else {
+                f.join(helper);
+                Entity rescuer = NULL_ENTITY;
+                Query<PlayerAccount>{w}.each([&](Entity e, PlayerAccount& a) {
+                    if (a.connection == helper.id()) rescuer = e;
+                });
+                CHECK(rescuer != NULL_ENTITY);
+                if (rescuer == NULL_ENTITY) return;
+                w.get<Transform>(rescuer) = w.get<Transform>(f.target);
+            }
+        }
+        Peer::rescueNearby(f.server, 1022000);
+        Peer::rescueNearby(f.server, 1024999);
+        CHECK(w.has<Dead>(f.target));
+        Peer::rescueNearby(f.server, 1025000);
+        CHECK(isStanding(w, f.target));
+        CHECK(w.get<Transform>(f.target).realm == origin);
+    }
+}
+
+TEST(placed_frozen_mark_does_not_prevent_nearby_rescue_in_prestige) {
+    for (const int level : {1, 2}) {
+        MarkFixture f;
+        if (!f.ready) return;
+        auto& w = f.server.world();
+        CommandBuffer commands{w};
+        const Entity mark = equipRescueTestMark(f, "arctic_frozen_mark", commands);
+        CHECK(mark != NULL_ENTITY);
+        if (!mark) return;
+
+        auto& owner = w.get<Transform>(f.owner);
+        bool found = false;
+        const Realm realm = f.server.worldMaps().prestigeRealm(owner.realm, found, level);
+        CHECK(found);
+        if (!found) return;
+        owner.realm = realm;
+        w.get<Transform>(f.target) = owner;
+        w.get<Transform>(mark) = owner;
+
+        startRescueBeforeMark(f, commands);
+        CHECK_EQ(w.get<PetalInstance>(mark).markTarget, f.target);
+        Peer::rescueNearby(f.server, 1023999);
+        CHECK(w.has<Dead>(f.target));
+        Peer::rescueNearby(f.server, 1024000);
+        CHECK(isStanding(w, f.target));
+        CHECK(w.get<Transform>(f.target).realm == realm);
+    }
+}

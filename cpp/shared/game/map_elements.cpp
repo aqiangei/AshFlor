@@ -1089,6 +1089,21 @@ bool WorldMaps::load(const std::string& dataDir, Terrain* terrain, std::string& 
         if (twin) {
             MapData& map = maps_[i];
             map.prestigeLevel_ = -copyOf[i];
+            // Give the deepest ordinary bands in the imported biomes a small
+            // Eternal tail after the Prestige II two-tier promotion.
+            const bool frontier = stem == "jurassic" || stem == "jurassic_pangea" ||
+                stem == "jurassic_tectonics" || stem == "bio" || stem == "bio_lab" ||
+                stem == "bio_micro" || stem == "zorr_void" || stem == "zorr_arctic";
+            if ((map.prestigeLevel() == 2 && frontier) ||
+                (map.prestigeLevel() == 1 && map.biome() == "jurassic")) {
+                for (auto& band : map.elements_) {
+                    const double deepBand = stem == "zorr_arctic" ? 74.0 : 75.0;
+                    if (band.isSpawnBand() && !band.singular && band.forceRarity < 0 &&
+                        band.difficulty >= deepBand && band.difficulty < 83.6) {
+                        band.difficulty = 83.6;
+                    }
+                }
+            }
             map.setId((map.prestigeLevel() == 2 ? kPrestigeTwoMapPrefix : kPrestigeMapPrefix) + stem);
             map.displayName_ = std::string(map.prestigeLevel() == 2 ? "Prestige II" : kPrestigeLabel) + " " +
                                (map.displayName_.empty() ? titleCase(stem) : map.displayName_);

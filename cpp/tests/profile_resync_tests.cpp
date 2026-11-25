@@ -599,7 +599,7 @@ TEST(continue_acknowledges_a_live_body_without_healing_or_replacing_it){
  double before=hp.current;c.revived=false;c.requestRespawn();CHECK(h.stepUntil({&c},[&]{return c.revived;},30));
  CHECK_EQ(bodyOf(h),body);CHECK_NEAR(h.server.world().get<Health>(body).current,before,0.5);
 }
-TEST(nearby_rescue_requires_three_continuous_seconds_and_announces_both_names){
+TEST(nearby_rescue_requires_three_continuous_seconds_without_a_public_announcement){
  const auto fixture=twoMapDataDir("rescue-empty");
  Harness h("nearby-rescue",[](const std::string& p){seedTinkerer(p,[](PlayerRecord&){});},fixture,0);
  CHECK(h.ready);if(!h.ready)return;NetClient c,helper;CHECK(login(h,c));CHECK(joinWorld(h,c));auto dead=bodyOf(h);
@@ -613,7 +613,7 @@ TEST(nearby_rescue_requires_three_continuous_seconds_and_announces_both_names){
  w.get<Transform>(rescuer).position.x+=1000;h.step(2,{&c,&helper});w.get<Transform>(rescuer)=site;w.get<Transform>(rescuer).position.x+=70;
  h.step(60,{&c,&helper});CHECK(w.has<Dead>(dead));CHECK(h.stepUntil({&c,&helper},[&]{return c.revived;},50));
  CHECK(!w.has<Dead>(dead));CHECK(!w.has<Unrevivable>(dead));bool announced=false;
- for(const auto& line:helper.chat())if(line.text.find("rescuer")!=std::string::npos&&line.text.find("Tinkerer")!=std::string::npos)announced=true;CHECK(announced);
+ for(const auto& line:helper.chat())if(line.text.find("rescuer")!=std::string::npos&&line.text.find("Tinkerer")!=std::string::npos)announced=true;CHECK(!announced);
  w.get<Transform>(rescuer).position.x+=1000;w.get<Health>(dead).current=0;w.add<Dead>(dead);h.step(3,{&c,&helper});c.revived=false;
  c.requestRespawn();CHECK(h.stepUntil({&c,&helper},[&]{return c.revived;},30));
 }

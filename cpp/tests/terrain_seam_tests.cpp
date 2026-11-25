@@ -179,6 +179,71 @@ TEST(terrain_chunks_leave_no_seam_when_antennae_zoom_the_camera_far_out) {
     }
 }
 
+TEST(imported_wall_rims_are_stable_when_terrain_chunks_finish_baking) {
+    TerrainScene scene;
+    CHECK(scene.load());
+    bool found = false;
+    const Realm arctic = scene.maps.realmOfId("zorr_arctic", found);
+    CHECK(found);
+    if (!found) return;
+    scene.view.setRealm(arctic);
+    scene.renderer.setTerrainCache(true);
+    const Vec2 edge{18560.0, 8166.4};
+    for (const double zoom : {0.1, 1.0}) {
+        auto first = scene.frame(edge, zoom);
+        std::size_t initial = 0, bytes = 0;
+        scene.renderer.terrainCacheStats(initial, bytes);
+        std::vector<std::uint8_t> last;
+        for (int i = 0; i < kFramesToBakeAll; ++i) last = scene.frame(edge, zoom);
+        std::size_t baked = 0;
+        scene.renderer.terrainCacheStats(baked, bytes);
+        CHECK(baked > initial);
+        // The textured rim passes through clip coverage and two source-over
+        // blends. A second premultiplied rounding in a cached chunk can add
+        // one extra byte of error to an occasional antialiased pixel.
+        CHECK_EQ(differingPixels(first, last, 2), 0);
+        CHECK_EQ(blackLines(last, true), 0);
+        CHECK_EQ(blackLines(last, false), 0);
+    }
+}
+
+TEST(imported_wall_rims_do_not_jump_when_loadout_zoom_settles) {
+    TerrainScene scene;
+    CHECK(scene.load());
+    scene.renderer.setTerrainCache(true);
+    for (const char* map : {"zorr_arctic", "jurassic_tectonics"}) {
+        bool found = false;
+        const Realm realm = scene.maps.realmOfId(map, found);
+        CHECK(found);
+        if (!found) return;
+        scene.view.setRealm(realm);
+
+        Camera moving;
+        moving.setWorldExtent(scene.terrain.cameraExtent(realm));
+        const Vec2 edge{18560.4, 8166.7};
+        for (const double zoom : {1.0, 0.44, 0.1}) {
+            moving.approachLoadoutZoom(0.1, 0.016);
+            moving.userZoom = zoom / moving.loadoutZoom;
+            CHECK(moving.loadoutZoomInMotion());
+            const Vec2 centre = edge + Vec2{zoom * 219.6, zoom * 87.1};
+            const auto direct = scene.frame(centre, moving);
+
+            // Keep the zoom and camera unchanged while entering the cached path.
+            Camera settled = moving;
+            settled.approachLoadoutZoom(settled.loadoutZoom, 0.016);
+            CHECK(!settled.loadoutZoomInMotion());
+            const auto caching = scene.frame(centre, settled);
+            std::size_t chunks = 0, bytes = 0;
+            scene.renderer.terrainCacheStats(chunks, bytes);
+            CHECK(chunks > 0);
+            CHECK_EQ(differingPixels(direct, caching, 2), 0);
+            CHECK_EQ(blackLines(caching, false), 0);
+            CHECK_EQ(blackLines(caching, true), 0);
+        }
+    }
+}
+
+
 TEST(terrain_chunks_follow_the_camera_without_changing_the_picture) {
     // Moving the camera moves where the chunks are blitted and nothing else:
     // a view reached by walking onto it, with the cache full of chunks baked

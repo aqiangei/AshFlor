@@ -690,7 +690,7 @@ Json transferableProgress(const PlayerRecord& record) {
             "lockedShopOffersRotation", "shopTierLocks", "dailyDropBonus",
             "titanHammerLeases", "titanHammerExpiresAt", "temporaryHyperHammer",
             "waveBonusHammerDay", "waveStars", "riftPrizes", "practiceRecords",
-            "bioAssemblerReadyAt", "hidePetalTypes", "activeLoadoutPreset",
+            "bioAssemblerReadyAt", "traderReadyAt", "hidePetalTypes", "activeLoadoutPreset",
             "activeLoadoutPresetSkillsLocked", "loadoutPresetRotation", "hyperHistory"}) {
         if (source.contains(field)) result[field] = source[field];
     }
@@ -1188,6 +1188,7 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     // headless test wants and what this must not be in production.
     petals_->allocateNetId = [this] { return netIds_.next(); };
     petals_->worldMaps = &worldMaps_;
+    petals_->spawning = spawning_.get();
     combat_->allocateNetId = [this] { return netIds_.next(); };
     mobAi_->allocateNetId = [this] { return netIds_.next(); };
     spawning_->netIds = &netIds_;
@@ -1320,7 +1321,7 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
         const auto* map = worldMaps_.forRealm(realm);
         return map && map->biome() == "pyramid";
     };
-    loot_->ordinaryMapLoot = [this](Realm realm) {
+    loot_->allowsEternalMobFallback = [this](Realm realm) {
         if (!isWorldRealm(realm) || isRiftRealm(realm)) return false;
         const auto* map = worldMaps_.forRealm(realm);
         if (!map) return false;
@@ -2518,7 +2519,9 @@ void GameServer::tick(double wallMillis, double nowMillis) {
     serviceRift(true);
     serviceNearbyRevives(nowMillis);
     markTickPhase("reap");
-    loot_->pruneGroundDrops(world_);
+    const auto beforeDropCap = loot_->pickups().size();
+    loot_->pruneGroundDrops(world_, events_);
+    bankPickups(beforeDropCap);
     markTickPhase("drop cap");
 
     // The wire runs slower than the simulation and on its own clock: physics
@@ -2654,7 +2657,7 @@ void GameServer::runSystems(double nowMillis, double dt, double excessVolleyMill
     // playerModifiers system sits in Phase.Input, ahead of playerMovement).
     // Folded only inside the petal phase below, a speed or size petal would not
     // reach movement until the tick after it was equipped.
-    petals_->foldModifiers(world_, content(), nowMillis);
+    petals_->foldModifiers(world_, content(), nowMillis, dt);
 
     const double controlSeconds = simulationPacing_.ticksPerSecond() < net::kTicksPerSecond
                                       ? simulationPacing_.intervalMillis() / 1000.0 : 0.0;
@@ -2674,7 +2677,7 @@ void GameServer::runSystems(double nowMillis, double dt, double excessVolleyMill
     // both the LOD list and broadphase after player movement instead of asking
     // AI to make this tick's decision from last tick's coordinates.
     //
-    // Two lists, because two questions are being asked. EVERY flower is an
+    // Two lists, because two questions are being asked. A standing flower is an
     // observer for the mob LOD and for the spawner's wake-up pass, bots
     // included: a bot fighting a mob is something worth simulating properly,
     // and a bot standing in a band is something that band has to be awake for.
@@ -2688,18 +2691,12 @@ void GameServer::runSystems(double nowMillis, double dt, double excessVolleyMill
     Query<PlayerTag, Transform> players{world_};
     const auto refreshActivePlayers = [&] {
         activePlayers_.clear();
-        players.each([&](Entity, PlayerTag&, Transform& transform) {
+        players.each([&](Entity player, PlayerTag&, Transform& transform) {
+            if (!isStanding(world_, player)) return;
             activePlayers_.push_back({transform.position, transform.realm});
         });
     };
     refreshActivePlayers();
-    humanPlayers_.clear();
-    for (const auto& entry : sessions_) {
-        if (!entry.second.playing()) continue;
-        if (const Transform* transform = world_.tryGet<Transform>(entry.second.entity)) {
-            humanPlayers_.push_back({transform->position, transform->realm});
-        }
-    }
     grid_.clear();
     mobTargetGrid_.clear();
     playerTargetGrid_.clear();
@@ -2804,9 +2801,17 @@ void GameServer::runSystems(double nowMillis, double dt, double excessVolleyMill
     dungeons_->run(world_, *terrain_, content(), *spawning_, *combat_, rng_, nowMillis,
                    commands_);
     // The arena and the maze are filled whole rather than by viewport, and only
-    // while someone is in them.
+    // while someone is standing in them. Combat and dungeon travel have run.
+    humanPlayers_.clear();
+    for (const auto& entry : sessions_) {
+        const Session& session = entry.second;
+        if (!session.playing() || !isStanding(world_, session.entity)) continue;
+        if (const Transform* transform = world_.tryGet<Transform>(session.entity)) {
+            humanPlayers_.push_back({transform->position, transform->realm});
+        }
+    }
     modes_->run(world_, *terrain_, content(), *spawning_, grid_, humanPlayers_, rng_, nowMillis);
-    // Every flower, bots included, is somebody an NPC can turn to look at.
+    // NPCs can turn to look at standing flowers, bots included.
     npcs_->run(world_, *terrain_, content(), activePlayers_, nowMillis, wallClockMillis_);
     markTickPhase("modes+npcs");
     // Pickups can only collect drops. Keeping them out of the body grid
@@ -2932,7 +2937,8 @@ void GameServer::bankPickups(std::size_t first) {
         auto& record = liveRecord(*session);
         const auto* mods = world_.tryGet<PlayerModifiers>(pickup.player);
         if (mods && petalTier(pickup.rarity) <= mods->autoAbsorbTier && !session->inRift &&
-            !absorbRequiresPassword(pickup.rarity) && absorbable(content().petal(pickup.petalIndex), pickup.rarity)) {
+            !absorbRequiresPassword(pickup.rarity) && absorbable(content().petal(pickup.petalIndex), pickup.rarity) &&
+            petalTier(pickup.rarity) <= activeMagicEmeraldTier(world_, content(), pickup.player)) {
             const auto& tree = session->realm == Realm::Maze ? record.mazeSkills : record.skills;
             const double xp = absorbXpTotal(pickup.quantity * absorbUnits(pickup.rarity), tree);
             CombatSystem::grantXp(world_, pickup.player, xp);
@@ -5985,20 +5991,17 @@ void GameServer::handleTrade(Session& session, net::Connection& connection, Byte
         return;
     }
 
-    // Once a day, per ACCOUNT.
-    const double wait = traderWaitMillis(session.userId);
-    if (wait > 0.0) {
-        refuse(traderCooldownText(wait));
+    const auto coin = content().petalIndex(kTraderCoinPetal);
+    const bool apex = rarity == Rarity::Ascendant;
+    const bool draw = apex && petalIndex == coin;
+    if (coin == kInvalidIndex || petalIndex >= content().petalCount() ||
+        !traderTakes(rarity) || (!draw && !content().petal(petalIndex).tradable)) {
+        refuse("The trader will not take that.");
         return;
     }
-
-    // The petals.json flag decides the petal and traderTakes the tier: every
-    // ladder tier of a tradable petal and Ascendant, and the coin itself is
-    // marked untradable.
-    const std::uint16_t coin = content().petalIndex(kTraderCoinPetal);
-    if (petalIndex >= content().petalCount() || !content().petal(petalIndex).tradable ||
-        !traderTakes(rarity) || coin == kInvalidIndex) {
-        refuse("The trader will not take that.");
+    const double wait = apex ? 0.0 : traderWaitMillis(session.userId);
+    if (wait > 0.0) {
+        refuse(traderCooldownText(wait));
         return;
     }
     PlayerRecord& record = liveRecord(session);
@@ -6008,13 +6011,34 @@ void GameServer::handleTrade(Session& session, net::Connection& connection, Byte
         refuse("争夺中的超凡不能换成硬币；请先在泰坦处解除。");
         return;
     }
-    if (!takeFromInventory(record, petalIndex, rarity, 1)) {
-        refuse("You don't have that petal.");
+    const int cost = draw ? kTraderApexDrawCost : 1;
+    if (record.itemCount(rarity, inventoryKey(petalIndex)) < cost) {
+        refuse(draw ? "需要 4 枚 Apex 硬币。" : "You don't have that petal.");
         resyncProfile(session, connection);
         return;
     }
-    giveToInventory(record, coin, rarity, content().petal(petalIndex).id == "magic_aztec_coin" ? 4 : 1);
-    traderReadyAt_[session.userId] = wallClockMillis_ + kTraderCooldownMillis;
+    auto received = coin;
+    const int quantity = content().petal(petalIndex).id == "magic_aztec_coin" ? 4 : 1;
+    if (draw) {
+        std::vector<std::uint16_t> candidates;
+        for (std::uint16_t i = 0; i < content().petalCount(); ++i) {
+            const auto& petal = content().petal(i);
+            if (i != coin && !petal.isAdminPetal && petalComesAt(petal, rarity) &&
+                petalCraftsToApex(content(), i)) candidates.push_back(i);
+        }
+        if (candidates.empty()) { refuse("No Apex petals available."); return; }
+        received = candidates[rng_.below(static_cast<std::uint32_t>(candidates.size()))];
+    }
+    if (record.itemCount(rarity, inventoryKey(received)) > kMaxStackCount - quantity) {
+        refuse("背包中该物品已达上限。");
+        return;
+    }
+    takeFromInventory(record, petalIndex, rarity, cost);
+    giveToInventory(record, received, rarity, quantity);
+    if (!apex) {
+        traderReadyAt_[session.userId] = wallClockMillis_ + kTraderCooldownMillis;
+        record.extra["traderReadyAt"] = database_.nowMillis() + kTraderCooldownMillis;
+    }
     database_.markDirty();
 
     ByteWriter w;
@@ -6022,20 +6046,32 @@ void GameServer::handleTrade(Session& session, net::Connection& connection, Byte
     w.boolean(true);
     w.u16(petalIndex);
     w.u8(static_cast<std::uint8_t>(rarity));
-    w.u16(coin);
+    w.u16(received);
     w.str("");
     connection.send(w);
-    // The profile carries the new wait: it is what turns the panel's line red
-    // and every stack in its grid grey.
+    if (draw) {
+        const auto& reward = content().petal(received);
+        broadcastChat(net::ChatChannel::System, "", escapedMarkup(session.displayName.empty() ?
+            session.username : session.displayName) + " 在沙漠商人处用 4 枚 Apex 硬币抽到了 <b data-petal='" +
+            escapedMarkup(reward.id) + "'>Apex " + escapedMarkup(reward.name) + "</b>。");
+    }
     sendProfile(session, connection);
 }
 
 double GameServer::traderWaitMillis(const std::string& userId) {
     const auto found = traderReadyAt_.find(userId);
-    if (found == traderReadyAt_.end()) return 0.0;
+    if (found == traderReadyAt_.end()) {
+        const auto* record = std::as_const(database_).findProgress(userId);
+        if (!record) return 0.0;
+        const double remaining = record->extra["traderReadyAt"].asDouble() - database_.nowMillis();
+        if (remaining <= 0.0) return 0.0;
+        traderReadyAt_[userId] = wallClockMillis_ + remaining;
+        return remaining;
+    }
     const double wait = found->second - wallClockMillis_;
     if (wait > 0.0) return wait;
     traderReadyAt_.erase(found);
+    database_.progress(userId).extra.erase("traderReadyAt");
     return 0.0;
 }
 
@@ -6820,7 +6856,7 @@ void GameServer::announceRareCraft(const Session& session, std::uint16_t petalIn
     // universal is never crafted -- it is forged at a titan, one at a time --
     // and says so.
     const bool forged = titanForge || made == Rarity::Universal;
-    if (made == Rarity::Super || made == Rarity::Unique) return;
+    if (made == Rarity::Super || made == Rarity::Unique || made == Rarity::PermanentHyper) return;
     if (made != Rarity::Apex && made != Rarity::Ascendant && !forged) return;
     if (petalIndex >= content().petalCount()) return;
 
@@ -6835,7 +6871,7 @@ void GameServer::announceRareCraft(const Session& session, std::uint16_t petalIn
     // universal line is not the browser's, and says "The Universal": there is
     // only ever one of each petal at universal.
     const std::string article =
-        forged && made != Rarity::PermanentHyper ? "The"
+        forged ? "The"
                : std::string("AEIOUaeiou").find(tier[0]) != std::string::npos ? "An" : "A";
     const auto& petal = content().petal(petalIndex);
     const std::string playerName =
@@ -6854,8 +6890,7 @@ void GameServer::announceRareCraft(const Session& session, std::uint16_t petalIn
     if (broadcast)
         broadcastChat(net::ChatChannel::System, "", marked);
 
-    addNotification(made == Rarity::PermanentHyper ? "permanent_hyper_forge"
-                    : made == Rarity::Universal ? "universal_craft"
+    addNotification(made == Rarity::Universal ? "universal_craft"
                     : made == Rarity::Ascendant ? "ascendant_craft"
                     : made == Rarity::Apex   ? "apex_craft"
                                              : "unique_craft",
@@ -8199,7 +8234,7 @@ void GameServer::handleNotifications(net::Connection& connection, ByteReader& re
         rows.reserve(table.size());
         for (const Json& entry : table.items()) {
             const auto type = entry["type"].asString();
-            if (type == "super_craft") continue;
+            if (type == "super_craft" || type == "permanent_hyper_forge") continue;
             if (type == "unique_craft") {
                 const auto message = entry["message"].asString();
                 if (message.find(" has been forged by ") != std::string::npos ||
@@ -8980,11 +9015,6 @@ void GameServer::guildDeputy(Session& session, net::Connection& connection,
         sendGuildSystem(guild, member + " 的副会长职位已撤销。");
     } else {
         if (appointed != deputies.end()) return;
-        if (deputies.size() >= kMaxGuildDeputies) {
-            sendNotice(connection, net::NoticeSeverity::Warning,
-                       "副会长名额已满，最多 " + std::to_string(kMaxGuildDeputies) + " 人。");
-            return;
-        }
         deputies.push_back(member);
         sendGuildSystem(guild, member + " 已成为副会长，可以邀请新成员。");
     }
@@ -9804,14 +9834,15 @@ void GameServer::serviceNearbyRevives(double nowMillis) {
                 distanceSq(pos->position, at->position) > range * range ||
                 terrain_->segmentBlocked(pos->position, at->position, at->realm)) return false;
 
-            // The caster cannot passively revive the same target while their Void mark charges.
-            // A different helper can still rescue the player, and Continue still cancels the mark.
+            // A placed mark takes priority over its caster's passive rescue.
+            // Other helpers can still rescue the target.
             if (const auto* loadout = world_.tryGet<Loadout>(helper)) {
                 for (const Entity petal : loadout->spawned) {
                     const auto* mark = world_.tryGet<PetalInstance>(petal);
                     if (!mark || mark->markTarget != victim || !isStanding(world_, petal)) continue;
                     const auto& id = content().petal(mark->configIndex).id;
-                    if (id == "void_mark" || id == "void_void_mark") return false;
+                    if (id == "dark_mark" || id == "void_mark" || id == "void_void_mark" ||
+                        (id == "arctic_frozen_mark" && !worldMaps_.isPrestige(at->realm))) return false;
                 }
             }
             return true;
@@ -10082,10 +10113,6 @@ void GameServer::onPlayerRevived(Entity revived, Entity reviver) {
     w.u8(static_cast<std::uint8_t>(net::ServerMessage::Revived));
     w.str(reviverName);
     connection->send(w);
-    if (!reviverName.empty()) {
-        broadcastChat(net::ChatChannel::System, "",
-            escapedMarkup(world_.get<PlayerAccount>(revived).username) + " 被 " + escapedMarkup(reviverName) + " 复活了。");
-    }
 }
 
 Entity GameServer::spawnPlayer(Session& session) {

@@ -325,7 +325,10 @@ TEST(contested_hyper_transfer_and_abandon_leave_permanent_items_alone) {
     const auto& transferred = f.db.progress(f.a);
     CHECK_EQ(transferred.itemCount(Rarity::PermanentHyper, "petal_rose"), 1);
     CHECK(transferred.loadout[0] && transferred.loadout[0]->rarity == Rarity::PermanentHyper);
-    CHECK(!transferred.loadout[1]);
+    // One of the four refunded Eternals fills the slot vacated by the contested Hyper.
+    CHECK(transferred.loadout[1] && transferred.loadout[1]->rarity == Rarity::Unique &&
+          transferred.loadout[1]->petalType == "rose");
+    CHECK_EQ(transferred.itemCount(Rarity::Unique, "petal_rose"), 3);
     CHECK(!transferred.loadoutPresets.at("K1")[0]);
     CHECK(transferred.loadoutPresets.at("K1")[1] &&
           transferred.loadoutPresets.at("K1")[1]->rarity == Rarity::PermanentHyper);

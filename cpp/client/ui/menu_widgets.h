@@ -143,7 +143,7 @@ inline double ordinaryPetalReloadMillis(double baseMillis, double reloadScale) {
 /// the Reload talent times the bar's golden-leaf cut, so the header matches
 /// what the equipped wedge actually times.
 std::vector<TooltipLine> equippedPetalTooltipLines(std::uint16_t originalIndex,
-        const EquippedPetal& equipped, const SkillSet& skills, double reloadScale, int slot = -1, double triangleBonus = 0.0, int slotCounter = -1);
+        const EquippedPetal& equipped, const SkillSet& skills, double reloadScale, int slot = -1, double triangleBonus = 0.0, double slotCounter = -1);
 
 std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rarity,
                                            const SkillSet& skills, double reloadScale, int slot = -1,

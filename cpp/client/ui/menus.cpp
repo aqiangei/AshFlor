@@ -821,7 +821,6 @@ bool ClientSettings::load(const std::string& path) {
         else if (key == "exactValues") showExactValues = number != 0;
         else if (key == "hideMobAnnouncements") hideMobAnnouncements = number != 0;
         else if (key == "hideCraftAnnouncements") hideCraftAnnouncements = number != 0;
-        else if (key == "hideOtherPhAnnouncements") hideOtherPhAnnouncements = number != 0;
         else if (key == "petalRarityGlow") render.rarityGlow = number != 0;
         else if (key == "debugButton") showDebugButton = number != 0;
         else if (key == "adminsOnBoard") showAdminsOnLeaderboard = number != 0;
@@ -902,7 +901,6 @@ bool ClientSettings::save(const std::string& path) const {
          << "exactValues " << (showExactValues ? 1 : 0) << '\n'
          << "hideMobAnnouncements " << (hideMobAnnouncements ? 1 : 0) << '\n'
          << "hideCraftAnnouncements " << (hideCraftAnnouncements ? 1 : 0) << '\n'
-         << "hideOtherPhAnnouncements " << (hideOtherPhAnnouncements ? 1 : 0) << '\n'
          << "petalRarityGlow " << (render.rarityGlow ? 1 : 0) << '\n'
          << "debugButton " << (showDebugButton ? 1 : 0) << '\n'
          << "adminsOnBoard " << (showAdminsOnLeaderboard ? 1 : 0) << '\n'
@@ -1728,11 +1726,11 @@ double slotHealthFraction(const NetClient& net, int index) {
 /// bar that only worked sometimes.
 std::string slotCounterLabel(const NetClient& net, int index, std::uint16_t petalIndex, bool showBoneBonus) {
     if (index < 0 || index >= kLoadoutActiveSlots) return {};
-    const int counter = net.view().self().slotCounter[static_cast<std::size_t>(index)];
+    const double counter = net.view().self().slotCounter[static_cast<std::size_t>(index)];
     if (counter < 0) return {};
     if (petalIndex != kNoPetal && content().petal(petalIndex).id == "magic_bone")
-        return showBoneBonus ? "+" + std::to_string(counter) + "%" : "";
-    return std::to_string(counter);
+        return showBoneBonus ? "+" + std::to_string(static_cast<int>(counter)) + "%" : "";
+    return counter >= 100000.0 ? formatCompact(counter) : std::to_string(static_cast<int>(counter));
 }
 
 }  // namespace
@@ -2462,7 +2460,7 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
             triangleBonus = triangleBonusDamage(petalContactDamage(config, stats, equipped.rarity),
                                                 equipped.rarity, counts);
         }
-        const int slotCounter = inGame_ && expectedLoadout_.empty() && tipIndex < visibleSlots
+        const double slotCounter = inGame_ && expectedLoadout_.empty() && tipIndex < visibleSlots
             ? net.view().self().slotCounter[static_cast<std::size_t>(tipIndex)] : -1;
         auto lines = equippedPetalTooltipLines(slot.petalIndex, equipped, profile.skills,
                                                reloadScale, tipIndex, triangleBonus, slotCounter);

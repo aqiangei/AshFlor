@@ -620,6 +620,10 @@ public:
     Sacrifice planSacrifice(World& world, const ContentRegistry& content, Rarity rarity, Vec2 at,
                             Realm realm, Rng& rng);
 
+    /// The magic ritual borrows the local roster without consuming a wild spawn or boss slot.
+    std::uint16_t rollSacrificePet(const ContentRegistry& content, Rarity rarity, Vec2 at,
+                                   Realm realm, Rng& rng);
+
     /// The second half: places a planned summon, past a cooling clock, and
     /// spends that clock. NULL_ENTITY if it could not be placed.
     Entity spawnSacrifice(World& world, const Terrain& terrain, const ContentRegistry& content,

@@ -2069,13 +2069,14 @@ TEST(a_uranium_cloud_poisons_the_mobs_in_it_and_the_poison_outlasts_it) {
     CHECK(!a.world.has<Afflictions>(outside));
 
     // The cloud is gone after this tick, and the poison carries on without it.
+    const double damagePerTick = 30.0 * net::kTickSeconds;
     a.step(net::kTickMillis);
     CHECK(a.world.has<Dead>(field));
-    CHECK_NEAR(a.health(mob), 99.0, 1e-9);
+    CHECK_NEAR(a.health(mob), 100.0 - damagePerTick, 1e-9);
     a.step(1000.0);
-    CHECK_NEAR(a.health(mob), 98.0, 1e-9);
+    CHECK_NEAR(a.health(mob), 100.0 - 2.0 * damagePerTick, 1e-9);
     a.step(2500.0);
-    CHECK_NEAR(a.health(mob), 98.0, 1e-9);
+    CHECK_NEAR(a.health(mob), 100.0 - 2.0 * damagePerTick, 1e-9);
     CHECK_NEAR(a.health(outside), 100.0, 1e-9);
 }
 

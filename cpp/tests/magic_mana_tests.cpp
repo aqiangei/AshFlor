@@ -1,12 +1,12 @@
-// Every magic petal with a body pays mana: to form on the ring
-// (PetalConfig::requiredMana) or, for a timed summon, per summon
-// (PetalConfig::petManaCost).
+// Attack petals pay on formation or per summon, worn modifiers pay upkeep,
+// and ordinary mana restorers can form with an empty pool.
 
 #include "test.h"
 
 #include "server_harness.h"
 #include "server/systems/petals.h"
 #include "test_data.h"
+#include "shared/game/zorr_mana.h"
 
 #include <set>
 #include <string>
@@ -15,21 +15,26 @@
 using namespace flix;
 using namespace flix::testsupport;
 
-TEST(magic_petals_with_a_body_all_cost_mana) {
+TEST(magic_petals_with_a_body_have_their_intended_mana_rules) {
     const auto& registry = shippedContent();
+    const std::set<std::string> freeRestorers{
+        "magic_arctic_banana", "magic_arctic_ice_rose", "magic_basil", "magic_dahlia",
+        "magic_fang", "magic_fries", "magic_leaf", "magic_lily_pad", "magic_palm_leaf",
+        "magic_soil", "magic_starfish", "magic_sunflower", "magic_tooth", "magic_vampire_fang"
+    };
     int magic = 0;
     for (std::size_t i = 0; i < registry.petalCount(); ++i) {
         const auto index = static_cast<std::uint16_t>(i);
         const PetalConfig& config = registry.petal(index);
         if (config.id.rfind("magic_", 0) != 0) continue;
         ++magic;
-        if (config.count <= 0 || config.noPhysics || config.id == "magic_soil" ||
-            config.id == "magic_fang" ||
-            config.id == "magic_tooth" ||
-            config.id == "magic_leaf") continue;
+        if (config.count <= 0 || config.noPhysics) continue;
         for (const Rarity tier : {Rarity::Common, Rarity::Apex}) {
             const PetalStats stats = registry.petalStats(index, tier);
-            if (stats.maxMana > 0 && stats.passiveManaPerSecond > 0) continue;
+            if (freeRestorers.count(config.id) || wornMagicManaPerSecond(config.id, tier) > 0.0) {
+                CHECK_NEAR(stats.requiredMana, 0.0, 1e-9);
+                continue;
+            }
             if (stats.requiredMana <= 0.0 && stats.petManaCost <= 0.0) {
                 std::printf("  free magic petal: %s\n", config.id.c_str());
             }
@@ -59,7 +64,7 @@ TEST(zorr_magic_variants_have_distinct_stats_and_costs) {
     CHECK_EQ(stats("magic_wing", Rarity::Apex).count, 1);
     CHECK_NEAR(stats("magic_bubble_bomb").reloadMillis, 200.0, 1e-9);
     const auto soil = stats("magic_soil");
-    CHECK_NEAR(soil.maxMana, 13.2, 1e-9);
+    CHECK_NEAR(soil.maxMana, 66.0, 1e-9);
     CHECK_NEAR(soil.passiveManaPerSecond, 1.0, 1e-9);
     CHECK_NEAR(soil.requiredMana, 0.0, 1e-9);
     CHECK_NEAR(soil.flowerHealthBonus, 0.0, 1e-9);
@@ -92,8 +97,9 @@ TEST(magic_poo_spends_mana_for_summon_reach_and_stops_when_unequipped) {
         commands.flush();
     };
     step(1000.0);
-    CHECK_NEAR(world.get<ManaPool>(player).max, 13.2, 1e-9);
-    CHECK_NEAR(world.get<ManaPool>(player).current, 13.2 * .4 + .2 * net::kTickSeconds, 1e-9);
+    CHECK_NEAR(world.get<ManaPool>(player).max, kFlowerBaseMana + 66.0, 1e-9);
+    CHECK_NEAR(world.get<ManaPool>(player).current,
+               (kFlowerBaseMana + 66.0) * .4 + .2 * net::kTickSeconds, 1e-9);
     CHECK_NEAR(world.get<PlayerModifiers>(player).summonRangeBonus, 5.0, 1e-9);
     world.get<Loadout>(player).slots[1].rarity = Rarity::Super;
     world.get<ManaPool>(player).current = 0;

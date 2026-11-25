@@ -705,6 +705,23 @@ SpawnSystem::Sacrifice SpawnSystem::planSacrifice(World& world, const ContentReg
     return plan;
 }
 
+std::uint16_t SpawnSystem::rollSacrificePet(const ContentRegistry& content, Rarity rarity,
+                                         Vec2 at, Realm realm, Rng& rng) {
+    rebuildZones(content);
+    const auto zone = std::find_if(zones_.begin(), zones_.end(), [&](const SpawnZone& area) {
+        return area.realm == realm && !area.singular && zoneContains(area.bounds, area.polygon, at);
+    });
+    if (zone == zones_.end() ||
+        rarityIndex(dominantTierForDifficulty(zone->difficulty)) < rarityIndex(Rarity::Rare)) {
+        return kInvalidIndex;
+    }
+    for (int attempt = 0; attempt < 8; ++attempt) {
+        const auto type = chooseZoneMobType(content, *zone, at, rarity, rng);
+        if (type < content.mobCount() && !content.mob(type).neverAmbient) return type;
+    }
+    return kInvalidIndex;
+}
+
 Entity SpawnSystem::spawnSacrifice(World& world, const Terrain& terrain,
                                    const ContentRegistry& content, const Sacrifice& plan, Vec2 at,
                                    Realm realm, double nowMillis, Rng& rng) {
@@ -1472,7 +1489,7 @@ void SpawnSystem::gatherViewers(World& world, const Terrain& terrain,
         // bands exist on every map and each one is stocked for the people
         // looking at it. The arena and the maze are populated whole, by
         // ModeSpawner, so their flowers are not viewers here.
-        if (!isWorldRealm(transform.realm)) return;
+        if (!isWorldRealm(transform.realm) || !isStanding(world, e)) return;
         Viewer viewer;
         viewer.identity=e;
         viewer.position = transform.position;
@@ -2766,7 +2783,10 @@ void SpawnSystem::trimMounds(World& world,const ContentRegistry& content,Command
     struct Mound {Entity entity;Realm realm;Rarity rarity;bool occupied;std::uint64_t order;};
     std::vector<Realm> occupied;
     Query<PlayerTag,Transform> players{world};
-    players.each([&](Entity,PlayerTag&,Transform& at){occupied.push_back(at.realm);});
+    players.each([&](Entity, PlayerTag&, Transform& at) {
+        // A downed player can still be revived inside this dungeon.
+        occupied.push_back(at.realm);
+    });
     std::vector<Mound> mounds;
     Query<DungeonEntrance,MobType,Transform,AmbientMob> all{world};all.without<Dead>();
     all.each([&](Entity e,DungeonEntrance& entrance,MobType& type,Transform& at,AmbientMob& mob){

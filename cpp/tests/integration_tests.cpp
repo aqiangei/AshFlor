@@ -1,3 +1,4 @@
+#include "client/ui/chat_i18n.h"
 #include "test.h"
 
 #include "client/net_client.h"
@@ -1609,9 +1610,15 @@ TEST(a_yggdrasil_revival_takes_the_death_screen_back_down) {
     CHECK(alice.revived);
     bool sawLine = false;
     for (const ChatLine& line : alice.chat()) {
-        if (line.text == "You were revived by bob.") sawLine = true;
+        if (line.text == ui::localizeChatText("You were revived by bob.")) sawLine = true;
     }
     CHECK(sawLine);
+    for (const auto* client : {&alice, &bob}) {
+        for (const ChatLine& line : client->chat())
+            CHECK(line.text != "alice 被 bob 复活了。");
+    }
+
+    for (const auto& line : bob.chat()) CHECK(line.text.find("复活了。") == std::string::npos);
 
     // And she can move again -- which is the bug this fixes, from the
     // simulation's side: a body with no Dead tag is one movement steps.
@@ -1745,6 +1752,11 @@ TEST(a_sponge_prints_its_stored_damage_on_the_owners_bar) {
     world.ensure<SpongeDamageState>(body).effects.push_back(stored);
 
     CHECK(h.stepUntil({&alice}, [&] { return alice.view().self().slotCounter[0] == 12; }));
+
+    for (const double amount : {65'534.0, 65'535.0, 3'200'000'001.0}) {
+        world.get<SpongeDamageState>(body).effects.front().remainingDamage = amount;
+        CHECK(h.stepUntil({&alice}, [&] { return alice.view().self().slotCounter[0] == amount; }));
+    }
 
     // Paid back: the gauge falls to zero and stays on the tile.
     world.get<SpongeDamageState>(body).effects.clear();

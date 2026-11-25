@@ -814,6 +814,7 @@ struct GameServerPeer {
 
     // Drive the production death reporter without a transport poll.
     static void reportDeaths(GameServer& server) { server.reapDead(); }
+    static void rescueNearby(GameServer& server, double now) { server.serviceNearbyRevives(now); }
     static void flushCommands(GameServer& server) { server.commands_.flush(); }
     static net::Connection* connectionOf(GameServer& server, const Session& session) {
         return server.listener_.find(session.connection);

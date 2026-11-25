@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>玩家议会 · Florr</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f3f5ec;color:#193f32;font:16px/1.7 system-ui,sans-serif}main{max-width:1120px;margin:auto;padding:32px 22px}a{color:inherit}header{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #cdd8c7;padding-bottom:20px}h1{font-size:clamp(36px,6vw,64px);line-height:1.15;margin:24px 0}h2{font-size:23px}small,.muted{color:#567163}.hero{padding:25px 0 32px;display:grid;grid-template-columns:2fr 1fr;gap:32px}.card{padding:24px;border:1px solid #d5ddce;background:#fffef8;border-radius:20px}.share{background:#184c38;color:#f2ffd5;display:flex;flex-direction:column;justify-content:center}.share strong{font-size:46px}.share small{color:#d5e7c0}button,input{font:inherit;border-radius:9px;padding:10px 16px;border:1px solid #bccdbb}button{background:#e9f2d7;color:#194b34;cursor:pointer}button:disabled{opacity:.5;cursor:default}input{width:100%;margin:8px 0}.polls{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:18px}.choices{display:flex;flex-wrap:wrap;gap:8px}.bar{height:10px;background:#e7ebdf;border-radius:20px;display:flex;overflow:hidden;margin:15px 0}.yes{background:#569b55}.no{background:#d9a282}.abstain{background:#a3afbc}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:14px 8px;border-bottom:1px solid #e2e8db}td:last-child,th:last-child{text-align:right}.table{overflow:auto}#status{min-height:28px;color:#864b26}details{margin:25px 0}summary{cursor:pointer}footer{margin-top:32px;font-size:13px;color:#567163}button:focus-visible,a:focus-visible{outline:3px solid #d5a228;outline-offset:3px}@media(max-width:650px){.hero{grid-template-columns:1fr}main{padding:20px 15px}.card{padding:20px}th,td{font-size:14px;padding:10px 5px}}
+.player-toggle{border:0;background:transparent;text-align:left;color:#184c38;padding:4px 0;text-decoration:underline;text-underline-offset:4px}.player-toggle:focus-visible{outline:3px solid #d5a228}.detail-cell{text-align:left!important;background:#eef3e5}.detail-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:20px}.detail-grid h3{margin:0 0 10px}.hyper-list{display:flex;flex-wrap:wrap;gap:8px}.hyper-item{border:1px solid #c6b4e5;background:#f2eafa;border-radius:10px;padding:8px 12px;color:#4b286e}.history-list{padding-left:20px}.history-list small{display:block}.time-sub{display:block;font-size:12px;color:#567163}td{vertical-align:top}.detail-content{white-space:normal;overflow-wrap:anywhere}.rule-note{padding:12px 16px;background:#e7eedc;border-radius:10px}.table{max-width:100%}.player-toggle{overflow-wrap:anywhere;max-width:240px}@media(max-width:650px){.detail-grid{grid-template-columns:1fr}.table{padding:10px}.player-toggle{max-width:120px}}
+.closed-row{padding:10px 14px;margin:8px 0;border:1px solid #cbd8c2;border-radius:12px;background:#fffef8}.closed-row h3{font-size:16px;line-height:1.4;margin:0 0 4px;overflow-wrap:anywhere}.closed-row p{font-size:13px;margin:3px 0}.closed-row small{font-size:12px}.closed-row .bar{height:6px;margin:7px 0}.result-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}.result-heading h2{margin:18px 0 8px}dialog{width:min(760px,calc(100vw - 24px));max-height:85vh;border:2px solid #9cb58b;border-radius:18px;padding:18px;background:#f3f5ec;color:inherit}dialog::backdrop{background:#153c3480}.history-nav{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:14px}.history-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.history-head h2{margin:0}.history-nav button{padding:6px 12px}#ranking-nav[hidden]{display:none}#closed-preview{margin:20px 0}
+</style>
+<main><header><b>🌼 FLORR / 玩家议会</b><a id="game-link" href="/">返回游戏 ↗</a></header>
+<section class="hero"><div><small>一起决定花园的下一步</small><h1>你的游玩，<br>有一份分量。</h1><p>以真实游玩数据分配更新投票权。每位玩家的份额，共同组成 100%。</p></div><div class="card share"><span id="share-label">玩家议会</span><strong id="share">—</strong><small id="identity">正在读取服务端数据…</small></div></section>
+<div id="status" role="status" aria-live="polite"></div><button id="refresh">刷新数据</button>
+<details><summary>权重如何计算？</summary><p>等级占20%，有效游玩时间占50%，Apex 持有总数占30%。Apex 按背包和当前装备的件数累加。所有合资格玩家均无 Apex 时，等级和时长按 2∶5 分配。</p><p>等级按等级减一计分。有效游玩时间按 log(1+小时) 计分，沿用每人10小时分数向等级份额平滑的规则。活跃操作后30秒内的游戏时间计入，静止挂机超过30秒后停止累计。管理员、游客及不足2级且有效游玩少于60秒的账号不参与。管理员赠予及脚本挂机尚不能完整识别。</p><p>新议题发布时冻结权重，持续 24 小时。截止前可修改选择，一账号一票。<span id="unified-rule" hidden>三服合资格账号合并后统一计算权重。每个合资格账号有一票，请从各服游戏内打开议会投票。</span>以下百分比均占该议题全体权重，未投票部分不算支持。结果供平衡更新参考。排行显示游戏账号名。</p></details>
+<section id="publish-panel" class="card" hidden><h2>发布更新议题</h2><p class="muted">当前综合权重前<span class="proposal-rank">20</span>名可发布；每24小时最多1个，同时最多3个进行中的议题。</p><form id="create"><label for="title">议题标题（建议一次只讨论一个改动）</label><input id="title" maxlength="80" required placeholder="例如：是否调整某种花瓣的冷却时间？"><button>发布并冻结权重 · 24小时</button></form></section>
+<p id="weight-note" class="rule-note"></p><h2>当前议题</h2><p class="muted">综合权重前<span class="proposal-rank">20</span>名可发起议题；发布时重新校验排名。同权重按服号和固定账号编号排序。</p><div id="polls" class="polls"></div><section aria-labelledby="ranking-heading"><h2 id="ranking-heading">玩家排行榜 <small id="total"></small></h2><label for="player-search">搜索玩家账号</label><input id="player-search" type="search" maxlength="100" placeholder="输入玩家账号名，支持部分名称" autocomplete="off" disabled><p id="search-status" class="muted" role="status" aria-live="polite"></p><div class="card table"><table><thead><tr><th>排名</th><th>玩家</th><th>服号</th><th>计入时长</th><th>等级</th><th>Apex 总数</th><th>权重</th></tr></thead><tbody id="players"></tbody></table></div><nav id="ranking-nav" class="history-nav" aria-label="排行榜分页" hidden><button id="ranking-prev">上一页</button><span id="ranking-page" aria-live="polite"></span><button id="ranking-next">下一页</button></nav></section><footer>投票权不可购买或转让。没有符合条件的玩家时不分配份额。权重显示到小数点后四位，合计精确为100%。</footer></main>
+<dialog id="history-dialog" aria-labelledby="history-title"><div class="history-head"><h2 id="history-title">已结束议题 · 历史详情</h2><button id="history-close" aria-label="关闭历史详情">关闭</button></div><div id="history-items"></div><nav class="history-nav" aria-label="历史议题分页"><button id="history-prev">上一页</button><span id="history-page" aria-live="polite"></span><button id="history-next">下一页</button></nav></dialog>
+<script>
+const $=id=>document.getElementById(id),pct=n=>(n*100/totalUnits).toFixed(4)+'%';
+let totalUnits=1000000;
+const publicPage=location.pathname==='/player-council/';
+const councilApi=publicPage?'./api':'/api/council';
+if(publicPage){
+ const links=$('game-link').parentNode;
+ $('game-link').remove();
+ const games=[['一服','http://154.219.105.158/'],['二服','http://154.219.105.161/'],['三服','http://154.219.105.164/']];
+ games.forEach(([label,url])=>{const link=document.createElement('a');link.href=url;link.textContent=label+' ↗';links.append(link);});
+}
+const realmName=realm=>realm?realm+'服':'';
+const author=p=>[realmName(p.realm),p.authorName||'历史议题'].filter(Boolean).join(' · ');
+let busy=false,localRanking=null,currentAccount='',closedPolls=[],historyPage=0;
+let rankingRevision=0,rankingTimer,rankingTarget=1;
+const historyPageSize=8;
+function node(tag,text){const n=document.createElement(tag);if(text!==undefined)n.textContent=text;return n;}
+function resultRow(p){const row=node('article');row.className='closed-row';row.append(node('h3',p.title));row.append(node('small',(p.result==='passed'?'通过':p.result==='rejected'?'未通过':'平票，未通过')+' · '+author(p)+(p.createdAt?' · 发布于 '+new Date(p.createdAt).toLocaleString():'')));const bar=node('div');bar.className='bar';['yes','no','abstain'].forEach(key=>{const part=node('span');part.className=key;part.style.width=pct(p[key]);bar.append(part);});row.append(bar,node('p','支持 '+pct(p.yes)+' / 反对 '+pct(p.no)+' / 弃权 '+pct(p.abstain)+' · '+p.count+' 人投票'));return row;}
+function renderHistory(){const pages=Math.max(1,Math.ceil(closedPolls.length/historyPageSize));historyPage=Math.max(0,Math.min(historyPage,pages-1));$('history-items').replaceChildren(...closedPolls.slice(historyPage*historyPageSize,(historyPage+1)*historyPageSize).map(resultRow));$('history-page').textContent=(historyPage+1)+' / '+pages+' 页 · 共 '+closedPolls.length+' 条';$('history-prev').disabled=historyPage===0;$('history-next').disabled=historyPage>=pages-1;}
+function renderResults(polls){closedPolls=polls.filter(p=>p.closed).sort((a,b)=>(Number(b.createdAt)||0)-(Number(a.createdAt)||0));let preview=$('closed-preview');if(!preview){preview=node('section');preview.id='closed-preview';$('polls').after(preview);}preview.replaceChildren();preview.hidden=!closedPolls.length;if(closedPolls.length){const heading=node('div');heading.className='result-heading';heading.append(node('h2','已结束议题 · 结果列表'));const more=node('button','详情 · 全部 '+closedPolls.length+' 条');more.onclick=()=>{historyPage=0;renderHistory();$('history-dialog').showModal();};heading.append(more);preview.append(heading,...closedPolls.slice(0,3).map(resultRow));}renderHistory();}
+function duration(seconds){if(seconds<=0)return '0';if(seconds<60)return Math.floor(seconds)+'秒';if(seconds<3600)return Math.floor(seconds/60)+'分'+Math.floor(seconds%60)+'秒';return (seconds/3600).toFixed(1)+'小时';}
+async function api(payload){let token='';if(!publicPage&&payload.action!=='ranking')try{token=localStorage.getItem('florrCouncilToken')||'';}catch(e){}const r=await fetch(councilApi,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify(payload)});if(!r.ok)throw Error(r.status===429?'操作较快，请稍候再试':'服务暂不可用，请稍后刷新');const data=await r.json();if(data.error)throw Error(data.error);return data;}
+function rankingInput(page){return {page,query:$('player-search').value.trim()};}
+function setPollButtonsDisabled(disabled){
+ document.querySelectorAll('#polls button,#create button,#refresh').forEach(b=>b.disabled=disabled||b.dataset.noVote==='true');
+}
+async function request(payload={action:'view'}){
+ if(busy)return;busy=true;$('status').textContent='正在连接…';setPollButtonsDisabled(true);
+ const revision=rankingRevision,input=rankingInput(rankingTarget);
+ try{
+  const data=await api({...payload,...input});render(data);
+  if(revision===rankingRevision)renderRanking(data.pagination?data:localPage(input));
+  $('status').textContent='已同步服务端数据';
+ }catch(e){$('status').textContent=e.message;}finally{busy=false;setPollButtonsDisabled(false);}
+}
+function localPage({page,query}){
+ const matches=query?localRanking.filter(p=>p.name.toLowerCase().includes(query.toLowerCase())):localRanking;
+ const pages=Math.max(1,Math.ceil(matches.length/30));
+ page=Math.max(1,Math.min(page,pages));
+ return {players:matches.slice((page-1)*30,page*30),pagination:{page,pages,matches:matches.length,query}};
+}
+async function loadRanking(page, revision=++rankingRevision){
+ rankingTarget=page;
+ const input=rankingInput(page);
+ $('search-status').textContent='正在读取排行榜…';
+ $('ranking-prev').disabled=$('ranking-next').disabled=true;
+ try{
+  const result=localRanking?localPage(input):await api({action:'ranking',...input});
+  if(revision===rankingRevision)renderRanking(result);
+ }catch(e){
+  if(revision!==rankingRevision)return;
+  $('search-status').textContent=e.message;
+  rankingTarget=Number($('ranking-nav').dataset.page||1);
+  $('ranking-prev').disabled=rankingTarget<=1;
+  $('ranking-next').disabled=rankingTarget>=Number($('ranking-nav').dataset.pages||1);
+ }
+}
+function renderRanking({players,pagination:{page,pages,matches,query}}){
+ rankingTarget=page;
+ $('players').replaceChildren();
+ players.forEach(p=>{const tr=node('tr');tr.append(node('td',p.rank));tr.append(node('td',p.name+(p.id===currentAccount?'（我）':'')),node('td',realmName(p.realm)||'—'),
+   node('td',duration(p.seconds)),node('td',p.level),node('td',p.apexCount),node('td',pct(p.units)));
+   $('players').append(tr);});
+ if(!players.length){const tr=node('tr'),td=node('td',query?'未找到匹配的上榜玩家。':'暂无符合权重条件的玩家。');td.colSpan=7;tr.append(td);$('players').append(tr);}
+ $('search-status').textContent=query?'找到 '+matches+' 位玩家 · 排名和权重仍按全体玩家计算':'按综合权重排序；搜索覆盖整个排行榜。';
+ $('ranking-nav').hidden=matches===0;
+ $('ranking-nav').dataset.page=page;
+ $('ranking-nav').dataset.pages=pages;
+ $('ranking-prev').disabled=page<=1;
+ $('ranking-next').disabled=page>=pages;
+ $('ranking-page').textContent=page+' / '+pages+' 页 · 共 '+matches+' 位';
+}
+function render(data){
+ totalUnits=data.totalUnits||1000000;
+ const proposalRank=data.proposalRank||20;
+ document.querySelectorAll('.proposal-rank').forEach(n=>n.textContent=proposalRank);
+ $('unified-rule').hidden=!data.totalUnits;
+ const realmSummary=data.realmShares?.map(entry=>realmName(entry.realm)+' '+entry.players+' 位，占 '+pct(entry.units)).join(' · ');
+ $('weight-note').textContent=realmSummary?'三服合并计算权重。'+realmSummary+'。已发布议题保留原权重。':'等级20%、有效游玩时间50%、Apex 持有数30%。';
+ currentAccount=data.me;
+ localRanking=data.pagination?null:data.players;
+ const me=data.pagination?data.self:data.players.find(p=>p.id===data.me);
+ const playerCount=data.playerCount??data.players.length;
+ $('share-label').textContent=data.me?'我的当前投票权':'公开浏览';
+ $('share').textContent=me?pct(me.units):data.me?'暂无权重':playerCount+' 位玩家';
+ $('identity').textContent=me?'已登录：'+[realmName(data.realm),me.name].filter(Boolean).join(' · '):data.me?'已登录：'+(data.accountName||'当前游戏账号')+' · 尚无投票权重':'无需登录即可查看议题、排行榜和搜索玩家；投票请先登录游戏。';
+ $('publish-panel').hidden=!data.canPublish;
+ $('player-search').disabled=false;
+ $('total').textContent=playerCount+' 位 · '+pct(data.pagination?(playerCount?totalUnits:0):data.players.reduce((sum,p)=>sum+p.units,0));
+ $('polls').replaceChildren();if(!data.polls.length)$('polls').append(node('p','暂无更新议题。综合权重前'+proposalRank+'名的玩家可发布议题。'));
+ renderResults(data.polls);
+ data.polls.filter(p=>!p.closed).sort((a,b)=>(Number(b.createdAt)||0)-(Number(a.createdAt)||0)).forEach(p=>{const card=node('article');card.className='card';card.append(node('small',p.closed?'已结束':'投票中 · '+new Date(p.endsAt).toLocaleString()+' 截止'),node('h2',p.title),node('small','发布者：'+author(p)));
+ if(p.createdAt)card.append(node('small','发布时间：'+new Date(p.createdAt).toLocaleString()));
+ if(p.closed)card.append(node('h3',p.result==='passed'?'结果：通过':p.result==='rejected'?'结果：未通过':'结果：平票，未通过'));
+ if(p.scope==='legacy')card.append(node('p','该议题沿用原服的权重和投票资格。'));
+ if(p.weightBasis==='equal-realms')card.append(node('p','该议题沿用发布时三服各占三分之一的权重。'));
+ if(p.legacyWeights)card.append(node('p','此议题冻结于权重修正前，建议发布者重新发起；已有投票保留。'));const bar=node('div');bar.className='bar';['yes','no','abstain'].forEach(key=>{const part=node('span');part.className=key;part.style.width=pct(p[key]);bar.append(part);});card.append(bar,node('p','支持 '+pct(p.yes)+' / 反对 '+pct(p.no)+' / 弃权 '+pct(p.abstain)),node('p',p.count+' 人投票 · 参与权重 '+pct(p.yes+p.no+p.abstain)));
+ if(!p.closed){const controls=node('div');controls.className='choices';[['yes','支持'],['no','反对'],['abstain','弃权']].forEach(([key,label])=>{const b=node('button',(p.mine===key?'✓ ':'')+label);b.disabled=p.canVote===false;b.dataset.noVote=String(b.disabled);b.onclick=()=>request({action:'vote',id:p.id,choice:key});controls.append(b);});if((data.canClose||data.admin)&&(p.scope!=='legacy'||p.realm===data.realm)){const close=node('button','提前结束');close.onclick=()=>request({action:'close',id:p.id});controls.append(close);}card.append(controls);} $('polls').append(card);});
+}
+$('history-close').onclick=()=>$('history-dialog').close();
+$('history-prev').onclick=()=>{--historyPage;renderHistory();};
+$('history-next').onclick=()=>{++historyPage;renderHistory();};
+$('player-search').addEventListener('input',()=>{
+ const revision=++rankingRevision;
+ rankingTarget=1;
+ $('ranking-prev').disabled=$('ranking-next').disabled=true;
+ clearTimeout(rankingTimer);
+ rankingTimer=setTimeout(()=>loadRanking(1,revision),300);
+});
+$('ranking-prev').onclick=()=>loadRanking(rankingTarget-1);
+$('ranking-next').onclick=()=>loadRanking(rankingTarget+1);
+window.addEventListener('storage',e=>{if(e.key==='florrCouncilToken')request();});
+window.addEventListener('focus',()=>request());
+$('refresh').onclick=()=>request();$('create').onsubmit=e=>{e.preventDefault();request({action:'create',title:$('title').value.trim()});};request();
+</script></html>

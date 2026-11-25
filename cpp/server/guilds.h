@@ -29,7 +29,7 @@
 namespace flix {
 
 inline constexpr std::size_t kMaxGuildSize = 200;
-inline constexpr std::size_t kMaxGuildDeputies = 2;
+static_assert(kMaxGuildSize <= 255, "Guild deputy count must fit the roster packet");
 /// A guild invitation lapses after a minute, as the reference's does.
 inline constexpr std::int64_t kGuildInviteMillis = 60000;
 
@@ -136,7 +136,7 @@ inline std::vector<std::string> guildDeputies(const Json& guild) {
     if (stored.isArray()) {
         for (const auto& value : stored.items()) {
             add(value);
-            if (deputies.size() == kMaxGuildDeputies) break;
+            if (deputies.size() == kMaxGuildSize - 1) break;
         }
     } else {
         add(guild["deputyUsername"]);

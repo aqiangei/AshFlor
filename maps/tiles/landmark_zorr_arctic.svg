@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 208">
+  <path d="M17 106L41 74L103 48L188 35L262 41L350 72L367 112L310 148L235 169L150 162L57 144Z" fill="#c3e1dc" opacity="0.37" stroke="none" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M48 116L69 77L130 62L185 71L248 53L333 79L342 107L302 140L212 153L149 140L87 140Z" fill="#608e98" opacity="0.48" stroke="none" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M68 109L111 77L178 81L216 66L303 81L326 100L287 130L218 143L156 129L102 131Z" fill="#638f9c" opacity="0.91" stroke="none" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M76 108L114 82L180 85L156 129L103 127Z" fill="#98bebf" opacity="0.65" stroke="none" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M181 85L218 69L268 78L241 112L156 129Z" fill="#7eafb7" opacity="0.88" stroke="none" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M157 130L241 112L269 78L303 85L322 101L284 129L219 140Z" fill="#557f91" opacity="0.53" stroke="none" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M81 107L124 103L156 129L191 102L241 112L272 105L301 84M234 112L260 137M166 115L153 86" fill="none" opacity="0.73" stroke="#cce4e2" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <ellipse cx="111" cy="148" rx="1" ry="1" fill="#dcf0e8" opacity="0.45"/>
+  <ellipse cx="103" cy="135" rx="1" ry="1" fill="#709eab" opacity="0.45"/>
+  <ellipse cx="253" cy="127" rx="2" ry="1" fill="#dcf0e8" opacity="0.45"/>
+  <ellipse cx="226" cy="53" rx="2" ry="2" fill="#709eab" opacity="0.45"/>
+  <ellipse cx="205" cy="135" rx="2" ry="2" fill="#dcf0e8" opacity="0.45"/>
+  <ellipse cx="309" cy="139" rx="1" ry="1" fill="#709eab" opacity="0.45"/>
+  <ellipse cx="321" cy="101" rx="4" ry="2" fill="#dcf0e8" opacity="0.45"/>
+  <ellipse cx="312" cy="131" rx="2" ry="2" fill="#709eab" opacity="0.45"/>
+  <ellipse cx="200" cy="151" rx="1" ry="2" fill="#dcf0e8" opacity="0.45"/>
+  <ellipse cx="295" cy="85" rx="2" ry="1" fill="#709eab" opacity="0.45"/>
+  <ellipse cx="154" cy="57" rx="1" ry="2" fill="#dcf0e8" opacity="0.45"/>
+  <ellipse cx="123" cy="107" rx="3" ry="2" fill="#709eab" opacity="0.45"/>
+  <ellipse cx="160" cy="134" rx="2" ry="2" fill="#dcf0e8" opacity="0.45"/>
+  <ellipse cx="135" cy="137" rx="4" ry="1" fill="#709eab" opacity="0.45"/>
+  <ellipse cx="151" cy="60" rx="4" ry="1" fill="#dcf0e8" opacity="0.45"/>
+  <ellipse cx="270" cy="125" rx="1" ry="1" fill="#709eab" opacity="0.45"/>
+  <ellipse cx="164" cy="68" rx="3" ry="1" fill="#dcf0e8" opacity="0.45"/>
+  <ellipse cx="331" cy="98" rx="3" ry="1" fill="#709eab" opacity="0.45"/>
+  <ellipse cx="162" cy="90" rx="4" ry="1" fill="#dcf0e8" opacity="0.45"/>
+  <ellipse cx="84" cy="136" rx="4" ry="2" fill="#709eab" opacity="0.45"/>
+  <ellipse cx="257" cy="114" rx="1" ry="2" fill="#dcf0e8" opacity="0.45"/>
+  <ellipse cx="170" cy="68" rx="1" ry="1" fill="#709eab" opacity="0.45"/>
+  <ellipse cx="127" cy="143" rx="2" ry="2" fill="#dcf0e8" opacity="0.45"/>
+  <ellipse cx="264" cy="153" rx="4" ry="2" fill="#709eab" opacity="0.45"/>
+  <ellipse cx="184" cy="121" rx="1" ry="1" fill="#dcf0e8" opacity="0.45"/>
+  <ellipse cx="184" cy="135" rx="3" ry="1" fill="#709eab" opacity="0.45"/>
+  <ellipse cx="71" cy="74" rx="1" ry="2" fill="#dcf0e8" opacity="0.45"/>
+  <ellipse cx="218" cy="152" rx="2" ry="2" fill="#709eab" opacity="0.45"/>
+  <ellipse cx="117" cy="117" rx="3" ry="1" fill="#dcf0e8" opacity="0.45"/>
+  <ellipse cx="181" cy="65" rx="3" ry="1" fill="#709eab" opacity="0.45"/>
+  <ellipse cx="173" cy="74" rx="1" ry="1" fill="#dcf0e8" opacity="0.45"/>
+  <ellipse cx="260" cy="63" rx="3" ry="2" fill="#709eab" opacity="0.45"/>
+  <ellipse cx="211" cy="159" rx="2" ry="1" fill="#dcf0e8" opacity="0.45"/>
+  <ellipse cx="286" cy="65" rx="3" ry="1" fill="#709eab" opacity="0.45"/>
+  <ellipse cx="81" cy="80" rx="4" ry="1" fill="#dcf0e8" opacity="0.45"/>
+  <ellipse cx="267" cy="107" rx="1" ry="2" fill="#709eab" opacity="0.45"/>
+</svg>

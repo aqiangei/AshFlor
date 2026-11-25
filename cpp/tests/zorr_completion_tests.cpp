@@ -115,15 +115,18 @@ TEST(zorr_completion_ring_is_linked_to_angels_drop_table) {
 }
 #include "canvas.h"
 #include "client/render/sprites.h"
-TEST(zorr_completion_ring_art_uses_original_gold_gem_and_red_blue_magnet) {
+TEST(zorr_ring_magnet_has_a_gold_band_and_gem_and_regular_magnet_has_two_poles) {
  const auto& c=testsupport::shippedContent();SpriteCache sprites;sprites.build(c,testsupport::dataDir());
  Canvas image=Canvas::createVirtual(256,128);image.clear(Color{7,7,7});
- sprites.drawPetal(image,c.petalIndex("ring"),Rarity::Common,64,64,96,0,0);
- sprites.drawPetal(image,c.petalIndex("ring_magnet"),Rarity::Common,192,64,96,0,0);
+ sprites.drawPetal(image,c.petalIndex("ring_magnet"),Rarity::Common,64,64,96,0,0);
+ sprites.drawPetal(image,c.petalIndex("magnet"),Rarity::Common,192,64,96,0,0);
  const auto bytes=image.getImageData(0,0,256,128);int gold=0,gem=0,red=0,blue=0;
  for(std::size_t i=0;i+3<bytes.size();i+=4){const int r=bytes[i],g=bytes[i+1],b=bytes[i+2];
-  gold+=(r>150&&g>80&&g<210&&b<70);gem+=(b>140&&g>100&&r<120);
-  red+=(r>90&&r>g*1.25&&r>b*1.25);blue+=(b>90&&b>r*1.25&&b>g*1.25);
+  if ((i / 4) % 256 < 128) {
+   gold+=(r>150&&g>80&&g<210&&b<70);gem+=(b>140&&g>100&&r<120);
+  } else {
+   red+=(r>90&&r>g*1.25&&r>b*1.25);blue+=(b>90&&b>r*1.25&&b>g*1.25);
+ }
  }
  CHECK(gold>100);CHECK(gem>50);CHECK(red>100);CHECK(blue>100);
  if(const char* path=std::getenv("FLIX_RING_ART_RGBA")){std::FILE* f=std::fopen(path,"wb");CHECK(f!=nullptr);if(f){std::fwrite(bytes.data(),1,bytes.size(),f);std::fclose(f);}}

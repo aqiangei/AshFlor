@@ -97,7 +97,8 @@ inline std::string oracleCooldownText(double remainingMillis) {
            (minutes == 1 ? " minute" : " minutes");
 }
 
-/// The petal every trade hands back, at the tier of the petal traded for it.
+/// Price of a random Apex and the petal used as merchant currency.
+inline constexpr unsigned kTraderApexDrawCost = 4;
 inline constexpr const char* kTraderCoinPetal = "coin";
 
 /// The tiers the trader takes and returns as coins: the ladder, Permanent
@@ -107,9 +108,7 @@ inline constexpr bool traderTakes(Rarity rarity) {
            rarity == Rarity::PermanentHyper || rarity == Rarity::Ascendant;
 }
 
-/// How long an account waits between two trades: one a day. Kept exactly as
-/// the oracle's wait is -- per account, in the server's memory only
-/// (GameServer::traderReadyAt_) -- so a relog keeps it and a restart clears it.
+/// Shared, persisted account cooldown for sales below Ascendant.
 inline constexpr double kTraderCooldownMillis = 24.0 * 60.0 * 60.0 * 1000.0;
 
 /// "You'll be able to trade again in 23 hours" -- the reference's sentence,

@@ -33,16 +33,16 @@
 #include "shared/game/drop_rates.h"
 
 namespace flix {
-inline constexpr int baseLootTrialsForRarity(Rarity rarity, bool ordinaryMap = false) {
-    constexpr int kOrdinaryMapLootTrials = 50;
-    return rarity == Rarity::Super ? 20 : (ordinaryMap ? kOrdinaryMapLootTrials : kLootFeelCopies) *
+inline constexpr int baseLootTrialsForRarity(Rarity rarity, bool garbageBag = false) {
+    if (garbageBag) return 15;
+    return rarity == Rarity::Super ? 20 : kLootFeelCopies *
         (rarityIndex(rarity) >= rarityIndex(Rarity::Super) ? kLootFeelSuperMultiplier : 1);
 }
 
 /// Daily bonus tier: 1 inactive, 2 ordinary day, 3 fourth consecutive day.
 /// Extra independent rolls belong only to the claimant with that bonus.
-inline constexpr int bonusLootTrialsForRarity(Rarity rarity, int bonus, bool ordinaryMap = false) {
-    const int base = baseLootTrialsForRarity(rarity, ordinaryMap);
+inline constexpr int bonusLootTrialsForRarity(Rarity rarity, int bonus, bool garbageBag = false) {
+    const int base = baseLootTrialsForRarity(rarity, garbageBag);
     if (bonus <= 1) return base;
     const bool fourthDay = bonus >= 3;
     if (rarityIndex(rarity) >= rarityIndex(Rarity::Apex)) return base * (fourthDay ? 18 : 14) / 10;
@@ -1372,8 +1372,13 @@ inline double uraniumRadiationDps(const PetalStats& stats, Rarity rarity) {
 inline constexpr double kRadiationDamageScale = 1.25;
 inline constexpr double kFluidRadiusScale = 1.20;
 inline constexpr double kRadiationRadiusScale = 1.20;
-inline constexpr double kFluidDamageScale = 1.5625;
-inline constexpr double kOffensiveSpillRadiusScale = 1.10;
+inline constexpr double kFluidDamageScale = 2.1875;
+inline constexpr double kOffensiveSpillRadiusScale = 1.375;
+inline constexpr int kFluidPoolLimit = 24;
+
+inline double spillLifetimeMillis(const SpillSpec& spill) {
+    return spill.durationMillis * 1.5;
+}
 
 inline bool isOffensiveSpill(SpillKind kind) {
     return kind == SpillKind::Acid || kind == SpillKind::Lava ||
@@ -1522,7 +1527,16 @@ inline bool petalCanBeAttracted(const PetalConfig& config) {
            (!config.defendOnly || config.id == "sawblade");
 }
 
+inline bool contactPoisonStacksByPetal(const std::string& id) {
+    return id == "stinger" || id == "magic_stinger" || id == "void_elemental" ||
+           id == "magic_gas" || id == "magic_microplastics";
+}
+
+inline constexpr double kMarblePreparationMillis = 350.0;
+inline constexpr double kMagicMarblePreparationMillis = 200.0;
+
 /// Laser: continuous outward lightning beam plus ordinary contact damage.
+inline int spikeballNeedleCount(const PetalConfig& config) { return config.id == "arctic_pinecone" ? 8 : 9; }
 inline bool petalIsLaser(const PetalConfig& config) { return config.id == "laser"; }
 
 /// Wiki ratio held against AshFlor's contact ladder: beam DPS = 10 × damage.
@@ -1573,6 +1587,7 @@ inline bool petalShredsShots(const PetalConfig& config) { return config.id == "p
 /// A carrot is a missile whose shot bounces off walls instead of flying over
 /// them.
 inline bool petalShotBounces(const PetalConfig& config) { return config.id == "carrot" || config.id == "marble" || config.id == "magic_marble"; }
+inline constexpr int kMagicMarbleImpactsBeforeShatter = 6;
 
 /// A tomato's hit grows the longer it has been out: florr's tooltip states it
 /// as a range, 5 ~ 70 at common (14x), and the class carries a one-second
@@ -1654,8 +1669,7 @@ inline double stemCellHealChance(Rarity rarity) {
     return (2.0 + tier * tier / 4.0) / 100.0;
 }
 inline constexpr double kStemCellHealChanceCap = .25;
-inline constexpr double kDnaChancePerSource = .005;
-inline constexpr double kDnaChanceCap = .05;
+inline constexpr double kDnaChancePerSource = .01;
 inline constexpr double kAfflictionExtensionCapMillis = 6000.0;
 inline double oxygenBurnExtensionMillis(Rarity rarity) { return 100.0 * (1 + ladderIndex(rarity)); }
 inline double cyanidePoisonExtensionMillis(Rarity rarity) { return 150.0 * (1 + ladderIndex(rarity)); }
@@ -1711,9 +1725,14 @@ inline double spillBaseRadius(const SpillSpec& spill, Rarity rarity) {
 }
 
 // Local maximum coverage per equipped Soap, shared with the inventory panel.
-inline constexpr double kMaxSoapCoverageBonus = 2.0;
 inline double soapCoverageBonus(Rarity rarity) {
-    return rarity == Rarity::Ascendant ? 0.80 : (20 + 6 * ladderIndex(rarity)) / 100.0;
+    const double base = rarity == Rarity::Ascendant ? 0.80 : (20 + 6 * ladderIndex(rarity)) / 100.0;
+    return 1.5 * base;
+}
+
+// Count copies from strongest to weakest, so swapping slots cannot affect reach.
+inline double soapCoverageWeight(int strongerCopies) {
+    return strongerCopies < 2 ? 1.0 : 1.0 / strongerCopies;
 }
 
 inline double soapSpillRateBonus(Rarity rarity) {

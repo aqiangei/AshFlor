@@ -194,7 +194,6 @@ enum Toggle : int {
     kScreenShake,
     kHideMobAnnouncements,
     kHideCraftAnnouncements,
-    kHideOtherPhAnnouncements,
     kToggleCount,
 };
 
@@ -314,7 +313,6 @@ bool* toggleValue(PanelState& st, ClientSettings& settings, int id) {
         case kHideOwnPets: return &settings.render.hideOwnPets;
         case kHideMobAnnouncements: return &settings.hideMobAnnouncements;
         case kHideCraftAnnouncements: return &settings.hideCraftAnnouncements;
-        case kHideOtherPhAnnouncements: return &settings.hideOtherPhAnnouncements;
         case kDisableUltraParticles: return &settings.render.disableUltraPetalParticles;
         case kSimplifyCombatEffects: return &settings.render.simplifyCombatEffects;
         case kScreenShake: return &settings.render.screenShake;
@@ -878,8 +876,6 @@ bool SettingsPanel::render(MenuContext& ctx) {
 
             p.checkbox(kHideMobAnnouncements, trEnZh("Hide mob announcements", "屏蔽怪物播报"));
             p.checkbox(kHideCraftAnnouncements, trEnZh("Hide crafting and forging announcements", "屏蔽合成及锻造播报"));
-            p.checkbox(kHideOtherPhAnnouncements,
-                       trEnZh("Hide other players' PH crafting notices", "屏蔽他人的永久超凡合成提示"));
             p.checkbox(kShowConsoleLogs, tr(Msg::ShowConsoleLogsOnScreen));
             p.checkbox(kShowAdminCommands, tr(Msg::ShowAdminCommands));
             p.checkbox(kShowAdminsOnLeaderboard, tr(Msg::ShowAdminsOnLeaderboard));

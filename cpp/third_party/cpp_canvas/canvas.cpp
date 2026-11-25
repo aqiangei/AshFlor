@@ -42,6 +42,7 @@ static const Font* uiFont(unsigned char family);
 // context.
 EM_JS(int, c2d_create, (const char* element, int width, int height, int virtualCanvas, int desynchronized), {
   Module.cppCanvasContexts ||= [];
+  Module.cppCanvasFreeContexts ||= [];
   let surface, options;
   if (virtualCanvas) surface = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(width, height) : document.createElement('canvas');
   else { const id = UTF8ToString(element); surface = document.getElementById(id) || Object.assign(document.createElement('canvas'), {id}); if (!surface.parentNode) document.body.appendChild(surface); options = {alpha: false, desynchronized: !!desynchronized}; }
@@ -57,10 +58,22 @@ EM_JS(int, c2d_create, (const char* element, int width, int height, int virtualC
     options = undefined;
   }
   surface.width = width; surface.height = height;
-  Module.cppCanvasContexts.push({surface, ctx: surface.getContext('2d', options), display});
-  return Module.cppCanvasContexts.length - 1;
+  const id = Module.cppCanvasFreeContexts.length ? Module.cppCanvasFreeContexts.pop() : Module.cppCanvasContexts.length;
+  Module.cppCanvasContexts[id] = {surface, ctx: surface.getContext('2d', options), display, owned: !!virtualCanvas || !!display};
+  return id;
 });
-EM_JS(void, c2d_destroy, (int id), { if (Module.cppCanvasContexts) Module.cppCanvasContexts[id] = null; });
+EM_JS(void, c2d_destroy, (int id), {
+  const item = Module.cppCanvasContexts[id];
+  if (!item) return;
+  // Destruction flushes queued draws first. Drop owned pixel storage now;
+  // the on-page display belongs to the window and can outlive this context.
+  if (item.owned) {
+    item.surface.width = 0;
+    item.surface.height = 0;
+  }
+  Module.cppCanvasContexts[id] = null;
+  Module.cppCanvasFreeContexts.push(id);
+});
 EM_JS(void, c2d_present, (int id, const char* target), {
   const item = Module.cppCanvasContexts[id], name = UTF8ToString(target);
   let canvas = document.getElementById(name);
@@ -178,7 +191,7 @@ EM_JS(void, c2d_image, (int id,int key,const std::uint8_t* data,int iw,int ih,do
   // That surface is KEPT. Built per call, an embedded sprite cost a copy of
   // its whole bitmap out of the wasm heap plus a new canvas every time it was
   // drawn -- and a glitch flower draws five of them, every frame, per mob on
-  // screen. Keyed by the decoded raster's own id, the upload happens once and
+  // screen. Keyed by raster and mip level, the upload happens once per level and
   // every later frame is one drawImage of a surface the browser already holds.
   let cache = Module.cppCanvasImages;
   if (!cache) { cache = new Map(); Module.cppCanvasImages = cache; }
@@ -2637,7 +2650,26 @@ void Canvas::blitRegion(const Canvas&s,float sx,float sy,float sw,float sh,float
 void Canvas::drawImage(const ImageLevel* levels,int levelCount,float dx,float dy,float dw,float dh,float alpha,std::uint32_t cacheKey) {
   if (!levels || levelCount <= 0) return;
 #ifdef __EMSCRIPTEN__
-  drawImage(levels[0].rgba,levels[0].width,levels[0].height,dx,dy,dw,dh,alpha,cacheKey);
+  int level = 0;
+  if (web_.smoothing && levelCount > 1) {
+    // The logical matrix includes the window's backing-store scale. Use the
+    // less minified axis so a narrow stretch does not blur the other axis.
+    const auto& t = web_.matrix;
+    const float stepX = std::hypot(t[0], t[1]) * std::abs(dw) / levels[0].width;
+    const float stepY = std::hypot(t[2], t[3]) * std::abs(dh) / levels[0].height;
+    float step = std::max(stepX, stepY);
+    while (step <= 0.5f && level + 1 < levelCount) {
+      ++level;
+      step *= 2.f;
+    }
+  }
+  // The browser's retained surfaces share one key space. Give each mip its
+  // own key so alternating small and large sprites can't reuse the wrong one.
+  constexpr std::uint32_t maxRasterId = UINT32_MAX >> 5;
+  const auto key = cacheKey <= maxRasterId && cacheKey && level < 32
+      ? (cacheKey << 5) | static_cast<std::uint32_t>(level) : 0;
+  const auto& image = levels[level];
+  drawImage(image.rgba,image.width,image.height,dx,dy,dw,dh,alpha,key);
 #else
   // How many image pixels land under one device pixel, measured off level 0,
   // and then the level whose own texels are nearest one-to-one with them. The

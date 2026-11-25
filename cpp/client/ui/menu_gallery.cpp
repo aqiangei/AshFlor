@@ -829,7 +829,8 @@ bool GalleryPanel::render(MenuContext& ctx) {
         const auto& petal = content().petal(i);
         return !searching || lowerCase(petal.id).find(query) != std::string::npos ||
                lowerCase(petal.name).find(query) != std::string::npos ||
-               std::string_view(petalNameZh(petal.id)).find(query) != std::string::npos;
+               std::string_view(petalNameZh(petal.id)).find(query) != std::string_view::npos ||
+               std::string_view(petalSearchAliases(petal.id)).find(query) != std::string_view::npos;
     };
     std::vector<std::uint16_t> matches;
     if (searching || garbageCatalog_) {
@@ -1183,16 +1184,8 @@ bool GalleryPanel::render(MenuContext& ctx) {
             stat(trEnZh("Drops exactly the visible petal types.","开袋掉落与外观中的花瓣种类一致。"),6.0);
             stat(trEnZh("Each visible type is guaranteed at least once.","每个可见种类至少掉落1件。"),0.0);
             stat(trEnZh("Open Garbage drops to see the full pool.", "点击「垃圾袋掉落」查看全部可能内容。"),0.0);
-            const int standardTrials = baseLootTrialsForRarity(cell.rarity);
-            const int ordinaryTrials = baseLootTrialsForRarity(cell.rarity, true);
-            if (ordinaryTrials == standardTrials) {
-                stat(std::string(trEnZh("Base independent trials: ", "基础独立掉落次数：")) +
-                         std::to_string(standardTrials), 0.0);
-            } else {
-                stat(std::string(trEnZh("Base independent trials: ", "基础独立掉落次数：")) +
-                         std::to_string(ordinaryTrials) + trEnZh(" on ordinary maps, ", "（普通地图），") +
-                         std::to_string(standardTrials) + trEnZh(" elsewhere", "（其他地图）"), 0.0);
-            }
+            stat(std::string(trEnZh("Base independent trials: ", "基础独立掉落次数：")) +
+                     std::to_string(baseLootTrialsForRarity(cell.rarity, true)), 0.0);
         }
         const std::vector<DropRow> rows = config.id=="garbage" ? std::vector<DropRow>{} : computeMobDrops(cell.mobIndex, cell.rarity, usedTiers, orbTier);
         if (previewEternalOrb) {

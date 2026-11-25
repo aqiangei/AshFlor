@@ -165,7 +165,7 @@ constexpr GardnIcon kGardnIcon[] = {
     {"heaviest",           35,   12,  0,       0,     1},
     {"honey",              25,   11,  0,       0,     1},
     {"iris",               17,    7,  0,       0,     1},
-    {"leaf",            38.25,   10,  0,      -1,     1},
+    {"leaf",            38.25,   10,  0,   -1.40,     1},   // Local drawing already leans clockwise.
     {"light",             17,    7,  0,       0,     1},
     {"lightning",          21,   10,  0,       1,     1},
     {"lotus",            26.5,   12,  0,     0.1,     1},
@@ -250,6 +250,27 @@ struct ClusterShape {
     double tilt = 0;
 };
 
+double zorrIconTilt(std::string_view id) {
+    struct Pose { std::string_view id; int degrees; };
+    // Zorr's iconAngle is independent of its in-world rotation. The angles
+    // below use the source pose, adjusted where the local art starts from a
+    // different baseline (carrot, trident and scythes).
+    constexpr Pose poses[] = {
+        {"arctic_ears", 18}, {"arctic_frost", -20}, {"arctic_icicle", -20},
+        {"arctic_lightsaber", -20}, {"arctic_nitro", -20}, {"arctic_visaber", -20},
+        {"carrot", 45}, {"coffee", -30}, {"compass", -60}, {"fire", -20},
+        {"gas", -20}, {"laser", -20}, {"oxygen", -20}, {"pumpkin_seed", -90},
+        {"vampire_fang", -20}, {"void_attractor", -20}, {"void_blood_scythe", -60},
+        {"void_cyanide", -20}, {"void_knife", 60}, {"void_pipe_bomb", 60},
+        {"void_scythe", -60}, {"void_trident", -60}, {"wind", -20},
+    };
+    if (id.substr(0, 6) == "magic_") id.remove_prefix(6);
+    for (const auto& pose : poses) {
+        if (pose.id == id) return pose.degrees * kPi / 180.0;
+    }
+    return 0.0;
+}
+
 /// gardn's own numbers where gardn has the petal, and this game's fallback
 /// where it does not.
 ///
@@ -328,6 +349,14 @@ ClusterShape clusterShape(const SpriteCache* sprites, std::uint16_t petalIndex, 
     // ring: a ring grown with it set the oranges -- whose fruit covers barely
     // three fifths of its box -- so far apart they fell off the plate.
     out.ring = count > 1 ? radius * kClusterRingPerRadius : 0.0;
+    static const std::vector<double> zorrTilts = [] {
+        std::vector<double> poses(content().petalCount());
+        for (std::uint16_t i = 0; i < content().petalCount(); ++i) {
+            poses[i] = zorrIconTilt(content().petal(i).id);
+        }
+        return poses;
+    }();
+    if (petalIndex < zorrTilts.size()) out.tilt = zorrTilts[petalIndex];
     return out;
 }
 
@@ -447,8 +476,10 @@ void drawPetalCluster(Canvas& canvas, const SpriteCache& sprites, std::uint16_t 
     const Vec2 extent = canFan || polygon ? sprites.petalExtent(petalIndex) : Vec2{1.0, 1.0};
     const bool slender = std::max(extent.x, extent.y) >= 1.4 * std::min(extent.x, extent.y);
     const bool fan = drawCount == 2 || (canFan && !polygon && (egg || beetleEgg || battery || slender));
-    const double upright = !egg && !beetleEgg && extent.x > extent.y ? -kPi * 0.5 : 0.0;
     ClusterShape shape = clusterShape(&sprites, petalIndex, sizeStat, drawCount);
+    const double fanTilt = battery ? -kPi / 5.5 :
+        shape.tilt != 0.0 ? shape.tilt :
+        !egg && !beetleEgg && extent.x > extent.y ? -kPi * 0.5 : 0.0;
     const int authoredCount = std::max(1, content().petalStats(petalIndex, rarity).count);
     if (drawCount > authoredCount) {
         // Preserve the authored gap between neighbours as copies are added;
@@ -529,7 +560,7 @@ void drawPetalCluster(Canvas& canvas, const SpriteCache& sprites, std::uint16_t 
                     sprites.drawPetal(into, petalIndex, rarity, 0, 0, fanDiameter, 0, timeSeconds);
                     into.restore();
                 } else {
-                    sprites.drawPetal(into, petalIndex, rarity, x, y, fanDiameter, turn + upright, timeSeconds);
+                    sprites.drawPetal(into, petalIndex, rarity, x, y, fanDiameter, turn + fanTilt, timeSeconds);
                 }
             }
             return;
@@ -641,20 +672,19 @@ void drawItemTile(Canvas& canvas, const SpriteCache& sprites, Rect rect, const I
         canvas.fillRect(static_cast<float>(-kFaceSide * 0.5),
                         static_cast<float>(kFaceSide * 0.5 - faceHeight),
                         static_cast<float>(kFaceSide), static_cast<float>(faceHeight));
-        if (filled && !greyed && tile.rarity == Rarity::PermanentHyper) {
-            // Draw the brushed highlight inside the remaining gold face.
-            const float top = static_cast<float>(kFaceSide * 0.5 - faceHeight);
-            const float width = static_cast<float>(kFaceSide);
-            setFill(canvas, 0x8B5427u, 0.27);
-            canvas.fillRect(-width * 0.5f, top + static_cast<float>(faceHeight * 0.73),
-                            width, static_cast<float>(faceHeight * 0.27));
-            setFill(canvas, 0xFFF1B2u, 0.58);
-            canvas.fillRect(-width * 0.5f, top + static_cast<float>(faceHeight * 0.10),
-                            width, static_cast<float>(faceHeight * 0.14));
-            setFill(canvas, 0xFFF8D4u, 0.65);
-            canvas.fillRect(-width * 0.5f, top + static_cast<float>(faceHeight * 0.13),
-                            width, static_cast<float>(faceHeight * 0.035));
+        if (filled && !greyed && tile.rarity != Rarity::PermanentHyper) {
+            constexpr float left = -kFaceSide * 0.5f;
+            constexpr float bottom = kFaceSide * 0.5f;
+            const float height = static_cast<float>(faceHeight);
+            // Keep both accents in the remaining health face. The dark base
+            // anchors the icon and name, even on very pale rarity colours.
+            const float shade = std::min(10.0f, height * 0.25f);
+            setFill(canvas, kInk, 0.09);
+            canvas.fillRect(left, bottom - shade, kFaceSide, shade);
+            setFill(canvas, kPaper, 0.21);
+            canvas.fillRect(left, bottom - height, kFaceSide, std::min(1.25f, height * 0.25f));
         }
+
     }
 
     if (tile.hovered) {
@@ -743,9 +773,10 @@ void drawItemTile(Canvas& canvas, const SpriteCache& sprites, Rect rect, const I
             label.size = kNameSize;
             // Shrink to the face rather than clipping: a truncated petal name
             // reads as a different petal.
+            constexpr double nameWidth = kFaceSide - 5.0; // Include the outline and side breathing room.
             const double measured = measure(name, kNameSize);
-            if (measured > kFaceSide) {
-                label.size = std::max(6.0, kNameSize * kFaceSide / measured);
+            if (measured > nameWidth) {
+                label.size = kNameSize * nameWidth / measured;
             }
             label.fill = kPaper;
             label.stroke = kInk;

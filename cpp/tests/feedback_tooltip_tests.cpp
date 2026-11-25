@@ -115,9 +115,9 @@ TEST(magic_blood_stinger_tooltip_matches_mana_and_contact_damage) {
     CHECK(config.requiredMana > 0.0);
     CHECK(content().petalStats(index, Rarity::Common).damage > 0.0);
     ui::setLanguage(ui::Language::En);
-    CHECK_EQ(std::string(ui::petalDescTr(config.id, "")), "Costs mana to form and deals contact damage.");
+    CHECK_EQ(std::string(ui::petalDescTr(config.id, "")), "Costs mana and hurts your flower when it forms.");
     ui::setLanguage(ui::Language::Zh);
-    CHECK_EQ(std::string(ui::petalDescTr(config.id, "")), "生成时消耗法力，碰撞时造成伤害。");
+    CHECK_EQ(std::string(ui::petalDescTr(config.id, "")), "生成时消耗法力并对自己的花朵造成自伤。");
 }
 
 TEST(mimic_tooltip_shows_eternal_cpp_stats_and_copied_reload){
@@ -393,13 +393,14 @@ TEST(petal_effect_panels_show_precise_effects_and_caps) {
     CHECK(hasLine("magic_chromosome", "Shield cap (% of petal max HP): 20%"));
     CHECK(hasLine("chloroplast", "Shield gain: +5%"));
     CHECK(hasLine("stem_cell", "Base heal chance per HP threshold: 2%"));
-    CHECK(hasLine("dna", "Base mutation chance per hatch with one DNA: 0.5%"));
+    CHECK(hasLine("dna", "Base mutation chance per hatch with one DNA: 1%"));
+    CHECK(!hasLine("dna", "Hatch mutation chance cap: 5%"));
     CHECK(hasLine("oxygen", "Existing burn extension per hit: 0.1s"));
     CHECK(hasLine("void_cyanide", "Existing poison extension per hit: 0.15s"));
     CHECK(hasLine("fire", "Base burn damage per second: 9"));
     CHECK(hasLine("fire", "Burn duration: 2.6s"));
     CHECK(hasLine("acid", "Pool charge time: 1s"));
-    CHECK(hasLine("acid", "Pool lifetime: 2.1s"));
+    CHECK(hasLine("acid", "Pool lifetime: 3.15s"));
     CHECK(!hasLine("acid_bomb", "Pool charge time: 1s"));
     CHECK(hasLine("void_pipe_bomb", "Explosion chance: 50%"));
     CHECK(hasLine("void_pipe_bomb", "Blast radius with talents: 60"));
@@ -407,6 +408,7 @@ TEST(petal_effect_panels_show_precise_effects_and_caps) {
     skills.set(SkillId::ExplosionReach, 0);
     CHECK(hasLine("void_pipe_bomb", "Blast radius with talents: 135", skills));
     ui::setLanguage(ui::Language::Zh);
+    CHECK(hasLine("dna", "单片每次孵化基础突变概率：1%"));
     CHECK(hasLine("void_knife", "每次有效接触的基础自伤：1"));
     CHECK(hasLine("antler", "额外伤害（野怪有效护甲）：25%"));
     CHECK(hasLine("arctic_snowball", "穿甲：直接命中无视护甲。"));
