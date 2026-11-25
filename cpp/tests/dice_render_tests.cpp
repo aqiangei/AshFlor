@@ -18,6 +18,46 @@ TEST(dice_art_is_visible_at_every_rarity){
 
 #include "client/ui/item_tile.h"
 #include "render_rig.h"
+TEST(wide_view_keeps_nearby_drop_icons_in_a_dense_pile) {
+    const auto& registry = testsupport::shippedContent();
+    SpriteCache sprites;
+    CHECK(sprites.build(registry));
+    Camera camera = testsupport::frameCamera(512, {2000, 2000});
+    camera.loadoutZoom = 0.15;
+    camera.snapTo({2000, 2000});
+    const auto render = [&](const char* nearArt, const char* farArt) {
+        WorldRenderer renderer;
+        renderer.setContent(&registry);
+        renderer.setSprites(&sprites);
+        WorldView view;
+        RemoteEntity drop;
+        drop.kind = net::EntityKind::Drop;
+        drop.radius = 20;
+        drop.rarity = Rarity::Epic;
+        for (int i = 0; i < 50; ++i) {
+            drop.netId = i + 1;
+            drop.position = {2010.0 + 29 * (i % 10), 2040.0 + 29 * (i / 10)};
+            drop.typeIndex = registry.petalIndex("basic");
+            if (i == 0) {
+                drop.position = {2000, 2000};
+                drop.typeIndex = registry.petalIndex(nearArt);
+            }
+            if (i == 49) {
+                drop.position = {2700, 2000};
+                drop.typeIndex = registry.petalIndex(farArt);
+            }
+            view.seedForTest(drop);
+        }
+        auto canvas = Canvas::createVirtual(512, 512);
+        renderer.draw(canvas, view, camera, {2000, 2000}, 0.0);
+        CHECK_EQ(renderer.sectionTiming().itemCount, 50);
+        return canvas.getImageData(0, 0, 512, 512);
+    };
+    const auto base = render("basic", "basic");
+    CHECK(testsupport::differingPixels(base, render("leaf", "basic")) > 4);
+    CHECK_EQ(testsupport::differingPixels(base, render("basic", "leaf")), 0);
+}
+
 TEST(equipped_dice_is_a_projected_cube_that_turns_over_time){
  std::string error;CHECK(loadContent(testsupport::dataDir(),error));SpriteCache sprites;CHECK(sprites.build(content()));
  auto frame=[&](double time,int face){Canvas canvas=Canvas::createVirtual(120,120);ui::ItemTile tile;tile.petalIndex=content().petalIndex("dice");tile.rarity=Rarity::Apex;tile.diceFace=face;tile.timeSeconds=time;tile.showName=false;ui::drawItemTile(canvas,sprites,{10,10,100,100},tile);return canvas.getImageData(0,0,120,120);};

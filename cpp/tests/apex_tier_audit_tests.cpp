@@ -17,7 +17,8 @@ using namespace flix::testsupport;
 
 namespace {
 
-enum class Better { Higher, Lower, Either };
+// Grows marks positive effects that receive an explicit Apex upgrade.
+enum class Better { Grows, Higher, Lower, Either };
 
 struct AuditField {
     const char* name;
@@ -29,21 +30,21 @@ struct AuditField {
     AuditField{#f, [](const PetalStats& s) { return static_cast<double>(s.f); }, Better::better}
 
 const AuditField kAuditFields[] = {
-    AUDIT_FIELD(damage, Higher), AUDIT_FIELD(health, Higher), AUDIT_FIELD(bodyDamage, Higher),
-    AUDIT_FIELD(armorReduction, Higher), AUDIT_FIELD(armorPerStack, Higher), AUDIT_FIELD(petalArmor, Higher),
-    AUDIT_FIELD(petalEvasion, Higher), AUDIT_FIELD(critDamage, Higher), AUDIT_FIELD(lifesteal, Higher),
-    AUDIT_FIELD(reloadMillis, Lower), AUDIT_FIELD(poisonPerSecond, Higher), AUDIT_FIELD(poisonDurationMillis, Either),
-    AUDIT_FIELD(noHealDurationMillis, Higher), AUDIT_FIELD(heal, Higher), AUDIT_FIELD(healChargeMillis, Lower),
-    AUDIT_FIELD(passiveHealPerSecond, Higher), AUDIT_FIELD(conditionalHealPerSecond, Higher),
-    AUDIT_FIELD(totemHealPerSecond, Higher), AUDIT_FIELD(lightningDamagePerHit, Higher),
+    AUDIT_FIELD(damage, Grows), AUDIT_FIELD(health, Grows), AUDIT_FIELD(bodyDamage, Grows),
+    AUDIT_FIELD(armorReduction, Grows), AUDIT_FIELD(armorPerStack, Grows), AUDIT_FIELD(petalArmor, Grows),
+    AUDIT_FIELD(petalEvasion, Higher), AUDIT_FIELD(critDamage, Grows), AUDIT_FIELD(lifesteal, Grows),
+    AUDIT_FIELD(reloadMillis, Lower), AUDIT_FIELD(poisonPerSecond, Grows), AUDIT_FIELD(poisonDurationMillis, Either),
+    AUDIT_FIELD(noHealDurationMillis, Higher), AUDIT_FIELD(heal, Grows), AUDIT_FIELD(healChargeMillis, Lower),
+    AUDIT_FIELD(passiveHealPerSecond, Grows), AUDIT_FIELD(conditionalHealPerSecond, Grows),
+    AUDIT_FIELD(totemHealPerSecond, Grows), AUDIT_FIELD(lightningDamagePerHit, Grows),
     AUDIT_FIELD(lightningBounces, Higher), AUDIT_FIELD(lightningRange, Higher), AUDIT_FIELD(batteryCharges, Higher),
-    AUDIT_FIELD(flowerHealthBonus, Higher), AUDIT_FIELD(flowerRadiusBonus, Either), AUDIT_FIELD(maxMana, Higher),
-    AUDIT_FIELD(mana, Higher), AUDIT_FIELD(manaChargeMillis, Lower), AUDIT_FIELD(passiveManaPerSecond, Higher),
+    AUDIT_FIELD(flowerHealthBonus, Grows), AUDIT_FIELD(flowerRadiusBonus, Either), AUDIT_FIELD(maxMana, Grows),
+    AUDIT_FIELD(mana, Grows), AUDIT_FIELD(manaChargeMillis, Lower), AUDIT_FIELD(passiveManaPerSecond, Grows),
     AUDIT_FIELD(requiredMana, Either), AUDIT_FIELD(petManaCost, Either), AUDIT_FIELD(knockback, Either),
-    AUDIT_FIELD(flowerKnockback, Either), AUDIT_FIELD(overhealShield, Higher), AUDIT_FIELD(healBonus, Higher),
-    AUDIT_FIELD(reloadCut, Higher), AUDIT_FIELD(lightningRepeatChance, Higher), AUDIT_FIELD(maxLightningRepeats, Higher),
+    AUDIT_FIELD(flowerKnockback, Either), AUDIT_FIELD(overhealShield, Grows), AUDIT_FIELD(healBonus, Grows),
+    AUDIT_FIELD(reloadCut, Grows), AUDIT_FIELD(lightningRepeatChance, Higher), AUDIT_FIELD(maxLightningRepeats, Higher),
     AUDIT_FIELD(collisionResist, Higher), AUDIT_FIELD(undeadMillis, Either), AUDIT_FIELD(unrevivableMillis, Either),
-    AUDIT_FIELD(undeadBodyDamageCut, Either), AUDIT_FIELD(shield, Higher), AUDIT_FIELD(slowFactor, Either),
+    AUDIT_FIELD(undeadBodyDamageCut, Either), AUDIT_FIELD(shield, Grows), AUDIT_FIELD(slowFactor, Either),
     AUDIT_FIELD(slowDurationMillis, Higher), AUDIT_FIELD(webRadius, Higher),
     AUDIT_FIELD(spongeDamageDurationMillis, Either), AUDIT_FIELD(attractionForce, Either), AUDIT_FIELD(radius, Either),
     AUDIT_FIELD(size, Either), AUDIT_FIELD(damageIntervalMillis, Lower), AUDIT_FIELD(count, Higher),
@@ -79,8 +80,10 @@ TEST(apex_tier_audit_of_every_petal_stat) {
             const double vu = f.read(u), vh = f.read(h), vp = f.read(p), va = f.read(a);
             if (vh != vu && va == vp)
                 flat[f.name].push_back(id + "(" + number(vu) + "/" + number(vh) + "/" + number(va) + ")");
-            const bool down = f.better == Better::Higher ? va < vp : f.better == Better::Lower ? va > vp : false;
-            if (down) worse[f.name].push_back(id + "(" + number(vp) + "->" + number(va) + ")");
+            const bool missedUpgrade = f.better == Better::Grows && vp > 0 && va == vp;
+            const bool dropped = (f.better == Better::Higher || f.better == Better::Grows) && va < vp;
+            const bool slower = f.better == Better::Lower && va > vp;
+            if (missedUpgrade || dropped || slower) worse[f.name].push_back(id + "(" + number(vp) + "->" + number(va) + ")");
             if (vp != vh) hyperDiff[f.name].push_back(id + "(" + number(vh) + "/" + number(vp) + ")");
         }
     }
@@ -88,6 +91,7 @@ TEST(apex_tier_audit_of_every_petal_stat) {
     report("FLAT", flat);
     report("WORSE", worse);
     report("PH_NOT_HYPER", hyperDiff);
+    CHECK(worse.empty());
     CHECK(c.petalCount() > 0);
 }
 
@@ -103,4 +107,29 @@ TEST(the_apex_step_does_not_deepen_a_downside) {
     CHECK(hyper.damage < 0.0);
     CHECK_NEAR(apex.damage, hyper.damage, 1e-9);
     CHECK(apex.health > hyper.health);
+}
+
+TEST(apex_reload_bonuses_preserve_the_magic_ratio_and_stack_per_leaf) {
+    const auto& registry = shippedContent();
+    CHECK_NEAR(registry.petalStats(registry.petalIndex("golden_leaf"), Rarity::Ascendant).reloadCut,
+               0.275, 1e-9);
+    const auto leaf = registry.petalIndex("golden_leaf");
+    const auto magic = registry.petalIndex("magic_golden_leaf");
+    for (auto tier : {Rarity::Common, Rarity::Super, Rarity::Unique, Rarity::Apex,
+                      Rarity::PermanentHyper, Rarity::Ascendant}) {
+        const auto ordinary = registry.petalStats(leaf, tier).reloadCut;
+        const auto equipped = [&](int slot) {
+            EquippedPetal item;
+            if (slot < 2) {
+                item.configIndex = magic;
+                item.rarity = item.reloadRarity = tier;
+            }
+            return item;
+        };
+        const double perLeaf = ordinary * kMagicGoldenLeafReloadShare;
+        CHECK_NEAR(registry.petalStats(magic, tier).reloadCut, perLeaf, 1e-9);
+        CHECK_NEAR(barReloadCut(registry, equipped), 1 - (1-perLeaf)*(1-perLeaf), 1e-9);
+        CHECK_NEAR(barReloadCut(registry, equipped, nullptr, true),
+                   1 - (1-ordinary)*(1-ordinary), 1e-9);
+    }
 }

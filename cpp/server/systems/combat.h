@@ -303,7 +303,7 @@ public:
     ///
     /// Not const-safe against iteration: see the structural trap above.
     DamageResult applyDamage(World& world, Entity victim, Entity source, double amount,
-                             double nowMillis, DamageKind kind = DamageKind::Direct);
+                             double nowMillis, DamageKind kind = DamageKind::Direct, bool critical = false);
 
     /// One lightning strike thrown BY A MOB: every flower whose centre is
     /// inside `radius` of `at` takes `damage` as DamageKind::Lightning, and the
@@ -653,6 +653,7 @@ private:
         double burnDamage = 0;
         double armorReduction = 0;
         double burnPerSecond = 0.0;
+        Entity stackedDamageEmitter = NULL_ENTITY;
     };
 
     struct ShotSource {
@@ -717,6 +718,7 @@ private:
         Entity victim = NULL_ENTITY;
         Entity source = NULL_ENTITY;
         double amount = 0;
+        bool critical = false;
     };
 
     struct Queries;
@@ -880,7 +882,7 @@ private:
     /// landed, is refused only when every share was, and carries the struck
     /// victim's own death and dodge.
     DamageResult shareHit(World& world, std::vector<Entity> group, Entity victim, Entity source,
-                          double amount, double nowMillis, DamageKind kind, bool& guard);
+                          double amount, double nowMillis, DamageKind kind, bool& guard, bool critical);
 
     /// Cotton: land `amount` of any damage aimed at `flower` -- the last step
     /// before its health bar, behind the shield and the sponge -- on the
@@ -1064,11 +1066,11 @@ private:
     bool resolvingRuby_=false;
     DamageResult applyDamageWithRuby(World& world, Entity victim, Entity source, double amount,
                                      double nowMillis, DamageKind kind, Entity checkedTarget,
-                                     std::optional<Vec2> impactPoint = std::nullopt);
+                                     std::optional<Vec2> impactPoint = std::nullopt, bool critical = false);
     DamageResult applyDamageOnce(World& world, Entity victim, Entity source, double amount,
                                  double nowMillis, DamageKind kind,
                                  Entity checkedTarget = NULL_ENTITY,
-                                 std::optional<Vec2> impactPoint = std::nullopt);
+                                 std::optional<Vec2> impactPoint = std::nullopt, bool critical = false);
 
     struct PracticeBucket {
         std::int64_t second = -1;

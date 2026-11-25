@@ -51,7 +51,7 @@ struct PetalTag {};
 struct ProjectileTag {};
 struct DropTag {};
 struct GroundEffectTag {};
-struct FireBombField {};
+struct FireBombField { bool independentStacks = false; };
 /// An NPC. Deliberately NOT a MobTag entity, although it wears a mob's config:
 /// see shared/game/npc.h for everything that buys.
 struct NpcTag {};
@@ -264,6 +264,7 @@ struct PoisonStack {
     // A stacking puddle keeps a separate identity, while source stays its
     // credited owner so poison kills still pay after the puddle expires.
     Entity emitter = NULL_ENTITY;
+    bool critical = false;
 };
 
 /// Damage-over-time and movement debuffs.
@@ -278,6 +279,7 @@ struct BurnStack {
     double untilMillis = 0;
     double budgetWeight = 1.0;
     bool fireBomb = false;
+    bool critical = false;
 };
 
 struct Afflictions {
@@ -450,6 +452,8 @@ struct ManaPool {
 
     double deferred = 0.0;
     double repaymentPerSecond = 0.0;
+    double wornMagicPaidAtMillis = -1.0;
+    std::uint64_t fundedWornSlots = 0;
     bool has() const { return max > 0.0; }
     bool canAfford(double cost) const { return cost <= 0.0 || current >= cost; }
 };
@@ -1845,6 +1849,9 @@ struct GroundEffect {
     Vec2 spillGravityVelocity{};
 
     bool suppressesAggro = false;
+    // Several pulses from one projectile refresh its stack. Distinct casts add.
+    Entity stackedDamageEmitter = NULL_ENTITY;
+    bool criticalSpill = false;
 };
 
 struct Burn {

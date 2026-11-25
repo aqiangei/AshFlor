@@ -1,3 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" xml:space="preserve" viewBox="0 0 256 256">
 	<rect width="256" height="256" fill="#663"/>
+	<path fill="none" stroke="#89804a" stroke-opacity=".19" stroke-width="4"
+	 d="M0 76C43 76 78 89 126 86S206 76 256 76M0 182C53 182 80 170 124 172s87 10 132 10"/>
+	<path fill="none" stroke="#57582d" stroke-opacity=".26" stroke-width="6"
+	 d="M0 102C43 102 79 115 125 112s81-10 131-10M0 202C44 202 79 191 122 193s90 9 134 9"/>
+	<path fill="none" stroke="#958b58" stroke-opacity=".18" stroke-linecap="round" stroke-width="2"
+	 d="M27 43q19-3 40-2m77 21q17 1 32-2m-76 87q14-3 37-1m48 73q16 1 32-1"/>
 </svg>

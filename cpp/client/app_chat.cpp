@@ -1294,17 +1294,14 @@ void App::drawChat(Canvas& canvas, double time) {
         const std::uint8_t shown = settings.chatChannels;
         static_assert(kChatChannelsAll == 0x3f);
         const std::uint16_t filters = shown | (settings.hideMobAnnouncements ? 0x40 : 0) |
-            (settings.hideCraftAnnouncements ? 0x80 : 0) | (settings.hideOtherPhAnnouncements ? 0x100 : 0);
-        const auto& username = net_.profile().username;
+            (settings.hideCraftAnnouncements ? 0x80 : 0);
         const auto passes = [&](const ChatLine& line) {
             if (line.channel == net::ChatChannel::System && line.author.empty()) {
                 // These prefixes are attached by the server and survive localization.
                 if (settings.hideMobAnnouncements && line.text.rfind("<b data-mob='", 0) == 0)
                     return false;
                 if (line.text.rfind("<b data-petal='", 0) == 0 &&
-                    (settings.hideCraftAnnouncements ||
-                     (settings.hideOtherPhAnnouncements &&
-                      ui::isOtherPermanentHyperCraft(line.text, username))))
+                    settings.hideCraftAnnouncements)
                     return false;
             }
             const int tab = chatTabOf(line.channel);
@@ -1325,13 +1322,11 @@ void App::drawChat(Canvas& canvas, double time) {
                 return height;
             };
             if (chatHeightSequence_ != net_.chatSequence() || chatMeasuredCount_ != net_.chat().size() ||
-                chatMeasuredWidth_ != column.w || chatMeasuredFilters_ != filters ||
-                chatMeasuredUsername_ != username) {
+                chatMeasuredWidth_ != column.w || chatMeasuredFilters_ != filters) {
                 chatHeightSequence_ = net_.chatSequence();
                 chatMeasuredCount_ = net_.chat().size();
                 chatMeasuredWidth_ = column.w;
                 chatMeasuredFilters_ = filters;
-                chatMeasuredUsername_ = username;
                 chatMeasuredHeight_ = measure(column.w);
                 chatMeasuredNarrowHeight_.reset();
             }

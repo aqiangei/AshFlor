@@ -1591,6 +1591,7 @@ TEST(the_trader_takes_ascendant_for_an_ascendant_coin_that_can_be_worn) {
     const std::string dir = traderWorld("trader-ascendant");
     Harness h("trader-ascendant", [](const std::string& path) {
         seedAccount(path, "merchant");
+        seedStack(path, "merchant", "petal_magic_aztec_coin", Rarity::Ascendant, 1);
         seedStack(path, "merchant", "petal_rose", Rarity::Ascendant, 1);
         seedStack(path, "merchant", "petal_rose", Rarity::PermanentHyper, 1);
         seedStack(path, "merchant", "petal_rose", Rarity::Admin, 1);
@@ -1628,7 +1629,7 @@ TEST(the_trader_takes_ascendant_for_an_ascendant_coin_that_can_be_worn) {
                p.stackCount(coin, Rarity::Ascendant) == 1u;
     }));
     CHECK_EQ(client.profile().stackCount(rose, Rarity::PermanentHyper), 1u);
-    CHECK(client.traderCooldownRemainingMillis() > 0.0);
+    CHECK_EQ(client.traderCooldownRemainingMillis(), 0.0);
 
     // The coin is a petal like any other at its tier: it goes on the bar.
     client.setLoadoutSlot(0, coin, Rarity::Ascendant);
@@ -1637,6 +1638,35 @@ TEST(the_trader_takes_ascendant_for_an_ascendant_coin_that_can_be_worn) {
                p.loadout[0].rarity == Rarity::Ascendant &&
                p.stackCount(coin, Rarity::Ascendant) == 0u;
     }));
+    standBeside(h, client, "trader");
+    client.requestTrade(rose, Rarity::PermanentHyper);
+    CHECK(awaitTrade(h, client, outcome));
+    CHECK(outcome.success);
+    const auto aztec = content().petalIndex("magic_aztec_coin");
+    standBeside(h, client, "trader");
+    client.requestTrade(aztec, Rarity::Ascendant);
+    CHECK(awaitTrade(h, client, outcome));
+    CHECK(outcome.success);
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stackCount(coin, Rarity::Ascendant) == 4u;
+    }));
+    standBeside(h, client, "trader");
+    client.requestTrade(coin, Rarity::Ascendant);
+    CHECK(awaitTrade(h, client, outcome));
+    CHECK(outcome.success);
+    CHECK(outcome.receivedIndex != coin);
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stackCount(coin, Rarity::Ascendant) == 0u &&
+               p.stackCount(outcome.receivedIndex, Rarity::Ascendant) == 1u;
+    }));
+    standBeside(h, client, "trader");
+    client.requestTrade(coin, Rarity::Ascendant);
+    CHECK(awaitTrade(h, client, outcome));
+    CHECK(!outcome.success);
+    h.step(3, {&client});
+    CHECK_EQ(std::count_if(client.chat().begin(), client.chat().end(), [](const auto& message) {
+        return message.text.find("沙漠商人处用 4 枚 Apex 硬币抽到了") != std::string::npos;
+    }), 1);
     removeDataDir(dir);
 }
 
@@ -2317,6 +2347,41 @@ TEST(titan_forge_all_exchanges_bagged_supers_in_one_request) {
     CHECK(awaitForge(h, clients, client, outcome));
     CHECK(!outcome.success);
     CHECK_EQ(client.profile().stackCount(rose, Rarity::Unique), 3u);
+    removeDataDir(dir);
+}
+
+TEST(permanent_hyper_single_and_bulk_forges_only_notify_the_smith) {
+    const auto dir = titanWorld("quiet-ph");
+    Harness h("quiet-ph", [](const std::string& path) {
+        seedAccount(path, "smith");
+        seedAccount(path, "watcher");
+        seedStack(path, "smith", "petal_rose", Rarity::Unique, 2 * kPermanentHyperCost);
+    }, dir, 0);
+    if (!h.ready) { CHECK(false); removeDataDir(dir); return; }
+    NetClient smith, watcher;
+    CHECK(joinAs(h, smith, "smith"));
+    CHECK(joinAs(h, watcher, "watcher"));
+    const std::vector<NetClient*> clients{&smith, &watcher};
+    h.step(3, clients);
+    standAtTitan(h, clients, "smith");
+    const auto rose = content().petalIndex("rose");
+    const auto before = watcher.chat().size();
+    int total = 0;
+    for (const auto target : {rose, kNoPetal}) {
+        smith.requestPermanentHyperForge(target);
+        TitanForgeOutcome outcome;
+        CHECK(awaitForge(h, clients, smith, outcome));
+        CHECK(outcome.success);
+        ++total;
+        CHECK(h.stepUntil(clients, [&] {
+            return smith.profile().stackCount(rose, Rarity::PermanentHyper) == total;
+        }));
+    }
+    h.step(10, clients);
+    for (std::size_t i = before; i < watcher.chat().size(); ++i)
+        CHECK(watcher.chat()[i].text.find("data-petal=") == std::string::npos);
+    for (const auto& entry : h.server.database().storedTable("notifications").items())
+        CHECK(entry["type"].asString() != "permanent_hyper_forge");
     removeDataDir(dir);
 }
 

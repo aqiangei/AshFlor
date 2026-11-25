@@ -223,8 +223,9 @@ public:
     std::function<void(const Pickup&)> onPickup;
     // A Rift prize must be credited to the account before its drop is consumed.
     std::function<bool(const Pickup&)> collectRiftPrize;
+    /// Maps allowed to offer the shared fallback for selected Eternal mobs.
+    std::function<bool(Realm)> allowsEternalMobFallback;
     /// Maps allowed to offer a participation floor on a natural boss kill.
-    std::function<bool(Realm)> ordinaryMapLoot;
     std::function<bool(Realm)> allowsBossParticipationFloor;
     std::function<int(Entity)> bonusMultiplier; // claimant-specific independent trials; Super+ uses 1.5x / 2x.
 
@@ -246,7 +247,7 @@ public:
 
     /// Called after the tick's pickup and expiry commands have drained, before
     /// replication can expose the ground. Returns the number of retired stacks.
-    std::size_t pruneGroundDrops(World& world);
+    std::size_t pruneGroundDrops(World& world, EventQueue& events);
 
     /// Authored maps are immutable during a live server run. Other consumers
     /// may edit their terrain, and the daily maze always resolves its walls.
@@ -298,6 +299,9 @@ private:
     void tryCollect(World& world, Entity player, Vec2 playerPosition, Realm playerRealm,
                     double reachSq, Entity candidate, CommandBuffer& commands,
                     EventQueue& events);
+    /// Returns true when the ground entity can be retired.
+    bool claimDrop(World&, Entity player, Vec2 position, Realm realm, double reachSq,
+                   Entity candidate, EventQueue&);
     /// Per-tick item maintenance, in the reference's order: wall push, bounds,
     /// expiry. The push is not a nicety -- nothing resolves the spawn scatter.
     void maintainDrops(double dt, CommandBuffer& commands);

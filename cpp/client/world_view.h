@@ -255,8 +255,8 @@ inline std::array<double, kLoadoutActiveSlots> fullSlotHealth() {
 /// No slot printing a number, which is what a bar with no snapshot behind it
 /// yet must draw as. A zeroed array would open the game on ten tiles each
 /// claiming a gauge that reads empty.
-inline std::array<int, kLoadoutActiveSlots> noSlotCounters() {
-    std::array<int, kLoadoutActiveSlots> none{};
+inline std::array<double, kLoadoutActiveSlots> noSlotCounters() {
+    std::array<double, kLoadoutActiveSlots> none{};
     none.fill(-1);
     return none;
 }
@@ -307,7 +307,7 @@ struct SelfState {
     /// the absent case: the bar prints a standing 0 and prints nothing at -1.
     /// Whole numbers, drawn as given: the server decides what the figure
     /// means, the bar only prints it.
-    std::array<int, kLoadoutActiveSlots> slotCounter = noSlotCounters();
+    std::array<double, kLoadoutActiveSlots> slotCounter = noSlotCounters();
 };
 
 class WorldView {

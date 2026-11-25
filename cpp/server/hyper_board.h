@@ -17,6 +17,19 @@ inline std::uint32_t hyperHoldingOwnerRank(const std::vector<HyperHoldingRow>& r
     return 0;
 }
 
+inline std::uint64_t apexHoldingCount(const PlayerRecord& record) {
+    // The database normalizes saves to bag-only inventory on load.
+    std::uint64_t total = 0;
+    for (const auto& [key, value] : record.inventory[rarityName(Rarity::Ascendant)].members()) {
+        if (key.rfind("petal_", 0) == 0)
+            total += PlayerRecord::stackCount(value);
+    }
+    for (const auto& slot : record.loadout) {
+        if (slot && slot->rarity == Rarity::Ascendant) ++total;
+    }
+    return total;
+}
+
 inline std::vector<HyperHoldingRow> apexHoldingBoard(const Database& db) {
     std::vector<HyperHoldingRow> rows;
     for (const auto& username : db.usernames()) {
@@ -24,15 +37,7 @@ inline std::vector<HyperHoldingRow> apexHoldingBoard(const Database& db) {
         const auto* record = account ? db.findProgress(account->id) : nullptr;
         if (!record) continue;
 
-        // The database normalizes saves to bag-only inventory on load.
-        std::uint64_t total = 0;
-        for (const auto& [key, value] : record->inventory[rarityName(Rarity::Ascendant)].members()) {
-            if (key.rfind("petal_", 0) == 0)
-                total += PlayerRecord::stackCount(value);
-        }
-        for (const auto& slot : record->loadout) {
-            if (slot && slot->rarity == Rarity::Ascendant) ++total;
-        }
+        const auto total = apexHoldingCount(*record);
         if (total == 0) continue;
 
         const auto count = static_cast<std::uint32_t>(

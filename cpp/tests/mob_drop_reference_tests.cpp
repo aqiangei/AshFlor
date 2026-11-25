@@ -22,9 +22,8 @@ struct BossFloorAudit {
     std::vector<int> floorCopiesByKill;
 };
 Counts kills(const char* id,Rarity rarity,int count,bool orb=false,int bonus=1,int* maxEternal=nullptr,bool splitAccount=false,double damage=100.0,
-             BossFloorAudit* audit=nullptr, bool finisher=false, bool ordinaryMap=false,Rarity orbTier=Rarity::Mythic){
+             BossFloorAudit* audit=nullptr, bool finisher=false,Rarity orbTier=Rarity::Mythic){
     const auto& c=registry();World w;CommandBuffer commands{w};EventQueue events;SpatialGrid grid;Rng rng{81927};LootSystem loot;loot.bonusMultiplier=[bonus](Entity){return bonus;};
-    loot.ordinaryMapLoot = [ordinaryMap](Realm realm) { return ordinaryMap && realm == Realm::Overworld; };
     if (audit) loot.allowsBossParticipationFloor = [audit](Realm) { return audit->enabled; };
     int priorMeaningful = 0;
     int priorPrivateFloor = 0;
@@ -281,6 +280,18 @@ TEST(all_imported_mob_tables_link_without_obsolete_generated_eggs){
         for(const auto& e:entries){CHECK(e.petalIndex!=kNoPetal);CHECK(!c.petal(e.petalIndex).isAdminPetal);CHECK(!e.rates.empty());for(int tier=0;tier<kLadderRarityCount;++tier){double sum=0;for(const auto&r:ratesFor(e.rates,static_cast<Rarity>(tier)))sum+=r.probability;CHECK(sum<=1.0000000001);}}
     }
     CHECK_EQ(imported,77); // Current imported definitions and corrected body aliases
+}
+
+TEST(arctic_stick_drops_from_snowman_and_snow_stick_drops_from_snowstorm) {
+    const auto snowman = kills("arctic_snowman", Rarity::Common, 20);
+    const auto snowstorm = kills("arctic_snowstorm", Rarity::Common, 20);
+    CHECK(total(snowman, "arctic_stick") > 0);
+    CHECK_EQ(total(snowman, "arctic_snow_stick"), 0);
+    CHECK(total(snowstorm, "arctic_snow_stick") > 0);
+    CHECK_EQ(total(snowstorm, "arctic_stick"), 0);
+    CHECK_EQ(total(snowman, "mysterious_stick"), 0);
+    CHECK_EQ(total(kills("arctic_snowman", Rarity::Common, 20, true), "arctic_stick"),
+             total(snowman, "arctic_stick"));
 }
 
 TEST(super_sandstorm_drops_only_sand_glass_and_stick_at_reference_tiers){
@@ -584,7 +595,7 @@ TEST(ordinary_and_void_ghosts_drop_splitter_with_the_existing_high_tier_rates) {
 
 TEST(zorr_magic_sacrifice_keeps_low_rolls_at_their_original_rarity) {
     const auto ordinary=kills("void_grave_digger",Rarity::Rare,100);
-    const auto magic=kills("void_grave_digger",Rarity::Rare,100,true,1,nullptr,false,100.0,nullptr,false,false,Rarity::Apex);
+    const auto magic=kills("void_grave_digger",Rarity::Rare,100,true,1,nullptr,false,100.0,nullptr,false,Rarity::Apex);
     CHECK(total(ordinary,"void_cross")>0);
     CHECK_EQ(total(magic,"void_cross"),total(ordinary,"void_cross"));
     CHECK_EQ(total(magic,"magic_blood_sacrifice"),0);
@@ -679,7 +690,7 @@ TEST(zorr_magic_catalog_has_obtainable_orb_drops) {
     int observed = 0;
     for (const auto& [mob,expected] : routes) {
         const int trials = (mob == "arctic_nuke" || mob == "void_grave_digger") ? 6000 : 160;
-        auto rewards = kills(mob.c_str(), Rarity::Apex, trials, true, 1, nullptr, false, 100.0, nullptr, false, false, Rarity::Apex);
+        auto rewards = kills(mob.c_str(), Rarity::Apex, trials, true, 1, nullptr, false, 100.0, nullptr, false, Rarity::Apex);
         for (const auto& id : expected) {
             if (!total(rewards,id)) {
                 std::printf("  missing magic reward: %s / %s\n",mob.c_str(),id.c_str());
@@ -690,21 +701,23 @@ TEST(zorr_magic_catalog_has_obtainable_orb_drops) {
     CHECK_EQ(observed,122);
 }
 
-TEST(ordinary_map_uses_fifty_trials_and_preserves_per_roll_rates) {
-    const auto ordinary = [](Rarity rarity, int bonus) {
-        return kills("ant_egg", rarity, 1, false, bonus, nullptr, false, 100.0,
-                     nullptr, false, true);
+TEST(base_loot_uses_thirty_trials_and_preserves_personal_apex_rewards) {
+    const auto eggDrops = [](Rarity rarity, int bonus) {
+        return kills("ant_egg", rarity, 1, false, bonus);
     };
-    CHECK_EQ(total(ordinary(Rarity::Common, 1), "egg"), 50);
-    CHECK_EQ(total(ordinary(Rarity::Common, 2), "egg"), 100);
-    CHECK_EQ(total(ordinary(Rarity::Common, 3), "egg"), 150);
-    CHECK_EQ(total(ordinary(Rarity::Super, 1), "egg"), 20);
-    CHECK_EQ(total(kills("ant_egg", Rarity::Common, 1), "egg"), 30);
+    CHECK_EQ(total(eggDrops(Rarity::Common, 1), "egg"), 30);
+    CHECK_EQ(total(eggDrops(Rarity::Common, 2), "egg"), 60);
+    CHECK_EQ(total(eggDrops(Rarity::Common, 3), "egg"), 90);
+    CHECK_EQ(total(eggDrops(Rarity::Super, 1), "egg"), 20);
+
+    CHECK_EQ(baseLootTrialsForRarity(Rarity::Unique, true), 15);
+    CHECK_EQ(baseLootTrialsForRarity(Rarity::Super, true), 15);
+    CHECK_EQ(bonusLootTrialsForRarity(Rarity::Unique, 2, true), 24);
 
     constexpr int count = 2000;
     const auto apex = [](int count) {
         return kills("crab", Rarity::Ascendant, count, false, 1, nullptr, true,
-                     100.0, nullptr, false, true);
+                     100.0);
     };
     int paid = 0;
     for (const auto& [key, number] : apex(count)) {

@@ -506,10 +506,12 @@ TEST(todo1106_initial_mana_is_partial_and_reequipping_does_not_refill) {
     CHECK_NEAR(w.get<ManaPool>(p).current,max*.4,1e-6);
     w.get<Loadout>(p).slots[0].configIndex=kNoPetal;
     petals.run(w,c,1050,0,commands);commands.flush();
-    CHECK_NEAR(w.get<ManaPool>(p).current,0,1e-6);
+    const auto retained = w.get<ManaPool>(p).max;
+    CHECK(retained > 0 && retained < max);
+    CHECK_NEAR(w.get<ManaPool>(p).current,retained,1e-6);
     wear(w,p,0,"mana_orb",Rarity::Unique);
     petals.run(w,c,1100,0,commands);commands.flush();
-    CHECK_NEAR(w.get<ManaPool>(p).current,0,1e-6);
+    CHECK_NEAR(w.get<ManaPool>(p).current,retained,1e-6);
     const auto respawn=flower(w);wear(w,respawn,0,"mana_orb",Rarity::Unique);
     w.add<ManaPool>(respawn);
     petals.run(w,c,1150,0,commands);commands.flush();

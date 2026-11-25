@@ -1,6 +1,7 @@
 #pragma once
 #include "server/db.h"
 #include "server/hyper_history.h"
+#include "server/hyper_board.h"
 #include "shared/game/constants.h"
 #include <algorithm>
 #include <cmath>
@@ -34,18 +35,8 @@ inline Json weightInputs(const Database& db) {
             std::max(0.0,p->extra["councilActiveSeconds"].asDouble());
         int level=levelFromTotalXp(p->totalXp).level;
         if(level<2 && seconds<60) continue;
-        double petals=0;
-        for (int r = 0; r < kRarityCount; ++r) {
-            const auto rarity = static_cast<Rarity>(r);
-            if (rarity == Rarity::Admin) continue;
-            double count=0;
-            for(const auto& kv:p->inventory[rarityName(rarity)].members())
-                if(kv.first.rfind("petal_",0)==0) count+=PlayerRecord::stackCount(kv.second);
-            for(const auto& item:p->loadout) if(item && item->rarity==rarity) ++count;
-            petals+=(r+1)*std::log1p(count);
-        }
         Json row=Json::object(); row["id"]=id; row["name"]=a->username;
-        row["level"]=level; row["petals"]=petals;
+        row["level"]=level; row["apexCount"]=static_cast<double>(apexHoldingCount(*p));
         row["recordedSeconds"]=seconds;
         row["levelScore"]=std::max(0.0,level-1.0);
         rows.push(row);
@@ -64,23 +55,24 @@ inline Json weights(const Database& db) {
         row["timeScore"] = timeScore;
         totals[0] += timeScore;
         totals[1] += row["levelScore"].asDouble();
-        totals[2] += row["petals"].asDouble();
+        totals[2] += row["apexCount"].asDouble();
     }
-    // Equal level/activity budgets; activity is shrunk toward level shares at cold start.
+    // Activity is shrunk toward level shares at cold start.
     // This is a share prior only: it never modifies recorded or credited seconds.
-    const double petalWeight=totals[2]>0?.10:0;
-    const double activityWeight=(1-petalWeight)/2;
+    const double apexWeight=totals[2]>0?.30:0;
+    const double activityWeight=totals[2]>0?.50:5.0/7;
+    const double levelWeight=1-apexWeight-activityWeight;
     const double prior=rows.size()*std::log1p(10.0);
     std::vector<std::pair<double,std::size_t>> remainders; int allocated=0;
     for(std::size_t i=0;i<rows.size();++i) {
         const double levelShare=totals[1]>0?rows[i]["levelScore"].asDouble()/totals[1]:1.0/rows.size();
-        const double petalShare=totals[2]>0?rows[i]["petals"].asDouble()/totals[2]:0;
+        const double apexShare=totals[2]>0?rows[i]["apexCount"].asDouble()/totals[2]:0;
         const double timeShare=(rows[i]["timeScore"].asDouble()+prior*levelShare)/(totals[0]+prior);
         rows[i]["activityWeight"]=activityWeight;
-        rows[i]["levelContribution"]=activityWeight*levelShare;
-        rows[i]["petalContribution"]=petalWeight*petalShare;
+        rows[i]["levelContribution"]=levelWeight*levelShare;
+        rows[i]["apexContribution"]=apexWeight*apexShare;
         rows[i]["activityContribution"]=activityWeight*timeShare;
-        const double score=activityWeight*(levelShare+timeShare)+petalWeight*petalShare;
+        const double score=levelWeight*levelShare+activityWeight*timeShare+apexWeight*apexShare;
         double exact=score*1000000; int units=static_cast<int>(std::floor(exact));
         rows[i]["units"]=units; allocated+=units; remainders.emplace_back(exact-units,i);
     }
@@ -165,7 +157,7 @@ inline Json request(Database& db,const std::string& token,const Json& input,
             Json poll=Json::object(); poll["title"]=title;
             poll["authorId"]=account->id;poll["authorName"]=account->username;poll["createdAt"]=static_cast<double>(db.nowMillis());
             poll["endsAt"]=static_cast<double>(db.nowMillis())+86400000.0;
-            poll["weights"]=snapshot; poll["votes"]=Json::object();poll["weightRule"]=3;
+            poll["weights"]=snapshot; poll["votes"]=Json::object();poll["weightRule"]=5;
             if(poll["weights"].size()==0) return error("暂无符合条件的玩家");
             polls[std::to_string(db.nowMillis())+"-"+std::to_string(polls.size())]=poll;
         } else if(action=="close") {
@@ -207,7 +199,7 @@ inline Json request(Database& db,const std::string& token,const Json& input,
     for(const auto& entry:db.storedTable("councilPolls").members()) {
         const auto& p=entry.second; Json row=Json::object(); row["id"]=entry.first;row["title"]=p["title"];row["authorName"]=p["authorName"];
         row["createdAt"]=p["createdAt"];row["endsAt"]=p["endsAt"];row["closed"]=db.nowMillis()>=p["endsAt"].asDouble();
-        row["legacyWeights"]=p["weightRule"].asInt()<3;
+        row["legacyWeights"]=p["weightRule"].asInt()<5;
         int yes=0,no=0,abstain=0,count=0; const auto& snapshot=p["weights"];
         for(std::size_t i=0;i<snapshot.size();++i) {
             const auto id=snapshot[i]["id"].asString(); const auto vote=p["votes"][id].asString();int units=snapshot[i]["units"].asInt();

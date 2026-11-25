@@ -469,17 +469,23 @@ bool AbsorbPanel::render(MenuContext& ctx) {
                  button.x + button.w * 0.5, button.y + button.h * 0.5,
                  panelLabel(kButtonLabelSize, Align::Centre, Baseline::Middle), 1.0);
 
-    const Rect batch{button.right() + 12.0, button.y, 145.0, button.h};
+    const Rect batch{button.right() + 12.0, button.y, bulkSelected_ ? 145.0 : 70.0, button.h};
+    const Rect eternalBatch{button.right() + 87.0, button.y, 70.0, button.h};
     const Rect batchHit{batch.x - rim, batch.y - rim, batch.w + kButtonBorder,
                         batch.h + kButtonBorder};
     const bool canBatch = !waiting_ && (bulkSelected_ || staged_.empty());
+    const bool hitsEternalBatch = !bulkSelected_ && eternalBatch.contains(mouse);
     const bool overBatch = canBatch && batchHit.contains(mouse);
-    drawFlorrButton(canvas, batch, canBatch ? 0x53888Bu : kButtonIdleFace, kButtonBorder,
-                    kButtonRadius, overBatch, overBatch && mouseDown);
-    outlinedText(canvas, bulkSelected_ ? trEnZh("Clear batch", "取消批量")
-                                      : trEnZh("Common–Rare spares", "批选普通至稀有"),
-                 batch.x + batch.w * 0.5, batch.y + batch.h * 0.5,
-                 panelLabel(13.0, Align::Centre, Baseline::Middle), 1.0);
+    const bool overEternalBatch = canBatch && hitsEternalBatch;
+    const auto drawBatch = [&](Rect bounds, bool hovered, const char* label) {
+        drawFlorrButton(canvas, bounds, canBatch ? 0x53888Bu : kButtonIdleFace, kButtonBorder,
+                        kButtonRadius, hovered, hovered && mouseDown);
+        outlinedText(canvas, label, bounds.x + bounds.w * 0.5, bounds.y + bounds.h * 0.5,
+                     panelLabel(12.0, Align::Centre, Baseline::Middle), 1.0);
+    };
+    drawBatch(batch, overBatch, bulkSelected_ ? trEnZh("Clear batch", "取消批量")
+                                            : trEnZh("C–Rare", "普通～稀有"));
+    if (!bulkSelected_) drawBatch(eternalBatch, overEternalBatch, trEnZh("C–Eternal", "普通～永恒"));
 
     // --- the bar -------------------------------------------------------------------
     // The level the flower is playing at -- the body's, live, in the world, or
@@ -636,13 +642,13 @@ bool AbsorbPanel::render(MenuContext& ctx) {
         ctx.wantsText = true;
         return true;
     }
-    if (!canBatch && batchHit.contains(mouse)) {
+    if (!canBatch && (batchHit.contains(mouse) || hitsEternalBatch)) {
         refusal_ = trEnZh("Take back the manually selected petals before selecting a batch.",
                            "请先取回手动放入的花瓣，再使用批选。");
         refusalUntil_ = nowMs + kRefusalMs;
         return true;
     }
-    if (overBatch) {
+    if (overBatch || overEternalBatch) {
         refusal_.clear();
         heldPetal_ = kNoPetal;
         confirming_ = false;
@@ -652,9 +658,10 @@ bool AbsorbPanel::render(MenuContext& ctx) {
             staged_.clear();
             bulkSelected_ = false;
         } else {
-            const auto counts = bulkAbsorbCounts(profile, content());
+            const auto counts = bulkAbsorbCounts(profile, content(),
+                                                  overEternalBatch ? Rarity::Unique : Rarity::Rare);
             if (counts.empty() || counts.size() > kMaxAbsorbStacks) {
-                refusal_ = counts.empty() ? trEnZh("No eligible spare petals.", "没有可批选的低品质重复花瓣。")
+                refusal_ = counts.empty() ? trEnZh("No eligible spare petals.", "所选品质范围内没有可批选的重复花瓣。")
                                           : trEnZh("Too many stacks for one batch.", "可选种类过多，请分开吸收。");
                 refusalUntil_ = nowMs + kRefusalMs;
                 return true;
@@ -669,7 +676,7 @@ bool AbsorbPanel::render(MenuContext& ctx) {
     }
     if (overButton) {
         if (bulkSelected_) {
-            const auto counts = bulkAbsorbCounts(profile, content());
+            const auto counts = bulkAbsorbCounts(profile, content(), Rarity::Unique);
             for (const Staged& s : staged_) {
                 const auto at = counts.find(absorbStackKey(s.petalIndex, s.rarity));
                 if (at != counts.end() && at->second >= s.count) continue;

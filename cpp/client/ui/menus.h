@@ -280,7 +280,6 @@ struct ClientSettings {
     bool showExactValues = false;
     bool hideMobAnnouncements = false;
     bool hideCraftAnnouncements = false;
-    bool hideOtherPhAnnouncements = false;
     /// Shows the grey bug button in the top strip, which is the only way into
     /// the debug panel. Off by default, exactly as `debugMenuEnabled` was.
     bool showDebugButton = false;

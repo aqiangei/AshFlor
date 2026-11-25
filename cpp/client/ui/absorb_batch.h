@@ -14,8 +14,9 @@ inline std::uint32_t absorbStackKey(std::uint16_t petalIndex, Rarity rarity) {
 }
 
 // Skip entire stacks referenced by current or saved gear. Keep one copy of
-// each other low-tier stack so batch selection only stages spare petals.
-inline auto bulkAbsorbCounts(const Profile& profile, const ContentRegistry& registry) {
+// each other eligible stack so batch selection only stages spare petals.
+inline auto bulkAbsorbCounts(const Profile& profile, const ContentRegistry& registry,
+                             Rarity ceiling = Rarity::Rare) {
     std::unordered_set<std::uint32_t> protectedStacks;
     const auto protect = [&](const auto& slots) {
         for (const auto& slot : slots)
@@ -26,7 +27,7 @@ inline auto bulkAbsorbCounts(const Profile& profile, const ContentRegistry& regi
 
     std::unordered_map<std::uint32_t, std::uint32_t> counts;
     for (const auto& stack : profile.inventory) {
-        if (stack.count <= 1 || rarityIndex(stack.rarity) > rarityIndex(Rarity::Rare) ||
+        if (stack.count <= 1 || rarityIndex(stack.rarity) > rarityIndex(ceiling) ||
             stack.petalIndex >= registry.petalCount() ||
             !absorbable(registry.petal(stack.petalIndex), stack.rarity)) continue;
         const auto key = absorbStackKey(stack.petalIndex, stack.rarity);

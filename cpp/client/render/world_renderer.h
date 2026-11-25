@@ -415,7 +415,8 @@ private:
     void drawTeleporters(Canvas&, const Camera&, Realm realm, double timeSeconds) const;
     bool riftOpen_ = false;
     void drawEntity(Canvas&, const RemoteEntity&, const Camera&, Vec2 at, double timeSeconds,
-                    double distantMobMarkerLimit = 0.0, bool simplifyRingArt = false) const;
+                    double distantMobMarkerLimit = 0.0, bool simplifyRingArt = false,
+                    bool detailedDrop = true) const;
     void drawFlower(Canvas&, const RemoteEntity&, const Camera&, Vec2 at, double timeSeconds) const;
     void drawDefaultFlower(Canvas&, const RemoteEntity&, double timeSeconds) const;
     bool drawMagicEyes(Canvas&, std::uint16_t equipFlags, double spacing, double y,
@@ -440,7 +441,7 @@ private:
     /// at frame zero, as the reference bakes it: only the plate breathes.
     void drawDrop(Canvas&, const Camera&, Vec2 at, std::uint16_t typeIndex, Rarity,
                   double rotation, double scale, double alpha, double timeSeconds,
-                  std::uint32_t quantity = 1) const;
+                  std::uint32_t quantity = 1, bool detailed = true) const;
 
     /// Everything one mob body needs that does not come from its config. The
     /// death animation replays a mob the snapshot has already dropped, so this

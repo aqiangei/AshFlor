@@ -718,7 +718,6 @@ private:
     double chatMeasuredHeight_ = 0.0;
     std::optional<double> chatMeasuredNarrowHeight_;
     std::uint16_t chatMeasuredFilters_ = 0;
-    std::string chatMeasuredUsername_;
     /// Online roster under the minimap: scroll offset and last painted box.
     ui::Scroller onlineRosterScroll_;
     Rect onlineRosterBox_{};

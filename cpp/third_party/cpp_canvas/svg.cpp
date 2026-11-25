@@ -403,7 +403,24 @@ struct Raster {
     std::vector<Canvas::ImageLevel> levels;
 };
 
-/// Halves `src` (w x h, straight RGBA) into `out`, averaging 2x2 blocks.
+struct RasterFootprint {
+    int first, last, start, end;
+};
+
+std::vector<RasterFootprint> rasterFootprints(int input, int output) {
+    std::vector<RasterFootprint> result;
+    result.reserve(output);
+    for (int i = 0; i < output; ++i) {
+        const int start = i * input;
+        const int end = start + input;
+        result.push_back({start / output, (end - 1) / output, start, end});
+    }
+    return result;
+}
+
+/// Halves `src` (w x h, straight RGBA) into `out` with an area filter.
+/// A 5-to-2 reduction covers all five pixels, sharing the middle pixel,
+/// rather than taking two pairs and silently dropping the last column.
 /// Averaged PREMULTIPLIED, then put back to straight: mixing straight colour
 /// across a transparent texel drags its undefined rgb into the visible edge,
 /// exactly as it would in the sampler.
@@ -412,18 +429,22 @@ void halveRaster(const std::uint8_t* src, int w, int h, std::vector<std::uint8_t
     outW = std::max(1, w / 2);
     outH = std::max(1, h / 2);
     out.assign(static_cast<std::size_t>(outW) * outH * 4, 0);
+    const auto columns = rasterFootprints(w, outW);
+    const auto rows = rasterFootprints(h, outH);
+    const float alphaScale = 1.f / (static_cast<float>(w) * h);
     for (int y = 0; y < outH; ++y) {
+        const auto& row = rows[y];
         for (int x = 0; x < outW; ++x) {
+            const auto& column = columns[x];
             float r = 0, g = 0, b = 0, a = 0;
-            int taken = 0;
-            for (int dy = 0; dy < 2; ++dy) {
-                const int sy = std::min(h - 1, y * 2 + dy);
-                for (int dx = 0; dx < 2; ++dx) {
-                    const int sx = std::min(w - 1, x * 2 + dx);
+            for (int sy = row.first; sy <= row.last; ++sy) {
+                const int dy = std::min(row.end, (sy + 1) * outH) - std::max(row.start, sy * outH);
+                for (int sx = column.first; sx <= column.last; ++sx) {
+                    const int dx = std::min(column.end, (sx + 1) * outW) -
+                                   std::max(column.start, sx * outW);
                     const std::uint8_t* p = src + (static_cast<std::size_t>(sy) * w + sx) * 4;
-                    const float pa = p[3] * (1.f / 255.f);
+                    const float pa = p[3] * (static_cast<float>(dx) * dy);
                     r += p[0] * pa; g += p[1] * pa; b += p[2] * pa; a += pa;
-                    ++taken;
                 }
             }
             std::uint8_t* q = out.data() + (static_cast<std::size_t>(y) * outW + x) * 4;
@@ -431,7 +452,7 @@ void halveRaster(const std::uint8_t* src, int w, int h, std::vector<std::uint8_t
             q[0] = static_cast<std::uint8_t>(std::clamp(std::lround(r / a), 0L, 255L));
             q[1] = static_cast<std::uint8_t>(std::clamp(std::lround(g / a), 0L, 255L));
             q[2] = static_cast<std::uint8_t>(std::clamp(std::lround(b / a), 0L, 255L));
-            q[3] = static_cast<std::uint8_t>(std::clamp(std::lround(a / taken * 255.f), 0L, 255L));
+            q[3] = static_cast<std::uint8_t>(std::clamp(std::lround(a * alphaScale), 0L, 255L));
         }
     }
 }

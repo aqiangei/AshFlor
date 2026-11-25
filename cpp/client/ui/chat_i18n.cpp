@@ -831,41 +831,6 @@ std::string localizeChatText(std::string text) {
     return localizeMarkupAware(std::move(text));
 }
 
-bool isOtherPermanentHyperCraft(std::string_view text, std::string_view username) {
-    if (username.empty()) return false;
-    constexpr std::string_view tag = "<b data-petal='";
-    constexpr std::string_view actorMarkup = "<b style=\"color: #00ff00;\">";
-    const bool marked = text.substr(0, tag.size()) == tag;
-    if (marked) {
-        const auto body = text.find('>');
-        if (body == std::string_view::npos) return false;
-        text.remove_prefix(body + 1);
-    }
-    constexpr std::string_view prefix = "A Permanent Hyper ";
-    if (text.substr(0, prefix.size()) != prefix) return false;
-
-    constexpr std::string_view forge = " has been forged by ";
-    constexpr std::string_view craft = " has been crafted by ";
-    const auto forged = text.find(forge, prefix.size());
-    const auto crafted = text.find(craft, prefix.size());
-    if (forged == std::string_view::npos && crafted == std::string_view::npos) return false;
-    const bool isForge = forged < crafted;
-    text.remove_prefix(isForge ? forged + forge.size() : crafted + craft.size());
-    if (marked) {
-        if (text.substr(0, actorMarkup.size()) != actorMarkup) return false;
-        text.remove_prefix(actorMarkup.size());
-    }
-    if (text.empty() || text.front() != '@') return false;
-    text.remove_prefix(1);
-    const auto end = text.find(marked ? "</b> [" : " [");
-    if (end == 0 || end == std::string_view::npos) return false;
-    const auto actor = text.substr(0, end);
-    if (actor.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_") !=
-        std::string_view::npos) return false;
-    return !std::equal(actor.begin(), actor.end(), username.begin(), username.end(),
-        [](char a, char b) { return lowerCase(a) == lowerCase(b); });
-}
-
 std::string localizeNotificationText(const std::string& text, const std::string& petalId) {
     if (!zh()) return text;
     for (const auto& verb : {Pair{" has been crafted by ", " 合成了 "},

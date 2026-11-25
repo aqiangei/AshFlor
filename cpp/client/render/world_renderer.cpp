@@ -370,6 +370,7 @@ constexpr int kDropBurstCount = ui::kDropBurstCount;
 /// bounded here rather than by the effect pool it no longer shares.
 constexpr std::size_t kMaxDropSparkles = 128;
 constexpr int kDetailedDropsPerFrame = 48;
+constexpr double kCompactDropSide = 15.0;
 /// The trickle stops short of the cap so a landing burst always has room: the
 /// shimmer is continuous and would otherwise hold the whole pool, and a burst
 /// silently swallowed is the thing a player notices.
@@ -1653,6 +1654,71 @@ double tileSidePixels(double zoom, double toPixels) {
                     std::ceil(step) + 1.0);
 }
 
+struct WallEdgeArt {
+    Path2D silhouette;
+    Path2D rim;
+};
+
+const std::array<WallEdgeArt, 16>& naturalWallEdges() {
+    static const auto edges = [] {
+        std::array<WallEdgeArt, 16> out;
+        constexpr std::array<Vec2, 4> corners{{{0, 0}, {1, 0}, {1, 1}, {0, 1}}};
+        constexpr double cornerRound = 0.125;
+        for (int mask = 1; mask < 16; ++mask) {
+            auto& art = out[mask];
+            for (int i = 0; i < 4; ++i) {
+                const int next = (i + 1) % 4;
+                const bool exposed = (mask & (1 << i)) != 0;
+                const bool roundedStart = exposed && (mask & (1 << ((i + 3) % 4)));
+                const bool roundedEnd = exposed && (mask & (1 << next));
+                const Vec2 direction = corners[next] - corners[i];
+                const Vec2 inward{-direction.y, direction.x};
+                const Vec2 start = corners[i] + direction * (roundedStart ? cornerRound : 0.0);
+                const Vec2 end = corners[next] - direction * (roundedEnd ? cornerRound : 0.0);
+                if (i == 0) art.silhouette.moveTo(start.x, start.y);
+                if (!exposed) {
+                    art.silhouette.lineTo(end.x, end.y);
+                    continue;
+                }
+                art.rim.moveTo(start.x, start.y);
+                const auto trace = [&](Path2D& path) {
+                    const Vec2 length = end - start;
+                    // Match the slope at both tile joins so a straight cliff
+                    // does not acquire a repeating V-shaped notch.
+                    const Vec2 crest = start + length * 0.46 + inward * 0.036;
+                    const Vec2 a = start + length * 0.17;
+                    const Vec2 b = crest - length * 0.14;
+                    const Vec2 c = crest + length * 0.15;
+                    const Vec2 d = end - length * 0.18;
+                    path.bezierCurveTo(a.x, a.y, b.x, b.y, crest.x, crest.y);
+                    path.bezierCurveTo(c.x, c.y, d.x, d.y, end.x, end.y);
+                    if (roundedEnd) {
+                        const Vec2 after = corners[next] + (corners[(next + 1) % 4] - corners[next]) * cornerRound;
+                        path.quadraticCurveTo(corners[next].x, corners[next].y, after.x, after.y);
+                    }
+                };
+                trace(art.silhouette);
+                trace(art.rim);
+            }
+            art.silhouette.closePath();
+        }
+        return out;
+    }();
+    return edges;
+}
+
+// These tilesets have a continuous floor under opaque, full-cell walls.
+// Treat only the wall silhouette here; the authored collision stays on its grid.
+std::uint32_t naturalWallRim(const MapData& map) {
+    if (map.layers().size() != 2 || !map.layers().back().collides) return 0;
+    const auto& biome = map.biome();
+    if (biome == "bio") return 0xFFE0A8u;
+    if (biome == "jurassic") return 0xD0DF88u;
+    if (biome == "zorr_void") return 0x807699u;
+    if (biome == "zorr_arctic" || biome == "zorr_glacier" || biome == "zorr_polar") return 0xE9FFF9u;
+    return 0;
+}
+
 /// Paints `span` of `map`'s tile layers. `corner(tx, ty)` is the top-left of
 /// cell (tx, ty)'s oversized box in the canvas's user units, already on a
 /// whole device pixel, and `side` is the box's side in the same units. The
@@ -1663,7 +1729,6 @@ void paintTerrainCells(Canvas& canvas, const MapData& map,
                        const std::vector<const SvgDocument*>& art, CellSpan span, double side,
                        const Corner& corner) {
     const int cols = map.width();
-    const double half = side * 0.5;
 
     // A cell's compiled artwork, or null: an empty cell, a tile whose art
     // index is out of the palette, or a file the data directory does not
@@ -1690,31 +1755,42 @@ void paintTerrainCells(Canvas& canvas, const MapData& map,
     // them every rotation of one tile would collide on the first one baked,
     // and every edge tile in the map is painted as four rotations of one
     // picture.
-    const auto drawCell = [&](const SvgDocument& document, int tx, int ty, std::uint8_t flags) {
+    const auto drawTile = [&](Canvas& into, const SvgDocument& document, double left, double top,
+                              double size, std::uint8_t flags) {
         // The box's own corner, snapped. `side` is already whole pixels, so
         // the corner being on one puts all four edges on one -- and the
         // turned case takes its centre from here rather than from the cell's
         // own centre, so that both paths keep drawing the SAME box.
-        const Vec2 at = corner(tx, ty);
-        const double left = at.x;
-        const double top = at.y;
+        const double half = size * 0.5;
         const TileOrientation orientation = tileOrientation(flags);
         if (orientation.radians == 0.0 && !orientation.mirror) {
-            if (!drawCachedArt(canvas, document, left, top, side, side)) {
-                document.renderFitted(canvas, static_cast<float>(left), static_cast<float>(top),
-                                      static_cast<float>(side), static_cast<float>(side), 0.0f);
+            if (!drawCachedArt(into, document, left, top, size, size)) {
+                document.renderFitted(into, static_cast<float>(left), static_cast<float>(top),
+                                      static_cast<float>(size), static_cast<float>(size), 0.0f);
             }
             return;
         }
-        canvas.save();
-        canvas.translate(static_cast<float>(left + half), static_cast<float>(top + half));
-        if (orientation.radians != 0.0) canvas.rotate(static_cast<float>(orientation.radians));
-        if (orientation.mirror) canvas.scale(-1.0f, 1.0f);
-        if (!drawCachedArt(canvas, document, -half, -half, side, side)) {
-            document.renderFitted(canvas, static_cast<float>(-half), static_cast<float>(-half),
-                                  static_cast<float>(side), static_cast<float>(side), 0.0f);
+        into.save();
+        into.translate(static_cast<float>(left + half), static_cast<float>(top + half));
+        if (orientation.radians != 0.0) into.rotate(static_cast<float>(orientation.radians));
+        if (orientation.mirror) into.scale(-1.0f, 1.0f);
+        if (!drawCachedArt(into, document, -half, -half, size, size)) {
+            document.renderFitted(into, static_cast<float>(-half), static_cast<float>(-half),
+                                  static_cast<float>(size), static_cast<float>(size), 0.0f);
         }
-        canvas.restore();
+        into.restore();
+    };
+    const std::uint32_t wallRim = naturalWallRim(map);
+    const auto edgeMask = [&](int x, int y) {
+        if (wallRim == 0) return 0;
+        const auto& walls = map.layers().back().cells;
+        const auto wallAt = [&](int cx, int cy) {
+            return cx < 0 || cy < 0 || cx >= cols || cy >= map.height() ||
+                   resolve(walls[static_cast<std::size_t>(cy) * cols + cx]) != nullptr;
+        };
+        if (!wallAt(x, y)) return 0;
+        return (!wallAt(x, y - 1) ? 1 : 0) | (!wallAt(x + 1, y) ? 2 : 0) |
+               (!wallAt(x, y + 1) ? 4 : 0) | (!wallAt(x - 1, y) ? 8 : 0);
     };
 
     // The lowest layer each cell can still be seen through, worked out before
@@ -1728,11 +1804,15 @@ void paintTerrainCells(Canvas& canvas, const MapData& map,
     // Kept between paints rather than allocated per paint: the direct path
     // runs every frame and this is one number per cell on screen, a few dozen.
     thread_local std::vector<std::size_t> bottoms;
+    thread_local std::vector<std::uint8_t> wallEdges;
     bottoms.assign(spanX * spanY, 0);
+    if (wallRim != 0) wallEdges.assign(spanX * spanY, 0);
     for (int ty = span.y0; ty <= span.y1; ++ty) {
         const std::size_t row = static_cast<std::size_t>(ty) * static_cast<std::size_t>(cols);
         for (int tx = span.x0; tx <= span.x1; ++tx) {
             const std::size_t index = row + static_cast<std::size_t>(tx);
+            const std::size_t local = static_cast<std::size_t>(ty - span.y0) * spanX + (tx - span.x0);
+            if (wallRim != 0 && (wallEdges[local] = static_cast<std::uint8_t>(edgeMask(tx, ty))) != 0) continue;
             for (std::size_t layer = layerCount; layer-- > 0;) {
                 const TiledCell& cell = map.layers()[layer].cells[index];
                 if ((cell.flags & kTileCoversEverything) == 0) continue;
@@ -1742,8 +1822,7 @@ void paintTerrainCells(Canvas& canvas, const MapData& map,
                 // one missing picture into a black hole with the ground it
                 // was painted over blanked out too.
                 if (resolve(cell) == nullptr) continue;
-                bottoms[static_cast<std::size_t>(ty - span.y0) * spanX +
-                        static_cast<std::size_t>(tx - span.x0)] = layer;
+                bottoms[local] = layer;
                 break;
             }
         }
@@ -1772,7 +1851,35 @@ void paintTerrainCells(Canvas& canvas, const MapData& map,
                 const TiledCell& cell = cells[row + static_cast<std::size_t>(tx)];
                 const SvgDocument* document = resolve(cell);
                 if (document == nullptr) continue;
-                drawCell(*document, tx, ty, cell.flags);
+                const Vec2 at = corner(tx, ty);
+                const int mask = wallRim != 0 && layer + 1 == layerCount
+                    ? wallEdges[bottomRow + static_cast<std::size_t>(tx - span.x0)] : 0;
+                if (mask == 0) {
+                    drawTile(canvas, *document, at.x, at.y, side, cell.flags);
+                    continue;
+                }
+
+                const auto& edge = naturalWallEdges()[mask];
+                const auto paintEdge = [&](Canvas& into, Vec2 offset) {
+                    into.save();
+                    into.translate(offset.x, offset.y);
+                    into.scale(side, side);
+                    into.clip(edge.silhouette, "nonzero");
+                    drawTile(into, *document, 0.0, 0.0, 1.0, cell.flags);
+                    into.setLineWidth(0.094f);
+                    ui::setStroke(into, 0x1B1720u, 0.23);
+                    into.stroke(edge.rim);
+                    into.setLineWidth(0.035f);
+                    ui::setStroke(into, wallRim, 0.62);
+                    into.stroke(edge.rim);
+                    into.restore();
+                };
+                const std::uint64_t variant = (static_cast<std::uint64_t>(wallRim) << 12) |
+                    (static_cast<std::uint64_t>(cell.flags) << 4) | static_cast<unsigned>(mask);
+                if (!drawCachedPicture(canvas, document, variant, at.x, at.y, side, side,
+                    [&](Canvas& into) { paintEdge(into, {}); })) {
+                    paintEdge(canvas, at);
+                }
             }
         }
     }
@@ -1883,6 +1990,36 @@ void WorldRenderer::drawTerrain(Canvas& canvas, const Camera& camera, Realm real
     }
 
     const double zoom = camera.zoom();
+    if (naturalWallRim(*map) != 0) {
+        const auto transform = canvas.currentTransform();
+        const double toPixels = transform[0];
+        if (toPixels > 0.0 && transform[1] == 0.0f && transform[2] == 0.0f &&
+            std::abs(static_cast<double>(transform[3]) - toPixels) <= 1e-6 * toPixels) {
+            // Zoom animations bypass chunk baking. Align the textured walls
+            // with the chunk grid so switching paths cannot move a tile by a pixel.
+            const double scale = zoom * toPixels * mapScale;
+            const double side = tileSidePixels(zoom * mapScale, toPixels);
+            const Vec2 origin = camera.worldToScreen({});
+            const double ox = std::round(toPixels * origin.x + transform[4]);
+            const double oy = std::round(toPixels * origin.y + transform[5]);
+            const auto cornerAt = [&](int cell) {
+                return std::round((cell * kTileSize - kTileOverlap) * scale);
+            };
+            // At wide zoom the rounded tile side has an extra coverage pixel.
+            // Keep a neighbour if it reaches into the viewport on this grid.
+            if (span.x0 > 0 && ox + cornerAt(span.x0 - 1) + side > 0) --span.x0;
+            if (span.y0 > 0 && oy + cornerAt(span.y0 - 1) + side > 0) --span.y0;
+            if (span.x1 + 1 < cols && ox + cornerAt(span.x1 + 1) < canvas.pixelWidth()) ++span.x1;
+            if (span.y1 + 1 < rows && oy + cornerAt(span.y1 + 1) < canvas.pixelHeight()) ++span.y1;
+            canvas.save();
+            canvas.setTransform(1, 0, 0, 1, 0, 0);
+            paintTerrainCells(canvas, *map, art, span, side, [&](int tx, int ty) {
+                return Vec2{ox + cornerAt(tx), oy + cornerAt(ty)};
+            });
+            canvas.restore();
+            return;
+        }
+    }
     // Device pixels per design unit: the base transform the frame was opened
     // with, read back off the canvas the way the tile cache reads it.
     const double logical = canvas.width() > 0 ? static_cast<double>(canvas.width()) : 1.0;
@@ -4439,7 +4576,7 @@ void WorldRenderer::drawTeleporters(Canvas& canvas, const Camera& camera, Realm 
 
 void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const Camera& camera,
                                Vec2 at, double timeSeconds, double distantMobMarkerLimit,
-                               bool simplifyRingArt) const {
+                               bool simplifyRingArt, bool detailedDrop) const {
     const double zoom = camera.zoom();
     const Vec2 screen = camera.worldToScreen(at);
     const double radius = entity.radius * zoom;
@@ -4606,7 +4743,7 @@ void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const
                 rotation += spawn->second.rotation * (1.0 - eased);
             }
             drawDrop(canvas, camera, where, entity.typeIndex, entity.rarity, rotation, 1.0, 1.0,
-                     timeSeconds, entity.dropQuantity);
+                     timeSeconds, entity.dropQuantity, detailedDrop);
             break;
         }
 
@@ -4836,9 +4973,11 @@ void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const
 
 void WorldRenderer::drawDrop(Canvas& canvas, const Camera& camera, Vec2 at,
                              std::uint16_t typeIndex, Rarity rarity, double rotation,
-                             double scale, double alpha, double timeSeconds, std::uint32_t quantity) const {
+                             double scale, double alpha, double timeSeconds, std::uint32_t quantity,
+                             bool detailed) const {
     // The pulse rides on top of whatever the animations asked for, so a drop
     // flying to its taker or spinning out keeps breathing as it goes.
+    const double compactScale = std::min(1.0, scale);
     scale *= 1.0 + std::sin(timeSeconds * kDropPulseRate) * kDropPulseAmount;
     const double zoom = camera.zoom();
     if (scale <= 0.0 || alpha <= 0.0 || kDropBackdropSide * zoom * scale <= 1.0) return;
@@ -4847,12 +4986,33 @@ void WorldRenderer::drawDrop(Canvas& canvas, const Camera& camera, Vec2 at,
     const double cell = kDropBackdropSide * zoom * scale;
     // Keep every visible drop marked at its position. In a dense pile, bound
     // expensive tile art, text and shadows instead of dropping loot from view.
-    if (timing_.itemCount > kDetailedDropsPerFrame || cell < 14.0) {
+    if (!detailed) {
         const double side = clamp(cell * 0.32, 3.0, 11.0);
         ui::setFill(canvas, rarityColor(rarity), alpha);
         canvas.fillRect(static_cast<float>(screen.x - side * 0.5),
                         static_cast<float>(screen.y - side * 0.5),
                         static_cast<float>(side), static_cast<float>(side));
+        return;
+    }
+
+    if (cell < kCompactDropSide) {
+        // Keep the identity of distant drops without unreadable text, a
+        // rotating shadow, or a different raster on every idle pulse.
+        const double side = kCompactDropSide * compactScale;
+        const auto paint = [&](Canvas& into, Rect box, double opacity) {
+            ui::ItemTile tile;
+            tile.petalIndex = typeIndex;
+            tile.rarity = rarity;
+            tile.showName = false;
+            tile.alpha = opacity;
+            ui::drawItemTile(into, *sprites_, box, tile);
+        };
+        const std::uint64_t variant = (1ull << 63) |
+            (static_cast<std::uint64_t>(typeIndex) << 8) | static_cast<std::uint64_t>(rarity);
+        const Rect box{screen.x - side * 0.5, screen.y - side * 0.5, side, side};
+        if (alpha == 1.0 && drawCachedPicture(canvas, sprites_, variant, box.x, box.y, side, side,
+            [&](Canvas& into) { paint(into, {0.0, 0.0, side, side}, 1.0); })) return;
+        paint(canvas, box, alpha);
         return;
     }
 
@@ -5339,7 +5499,7 @@ void WorldRenderer::draw(Canvas& canvas, const EntityMap& entities, const Camera
         }
     }
 #endif
-    const auto drawLive = [&](const RemoteEntity& entity) {
+    const auto drawLive = [&](const RemoteEntity& entity, bool detailedDrop = true) {
         // Every entity draws at its own interpolated position, petals
         // included: WorldView has already anchored each ring to the
         // flower its owner is DRAWN at (see RemoteEntity::ownerOffset), so
@@ -5392,9 +5552,9 @@ void WorldRenderer::draw(Canvas& canvas, const EntityMap& entities, const Camera
 #ifdef __EMSCRIPTEN__
         const bool simplifyRingArt = denseGamblerRings && isCommonGamblerRing(entity) &&
             distanceSq(at, selfDrawn) > kGamblerArtNearDistance * kGamblerArtNearDistance;
-        drawEntity(canvas, entity, camera, at, timeSeconds, markerLimit, simplifyRingArt);
+        drawEntity(canvas, entity, camera, at, timeSeconds, markerLimit, simplifyRingArt, detailedDrop);
 #else
-        drawEntity(canvas, entity, camera, at, timeSeconds, markerLimit);
+        drawEntity(canvas, entity, camera, at, timeSeconds, markerLimit, false, detailedDrop);
 #endif
         if (options.hitboxes) drawHitbox(canvas, entity, camera, at);
     };
@@ -5469,7 +5629,12 @@ void WorldRenderer::draw(Canvas& canvas, const EntityMap& entities, const Camera
                 std::nth_element(visibleDrops.begin(), visibleDrops.begin() + kDetailedDropsPerFrame,
                                  visibleDrops.end(), nearest);
             }
-            for (const auto* drop : visibleDrops) drawLive(*drop);
+            const auto detailCount = std::min(visibleDrops.size(),
+                                             static_cast<std::size_t>(kDetailedDropsPerFrame));
+            for (std::size_t i = detailCount; i < visibleDrops.size(); ++i) {
+                drawLive(*visibleDrops[i], false);
+            }
+            for (std::size_t i = 0; i < detailCount; ++i) drawLive(*visibleDrops[i]);
         } else if (kind == net::EntityKind::Effect) {
             // Keep one actual ghost position per small screen cell. Nearby
             // hints share a marker without inventing a location between mobs.
@@ -5541,7 +5706,8 @@ void WorldRenderer::draw(Canvas& canvas, const EntityMap& entities, const Camera
                 if (!onScreen(where, kDropBackdropSide)) continue;
                 ++timing_.itemCount;
                 drawDrop(canvas, camera, where, drop.typeIndex, drop.rarity, rotation, scale,
-                         alpha, timeSeconds, drop.quantity);
+                         alpha, timeSeconds, drop.quantity,
+                         timing_.itemCount <= kDetailedDropsPerFrame);
             }
         }
 

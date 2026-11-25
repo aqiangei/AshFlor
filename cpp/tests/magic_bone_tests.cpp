@@ -1,11 +1,12 @@
 // Magic Bone (#773, #804): its armour climbs Bone's ladder at every tier, and
-// it forms only once the flower has a mana pool to pay for it.
+// it forms once the flower can pay the full cost.
 
 #include "test.h"
 
 #include "server_harness.h"
 #include "server/systems/petals.h"
 #include "test_data.h"
+#include "shared/game/zorr_mana.h"
 
 #include <cstdio>
 
@@ -110,14 +111,18 @@ struct MagicBoneRing {
 
 } // namespace
 
-TEST(magic_bone_without_a_mana_source_never_forms) {
+TEST(magic_bone_uses_innate_mana_when_it_covers_the_full_cost) {
     for (const Rarity tier : {Rarity::Common, Rarity::Super, Rarity::Apex}) {
         MagicBoneRing ring(tier, false);
-        for (double now = 1000.0; now <= 20000.0; now += 500.0) ring.step(now);
-        std::printf("  %-6s no mana source: pool=%d bones=%d\n", rarityName(tier),
-                    ring.world.has<ManaPool>(ring.player) ? 1 : 0, ring.bones());
-        CHECK(!ring.world.has<ManaPool>(ring.player));
-        CHECK(ring.bones() == 0);
+        ring.step(1000.0);
+        const auto id = ring.registry.petalIndex("magic_bone");
+        const double cost = ring.registry.petalStats(id, tier).requiredMana;
+        const double start = ring.world.get<ManaPool>(ring.player).current;
+        const bool affordable = start >= cost;
+        for (double now = 1500.0; now <= 20000.0; now += 500.0) ring.step(now);
+        CHECK_NEAR(ring.world.get<ManaPool>(ring.player).max, kFlowerBaseMana, 1e-9);
+        CHECK_NEAR(ring.world.get<ManaPool>(ring.player).current, start - (affordable ? cost : 0.0), 1e-9);
+        CHECK_EQ(ring.bones(), affordable ? 1 : 0);
     }
 }
 

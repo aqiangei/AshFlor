@@ -467,14 +467,14 @@ void LootSystem::run(World& world, const SpatialGrid& grid, const ContentRegistr
     collectFresh(world, commands, events);
 }
 
-std::size_t LootSystem::pruneGroundDrops(World& world) {
+std::size_t LootSystem::pruneGroundDrops(World& world, EventQueue& events) {
     bind(world);
     if (drops_->count() <= kMaxGroundDropsPerRealm) return 0;
 
     std::array<std::size_t, kMaxRealms> byRealm{};
     groundDrops_.clear();
     drops_->each([&](Entity e, DropTag&, Transform& at, Lifetime& life, DropItem& drop) {
-        if (drop.singleCopy || drop.humansOnly) return;
+        if (drop.singleCopy || drop.humansOnly || drop.riftPrize) return;
         ++byRealm[realmIndex(at.realm)];
         groundDrops_.push_back({e, at.realm, drop.rarity, std::max(0.0, life.remainingSeconds)});
     });
@@ -488,11 +488,26 @@ std::size_t LootSystem::pruneGroundDrops(World& world) {
         if (a.remaining != b.remaining) return a.remaining < b.remaining;
         return a.entity < b.entity;
     });
+    // A ring normally pulls gradually. If the cap would retire a stack first,
+    // settle reachable owners' copies through the ordinary pickup path.
+    const auto retire = [&](Entity entity) {
+        const auto& at = world.get<Transform>(entity);
+        collectors_->each([&](Entity player, PlayerTag&, Transform& flower, PlayerModifiers& mods) {
+            const double reach = mods.ringMagnetism;
+            if (reach <= 0.0 || at.realm != flower.realm ||
+                distanceSq(at.position, flower.position) > reach * reach) return;
+            const auto* health = world.tryGet<Health>(player);
+            if (health && !health->alive()) return;
+            if (terrain && terrain->segmentBlocked(at.position, flower.position, at.realm)) return;
+            claimDrop(world, player, flower.position, flower.realm, reach * reach, entity, events);
+        });
+        world.destroy(entity);
+    };
     std::size_t retained = initial;
     for (auto& drop : groundDrops_) {
         auto& count = byRealm[realmIndex(drop.realm)];
         if (count <= kMaxGroundDropsPerRealm) continue;
-        world.destroy(drop.entity);
+        retire(drop.entity);
         drop.entity = NULL_ENTITY;
         --count;
         --retained;
@@ -500,7 +515,7 @@ std::size_t LootSystem::pruneGroundDrops(World& world) {
     for (const auto& drop : groundDrops_) {
         if (retained <= kMaxGroundDrops) break;
         if (drop.entity == NULL_ENTITY) continue;
-        world.destroy(drop.entity);
+        retire(drop.entity);
         --retained;
     }
     return initial - retained;
@@ -681,34 +696,39 @@ void LootSystem::collectReservedDrops(World& world, Entity player, net::Connecti
 void LootSystem::tryCollect(World& world, Entity player, Vec2 playerPosition, Realm playerRealm,
                             double reachSq, Entity candidate, CommandBuffer& commands,
                             EventQueue& events) {
+    if (claimDrop(world, player, playerPosition, playerRealm, reachSq, candidate, events))
+        commands.destroy(candidate);
+}
+
+bool LootSystem::claimDrop(World& world, Entity player, Vec2 playerPosition, Realm playerRealm,
+                           double reachSq, Entity candidate, EventQueue& events) {
     DropItem* drop = world.tryGet<DropItem>(candidate);
-    if (drop == nullptr) return;
+    if (drop == nullptr) return false;
     const Transform* at = world.tryGet<Transform>(candidate);
-    if (at == nullptr) return;
+    if (at == nullptr) return false;
     // A drop on another map is out of reach whatever the numbers say. The
     // broadphase pass only ever finds drops filed under the flower's realm,
     // but the fresh pass walks this tick's drops directly -- so without this
     // a flower standing at the same coordinates on another map, a contributor
     // who changed map on the tick of the kill, took its copy from there.
-    if (at->realm != playerRealm) return;
-    if (distanceSq(at->position, playerPosition) > reachSq) return;
+    if (at->realm != playerRealm) return false;
+    if (distanceSq(at->position, playerPosition) > reachSq) return false;
     const PlayerAccount* taker = world.tryGet<PlayerAccount>(player);
     const net::ConnectionId owner = taker != nullptr ? taker->connection : 0;
     // A bot's body carries no connection; see DropItem::humansOnly.
-    if (drop->humansOnly && owner == 0) return;
-    if (!mayPickUp(*drop, player, owner)) return;
+    if (drop->humansOnly && owner == 0) return false;
+    if (!mayPickUp(*drop, player, owner)) return false;
     if (drop->quantity == 0 || drop->quantity > kMaxStackCount) {
         std::fprintf(stderr, "[loot] rejected invalid ground stack: petal=%u tier=%u quantity=%u\n",
                      static_cast<unsigned>(drop->configIndex),
                      static_cast<unsigned>(rarityIndex(drop->rarity)),
                      static_cast<unsigned>(drop->quantity));
-        commands.destroy(candidate);
-        return;
+        return true;
     }
 
     const Pickup pickup{drop->quantity, player, drop->configIndex, drop->rarity};
     if (drop->riftPrize) {
-        if (!collectRiftPrize || !collectRiftPrize(pickup)) return;
+        if (!collectRiftPrize || !collectRiftPrize(pickup)) return false;
     } else {
         pickups_.push_back(pickup);
         if (onPickup) onPickup(pickup);
@@ -728,7 +748,7 @@ void LootSystem::tryCollect(World& world, Entity player, Vec2 playerPosition, Re
                                    return claimed(drop->pickedUpBy, claim.body, claim.owner);
                                });
     }
-    if (finished) commands.destroy(candidate);
+    return finished;
 }
 
 void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& rng, double nowMillis) {
@@ -1069,7 +1089,6 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
                 hyperEternalPool.push_back(entry.petalIndex);
                 hyperWeights.push_back(hyperEternalDropWeight(entry.rates, content.petal(entry.petalIndex).minRarity));
             }
-        const bool ordinaryTrials = !wave && ordinaryMapLoot && ordinaryMapLoot(realm);
         struct ClaimantRolls {
             int trials;
             int orbTier;
@@ -1081,7 +1100,7 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
             const int bonus=bonusMultiplier
                 ? clamp(bonusMultiplier(claimant),1,3) : 1;
             const int orbTier = visibleGarbage ? kRarityCount : wornOrbTier(world,content,claimant,magicOrb);
-            int rolls = bonusLootTrialsForRarity(mobRarity, bonus, ordinaryTrials);
+            int rolls = bonusLootTrialsForRarity(mobRarity, bonus, visibleGarbage);
             if (hyperKill) {
                 const auto* account = world.tryGet<PlayerAccount>(claimant);
                 const int tenths = hyperRewardTenths(world.get<Bounty>(corpse), claimant,
@@ -1319,7 +1338,8 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
         const auto& mobId = content.mob(mobIndex).id;
         const auto* ambient = world.tryGet<AmbientMob>(corpse);
         const auto* part = world.tryGet<BodySegment>(corpse);
-        if (!anyUltraOrHigher && mobRarity == Rarity::Unique && ordinaryTrials &&
+        if (!anyUltraOrHigher && mobRarity == Rarity::Unique && !wave &&
+            allowsEternalMobFallback && allowsEternalMobFallback(realm) &&
             allowsBossParticipationFloor && allowsBossParticipationFloor(realm) &&
             ambient && ambient->zone != kInvalidIndex && (!part || part->head) &&
             !world.has<Pet>(corpse) && !world.has<InheritedLootClaims>(corpse) &&

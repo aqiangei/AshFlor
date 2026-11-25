@@ -30,11 +30,13 @@ namespace flix {
 
 class Terrain;
 class WorldMaps;
+class SpawnSystem;
 class EventQueue;
 struct SquadEntityIndex;
 
 /// Debits one petal action atomically, including the wearer's sharing, shielding and deferral effects.
 bool spendPetalMana(World& world, Entity player, const SquadEntityIndex* squads, double cost);
+int activeMagicEmeraldTier(const World& world, const ContentRegistry& registry, Entity player);
 struct ShotLanding;
 
 inline constexpr double kToiletPaperBurstMillis = 8000.0;
@@ -280,7 +282,8 @@ public:
     /// inside run() alone, a speed or size petal would not reach movement until
     /// the tick after it was equipped, and movement would spend that tick
     /// stepping the flower at its previous speed.
-    void foldModifiers(World& world, const ContentRegistry& registry, double nowMillis = -1.0);
+    void foldModifiers(World& world, const ContentRegistry& registry, double nowMillis = -1.0,
+                       double dt = 0.0);
 
     /// Wire ids for the entities this system spawns -- petals, projectiles,
     /// pets and ground effects.
@@ -291,6 +294,7 @@ public:
     /// replicated, which is what a headless test wants.
     std::function<std::uint32_t()> allocateNetId;
     const WorldMaps* worldMaps = nullptr;
+    SpawnSystem* spawning = nullptr;
 
     /// Spend one slot outright: take its petals off the ring and start its
     /// reload, exactly as breaking the last of them would.
@@ -366,7 +370,8 @@ private:
         double elementalShieldPerSecond = 0.0;
         double summonRangeBonus = 0.0;
         double summonRangeManaDrain = 0.0;
-        double cutterDamage = 0, cutterUpkeep = 0;
+        double cutterDamage = 0;
+        int magicSapphireTier = -1;
         double nitroManaPerSecond = 0.0;
         Vec2 nitroBoost{};
         bool compassSteer = false;
@@ -405,6 +410,8 @@ private:
                         double nowMillis);
     Aggregate recomputeModifiers(World& world, const ContentRegistry& registry, Entity player,
                                  double nowMillis = -1.0);
+    bool fundWornMagic(World& world, const ContentRegistry& registry, Entity player,
+                       double nowMillis, double dt);
     /// Bank root's armour: one stack per kArmorStackIntervalMillis, capped at
     /// kMaxArmorStacks, and nothing at all for a flower wearing no root.
     ///
@@ -648,7 +655,8 @@ private:
     /// -- is sqrt(2) times as strong.
     int summonPets(World& world, const ContentRegistry& registry, Entity player,
                     std::uint8_t slot, std::uint16_t mobIndex, Rarity rarity, int count, Vec2 at,
-                    PetalSlotState& state, double strength, double expiresAtMillis = 0.0, bool crownSummon = false);
+                    PetalSlotState& state, double strength, double expiresAtMillis = 0.0,
+                    bool crownSummon = false, bool allowTwin = true);
     /// One summoned body, every component a pet carries, at an already
     /// chosen spot and size -- and, if its config has one, its ammunition
     /// ring. summonPets lays chains and broods on top.

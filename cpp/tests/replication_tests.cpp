@@ -1766,6 +1766,67 @@ TEST(snapshot_reports_the_equipped_eggs_hatching_timer) {
     CHECK_EQ(client.self().slotReloadRemainingMillis[2], 0.0);
 }
 
+TEST(arctic_stick_snapshot_reports_its_live_storms_and_next_summon) {
+    std::string error;
+    if (!loadContent(testsupport::dataDir(), error)) { CHECK(false); return; }
+    Fixture f;
+    auto& world = f.world;
+    world.add<Faction>(f.viewer, Faction{Team::Players, false});
+    world.add<PetalRing>(f.viewer);
+    world.add<PlayerModifiers>(f.viewer);
+    const auto branch = content().petalIndex("arctic_stick");
+    const auto snowStick = content().petalIndex("arctic_snow_stick");
+    auto& loadout = world.add<Loadout>(f.viewer);
+    loadout.slots[0] = {branch, Rarity::Common};
+    loadout.slots[1] = {snowStick, Rarity::Common};
+
+    CommandBuffer commands{world};
+    PetalSystem petals;
+    WorldView client;
+    auto step = [&](double now) {
+        petals.run(world, content(), now, net::kTickSeconds, commands);
+        commands.flush();
+    };
+    step(1000);
+    f.tick(client, 1, 1000);
+    CHECK_EQ(client.self().slotCounter[0], 0);
+    CHECK_EQ(client.self().slotCounter[1], 0);
+    CHECK(client.self().slotReloadRemainingMillis[0] > 0);
+    for (int now = 1050; now <= 12000; now += 50) step(now);
+    f.tick(client, 2, 12000);
+    CHECK_EQ(client.self().slotCounter[0], 2);
+    CHECK_EQ(client.self().slotCounter[1], 3);
+    CHECK_EQ(client.self().slotReloadRemainingMillis[0], 0);
+    const auto storms = world.get<PetalSlotState>(f.viewer).slots[0].pets;
+    CHECK_EQ(storms.size(), 2u);
+    if (storms.size() != 2) return;
+    for (Entity storm : storms)
+        CHECK_EQ(world.get<MobType>(storm).configIndex, content().mobIndex("sandstorm"));
+    world.add<Dead>(storms.front());
+    f.tick(client, 3, 12050);
+    CHECK_EQ(client.self().slotCounter[0], 1);
+    CHECK(client.self().slotReloadRemainingMillis[0] > 0);
+    CHECK_EQ(client.self().slotCounter[1], 3);
+
+    const Realm nextMap = worldRealm(1);
+    world.get<Transform>(f.viewer).realm = nextMap;
+    f.tick(client, 4, 12100);
+    CHECK_EQ(client.self().slotCounter[0], 0);
+    CHECK_EQ(client.self().slotCounter[1], 0);
+    for (int now = 12100; now <= 16000; now += 50) step(now);
+    f.tick(client, 5, 16000);
+    CHECK_EQ(client.self().slotCounter[0], 2);
+    CHECK_EQ(client.self().slotCounter[1], 3);
+    CHECK(world.isAlive(storms.back()));
+    CHECK(world.get<Transform>(storms.back()).realm == nextMap);
+
+    world.get<Loadout>(f.viewer).slots[0] = {};
+    step(16050);
+    f.tick(client, 6, 16050);
+    CHECK_EQ(client.self().slotCounter[0], -1);
+    CHECK_EQ(client.self().slotCounter[1], 3);
+}
+
 TEST(a_slot_that_finished_reloading_drops_off_the_wire) {
     // Streamed state, not a one-shot event: the wedge clears because the slot
     // stops being reported, so a client that missed a frame is not left with a
@@ -1881,6 +1942,18 @@ TEST(a_sponge_reports_the_damage_it_is_still_holding) {
     // A petal with no number of its own is not reported, and reads as none --
     // which is -1, not 0: zero is a reading, not an absence.
     CHECK_EQ(client.self().slotCounter[0], -1);
+
+    auto& counter = f.world.get<PetalSlotState>(f.viewer).slots[1].counter;
+    f.world.get<Loadout>(f.viewer).slots[2] = LoadoutSlot{0, Rarity::Common, 0.0, false};
+    f.world.get<PetalSlotState>(f.viewer).slots[2].counter = 19;
+    const double amounts[] = {65533, 65534, 65535, 3200000000.25, 0};
+    for (unsigned i = 0; i < sizeof(amounts) / sizeof(amounts[0]); ++i) {
+        counter = amounts[i];
+        f.tick(client, i + 2, 2050 + 50 * i);
+        CHECK_EQ(client.self().slotCounter[1], std::ceil(counter));
+        CHECK_EQ(client.self().slotCounter[0], -1);
+        CHECK_EQ(client.self().slotCounter[2], 19);
+    }
 }
 
 TEST(an_emptied_sponge_prints_a_standing_zero) {

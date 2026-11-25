@@ -1,5 +1,6 @@
 #include "test.h"
 #include "test_data.h"
+#include "shared/game/zorr_mana.h"
 #include "server/systems/combat.h"
 #include "server/systems/petals.h"
 using namespace flix;
@@ -65,7 +66,7 @@ TEST(magic_eye_eternal_uses_seven_mana_orbs_against_a_super_bee) {
 
     auto& mana = r.w.get<ManaPool>(r.player);
     const double maxMana = mana.max;
-    CHECK_NEAR(maxMana, 103488.0, 1e-6);
+    CHECK_NEAR(maxMana, 103488.0 + kFlowerBaseMana, 1e-6);
     mana.current = maxMana;
     const auto bee = r.mob({5075.0, 5000.0});
     const double health = r.c.mobStats(r.c.mobIndex("bee"), Rarity::Super).health;
@@ -75,7 +76,7 @@ TEST(magic_eye_eternal_uses_seven_mana_orbs_against_a_super_bee) {
     r.commands.flush();
     r.hit(10000.0);
     CHECK_NEAR(r.w.get<ManaPool>(r.player).current, maxMana * 0.75, 1e-6);
-    CHECK_NEAR(health - r.w.get<Health>(bee).current, 2587200.0, 1e-3);
+    CHECK_NEAR(health - r.w.get<Health>(bee).current, maxMana * 25.0, 1e-3);
 }
 
 TEST(practice_dps_tracks_actual_sources_on_one_dummy_and_expires) {

@@ -2079,7 +2079,8 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
         const auto boost = [](double& value, double factor) {
             if (value > 0.0) value *= factor;
         };
-        if (c.id == "golden_leaf") stats.reloadCut += 0.025;
+        // Grow the shared reload bonus after each form has applied its own ratio.
+        boost(stats.reloadCut, 1.10);
         boost(stats.damage, kAscendantPetalDamageScale);
         boost(stats.bodyDamage, kAscendantPetalDamageScale);
         boost(stats.critDamage, kAscendantPetalDamageScale);

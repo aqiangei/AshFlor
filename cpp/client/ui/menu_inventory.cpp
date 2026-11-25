@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "client/ease.h"
+#include "client/render/art_cache.h"
 #include "client/ui/content_i18n.h"
 #include "client/ui/gallery_drop_preview.h"
 #include "client/ui/gallery_map_mobs.h"
@@ -27,6 +28,7 @@
 #include "client/ui/text.h"
 #include "client/ui/text_input.h"
 #include "shared/core/text.h"
+#include "shared/game/chromosome.h"
 #include "shared/game/config.h"
 #include "shared/game/dark_mark.h"
 #include "shared/game/domino.h"
@@ -34,6 +36,7 @@
 #include "shared/game/npc.h"
 #include "shared/game/rarity.h"
 #include "shared/game/summon_combat_stats.h"
+#include "shared/game/zorr_mana.h"
 
 namespace flix {
 
@@ -152,7 +155,8 @@ bool matchesSearch(std::uint16_t petalIndex, const std::string& needle) {
     return lowerCase(petalNameTr(config.id, name.c_str())).find(needle) != std::string::npos ||
            lowerCase(name).find(needle) != std::string::npos ||
            lowerCase(config.id).find(needle) != std::string::npos ||
-           std::string(petalNameZh(config.id)).find(needle) != std::string::npos;
+           std::string_view(petalNameZh(config.id)).find(needle) != std::string_view::npos ||
+           std::string_view(petalSearchAliases(config.id)).find(needle) != std::string_view::npos;
 }
 
 std::vector<bool> mapDropTypes(const MapData& map) {
@@ -201,13 +205,22 @@ void layoutRun(Grid& grid, const std::vector<Cell>& entries, double left, double
 /// carries a petal index alone. Mobs drop no consumables, and the TypeScript
 /// build's speed boosts, health potions and shields became powder, roses and
 /// shells where an account loads (server/db.cpp).
-Grid buildGrid(const Profile& profile, double innerWidth, bool stacked,
+Grid buildGrid(const Profile& profile, double innerWidth, bool stacked, bool sortByCount,
                const std::string& needle, const std::vector<bool>* dropTypes) {
     Grid grid;
     double y = kGridTopPad;
     const auto visible = [&](std::uint16_t petal) {
         return (!dropTypes || (petal < dropTypes->size() && (*dropTypes)[petal])) &&
                matchesSearch(petal, needle);
+    };
+
+    const auto layoutEntries = [&](std::vector<Cell>& entries) {
+        if (sortByCount) {
+            std::stable_sort(entries.begin(), entries.end(), [](const Cell& a, const Cell& b) {
+                return a.count > b.count;
+            });
+        }
+        layoutRun(grid, entries, kGridPadding, innerWidth, y);
     };
 
     if (stacked) {
@@ -235,7 +248,7 @@ Grid buildGrid(const Profile& profile, double innerWidth, bool stacked,
                 break;
             }
         }
-        layoutRun(grid, entries, kGridPadding, innerWidth, y);
+        layoutEntries(entries);
         y += kSectionGap;
         grid.contentHeight = y + kGridTopPad;
         return grid;
@@ -256,7 +269,7 @@ Grid buildGrid(const Profile& profile, double innerWidth, bool stacked,
 
         y += kLabelHeight;
         grid.sections.push_back({rarity, y - kLabelToGrid});
-        layoutRun(grid, entries, kGridPadding, innerWidth, y);
+        layoutEntries(entries);
         y += kSectionGap;
     }
 
@@ -385,19 +398,26 @@ void showTimedHammerExpiry(std::vector<TooltipLine>& lines, const Profile& profi
 /// `reloadScale` -- the Reload talent and the bar's golden leaves -- for the
 /// same reason.
 std::vector<TooltipLine> equippedPetalTooltipLines(std::uint16_t originalIndex,
-        const EquippedPetal& equipped, const SkillSet& skills, double reloadScale, int slot, double triangleBonus, int slotCounter) {
+        const EquippedPetal& equipped, const SkillSet& skills, double reloadScale, int slot, double triangleBonus, double slotCounter) {
     const auto effectiveStats = equippedPetalStats(content(), equipped);
-    const bool copiedSawblade = originalIndex != equipped.configIndex &&
-        content().petal(equipped.configIndex).id == "sawblade";
+    const auto& config = content().petal(equipped.configIndex);
+    const bool copiedSawblade = originalIndex != equipped.configIndex && config.id == "sawblade";
     const bool showHyperTechnique = samePetalTier(equipped.reloadRarity, equipped.rarity) && !copiedSawblade;
     auto lines = petalTooltipLines(equipped.configIndex, equipped.rarity, skills, reloadScale,
                                    slot, triangleBonus, showHyperTechnique, effectiveStats.reloadMillis);
-    if (slotCounter >= 0 && content().petal(equipped.configIndex).id == "magic_bone") {
+    if (slotCounter >= 0 && config.id == "magic_bone") {
         TooltipLine bonus{trEnZh("Current bone multiplier (wild mobs / training dummies): ",
                                 "当前骨头倍率（野怪／训练木桩）：") +
                           oneDecimal(1.0 + slotCounter / 100.0) + "x", 12.0};
         bonus.maxWidth = kTooltipWrapWidth;
         lines.push_back(std::move(bonus));
+    }
+    if (!lines.empty() && slotCounter >= 0 &&
+        (isPermanentSandstormStick(config) || config.id == "arctic_snow_stick")) {
+        const int wanted = configuredSummonCount(config, equipped.rarity, &skills, slot);
+        TooltipLine summons{trEnZh("Summons here: ", "当前地图召唤物：") +
+                            std::to_string(slotCounter) + "/" + std::to_string(wanted), 12.0};
+        lines.insert(lines.begin() + 1, std::move(summons));
     }
     if (originalIndex != equipped.configIndex && !lines.empty()) {
         const auto& original = content().petal(originalIndex);
@@ -674,6 +694,12 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         line.altText =
             std::string(tipPoison()) + exactNumber(pps) + sep + exactNumber(secs) + "s";
         lines.push_back(line);
+        const bool zh = language() == Language::Zh;
+        const bool stacks = contactPoisonStacksByPetal(config.id);
+        lines.push_back({stacks
+            ? (zh ? "接触毒对怪：不同瓣体可叠加，同一瓣体续时。" : "Contact poison on mobs stacks across petals. The same petal refreshes.")
+            : (zh ? "接触毒对怪：同一玩家共用一层，持续更久的替换。" : "Contact poison on mobs shares a layer per player. A later expiry replaces it."), 12.0});
+        lines.push_back({zh ? "对玩家：新毒替换旧毒。" : "On players, new poison replaces existing poison.", 12.0});
     }
 
     // Report the same effective numbers the server uses, including passive
@@ -686,6 +712,15 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         TooltipLine line{std::string(chinese ? zhLabel : enLabel) + (format ? std::string(number) : tooltipStatNumber(value)) + suffix, 12.0};
         line.alpha = 0.72;line.labelColor = kStatGeneric;lines.push_back(line);
     };
+    if (const double upkeep = wornMagicManaPerSecond(config.id, rarity); upkeep > 0.0) {
+        special("持续法力消耗：", "Mana upkeep: ", upkeep, "/s", "%.8g");
+        lines.push_back({chinese ? "装备时持续生效，破碎期间也会耗蓝。蓝量不足时暂停效果。"
+                                 : "Works while equipped, including during reload. Pauses when mana is too low.", 12.0});
+    }
+    if (config.id == "magic_marble") {
+        special("每颗弹珠最多承受的命中次数：", "Maximum hits before shattering: ",
+                kMagicMarbleImpactsBeforeShatter);
+    }
     if (stats.flowerHealthBonus > 0) special("增加花朵生命：+", "Flower health: +", stats.flowerHealthBonus);
     if (magicTomato) {
         char cost[32];
@@ -731,7 +766,6 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     if (config.id == "dna") {
         special("单片每次孵化基础突变概率：", "Base mutation chance per hatch with one DNA: ",
                 kDnaChancePerSource * 100.0, "%");
-        special("孵化突变概率上限：", "Hatch mutation chance cap: ", kDnaChanceCap * 100.0, "%");
     }
     if (config.id == "oxygen" || config.id == "void_cyanide") {
         if (config.id == "oxygen")
@@ -797,8 +831,9 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         lines.push_back(burn);
         special("燃烧持续时间：", "Burn duration: ", kFireBombBurnMillis / 1000.0, "s");
         special("燃烧半径：", "Burn radius: ", fireBombRadius(config, rarity) + explosionReach);
-        special("同一玩家对单个目标的叠火上限：", "Max stacks per player on one target: ",
-                kFireBombBurnLayers);
+        if (config.id != "magic_void_fire_bomb")
+            special("同一玩家对单个目标的叠火上限：", "Max stacks per player on one target: ",
+                    kFireBombBurnLayers);
     }
     if (config.spill.kind != SpillKind::None) {
         special("基础最大半径：", "Base maximum pool radius: ", spillBaseRadius(config.spill, rarity), "", "%.8g");
@@ -807,7 +842,8 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         const double radius = spillBaseRadius(config.spill, rarity);
         if (const double reach = skills.effectScale(SkillId::FluidReach); reach > 1.0)
             special("流体半径（仅计天赋）：", "Spill radius with talent only: ", radius * reach);
-        special("液池持续：", "Pool lifetime: ", config.spill.durationMillis / 1000.0, "s");
+        special("液池持续：", "Pool lifetime: ", spillLifetimeMillis(config.spill) / 1000.0, "s");
+        special("每朵花同时铺池上限：", "Active pools per flower: ", kFluidPoolLimit);
         if (!config.spill.onHit && config.spill.chargeMillis > 0.0) {
             const double rate = skills.effectScale(SkillId::SpillRate) * skills.effectScale(SkillId::SecondaryReload);
             special("铺池准备时间：", "Pool charge time: ",
@@ -842,7 +878,7 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
                 special("专属酸池伤害/秒：", "Pool damage per second with technique: ",
                         basePoolDamage * technique->amount);
                 TooltipLine duration{std::string(chinese ? "酸池持续时间：" : "Pool duration: ") +
-                                     reloadSeconds(config.spill.durationMillis), 12.0};
+                                     reloadSeconds(spillLifetimeMillis(config.spill)), 12.0};
                 duration.alpha = 0.72;
                 duration.labelColor = kStatGeneric;
                 lines.push_back(duration);
@@ -850,11 +886,22 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         }
     }
     if (config.id == "void_soap") {
-        special("液池最大半径：+", "Maximum pool radius: +", soapCoverageBonus(rarity) * 100.0, "%");
-        special("最大半径叠加上限：+", "Maximum radius bonus cap: +", kMaxSoapCoverageBonus * 100.0, "%");
+        special("前两块各自增加液池半径：+", "Pool radius per soap for the first two: +", soapCoverageBonus(rarity) * 100.0, "%");
         special("液池扩散速度：+", "Liquid spread speed: +", soapSpillRateBonus(rarity) * 100.0, "%", "%.8g");
-        lines.push_back({chinese ? "多块肥皂的速度加成相加。"
-                                 : "Spread speed bonuses from equipped soaps add together.", 12.0});
+        TooltipLine stacking{chinese ? "按肥皂强度排序。第三块起，依次获得各自半径加成的 1/2、1/3、1/4……扩散速度直接相加。"
+                                    : "Strongest soaps count first. From the third soap onward, radius bonuses contribute 1/2, 1/3, 1/4, and so on. Spread speed adds up.", 12.0};
+        stacking.maxWidth = kTooltipWrapWidth;
+        lines.push_back(std::move(stacking));
+    }
+    if (config.id == "spikeball" || config.id == "arctic_pinecone") {
+        const double burst = stats.damage * damageScale;
+        special("每次散射针数：", "Needles per burst: ", spikeballNeedleCount(config));
+        special("单针伤害：", "Damage per needle: ", burst / spikeballNeedleCount(config));
+        special("全针命中合计：", "All needles combined: ", burst);
+    }
+    if (config.id == "opal" || config.id == "void_opal" || config.id == "ruby") {
+        lines.push_back({chinese ? "主栏被动：破碎装填时仍生效，移出主栏后结束。"
+                                 : "Active-slot passive: stays active during reload and ends when removed.", 12.0});
     }
     if (stats.flowerRadiusBonus > 0) special("增加花朵半径：+", "Flower radius: +", stats.flowerRadiusBonus);
     if (stats.summonRangeBonus > 0) special("召唤物追击范围：+", "Summon pursuit range: +", stats.summonRangeBonus);
@@ -879,7 +926,13 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
                                  : "Reload time +5%. Only the strongest durability bonus from Dead Leaf or Golden Cactus applies.", 12.0});
     }
     if (stats.modifiers.attackRange > 0) special("攻击范围：+", "Attack range: +", stats.modifiers.attackRange);
-    if (stats.modifiers.magnetism > 0) special("拾取范围：+", "Pickup range: +", stats.modifiers.magnetism);
+    if (config.id == "ring_magnet") {
+        special("牵引半径：", "Pull radius: ", stats.modifiers.magnetism);
+        lines.push_back({chinese ? "普通磁铁扩大直接拾取范围；戒指的牵引半径单独计算。"
+                                 : "Normal magnets extend direct pickup range. The ring has its own pull radius.", 12.0});
+    } else if (stats.modifiers.magnetism > 0) {
+        special("拾取范围：+", "Pickup range: +", stats.modifiers.magnetism);
+    }
     if (config.id == "flower") {
         const auto glitchFlower = content().mobIndex("glitch_flower");
         if (glitchFlower != kInvalidIndex) {
@@ -917,6 +970,12 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         special("召唤物接触伤害：", "Summon contact damage: ",
                 summon.damage * summonScale * summon.petDamageScale * summonDamageScale(config, rarity) * configuredSummonDamageScale(config, rarity) *
                 skills.effectScale(SkillId::PetDamage));
+        if (isPermanentSandstormStick(config) || config.id == "arctic_snow_stick") {
+            TooltipLine use{trEnZh("Equip in an active slot to summon automatically. Leave room under the pet cap.",
+                                  "放入主装备栏后自动召唤。召唤已满时，需要先腾出名额。"), 12.0};
+            use.maxWidth = kTooltipWrapWidth;
+            lines.push_back(std::move(use));
+        }
         if(apex && petalIsEgg(config))lines.push_back({chinese?"H护甲：己方召唤物受到不高于蛋稀有度的野怪体伤时，单次最多损失35%最大生命；不抵挡玩家、毒素或技能。":"H escort armour: wild body hits up to the egg tier deal at most 35% of summon max health per hit; no protection from players, poison or abilities.",12.0});
         if(config.id=="egg"||config.id=="beetle_egg")lines.push_back({chinese?"蛋壳不造成接触伤害；蛋壳破碎不会收回已孵化召唤物。":"The shell deals no contact damage; breaking it does not recall hatched pets.",12.0});
         if (config.petLifetimeMillis > 0) special("召唤持续：", "Summon lifetime: ", config.petLifetimeMillis / 1000.0, "s");
@@ -974,6 +1033,10 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         if (ladderRarity(rarity)==Rarity::Apex) {
             special("腐化光环半径：", "Corruption aura radius: ", kHyperCorruptionRadius);
             lines.push_back({chinese ? "装备时影响同地图范围内20级及以上玩家；离开即解除，不连锁传播。" : "While worn, affects nearby level 20+ flowers in the same realm; ends on leaving, never chains.",12.0});
+            special("卸下后的破绽：", "Exposure after unequipping: ",
+                    kHyperCorruptionExposureMillis / 1000.0, "s");
+            lines.push_back({chinese ? "卸下时光环消失，自己仍会短暂暴露，可被先前受到腐化影响的玩家反击。"
+                                     : "Unequipping ends the aura and briefly leaves you vulnerable to retaliation by flowers affected by it.",12.0});
         }
         if (rarity == Rarity::Ascendant) {
             lines.push_back({chinese ? "装备 Apex 腐化时仍可使用绷带续命。" : "Bandage can still work while wearing Apex Corruption.",12.0});
@@ -1022,11 +1085,9 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     if (stats.spongeDamageDurationMillis > 0)
         special("伤害分摊时间：", "Damage spread duration: ", stats.spongeDamageDurationMillis / 1000.0, "s");
     if (config.id == "chromosome") {
-        TooltipLine repair{std::string(chinese ? "展开花瓣耐久回复：" : "Deployed petal repair: ") +
-                               oneDecimal(petalHealScale(rarity)) + (chinese ? " / 秒" : " / s"), 12.0};
-        repair.alpha = 0.72;
-        repair.labelColor = kStatGeneric;
-        lines.push_back(std::move(repair));
+        special("每槽单次修复上限：", "Repair per slot per pulse: ", chromosomeRepairPerPulse(rarity));
+        special("每槽耐久比例上限：", "Slot durability cap: ",
+                kChromosomeRepairHealthCap * 100.0, chinese ? "%（至少保留基础修复量）" : "% (at least base repair)");
     }
     if (config.id == "magic_bone") {
         TooltipLine stacking{chinese
@@ -1069,6 +1130,10 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     }
     if (stats.modifiers.poisonArmor > 0) special("毒抗：", "Poison armor: ", stats.modifiers.poisonArmor);
     if (config.projectile.present) {
+        if (config.id == "marble" || config.id == "magic_marble") {
+            const double wait = config.id == "marble" ? kMarblePreparationMillis : kMagicMarblePreparationMillis;
+            special("装填完成后发射准备：", "Shot preparation after reload: ", wait / 1000.0, "s");
+        }
         if (config.id == "mecha_missile") {
             special("单发伤害：", "Damage per missile: ", baseDamage * skills.effectScale(SkillId::PetDamage));
             lines.push_back({chinese ? "单发伤害随召唤物伤害天赋提升。" :
@@ -1121,6 +1186,10 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
             config.radiation.poisonPerSecond;
         if (poison > 0.0)
             special("基础辐射毒伤/秒：", "Base radiation poison per second: ", poison * referenceOffenseScale(config, rarity) * kRadiationDamageScale);
+        if (poison > 0.0 || config.id == "uranium") {
+            lines.push_back({chinese ? "辐射毒对怪：同一玩家共用一层，不同玩家可叠加。"
+                                     : "Radiation poison on mobs shares a layer per player. Different players stack.", 12.0});
+        }
         if (config.radiation.burnDamage > 0.0) {
             const double baseBurn = config.radiation.burnDamage * referenceOffenseScale(config, rarity) *
                 kRadiationDamageScale;
@@ -1340,10 +1409,6 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         refund.alpha = 0.72;
         refund.labelColor = kStatGeneric;
         lines.push_back(refund);
-        if (fang) {
-            lines.push_back({chinese ? "需要先装备提供最大法力的花瓣，例如魔力宝珠。"
-                                     : "Requires a petal that grants max mana, such as Mana Orb.", 12.0});
-        }
     }
 
     if (stats.petalEvasion > 0.0) {
@@ -1459,6 +1524,7 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
 } // namespace ui
 
 struct InventoryPanel::LayoutCache {
+    double lastPaintScroll = -1;
     Grid grid;
     const WorldMaps* dropMapSource = nullptr;
     std::vector<const MapData*> dropMaps;
@@ -1466,6 +1532,7 @@ struct InventoryPanel::LayoutCache {
     std::string search;
     double width = -1;
     bool stacked = false;
+    bool sortByCount = false;
     Language lang = Language::Zh;
     const std::vector<bool>* drops = nullptr;
 
@@ -1479,7 +1546,7 @@ struct InventoryPanel::LayoutCache {
             std::equal(stacks.begin(), stacks.end(), profile.inventory.begin(),
                        profile.inventory.end(), sameStack)) return grid;
 
-        grid = buildGrid(profile, nextWidth, nextStacked, trimmed(lowerCase(nextSearch)), nextDrops);
+        grid = buildGrid(profile, nextWidth, nextStacked, sortByCount, trimmed(lowerCase(nextSearch)), nextDrops);
         stacks = profile.inventory;
         width = nextWidth;
         stacked = nextStacked;
@@ -1775,11 +1842,26 @@ bool InventoryPanel::render(MenuContext& ctx) {
         text(canvas, label, (left.right() + right.x) * 0.5, left.y + left.h * 0.5, style);
     }
 
+    constexpr double inventoryHeaderHeight = kHeaderHeight + 26.0;
+    const Rect sortButton{gridLeft, panel.y + inventoryHeaderHeight - 25.0, 152.0, 24.0};
+    const bool sortHovered = sortButton.contains(mouse);
+    if (sortHovered && ctx.pressed()) {
+        layout_->sortByCount = !layout_->sortByCount;
+        layout_->width = -1;
+        scroll_.offset = 0.0;
+        tooltipDelay.reset();
+        touchInspect.reset();
+    }
+    const char* order = layout_->sortByCount ? trEnZh("Sort: Quantity", "排序：数量")
+                                            : trEnZh("Sort: Default", "排序：默认");
+    drawSlotButton(canvas, sortButton, order, kInventorySkin.fill,
+                   sortHovered, sortHovered && ctx.pressed());
+
     // --- content -----------------------------------------------------------
-    const Rect view{panel.x + kMenuBorder, panel.y + kHeaderHeight, panel.w - kMenuBorder * 2,
-                    std::max(0.0, panel.bottom() - (panel.y + kHeaderHeight) - kMenuBorder)};
+    const Rect view{panel.x + kMenuBorder, panel.y + inventoryHeaderHeight, panel.w - kMenuBorder * 2,
+                    std::max(0.0, panel.bottom() - (panel.y + inventoryHeaderHeight) - kMenuBorder)};
     const double visibleH =
-        std::max(0.0, panel.bottom() - (panel.y + kHeaderHeight) - kViewBottomPad);
+        std::max(0.0, panel.bottom() - (panel.y + inventoryHeaderHeight) - kViewBottomPad);
     const double innerWidth = panel.w - kGridPadding - kGridGutter;
     // Leading and trailing whitespace is dropped before matching: the browser
     // trims the field's value, so a stray space must not filter the grid
@@ -1854,12 +1936,15 @@ bool InventoryPanel::render(MenuContext& ctx) {
     const bool touchScrolling = ctx.window.touchScrolling();
     if (panel.contains(mouse) && mouse.y >= view.y && !drag.active &&
         !(touchPointer && touchScrolling) && !track.contains(mouse)) {
-        for (std::size_t i = 0; i < grid.cells.size(); ++i) {
-            const Cell& cell = grid.cells[i];
+        const double localY = mouse.y - originY;
+        const auto row = std::lower_bound(grid.cells.begin(), grid.cells.end(), localY,
+            [](const Cell& cell, double y) { return cell.rect.bottom() < y; });
+        for (auto it = row; it != grid.cells.end() && it->rect.y <= localY; ++it) {
+            const Cell& cell = *it;
             const Rect rect{originX + cell.rect.x, originY + cell.rect.y, cell.rect.w,
                             cell.rect.h};
             if (!rect.contains(mouse)) continue;
-            hovered = static_cast<int>(i);
+            hovered = static_cast<int>(it - grid.cells.begin());
             hoveredRect = rect;
             break;
         }
@@ -1912,6 +1997,10 @@ bool InventoryPanel::render(MenuContext& ctx) {
         canvas.setLineCap("butt");
     }
 
+#ifdef __EMSCRIPTEN__
+    const bool settled = layout_->lastPaintScroll == scroll_.offset;
+    layout_->lastPaintScroll = scroll_.offset;
+#endif
     const auto firstVisible = std::lower_bound(grid.cells.begin(), grid.cells.end(), view.y - originY,
         [](const Cell& cell, double top) { return cell.rect.bottom() < top; });
     for (auto it = firstVisible; it != grid.cells.end(); ++it) {
@@ -1932,6 +2021,22 @@ bool InventoryPanel::render(MenuContext& ctx) {
         // No hover wash: the pointer turning into a hand is what says a cell
         // can be picked up (below), and the tile itself stays its own colour.
         tile.timeSeconds = ctx.timeSeconds;
+#ifdef __EMSCRIPTEN__
+        if (settled && Fonts::ready() && !ctx.sprites.petalAnimated(cell.petalIndex)) {
+            // Only inventory cells have this fixed appearance. The padding
+            // includes the tilted count badge outside the upper corner.
+            static const char inventoryArt = 0;
+            const std::uint32_t count = tile.badge.empty() ? 0 : cell.count;
+            const std::uint64_t variant = (std::uint64_t{count} << 32) |
+                (static_cast<std::uint64_t>(language()) << 24) |
+                (static_cast<std::uint64_t>(cell.rarity) << 16) | cell.petalIndex;
+            const double pad = rect.w * 0.25;
+            if (drawCachedPicture(canvas, &inventoryArt, variant, rect.x - pad, rect.y - pad,
+                                  rect.w + 2 * pad, rect.h + 2 * pad, [&](Canvas& bitmap) {
+                    drawItemTile(bitmap, ctx.sprites, {pad, pad, rect.w, rect.h}, tile);
+                })) continue;
+        }
+#endif
         drawItemTile(canvas, ctx.sprites, rect, tile);
     }
     canvas.restore();

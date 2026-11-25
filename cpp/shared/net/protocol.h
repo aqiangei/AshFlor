@@ -27,7 +27,7 @@ using ConnectionId = std::uint32_t;
 // Version 128: snapshot update records are smaller. The mask is a varint with
 // the common fields in its low seven bits, a short move is two bytes, and the
 // state byte carries only the bits a client draws from.
-inline constexpr std::uint16_t kProtocolVersion = 148; // Adds two radiative talent branch IDs.
+inline constexpr std::uint16_t kProtocolVersion = 149; // Extends large loadout counters.
 inline constexpr std::size_t kBossDamageRows = 3;
 inline constexpr std::size_t kBossDamageTargets = 6;
 inline constexpr std::uint32_t kBossDamageOwnUnavailable = UINT32_MAX;
@@ -716,7 +716,7 @@ struct InputFrame {
 /// How many of the viewer's own slots a snapshot can report on.
 ///
 /// The block is written as
-/// `u8 count, { u8 slot, u16 reloadRemainingMillis, u8 healthFraction, u16 counter }*`
+/// `u8 count, { u8 slot, u16 reloadRemainingMillis, u8 healthFraction, u16 counter, [f64 largeCounter] }*`
 /// rather than a fixed entry per slot, because a bar of untouched petals is by
 /// far the common case and costs one byte that way. A slot appears when it is
 /// reloading, when it is damaged, when it has a counter to print, or any
@@ -738,8 +738,9 @@ inline constexpr std::uint8_t kMaxReportedSlots = 10;
 
 /// A slot entry's `counter` when the petal in it has no number to print.
 /// Sentinel rather than zero, because zero is a number a sponge really does
-/// hold. A counter at the sentinel's own value is clamped one below it.
+/// hold. kWideSlotCounter precedes a full-size counter when needed.
 inline constexpr std::uint16_t kNoSlotCounter = 0xFFFFu;
+inline constexpr std::uint16_t kWideSlotCounter = 0xFFFEu;
 
 /// Which of the viewer's own figures a snapshot restates. Each is sent when it
 /// differs from what this viewer was last sent, and in full on the first

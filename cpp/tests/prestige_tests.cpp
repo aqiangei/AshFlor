@@ -1219,33 +1219,42 @@ TEST(jurassic_links_both_jungles_and_stocks_all_fifteen_species) {
 
     bool found = false;
     constexpr int side = 100;
-    for (const auto& [id, expectedWalls] : {
-             std::pair{"jurassic", 5083}, {"jurassic_pangea", 6175}, {"jurassic_tectonics", 5661}}) {
+    struct Layout {
+        const char* id;
+        int wallTiles;
+        std::uint32_t tileHash;
+        std::uint32_t centreCollisionHash;
+    };
+    for (const auto& [id, expectedWalls, tileHash, centreHash] : {
+             Layout{"jurassic", 5083, 1962760074u, 793317559u},
+             Layout{"jurassic_pangea", 6175, 3646136026u, 3094947141u},
+             Layout{"jurassic_tectonics", 5661, 2681293992u, 3282578394u}}) {
         const Realm realm = maps.realmOfId(id, found);
         CHECK(found);
         if (!found) continue;
         const auto* layout = maps.forRealm(realm);
         CHECK_EQ(layout->width(), side);
         CHECK_EQ(layout->height(), side);
-        // The original client paints the set bits as paths. Compare every
-        // effective collision cell, including both prestige twins.
-        const std::string idText = id;
-        const std::uint32_t sourceMaskHash = idText == "jurassic" ? 1962760074u
-            : idText == "jurassic_pangea" ? 3646136026u : 2681293992u;
+        // The tile grid records which cells have walls. The authored polygons
+        // inside those cells can still leave their centres open.
         for (int level : {0, 1, 2}) {
             const Realm current = level == 0 ? realm : maps.prestigeRealm(realm, found, level);
             CHECK(found);
             int walls = 0;
             std::uint32_t maskHash = 2166136261u;
+            std::uint32_t collisionHash = 2166136261u;
             for (int y = 0; y < side; ++y) {
                 for (int x = 0; x < side; ++x) {
+                    const bool wall = terrain.atTile(x, y, current) == Tile::Solid;
                     const bool blocked = terrain.blocked(Terrain::tileCenter(x, y), current);
-                    walls += blocked;
-                    maskHash = (maskHash ^ static_cast<std::uint32_t>(blocked)) * 16777619u;
+                    walls += wall;
+                    maskHash = (maskHash ^ static_cast<std::uint32_t>(wall)) * 16777619u;
+                    collisionHash = (collisionHash ^ static_cast<std::uint32_t>(blocked)) * 16777619u;
                 }
             }
             CHECK_EQ(walls, expectedWalls);
-            CHECK_EQ(maskHash, sourceMaskHash);
+            CHECK_EQ(maskHash, tileHash);
+            CHECK_EQ(collisionHash, centreHash);
         }
         const Vec2 spawn = layout->defaultSpawn(rng, terrain);
         CHECK(!terrain.resolveWall(spawn, kPlayerBaseRadius, realm).collided);
@@ -1475,7 +1484,9 @@ TEST(jurassic_original_ground_and_rock_wall_render_in_game) {
     CHECK(foundWall);
     const auto wall = pixel(wallCell);
     CHECK(soil.size() == 4 && soil[0] > soil[1] && soil[1] > soil[2] && soil[2] > 0);
-    CHECK(wall.size() == 4 && wall[0] == wall[1] && wall[1] == wall[2] && wall[0] >= 90);
+    // The sediment texture has a muted olive palette across all sixteen wall tiles.
+    CHECK(wall.size() == 4 && wall[0] >= 90 && wall[1] >= wall[0] &&
+          wall[1] - wall[0] <= 6 && wall[1] - wall[2] >= 16 && wall[1] - wall[2] <= 26);
 #endif
 }
 
@@ -1821,13 +1832,12 @@ TEST(guild_deputies_can_invite_but_cannot_manage_or_transfer) {
     outsider.requestGuildAccept();
     CHECK(h.stepUntil(clients, [&] { return outsider.guild().joined; }));
     boss.sendChat("/guild-deputy outsider");
-    h.step(10, clients);
-    CHECK(boss.guild().deputies == bothDeputies);
+    const std::vector<std::string> allDeputies{"deputy", "guest", "outsider"};
+    CHECK(h.stepUntil(clients, [&] { return boss.guild().deputies == allDeputies; }));
     boss.sendChat("/guild-transfer guest");
     CHECK(h.stepUntil(clients, [&] { return boss.guild().leader == "guest"; }));
-    CHECK(boss.guild().deputies == firstDeputy);
-    guest.sendChat("/guild-deputy outsider");
-    CHECK(h.stepUntil(clients, [&] { return boss.guild().deputies.size() == 2; }));
+    const std::vector<std::string> remainingDeputies{"deputy", "outsider"};
+    CHECK(boss.guild().deputies == remainingDeputies);
     guest.sendChat("/guild-undeputy outsider");
     CHECK(h.stepUntil(clients, [&] { return boss.guild().deputies == firstDeputy; }));
     deputy.requestGuildLeave();
@@ -4329,7 +4339,7 @@ TEST(practice_history_round_trips_real_timed_trial_and_publication) {
 TEST(zorr_dna_hatches_bio_and_other_eggs_at_the_actual_tier) {
     const auto& registry = shippedContent();
     const auto trial = [&](const char* id, Rarity eggTier, Rarity dnaTier,
-                           Rarity normal, bool hasDna, bool canPromote) {
+                           Rarity normal, int dnaCopies, Rarity promoted, int minUpgrades, int maxUpgrades) {
         World world;
         CommandBuffer commands{world};
         PetalSystem petals;
@@ -4346,7 +4356,9 @@ TEST(zorr_dna_hatches_bio_and_other_eggs_at_the_actual_tier) {
         CHECK(eggIndex < registry.petalCount());
         if (eggIndex >= registry.petalCount()) return;
         bar[0] = {eggIndex, eggTier};
-        if (hasDna) bar[1] = {registry.petalIndex("dna"), dnaTier};
+        for (int slot = 1; slot <= dnaCopies; ++slot) {
+            bar[slot] = {registry.petalIndex("dna"), dnaTier};
+        }
 
         int checked = 0, upgraded = 0;
         for (int tick = 1; tick < 10000 && checked < 4000; ++tick) {
@@ -4355,28 +4367,32 @@ TEST(zorr_dna_hatches_bio_and_other_eggs_at_the_actual_tier) {
             for (const Entity entity : Query<Pet, MobType>{world}.collect()) {
                 const auto& type = world.get<MobType>(entity);
                 if (type.configIndex == registry.petal(eggIndex).petMobIndex) {
-                    const bool higher = rarityIndex(type.rarity) == rarityIndex(normal) + 1;
-                    CHECK(type.rarity == normal || (higher && canPromote));
+                    const bool higher = promoted != normal && type.rarity == promoted;
+                    CHECK(type.rarity == normal || higher);
                     upgraded += higher;
                     ++checked;
                 }
                 world.destroy(entity);
             }
         }
-        std::printf("DNA %s egg=%d dna=%d hatch=%d total=%d upgraded=%d\n",
-                    id, rarityIndex(eggTier), hasDna ? rarityIndex(dnaTier) : -1,
+        std::printf("DNA %s egg=%d dna=%d copies=%d hatch=%d total=%d upgraded=%d\n",
+                    id, rarityIndex(eggTier), rarityIndex(dnaTier), dnaCopies,
                     rarityIndex(normal), checked, upgraded);
         CHECK(checked >= 4000);
-        if (canPromote) CHECK(upgraded >= 8 && upgraded <= 40);
-        else CHECK_EQ(upgraded, 0);
+        CHECK(upgraded >= minUpgrades && upgraded <= maxUpgrades);
     };
-    trial("bio_bacteria_egg", Rarity::Rare, Rarity::Rare, Rarity::Rare, true, true);
-    trial("arctic_spider_egg", Rarity::Mythic, Rarity::Mythic, Rarity::Legendary, true, true);
-    trial("arctic_spider_egg", Rarity::Mythic, Rarity::Legendary, Rarity::Legendary, true, false);
-    trial("arctic_spider_egg", Rarity::Mythic, Rarity::Mythic, Rarity::Legendary, false, false);
-    trial("bio_bacteria_egg", Rarity::Unique, Rarity::Unique, Rarity::Unique, true, true);
-    trial("bio_bacteria_egg", Rarity::Unique, Rarity::PermanentHyper, Rarity::Unique, true, true);
-    trial("bio_bacteria_egg", Rarity::Apex, Rarity::Apex, Rarity::Apex, true, false);
+    trial("bio_bacteria_egg", Rarity::Rare, Rarity::Rare, Rarity::Rare, 1, Rarity::Epic, 20, 65);
+    trial("arctic_spider_egg", Rarity::Mythic, Rarity::Mythic, Rarity::Legendary, 1, Rarity::Mythic, 20, 65);
+    trial("arctic_spider_egg", Rarity::Mythic, Rarity::Legendary, Rarity::Legendary, 1, Rarity::Mythic, 0, 0);
+    trial("arctic_spider_egg", Rarity::Mythic, Rarity::Mythic, Rarity::Legendary, 0, Rarity::Mythic, 0, 0);
+    trial("bio_bacteria_egg", Rarity::Unique, Rarity::Unique, Rarity::Unique, 1, Rarity::Apex, 20, 65);
+    trial("bio_bacteria_egg", Rarity::Unique, Rarity::PermanentHyper, Rarity::Unique, 1, Rarity::Apex, 20, 65);
+    trial("jurassic_tyrannosaurus_egg", Rarity::PermanentHyper, Rarity::PermanentHyper,
+          Rarity::Apex, 1, Rarity::Ascendant, 20, 65);
+    trial("jurassic_tyrannosaurus_egg", Rarity::PermanentHyper, Rarity::PermanentHyper,
+          Rarity::Apex, 8, Rarity::Ascendant, 245, 410);
+    trial("jurassic_tyrannosaurus_egg", Rarity::Ascendant, Rarity::Ascendant,
+          Rarity::Ascendant, 8, Rarity::Ascendant, 0, 0);
 }
 
 TEST(zorr_bio_blood_cells_fire_their_own_ammo) {
@@ -4421,5 +4437,33 @@ TEST(zorr_bio_blood_cells_fire_their_own_ammo) {
             });
         }
         CHECK_EQ(shots, white ? 4 : 3);
+    }
+}
+
+TEST(deep_imported_bands_offer_eternals_only_after_prestige_two_promotion) {
+    WorldMaps maps;
+    std::string error;
+    CHECK(maps.load(dataDir(), nullptr, error));
+    for (const std::string stem : {"jurassic", "jurassic_pangea", "jurassic_tectonics",
+                                   "bio", "bio_micro", "bio_lab", "zorr_void", "zorr_arctic"}) {
+        for (const std::string prefix : {"", "prestige_", "prestige_2_"}) {
+            bool found = false;
+            const auto realm = maps.realmOfId(prefix + stem, found);
+            CHECK(found);
+            if (!found) continue;
+            const auto& elements = maps.forRealm(realm)->elements();
+            double deepest = 0.0;
+            for (const auto& band : elements) {
+                if (band.isSpawnBand() && !band.singular && band.forceRarity < 0)
+                    deepest = std::max(deepest, band.difficulty);
+            }
+            const auto mix = tierMixForDifficulty(deepest);
+            if (prefix == "prestige_2_" || (prefix == "prestige_" && stem.rfind("jurassic", 0) == 0)) {
+                CHECK(mix.upper == Rarity::Ultra);
+                CHECK(mix.upperChance > 0.02 && mix.upperChance < 0.04);
+            } else {
+                CHECK(mix.upper < Rarity::Ultra);
+            }
+        }
     }
 }

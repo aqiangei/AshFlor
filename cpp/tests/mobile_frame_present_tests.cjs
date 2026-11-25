@@ -21,6 +21,24 @@ function body(name){const a=source.indexOf('EM_JS(',source.indexOf(name)-20),b=s
   });
   assert.equal(result.buffered,mobile);assert.equal(result.before,'0,255,0');assert.equal(result.after,'255,0,0');assert.equal(result.resets,0);
   if(mobile){assert.equal(result.middle,'0,255,0');assert.equal(result.white,'0,255,0');}
+  await page.addScriptTag({content:`window.drop=function(id){${body('c2d_destroy')}};`});
+  const lifetime = await page.evaluate(() => {
+   const held = [];
+   for (let round = 0; round < 16; ++round) {
+    const ids = Array.from({length: 8}, () => make('',256,256,1,0));
+    if (new Set(ids).size !== ids.length) throw Error('overlapping active canvas slots');
+    for (const id of ids) {
+     const item = Module.cppCanvasContexts[id];
+     item.ctx.fillRect(0,0,1,1);
+     held.push(item.surface);
+     drop(id);
+    }
+   }
+   drop(0);
+   return {slots:Module.cppCanvasContexts.length, cleared:held.filter(s=>!s.width&&!s.height).length,
+           screen:document.querySelector('#game').width};
+  });
+  assert.deepEqual(lifetime,{slots:9,cleared:128,screen:64});
   await page.close();
  }}finally{await browser.close();}
  console.log('PASS: mobile black/white intermediate frames stay offscreen; desktop and fallback present without resetting the visible canvas.');

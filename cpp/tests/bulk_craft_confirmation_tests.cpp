@@ -229,7 +229,7 @@ TEST(craftable_filter_skips_understocked_rows_and_crafts_an_eligible_batch) {
     const double filterX = bounds.right() - 12 - 66;
     const double filterY = layout.listView.y + 82 + 14;
     const int column = rarityIndex(Rarity::Unique) + 1;
-    const double gridWidth = (column + 1) * 70.0 + 16;
+    const double gridWidth = (column + 2) * 70.0 + 16; // Apex follows the permanent-hyper cell.
     const double fragmentX = bounds.x + (bounds.w - gridWidth) * .5 + 35 + 70 * column;
     const double craftWidth = ui::measure("Craft", 16) + 26;
     const double pairWidth = craftWidth + 8 + ui::measure("Craft All", 16) + 26;
