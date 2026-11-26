@@ -84,7 +84,7 @@ inline bool shopSellsRarity(Rarity rarity) {
 inline bool shopSellsPetal(std::uint16_t petalIndex) {
     if (petalIndex >= content().petalCount()) return false;
     const PetalConfig& petal = content().petal(petalIndex);
-    if (petal.isAdminPetal) return false;
+    if (petal.isAdminPetal || petal.id == "poker_chip") return false;
     // Fission keeps its Eternal minimum and is the only dedicated-source
     // petal explicitly included in this rotation.
     const bool fission = petal.id == "fission";

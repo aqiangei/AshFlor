@@ -4272,7 +4272,7 @@ TEST(a_contributor_may_take_a_reserved_drop_at_once) {
     // The hidden common drop still has its pickup cue id and reservation.
     CHECK(world.has<NetId>(drop));
     CHECK(!world.has<Replicated>(drop));
-    CHECK_NEAR(world.get<Lifetime>(drop).remainingSeconds, 8.0, 1e-12);
+    CHECK_NEAR(world.get<Lifetime>(drop).remainingSeconds, 20.0, 1e-12);
     const std::uint32_t dropNetId = world.get<NetId>(drop).value;
 
     rebuildGrid(world, grid);

@@ -74,6 +74,10 @@ EM_JS(void, c2d_destroy, (int id), {
   Module.cppCanvasContexts[id] = null;
   Module.cppCanvasFreeContexts.push(id);
 });
+EM_JS(bool, c2d_can_draw, (int id), {
+  const ctx = Module.cppCanvasContexts?.[id]?.ctx;
+  return !!ctx && !ctx.isContextLost?.();
+});
 EM_JS(void, c2d_present, (int id, const char* target), {
   const item = Module.cppCanvasContexts[id], name = UTF8ToString(target);
   let canvas = document.getElementById(name);
@@ -110,6 +114,7 @@ EM_JS(void, c2d_flush, (int id, const int* ops, int count, const char* text, con
   const x = Module.cppCanvasContexts[id].ctx, S = Module.cppCanvasStrings || [""];
   // Read here, not hoisted: ALLOW_MEMORY_GROWTH detaches the views on a grow.
   const F = HEAPF32, I = HEAP32;
+  let batchStart = 0;
   for (let n = 0, p = ops >> 2; n < count; n++, p += 10) {
     const s = S[I[p+9]];
     switch(I[p]) {
@@ -128,6 +133,7 @@ EM_JS(void, c2d_flush, (int id, const int* ops, int count, const char* text, con
       // only that carries a payload; the redraws are most of them and stay in
       // the buffer with everything else.
       case 50:{const P=Module.cppCanvasPaths.get(I[p+9]);if(P){const r=F[p+2]?'evenodd':'nonzero';F[p+1]===0?x.fill(P,r):F[p+1]===1?x.stroke(P):x.clip(P,r);}break;}
+      case 57:if (Module.cppCanvasPaths) Module.cppCanvasPaths.delete(I[p+9]);break;
       case 51:{const im=Module.cppCanvasContexts[I[p+9]].surface;F[p+5]?x.drawImage(im,F[p+1],F[p+2],F[p+3],F[p+4]):x.drawImage(im,F[p+1],F[p+2]);break;}
       case 52:x.drawImage(Module.cppCanvasContexts[I[p+9]].surface,F[p+1],F[p+2],F[p+3],F[p+4],F[p+5],F[p+6],F[p+7],F[p+8]);break;
       // Geometry the page has not seen. It rides in the path arena rather
@@ -147,6 +153,19 @@ EM_JS(void, c2d_flush, (int id, const int* ops, int count, const char* text, con
       // animated one draws its current decoded frame, and being drawn is what
       // keeps it animating (see cppRemoteAnimate).
       case 54:{const R=Module.cppRemoteImages,e=R&&R.get(I[p+9]);if(e){e.drawnAt=performance.now();if(e.parked)e.resume();const im=e.frame||(e.state===1?e.img:null);if(im)x.drawImage(im,F[p+1],F[p+2],F[p+3],F[p+4]);}break;}
+      case 56:{
+        if (n >= batchStart && Module.cppCanvasRasterBatch) {
+          const consumed = Module.cppCanvasRasterBatch(x, I, F, p, count - n);
+          if (consumed > 0) {
+            n += consumed - 1;
+            p += (consumed - 1) * 10;
+            break;
+          }
+          // A short or unsupported run still draws normally. Inspect it once.
+          batchStart = n - consumed;
+        }
+      }
+      // Fall through for the ordinary Canvas2D draw.
       case 55:{
         const image = Module.cppCanvasImages.get(I[p+9]);
         const alpha = x.globalAlpha;
@@ -159,7 +178,6 @@ EM_JS(void, c2d_flush, (int id, const int* ops, int count, const char* text, con
   }
 });
 EM_JS(void, c2d_dash, (int id, const float* data, int length), { Module.cppCanvasContexts[id].ctx.setLineDash(Array.from(HEAPF32.subarray(data>>2,(data>>2)+length))); });
-EM_JS(void, c2d_path_drop, (int key), { if (Module.cppCanvasPaths) Module.cppCanvasPaths.delete(key); });
 // Whether the page runs on Blink -- Chrome, Edge, Opera, Brave -- whose canvas
 // has the full-turn arc bug segmentNeed() works around.
 //
@@ -206,6 +224,17 @@ EM_JS(void, c2d_image, (int id,int key,const std::uint8_t* data,int iw,int ih,do
       // memory without limit. Sized well above the sprite sheet a frame
       // touches, so an image drawn every frame is never the one evicted.
       if (cache.size >= 512) cache.delete(cache.keys().next().value);
+      if (iw <= 32 && ih <= 32 && Module.cppCanvasRasterBatch) {
+        // Transparent borders avoid a difference in polygon edge antialiasing.
+        let clear = true;
+        for (let y = 0; y < ih && clear; y++) {
+          for (let x = 0; x < iw; x++) {
+            if (x && x+1 < iw && y && y+1 < ih) continue;
+            if (pixels.data[(y*iw+x)*4+3]) { clear = false; break; }
+          }
+        }
+        scratch.cppCanvasClearBorder = clear;
+      }
       cache.set(key, scratch);
     }
   }
@@ -1187,6 +1216,10 @@ Canvas::Canvas(int w,int h,bool virtualCanvas) : width_(std::max(1,w)),height_(s
   pixels_.assign(static_cast<size_t>(width_)*height_,Color{0,0,0,0});
 #endif
 }
+#ifdef __EMSCRIPTEN__
+bool Canvas::canDraw() const { return c2d_can_draw(contextId_); }
+#endif
+
 Canvas Canvas::createVirtual(int w,int h) { return Canvas(w,h,true); }
 void Canvas::setLogicalSize(int w,int h) {
   logicalWidth_ = w > 0 ? w : width_;
@@ -1631,7 +1664,7 @@ void Canvas::emitSegmentAt(const std::array<double, 6>& m, const Path2D::Segment
   emitSegment(contextId_, mapSegment(g, f, loose));
 }
 namespace {
-bool pathAlreadySent(const Path2D& path);   // the retained-path cache, further down
+bool pathAlreadySent(int context, const Path2D& path);   // the retained-path cache, further down
 
 /// A held segment, as the call that adds it to the page's current path.
 void emitSegment(int context, const Path2D::Segment& g) {
@@ -1792,7 +1825,7 @@ bool Canvas::paintCachedPath(int action, bool evenOdd) {
   // A retained path is the page's to transform: it has to hold the matrix.
   movePageTo(pathMatrix_);
   const std::int32_t key = static_cast<std::int32_t>(cached->cacheKey());
-  if (pathAlreadySent(*cached)) {
+  if (pathAlreadySent(contextId_, *cached)) {
     pushRef(contextId_, 50, key, static_cast<float>(action), evenOdd ? 1.f : 0.f, 0,0,0,0,0,0);
   } else {
     pushPath(contextId_, key, *cached, action, evenOdd);
@@ -2312,6 +2345,7 @@ void Canvas::clip(const std::string&s){
   // The clip region is the one piece of state that cannot be put back by
   // writing values, so a clip inside a save() needs the real thing.
   realSave();
+  web_.clipped = true;
   // Like a fill, the clip reads the path and nothing of the matrix.
   if (paintCachedPath(2, s=="evenodd")) return;
   preparePagePath(true);
@@ -2336,7 +2370,7 @@ std::deque<std::uint32_t> gCacheOrder;
 // True when the page already holds this exact geometry under this key, in
 // which case the caller sends the key alone. Records the geometry as sent
 // either way, because the caller sends it when this returns false.
-bool pathAlreadySent(const Path2D& path) {
+bool pathAlreadySent(int context, const Path2D& path) {
     const std::uint32_t key = path.cacheKey();
     const auto it = gCachedRevision.find(key);
     if (it != gCachedRevision.end()) {
@@ -2349,11 +2383,8 @@ bool pathAlreadySent(const Path2D& path) {
         const std::uint32_t evicted = gCacheOrder.front();
         gCacheOrder.pop_front();
         gCachedRevision.erase(evicted);
-        // Before the drop, not after: buffered calls name a path by key, and
-        // one of them may name this key. Evictions are rare enough that
-        // flushing for them costs nothing.
-        canvasFlushOps();
-        c2d_path_drop(evicted);
+        // Release in draw order, after the last queued use of this key.
+        pushRef(context, 57, static_cast<std::int32_t>(evicted), 0,0,0,0,0,0,0,0);
     }
     gCachedRevision.emplace(key, path.revision());
     return false;
@@ -2372,7 +2403,7 @@ constexpr std::size_t kMaxInlinePathSegments = 8;
 // under the transform the page already holds.
 static void emitPath(int contextId, const Path2D& path, int action, bool evenOdd) {
     const std::uint32_t key = path.cacheKey();
-    if (pathAlreadySent(path)) {
+    if (pathAlreadySent(contextId, path)) {
         pushRef(contextId, 50, static_cast<std::int32_t>(key),
                 static_cast<float>(action), evenOdd ? 1.f : 0.f, 0,0,0,0,0,0);
         return;
@@ -2425,6 +2456,7 @@ void Canvas::stroke(const Path2D&p) {
 void Canvas::clip(const Path2D&p,const std::string&s) {
 #ifdef __EMSCRIPTEN__
   realSave();
+  web_.clipped = true;
   emitPathAt(p, 2, s=="evenodd");
 #else
   flatten(p, state_.matrix, matrixScale(state_.matrix), gFlat);
@@ -2725,7 +2757,9 @@ void Canvas::drawImage(const std::uint8_t* rgba,int iw,int ih,float dx,float dy,
   // with the surrounding clip and transform instead of flushing for every
   // sprite. A miss still flushes before the upload can evict a queued image.
   if (cacheKey && c2d_image_is_cached(static_cast<int>(cacheKey))) {
-    pushRef(contextId_, 55, static_cast<int>(cacheKey), dx, dy, dw, dh, alpha, 0, 0, 0);
+    const bool batchable = iw <= 32 && ih <= 32 && alpha == 1 && web_.alpha == 1 &&
+        !web_.clipped && web_.smoothing && web_.smoothingQuality == "low" && isPlainComposite();
+    pushRef(contextId_, batchable ? 56 : 55, static_cast<int>(cacheKey), dx, dy, dw, dh, alpha, 0, 0, 0);
     return;
   }
   canvasFlushOps();
@@ -3100,7 +3134,8 @@ const char* canvasOpName(int code) {
     case 46: return "clip";          case 47: return "fillText";
     case 48: return "strokeText";    case 50: return "fill(cached path)";
     case 51: return "drawImage";     case 52: return "drawImage(sub)";
-    case 53: return "fill(new path)"; case 54: return "drawImage(remote)"; case 55: return "drawImage(cached raster)";
+    case 57: return "release cached path";
+    case 53: return "fill(new path)"; case 54: return "drawImage(remote)"; case 55: case 56: return "drawImage(cached raster)";
     default: return nullptr;
   }
 }

@@ -699,7 +699,7 @@ private:
 
     /// Scripted-login progress. A screenshot or smoke run has no one to type,
     /// so it registers, and falls back to logging in when the name is taken.
-    enum class AutoLogin : std::uint8_t { Idle, Registering, LoggingIn, Done, Failed };
+    enum class AutoLogin : std::uint8_t { Idle, Registering, LoggingIn, Done, Failed, ResumingAfterDrop, WaitingToRetryResume };
     AutoLogin autoLogin_ = AutoLogin::Idle;
 
     // -- chat --------------------------------------------------------------

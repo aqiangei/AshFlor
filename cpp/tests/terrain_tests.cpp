@@ -473,6 +473,28 @@ TEST(spatial_grid_query_returns_a_complete_candidate_set) {
     }
 }
 
+TEST(spatial_grid_single_bucket_fast_path_respects_rebuild_mode) {
+    SpatialGrid grid(100.0);
+    const Realm realm = Realm::Arena;
+    const Entity first = makeEntity(12, 1), second = makeEntity(19, 1);
+    const Vec2 centre{95, 50};
+    SpatialGrid::QueryScratch reader;
+    std::vector<Entity> out;
+    grid.clearForDistinctEntities();
+    grid.insert(first, realm, centre, 10);
+    grid.insert(second, realm, centre, 0);
+    grid.query(realm, centre, 0, out, reader);
+    CHECK((out == std::vector<Entity>{first, second}));
+    grid.query(realm, centre, 20, out, reader);
+    CHECK((out == std::vector<Entity>{first, second}));
+    grid.clear();
+    grid.insert(second, realm, centre);
+    grid.insert(first, realm, centre);
+    grid.insert(second, realm, centre);
+    grid.query(realm, centre, 0, out, reader);
+    CHECK((out == std::vector<Entity>{second, first}));
+}
+
 TEST(spatial_grid_clear_retires_the_previous_tick) {
     SpatialGrid grid;
     std::vector<Entity> out;

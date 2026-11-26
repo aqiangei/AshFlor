@@ -184,7 +184,7 @@ bool tierRowSplits(const char* id, Rarity rarity) {
 
 // ---------------------------------------------------------------------------
 
-TEST(equipped_trident_hitboxes_show_the_oriented_mob_capsule_and_player_circle) {
+TEST(equipped_trident_hitbox_stays_vertical_at_every_orbit_angle) {
     constexpr auto centre = kFrameSize / 2;
     for (double angle : {0.0, kPi / 2.0}) {
         RemoteEntity trident;
@@ -207,8 +207,8 @@ TEST(equipped_trident_hitboxes_show_the_oriented_mob_capsule_and_player_circle) 
             renderer.draw(canvas, view, camera, kMobAt, 0.0);
             const auto rgba = canvas.getImageData(0, 0, kFrameSize, kFrameSize);
             const auto hasOutline = [&](int along, int across, bool blue) {
-                const int dx = angle == 0 ? along : -across;
-                const int dy = angle == 0 ? across : along;
+                const int dx = across;
+                const int dy = along;
                 const auto x = centre + static_cast<int>(std::round(dx * camera.zoom()));
                 const auto y = centre + static_cast<int>(std::round(dy * camera.zoom()));
                 for (int row = y - 1; row <= y + 1; ++row) {
@@ -222,7 +222,7 @@ TEST(equipped_trident_hitboxes_show_the_oriented_mob_capsule_and_player_circle) 
             };
             CHECK_EQ(hasOutline(60, 10, false), show);
             CHECK_EQ(hasOutline(100, 0, false), show);
-            CHECK_EQ(hasOutline(0, 100, true), show);
+            CHECK(!hasOutline(0, 100, true));
             CHECK(!hasOutline(0, 30, false));
         }
     }

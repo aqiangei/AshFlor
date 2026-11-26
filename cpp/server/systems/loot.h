@@ -51,7 +51,7 @@ struct LootAwarded {};
 
 /// Sub-Ultra loot stays on the server briefly for nearby pickup. Higher
 /// tiers use their original lifetimes. Event drops set their own lifetime.
-inline constexpr double kShortGroundDropSeconds = 8.0;
+inline constexpr double kShortGroundDropSeconds = 20.0;
 inline constexpr std::array<double, kRarityCount> kDropLifetimeByRarity = {
     kShortGroundDropSeconds, kShortGroundDropSeconds, kShortGroundDropSeconds,
     kShortGroundDropSeconds, kShortGroundDropSeconds, kShortGroundDropSeconds,

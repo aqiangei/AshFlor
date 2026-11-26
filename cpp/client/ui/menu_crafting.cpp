@@ -421,6 +421,17 @@ bool CraftingPanel::render(MenuContext& ctx) {
         heldPetal_ = kNoPetal;
         return true;
     }
+    const Rect plinkoTab{panel.x + 120.0, card.close.y, 76.0, card.close.h};
+    ButtonStyle plinkoStyle;
+    plinkoStyle.fill = 0x615071;
+    plinkoStyle.outlineWidth = 3.0;
+    plinkoStyle.textSize = 15.0;
+    button(canvas, plinkoTab, trEnZh("Plinko", "弹珠"), ctx.over(plinkoTab), false, plinkoStyle);
+    if (!inRift && ctx.clicked(plinkoTab)) {
+        plinkoTab_ = true;
+        searchField_.blur();
+        return true;
+    }
     // florr's old client turns this window over to Absorb with a button in
     // Absorb's purple beside the close button.
     const Rect switchRect = drawSlotSwitch(canvas, card, kAbsorbSkin.fill, mouse,

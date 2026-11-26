@@ -14,6 +14,8 @@
 #include "shared/game/markup.h"
 #include "shared/game/npc.h"
 
+#include "shared/game/hel_plinko.h"
+
 namespace flix {
 
 namespace {
@@ -75,6 +77,7 @@ const char* clientMessageName(std::uint8_t id) {
         case net::ClientMessage::SetPresetAutosave:   return "setPresetAutosave";
         case net::ClientMessage::SetPetalPrivacy:     return "setPetalPrivacy";
         case net::ClientMessage::BulkCraftMythicUltra: return "bulkCraftMythicUltra";
+        case net::ClientMessage::HelPlinko: return "helPlinko";
         case net::ClientMessage::LoadLoadoutPreset:   return "loadLoadoutPreset";
         case net::ClientMessage::Trade:               return "trade";
         case net::ClientMessage::AdminDb:             return "adminDb";
@@ -141,6 +144,7 @@ const char* serverMessageName(std::uint8_t id) {
         case net::ServerMessage::Teleported:          return "teleported";
         case net::ServerMessage::ProfileDelta:        return "profileDelta";
         case net::ServerMessage::BulkCraftTicket:     return "bulkCraftTicket";
+        case net::ServerMessage::HelPlinko: return "helPlinko";
         case net::ServerMessage::OnlineRoster:        return "onlineRoster";
         case net::ServerMessage::SquadInviteReceived: return "squadInvite";
     }
@@ -324,6 +328,7 @@ void NetClient::forgetAccount() {
     // on the lobby's first frame before the server's fresh copy arrived.
     sessionToken_.clear();
     profile_ = Profile{};
+    helPlinkoReplies_.clear();
     pendingPresetRotationStep_ = 0;
     chat_.clear();
     chatBackfilled_ = false;
@@ -495,7 +500,7 @@ void NetClient::saveLoadoutPreset(int preset, int rotationStep) {
     ByteWriter w;
     beginMessage(w, net::ClientMessage::SaveLoadoutPreset);
     w.u8(static_cast<std::uint8_t>(preset));
-    w.u8(static_cast<std::uint8_t>(std::clamp(rotationStep, 1, 4)));
+    w.u8(static_cast<std::uint8_t>(net::validRotation(rotationStep) ? rotationStep : 4));
     send(w);
 }
 
@@ -504,7 +509,7 @@ void NetClient::loadLoadoutPreset(int preset, int rotationStep) {
     ByteWriter w;
     beginMessage(w, net::ClientMessage::LoadLoadoutPreset);
     w.u8(static_cast<std::uint8_t>(preset));
-    w.u8(static_cast<std::uint8_t>(std::clamp(rotationStep, 1, 4)));
+    w.u8(static_cast<std::uint8_t>(net::validRotation(rotationStep) ? rotationStep : 4));
     send(w);
 }
 
@@ -578,6 +583,22 @@ void NetClient::requestCraft(std::uint16_t petalIndex, Rarity rarity, int count)
     send(w);
 }
 
+std::vector<NetClient::HelPlinkoReply> NetClient::takeHelPlinkoReplies() {
+    std::vector<HelPlinkoReply> replies;
+    replies.swap(helPlinkoReplies_);
+    return replies;
+}
+
+std::uint32_t NetClient::requestHelPlinko(HelPlinkoAction action, Rarity rarity) {
+    ByteWriter writer;
+    beginMessage(writer, net::ClientMessage::HelPlinko);
+    writer.u32(++helPlinkoRequest_);
+    writer.u8(static_cast<std::uint8_t>(action));
+    writer.u8(static_cast<std::uint8_t>(rarity));
+    send(writer);
+    return helPlinkoRequest_;
+}
+
 void NetClient::requestAccountQQ(bool save, const std::string& value) {
     ByteWriter w;
     beginMessage(w, net::ClientMessage::AccountQQ);
@@ -619,6 +640,15 @@ void NetClient::requestTrade(std::uint16_t petalIndex, Rarity rarity) {
     beginMessage(w, net::ClientMessage::Trade);
     w.u16(petalIndex);
     w.u8(static_cast<std::uint8_t>(rarity));
+    send(w);
+}
+
+void NetClient::requestApexDraw(const std::array<std::uint16_t, kTraderApexDrawCost>& petals) {
+    ByteWriter w;
+    beginMessage(w, net::ClientMessage::Trade);
+    w.u16(kNoPetal);
+    w.u8(static_cast<std::uint8_t>(Rarity::Ascendant));
+    for (auto index : petals) w.u16(index);
     send(w);
 }
 
@@ -1383,6 +1413,14 @@ void NetClient::onMessage(net::Connection& connection, ByteReader& reader) {
         }
         case net::ServerMessage::Profile:      handleProfile(reader); break;
         case net::ServerMessage::ProfileDelta: handleProfileDelta(reader); break;
+        case net::ServerMessage::HelPlinko: {
+            const HelPlinkoReply result{reader.u32(), reader.u8(), reader.u16()};
+            if (reader.ok() && result.request != 0 && result.request <= helPlinkoRequest_ &&
+                helPlinkoReplies_.size() < 32) {
+                helPlinkoReplies_.push_back(result);
+            }
+            break;
+        }
         case net::ServerMessage::BulkCraftTicket: {
             const auto request = reader.u32();
             const auto ticket = reader.u64();
@@ -1727,7 +1765,7 @@ void NetClient::handleProfile(ByteReader& reader) {
     if (!reader.ok()) return;
     profile_ = std::move(next);
     ++runStatsRevision_;
-    if (presetRotationStep >= 1 && presetRotationStep <= 4)
+    if (net::validRotation(presetRotationStep))
         pendingPresetRotationStep_ = presetRotationStep;
     oracleReadyAtMillis_ = renderClockMillis() + static_cast<double>(profile_.oracleCooldownMillis);
     traderReadyAtMillis_ = renderClockMillis() + static_cast<double>(profile_.traderCooldownMillis);
@@ -2206,10 +2244,18 @@ void NetClient::installLocalCollision(Realm realm) {
     // function the server loads with (Terrain::setCollisionShapes, by way of
     // loadCollisionShapes). There is one place that turns a map into collision
     // and this is not a second one.
-    terrain_.clearCollisionShapes(realm);
-
     const MapData* map = worldMaps_ != nullptr ? worldMaps_->forRealm(realm) : nullptr;
     const std::string path = map != nullptr ? map->sourcePath() : std::string();
+    // readMapGrid has already replaced the coarse cells. Terrain retains the
+    // exact shape store only when its dimensions still match. A respawn can
+    // send that same realm again, without changing any authored geometry.
+    const int cols = terrain_.tileCols(realm), rows = terrain_.tileRows(realm);
+    const auto installed = installedCollision_.find(realm);
+    if (installed != installedCollision_.end() && installed->second.contentHash == contentHash &&
+        installed->second.path == path && installed->second.cols == cols && installed->second.rows == rows) return;
+
+    installedCollision_.erase(realm);
+    terrain_.clearCollisionShapes(realm);
     if (path.empty()) {
         // No local map for this realm: this client collides against whole
         // cells, straight off the wire's grid. That is the SAFE direction to be
@@ -2231,6 +2277,8 @@ void NetClient::installLocalCollision(Realm realm) {
                      "[map] %s: could not read the collision shapes (%s); this client falls back "
                      "to whole-cell collision\n",
                      path.c_str(), error.c_str());
+    } else {
+        installedCollision_.emplace(realm, CollisionSource{path, contentHash, cols, rows});
     }
 }
 

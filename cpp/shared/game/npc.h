@@ -98,7 +98,7 @@ inline std::string oracleCooldownText(double remainingMillis) {
 }
 
 /// Price of a random Apex and the petal used as merchant currency.
-inline constexpr unsigned kTraderApexDrawCost = 4;
+inline constexpr unsigned kTraderApexDrawCost = 5;
 inline constexpr const char* kTraderCoinPetal = "coin";
 
 /// The tiers the trader takes and returns as coins: the ladder, Permanent

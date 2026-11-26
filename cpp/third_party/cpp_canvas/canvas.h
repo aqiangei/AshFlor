@@ -201,6 +201,12 @@ public:
     // a Canvas built on an element that already has one gets that one, with
     // whatever it was made with. Ignored natively.
     Canvas(int width, int height, std::string elementId = "canvas", bool desynchronized = false);
+    // A browser can deny or lose an offscreen 2D context under memory pressure.
+#if defined(__EMSCRIPTEN__) && !defined(CPP_CANVAS_SKIA)
+    bool canDraw() const;
+#else
+    bool canDraw() const { return true; }
+#endif
     static Canvas createVirtual(int width, int height);
     Canvas(const Canvas&) = delete; Canvas& operator=(const Canvas&) = delete;
     Canvas(Canvas&& other) noexcept; Canvas& operator=(Canvas&& other) noexcept;
@@ -427,6 +433,7 @@ private:
         float lineWidth = 1, alpha = 1, miterLimit = 10, dashOffset = 0;
         float shadowBlur = 0, shadowOffsetX = 0, shadowOffsetY = 0;
         bool smoothing = true;
+        bool clipped = false;
         /// The current transform. Composed in double, as the browser composes
         /// its own. A drawing call's coordinates are mapped by it into the
         /// page's matrix, or it is sent as one setTransform where they cannot

@@ -84,7 +84,15 @@ void HealthBarEase::step(double targetHealth, double targetShield, double nowMil
     }
 }
 
+RemoteEntity& WorldView::spawnSlot(std::uint32_t id, net::EntityKind kind) {
+    auto& entity = entities_[id];
+    if (entity.kind == net::EntityKind::Npc) --npcCount_;
+    if (kind == net::EntityKind::Npc) ++npcCount_;
+    return entity;
+}
+
 void WorldView::clear() {
+    npcCount_ = 0;
     entities_.clear();
     events_.clear();
     practiceMeters_.clear();
@@ -601,7 +609,11 @@ bool WorldView::applySnapshot(ByteReader& reader, double receivedMillis, bool ke
             // fallen one immediately so it cannot keep painting next to the
             // reborn flower for the tick the removal is still in flight.
             if (self_.netId != 0 && self_.netId != s.netId) {
-                entities_.erase(self_.netId);
+                const auto old = entities_.find(self_.netId);
+                if (old != entities_.end()) {
+                    if (old->second.kind == net::EntityKind::Npc) --npcCount_;
+                    entities_.erase(old);
+                }
             }
             self_.netId = s.netId;
             suppressSelfCorpse_ = false;
@@ -617,7 +629,7 @@ bool WorldView::applySnapshot(ByteReader& reader, double receivedMillis, bool ke
         }
         const auto guild = guildNames_.find(e.name);
         if (guild != guildNames_.end()) e.guildName = guild->second;
-        entities_[s.netId] = std::move(e);
+        spawnSlot(s.netId, e.kind) = std::move(e);
     }
 
     for (const Update& u : updates) {
@@ -685,6 +697,7 @@ bool WorldView::applySnapshot(ByteReader& reader, double receivedMillis, bool ke
         if (petal && removedPetals_.size() < kMaxRemovedPetals) {
             removedPetals_.push_back(std::move(it->second));
         }
+        if (it->second.kind == net::EntityKind::Npc) --npcCount_;
         entities_.erase(it);
     }
 
@@ -846,9 +859,13 @@ void WorldView::interpolate(double nowMillis, double dtSeconds) {
     }
 
     // --- everything that is not a petal -----------------------------------
+    framePetals_.clear();
     for (auto& entry : entities_) {
         RemoteEntity& e = entry.second;
-        if (e.kind == net::EntityKind::Petal) continue;   // second pass, below
+        if (e.kind == net::EntityKind::Petal) {
+            framePetals_.push_back(&e);
+            continue;
+        }
         const bool isFlower = e.kind == net::EntityKind::Player;
         if (e.kind == net::EntityKind::Effect) e.effectAgeSeconds += dtSeconds;
 
@@ -923,9 +940,8 @@ void WorldView::interpolate(double nowMillis, double dtSeconds) {
     // moon among them is what its owner's ring is anchored to in the second,
     // so it has to be where it is drawn this frame before the ring reads it.
     ringAnchors_.clear();
-    for (auto& entry : entities_) {
-        RemoteEntity& e = entry.second;
-        if (e.kind != net::EntityKind::Petal) continue;
+    for (RemoteEntity* petal : framePetals_) {
+        RemoteEntity& e = *petal;
         e.petalAgeSeconds += simulationDelta;
 
         const auto owner = entities_.find(e.ownerNetId);
@@ -952,9 +968,9 @@ void WorldView::interpolate(double nowMillis, double dtSeconds) {
         e.angle = e.targetAngle;
     }
 
-    for (auto& entry : entities_) {
-        RemoteEntity& e = entry.second;
-        if (e.kind != net::EntityKind::Petal || e.isLoosePetal()) continue;
+    for (RemoteEntity* petal : framePetals_) {
+        RemoteEntity& e = *petal;
+        if (e.isLoosePetal()) continue;
         const auto owner = entities_.find(e.ownerNetId);
         if (owner == entities_.end()) continue;   // first pass
 

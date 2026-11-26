@@ -76,6 +76,7 @@ public:
         std::uint8_t shield = 0;
         std::uint8_t petalVariant = 255;
         bool rollingDice = false;
+        Entity markTarget = NULL_ENTITY;
         bool petalTypeHidden = false;
         bool beamOnly = false;
         bool foreignLoan = false;
@@ -88,10 +89,14 @@ public:
         /// the hash of "", so the sentinel for "never sent" has to be
         /// something else.
         std::uint32_t skinIdHash = 0xFFFFFFFFu;
-        bool seenThisTick = false;
+        std::uint32_t netId = 0;
     };
 
-    std::unordered_map<std::uint32_t, Tracked> tracked;
+    // Kept in the same network-ID order as the last snapshot.
+    std::vector<Tracked> tracked;
+    // Search hint from the last capped snapshot, revalidated before use.
+    double selectionDistanceSq = 0;
+    const Tracked* trackedEntity(std::uint32_t netId) const;
 
     /// The viewer's own figures as last sent (net::SelfFields), at the width
     /// they went out in. Meaningless until `selfSent`.
@@ -311,6 +316,25 @@ public:
     // Register every component touched by this reader on the main thread,
     // before any worker can trigger lazy component registration.
     static void prepareParallelReads();
+    // Built once from the final positions, then shared by all readers until send.
+    struct VisibleEntity {
+        Vec2 position;
+        Realm realm;
+        std::uint32_t netId;
+        const Replicated* info;
+        const DropItem* drop;
+        const GhostSparkle* sparkle;
+        const MobType* ghost;
+        double radius;
+        // These values are independent of the viewer. Capture them once at
+        // the same simulation time used by every job in this snapshot batch.
+        double angle = 0;
+        double wireRadius = 0;
+        std::uint8_t state = 0;
+        const Health* health = nullptr;
+    };
+    static VisibleEntity describe(World& world, Entity e, const NetId& id,
+                                  const Replicated& info, const Transform& at, double nowMillis);
     /// Everything the snapshot needs that is not in the world.
     struct Frame {
         std::uint32_t tick = 0;
@@ -342,6 +366,9 @@ public:
         std::uint8_t visibility = 0;
         /// All current replicated centres, shared read-only by workers.
         const SpatialGrid* entityGrid = nullptr;
+        const std::vector<VisibleEntity>* indexedEntities = nullptr;
+        // All mobs and loot in this realm, including those outside a guessed search radius.
+        const std::vector<Entity>* priorityEntities = nullptr;
         double mobRadiusPadding = 0.0;
         std::optional<double> wallMillis;
         std::vector<net::PracticeMeter> practiceMeters;
@@ -410,12 +437,17 @@ public:
 private:
     struct Candidate {
         Entity entity;
-        std::uint32_t netId;
         double selectionKey;
+        std::uint32_t netId;
         bool beamOnly = false;
+        net::EntityKind kind;
     };
 
+    void sortCandidatesByNetId();
+
     std::vector<Candidate> candidates_;
+    std::vector<ClientView::Tracked> nextTracked_;
+    std::vector<Candidate> sortScratch_;
     std::vector<Entity> nearbyEntities_;
     std::vector<std::uint32_t> removals_;
 };

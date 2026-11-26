@@ -417,7 +417,7 @@ void MovementSystem::collectNpcDiscs() {
 }
 
 void MovementSystem::collectStationaryMobs(World& world) {
-    stationaryMobGrid_.clear();
+    stationaryMobGrid_.clearForDistinctEntities();
     const auto& registry = content();
     queries_->mobBodies.each([&](Entity e, MobTag&, Transform& at, Body& body, MobType& type) {
         if (type.configIndex >= registry.mobCount()) return;
@@ -1299,7 +1299,7 @@ void MovementSystem::buildSeparationSet(World& world, const Terrain& terrain) {
         if (index < separationSlot_.size()) separationSlot_[index] = kNoSeparationEntry;
     }
     separationSet_.clear();
-    separationGrid_.clear();
+    separationGrid_.clearForDistinctEntities();
     std::array<bool, kMaxRealms> fitted{};
     waxRadiusPadding_.fill(0.0);
 

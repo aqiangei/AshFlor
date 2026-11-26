@@ -2978,6 +2978,44 @@ bool drawDistantGamblerPetal(Canvas& canvas, std::string_view id, float size) {
     }
     return true;
 }
+void drawLiveCard(Canvas& canvas, double diameter, std::uint8_t suit) {
+    canvas.save();
+    const float scale = static_cast<float>(diameter / 60.0);
+    canvas.scale(scale, scale);
+    ui::setFill(canvas, 0xFAF7EFu);
+    canvas.setStrokeStyle("#343431");
+    canvas.setLineWidth(2.5f);
+    canvas.beginPath();
+    canvas.roundRect(-18, -26, 36, 52, 4);
+    canvas.fill();
+    canvas.stroke();
+
+    ui::setFill(canvas, suit == 2 || suit == 4 ? 0xBC393Bu : 0x343431u);
+    if (suit == 4) {
+        canvas.beginPath();
+        canvas.moveTo(0, -11);
+        canvas.lineTo(8, 0);
+        canvas.lineTo(0, 11);
+        canvas.lineTo(-8, 0);
+        canvas.closePath();
+        canvas.fill();
+    } else if (suit == 3) {
+        canvas.fillCircle(0, -5, 5);
+        canvas.fillCircle(-5, 2, 5);
+        canvas.fillCircle(5, 2, 5);
+        canvas.fillRect(-2, 3, 4, 7);
+    } else {
+        if (suit == 1) canvas.scale(1, -1);
+        canvas.beginPath();
+        canvas.moveTo(0, 9);
+        canvas.bezierCurveTo(-17, -2, -9, -13, 0, -6);
+        canvas.bezierCurveTo(9, -13, 17, -2, 0, 9);
+        canvas.closePath();
+        canvas.fill();
+        if (suit == 1) canvas.fillRect(-2, -11, 4, 7);
+    }
+    canvas.restore();
+}
 } // namespace
 
 void WorldRenderer::drawPetalSprite(Canvas& canvas, const RemoteEntity& entity,
@@ -3050,7 +3088,10 @@ void WorldRenderer::drawPetalSprite(Canvas& canvas, const RemoteEntity& entity,
     const bool equippedMissile = playerPetal && config && config->id == "mecha_missile";
     const bool equippedElemental = playerPetal && config && config->id == "void_elemental";
     double rotation = 0;
-    if (equippedMissile) {
+    const bool uprightWeapon = playerPetal && config && uprightVoidWeapon(config->id);
+    if (uprightWeapon) {
+        rotation = 0;
+    } else if (equippedMissile) {
         const Vec2 out = entity.ownerOffset;
         const double bearing = out.lengthSq() > 0.0 ? out.angle() : entity.angle;
         rotation = bearing - std::atan2(1124.0, 747.0);
@@ -3147,14 +3188,15 @@ void WorldRenderer::drawPetalSprite(Canvas& canvas, const RemoteEntity& entity,
         }
     } else if (config && config->id == "domino" && entity.petalVariant < 49) {
         SpriteCache::drawDomino(canvas, diameter, entity.petalVariant);
+    } else if (config && config->id == "card" && entity.petalVariant >= 1 && entity.petalVariant <= 4) {
+        drawLiveCard(canvas, diameter, entity.petalVariant);
     } else if (config && config->id == "dust") {
         SpriteCache::drawDustGrain(canvas, diameter);
     } else if (sprites_) {
-        // Keep the equipped Trident readable without changing its combat
-        // shape, its rotation, or the inventory and drop artwork.
-        const bool equippedTrident = playerPetal && config && (config->id == "void_trident" || config->id == "magic_void_trident") &&
-            sprites_->petalDrawable(entity.typeIndex);
-        const double spriteDiameter = equippedTrident ? diameter * 1.15 : diameter;
+        const double spriteDiameter = uprightWeapon ? entity.radius * 2.0 * zoom : diameter;
+        // The blade extends to the right of its shaft in Zorr's upright pose.
+        if (uprightWeapon && config->id.find("scythe") != std::string::npos)
+            canvas.translate(static_cast<float>(spriteDiameter * 0.2575), 0);
         // The sprite cache falls back to a disc in the petal's own colour when
         // its artwork failed to compile, which is the useful fallback here.
         sprites_->drawPetal(canvas, entity.typeIndex, entity.rarity, 0, 0, spriteDiameter, 0,
@@ -3582,17 +3624,14 @@ void WorldRenderer::drawHitbox(Canvas& canvas, const RemoteEntity& entity, const
         color = 0x46D9FFu;
     } else if (entity.kind == net::EntityKind::Petal && content_) {
         const auto& config = content_->petal(entity.typeIndex);
-        if (!entity.isRingPetal() && !entity.isLoosePetal() && (config.id == "void_trident" || config.id == "magic_void_trident")) {
+        if (!entity.isRingPetal() && !entity.isLoosePetal() && uprightVoidWeapon(config.id)) {
             const float halfLength = static_cast<float>(radius);
             const float halfWidth = std::min(halfLength, static_cast<float>(
-                referencePetalHalfWidth(config.id, entity.rarity) * zoom));
+                referencePetalHalfWidth(config.id, entity.rarity) * radius / referencePetalLengthRadius(config.id, entity.rarity)));
             canvas.save();
             canvas.translate(static_cast<float>(screen.x), static_cast<float>(screen.y));
-            canvas.rotate(static_cast<float>(entity.angle));
+            canvas.rotate(static_cast<float>(kPi * .5));
             canvas.setLineWidth(static_cast<float>(2.0 * zoom));
-            // Player contact, where PvP is allowed, uses the full body circle.
-            ui::setStroke(canvas, 0x46D9FFu);
-            canvas.strokeCircle(0, 0, halfLength);
             ui::setStroke(canvas, color);
             canvas.beginPath();
             canvas.roundRect(-halfLength, -halfWidth, 2 * halfLength, 2 * halfWidth, halfWidth);
@@ -5150,8 +5189,8 @@ void WorldRenderer::drawSacrificeRituals(Canvas& canvas, const EntityMap& entiti
     const Rect visible = camera.visibleWorld(0);
     const std::uint32_t red = rarityColor(Rarity::Legendary);
 
-    for (const auto& entry : entities) {
-        const RemoteEntity& entity = entry.second;
+    for (const auto* member : drawLayers_[static_cast<std::size_t>(net::EntityKind::Effect)]) {
+        const RemoteEntity& entity = *member;
         if (entity.kind != net::EntityKind::Effect ||
             entity.typeIndex != static_cast<std::uint16_t>(GroundEffectKind::Sacrifice)) {
             continue;
@@ -5487,16 +5526,16 @@ void WorldRenderer::draw(Canvas& canvas, const EntityMap& entities, const Camera
             owner->second.typeIndex == gambler;
     };
     bool denseGamblerRings = false;
-    if (gambler != kInvalidIndex && entities.size() >= kDenseGamblerRings) {
+    if (gambler != kInvalidIndex && mobRings_.size() + sacrificedMobs_.size() >= kDenseGamblerRings) {
         int visible = 0;
-        for (const auto& entry : entities) {
-            const auto& petal = entry.second;
-            if (isCommonGamblerRing(petal) && onScreen(petal.position, petal.radius) &&
-                ++visible >= kDenseGamblerRings) {
-                denseGamblerRings = true;
-                break;
+        const auto reachesThreshold = [&](const auto& members) {
+            for (const auto* petal : members) {
+                if (isCommonGamblerRing(*petal) && onScreen(petal->position, petal->radius) &&
+                    ++visible >= kDenseGamblerRings) return true;
             }
-        }
+            return false;
+        };
+        denseGamblerRings = reachesThreshold(mobRings_) || reachesThreshold(sacrificedMobs_);
     }
 #endif
     const auto drawLive = [&](const RemoteEntity& entity, bool detailedDrop = true) {
@@ -5511,6 +5550,28 @@ void WorldRenderer::draw(Canvas& canvas, const EntityMap& entities, const Camera
             const auto owner = entities.find(entity.ownerNetId);
             if (owner != entities.end() && owner->second.isSelf())
                 at += selfDrawn - owner->second.position;
+        }
+        const bool hiddenType = entity.typeIndex == kNoPetal;
+        const bool attachedMark = entity.kind == net::EntityKind::Petal &&
+            (hiddenType ? (entity.petalVariant & net::PrivatePetalAttachedMark) != 0
+                        : entity.petalVariant == net::kAttachedMarkVariant);
+        if (attachedMark) {
+            const auto target = entities.find(entity.ownerNetId);
+            if (target == entities.end() || !target->second.dead()) return;
+            const auto& body = target->second;
+            at = body.isSelf() ? selfDrawn : body.position;
+            if (!onScreen(at, body.radius + 20.0)) return;
+            at.y -= body.radius * 0.55;
+            const auto screen = camera.worldToScreen(at);
+            const double pulse = 0.5 + 0.5 * std::sin(timeSeconds * 5.0);
+            const float radius = static_cast<float>((11.0 + 3.0 * pulse) * camera.zoom());
+            canvas.save();
+            ui::setStroke(canvas, 0xEEE3FFu, 0.55 + pulse * 0.35);
+            canvas.setLineWidth(std::max(1.0f, radius * 0.14f));
+            canvas.strokeCircle(screen.x, screen.y, radius);
+            canvas.restore();
+            if (!hiddenType) drawPetalSprite(canvas, entity, camera, at, timeSeconds, false);
+            return;
         }
         if (hiddenByOptions(entity)) {
             // A pet drawn before the switch went on keeps the shadow it was

@@ -110,6 +110,9 @@ const char* const kPetalsJson = R"JSON({
   "disc":     {"name":"Disc","damage":0,"health":null,"size":1,"cooldown":1,"count":0,"range":0,"equipFlags":"Disc","noPhysics":true,"color":"#111111"},
   "bandage":  {"name":"Bandage","damage":0,"health":null,"size":1,"cooldown":1,"count":0,"range":0,"noPhysics":true,"color":"#E5DAA1"},
   "egg":{"name":"Ant Egg","damage":0,"health":1,"cooldown":60000,"count":4,"petMobType":"critter","petCount":4},
+  "puffball_egg":{"name":"Puffball Egg","health":1,"damage":0,"cooldown":1000,"count":1,"petMobType":"puffball","petCount":1},
+  "centipede_egg":{"name":"Centipede Egg","health":1,"damage":0,"cooldown":1000,"count":1,"petMobType":"centipede","petCount":1},
+  "matriarch_egg":{"name":"Matriarch Egg","health":1,"damage":0,"cooldown":1000,"count":1,"petMobType":"matriarch","petCount":1},
   "beetle_egg":{"name":"Beetle Egg","damage":0,"health":1,"cooldown":30000,"count":1,"petMobType":"critter","petCount":1},
   "golden_leaf":{"name":"Golden Leaf","damage":1,"health":100,"size":1.2,"cooldown":200,"count":1,"color":"#EBEB34"},
   "cursor":   {"name":"Cursor","damage":0,"health":null,"size":1,"cooldown":1,"count":1,"color":"#EEEEEE"},
@@ -1006,11 +1009,6 @@ TEST(a_defend_only_petal_is_never_attracted) {
 // Lightning
 // ---------------------------------------------------------------------------
 
-/// PetalSystem's own kLightningRadius, which is private to it. Spelling the
-/// number out here is deliberate: a test that hard-codes it is what notices the
-/// reach changing under a strike that is supposed to cover a screen.
-constexpr double kStrikeRadius = 1000.0;
-
 /// Puts a mob on the field with enough health to survive the strike, so what is
 /// being measured is the report and not the corpse.
 Entity addMob(Rig& rig, Vec2 at, const char* type = "critter") {
@@ -1319,19 +1317,25 @@ TEST(a_strike_reports_a_bolt_to_every_mob_it_hit) {
     rig.settleEquips();
     rig.settleRing();
 
-    // One mob against the ring, which is what arms the petal, and two more well
-    // inside the strike's thousand-unit reach but nowhere near the petal. All
-    // three are struck, so all three must be drawn.
+    // Only the first mob touches the ring. Each following mob is within one
+    // 240-unit jump of its predecessor, including the last mob beyond the first hop.
     const Vec2 orbit = rig.world.get<Transform>(rig.petals(0).front()).position;
     addMob(rig, orbit);
-    addMob(rig, {1400.0, 1000.0});
-    addMob(rig, {1000.0, 1300.0});
+    const Vec2 middle = orbit + Vec2{190, 0};
+    const Vec2 end = middle + Vec2{190, 0};
+    addMob(rig, middle);
+    addMob(rig, end);
 
     CHECK(rig.tickUntil([&] { return firstStrike(rig) != nullptr; }, 120));
     const WireEvent* strike = firstStrike(rig);
     CHECK(strike != nullptr);
     if (strike == nullptr) return;
     CHECK_EQ(strike->points.size(), std::size_t(3));
+    if (strike->points.size() == 3) {
+        CHECK(strike->points[0] == orbit);
+        CHECK(strike->points[1] == middle);
+        CHECK(strike->points[2] == end);
+    }
     CHECK(strike->positional);
 
     // A mob outside the reach is not drawn a bolt, because it was not hit.
@@ -1340,7 +1344,7 @@ TEST(a_strike_reports_a_bolt_to_every_mob_it_hit) {
     far.settleEquips();
     far.settleRing();
     addMob(far, far.world.get<Transform>(far.petals(0).front()).position);
-    addMob(far, {1000.0 + kStrikeRadius + 200.0, 1000.0});
+    addMob(far, far.world.get<Transform>(far.petals(0).front()).position + Vec2{400, 0});
     CHECK(far.tickUntil([&] { return firstStrike(far) != nullptr; }, 120));
     const WireEvent* nearOnly = firstStrike(far);
     CHECK(nearOnly != nullptr);
@@ -1369,7 +1373,8 @@ TEST(a_strike_into_a_pile_keeps_the_nearest_bolts) {
     const WireEvent* strike = firstStrike(rig);
     CHECK(strike != nullptr);
     if (strike == nullptr) return;
-    CHECK_EQ(strike->points.size(), net::kMaxLightningTargets);
+    // Common lightning gets a first target and two jumps.
+    CHECK_EQ(strike->points.size(), std::size_t(3));
     for (const Vec2& point : strike->points) {
         CHECK((point - strike->position).length() < 600.0);
     }
@@ -1380,9 +1385,7 @@ TEST(a_strike_into_a_pile_keeps_the_nearest_bolts) {
 // ---------------------------------------------------------------------------
 
 /// PetalSystem's own kBatteryCharges and kBatteryStrikeIntervalMillis, which
-/// are private to it. Spelt out here for the reason kStrikeRadius is: a test
-/// that hard-codes them is what notices a battery quietly growing a fourth
-/// charge or losing its pacing.
+/// are private to it. Pin both so a fourth charge or a change of pace is visible.
 constexpr int kBatteryCharges = 3;
 constexpr double kBatteryIntervalMillis = 500.0;
 
@@ -4077,7 +4080,9 @@ TEST(a_summoned_ring_mob_wears_its_seeds_on_its_owners_side) {
     CHECK(rig.tickUntil([&] { return rig.petCount() == 1; }));
 
     Query<Pet> pets{rig.world};
-    const Entity pet = pets.collect().front();
+    const auto hatched = pets.collect();
+    if (hatched.size() != 1) return; // The hatch assertion above records the failure.
+    const Entity pet = hatched.front();
     CHECK(rig.world.has<MobPetalRing>(pet));
     const MobPetalRing& ring = rig.world.get<MobPetalRing>(pet);
     CHECK_EQ(ring.seats.size(), std::size_t(4));
@@ -4115,6 +4120,7 @@ TEST(a_summoned_centipede_arrives_whole_and_leaves_whole) {
     }
     CHECK(headEntity != NULL_ENTITY);
     CHECK_EQ(segments, kCentipedeSegmentCount);
+    if (headEntity == NULL_ENTITY) return;
     // One linked animal: walking back from the head reaches every segment.
     int walked = 0;
     for (Entity at = rig.world.get<BodySegment>(headEntity).behind; at != NULL_ENTITY;
@@ -4211,7 +4217,13 @@ TEST(a_timed_summons_price_doubles_per_tier) {
     rig.settleEquips();
     CHECK_NEAR(fixture().registry.petalStats(petalId("stormcaller"), Rarity::Rare).petManaCost,
                80.0, 1e-9);
+    rig.world.get<ManaPool>(rig.player).current = 79.0;
+    rig.tick(150);
+    CHECK_EQ(rig.petCount(), std::size_t(0));
+    CHECK_NEAR(rig.world.get<ManaPool>(rig.player).current, 79.0, 1e-9);
+    rig.world.get<ManaPool>(rig.player).current = 100.0;
     CHECK(rig.tickUntil([&] { return rig.petCount() == 1; }));
+    CHECK_NEAR(rig.world.get<ManaPool>(rig.player).current, 20.0, 1e-9);
     rig.tick(150);
     CHECK_EQ(rig.petCount(), std::size_t(1));
 }
@@ -4222,6 +4234,7 @@ TEST(a_squad_of_the_same_mob_neither_counts_nor_recalls_timed_summons) {
     rig.equip(0, "vessel");
     rig.equip(1, "stormcaller");
     rig.settleEquips();
+    rig.world.get<ManaPool>(rig.player).current = 60.0;
     CHECK(rig.tickUntil([&] { return timedPetCount(rig.world) == 3; }));
     // The summoner hatches critters too. Its squad of two comes out whole
     // beside the storms, and replacing it does not take them back.
@@ -4275,23 +4288,31 @@ TEST(eggs_of_one_type_stack_a_squad_each) {
     for (const Entity pet : first) CHECK(rig.world.isAlive(pet));
 }
 
-TEST(a_lost_pet_reloads_the_egg_that_hatched_it_and_no_other) {
+TEST(recovering_a_lost_pet_preserves_both_egg_squads) {
     if (!contentLoaded()) return;
     Rig rig;
     rig.equip(0, "summoner");
     rig.equip(1, "summoner");
     CHECK(rig.tickUntil([&] { return rig.petCount() == 4; }));
-
-    Query<Pet> pets{rig.world};
-    for (const Entity pet : pets.collect()) {
+    const auto original = Query<Pet>{rig.world}.collect();
+    Entity lost = NULL_ENTITY;
+    for (const Entity pet : original) {
         if (rig.world.get<Pet>(pet).slot == 1) {
-            rig.world.get<MobAi>(pet).petRecall = true;
+            lost = pet;
             break;
         }
     }
+    CHECK(lost != NULL_ENTITY);
+    if (lost == NULL_ENTITY) return;
+    rig.world.get<Transform>(lost).position += Vec2{kPetRecallDistance + 1000.0, 0.0};
+    rig.world.get<MobAi>(lost).petRecall = true;
     rig.tick();
     CHECK(!rig.slot(0).broken);
-    CHECK(rig.slot(1).broken);
+    CHECK(!rig.slot(1).broken);
+    CHECK_EQ(rig.petCount(), original.size());
+    for (Entity pet : original) CHECK(rig.world.isAlive(pet));
+    if (rig.world.isAlive(lost))
+        CHECK(distance(rig.position(lost), rig.position(rig.player)) < kPetHomeDistance);
 }
 
 TEST(a_row_of_eggs_stops_at_thirty_pets) {
@@ -5006,7 +5027,7 @@ TEST(a_wing_lunges_past_the_ring_and_comes_back_while_attacking) {
     }
     CHECK(crests.size() >= 2);
     const double period = (kPi / kWingOrbitLungeRate) / net::kTickSeconds;
-    CHECK_NEAR(period, 37.7, 0.1);
+    CHECK_NEAR(period, 25.13, 0.1);
     for (std::size_t i = 1; i < crests.size(); ++i) {
         CHECK_NEAR(static_cast<double>(crests[i] - crests[i - 1]), period, 2.0);
     }
@@ -5392,7 +5413,7 @@ TEST(zorr_momy_egg_hatches_the_reference_brood_at_each_tier) {
         const auto rarity = static_cast<Rarity>(tier);
         rig.equip(0, "void_momy_egg", rarity);
         CHECK_EQ(registry.petalStats(egg, rarity).reloadMillis, hatchSeconds[tier] * 1000.0);
-        const int expected = tier < rarityIndex(Rarity::Unique) ? 2 : 3;
+        const int expected = tier < rarityIndex(Rarity::Unique) ? 2 : tier == 9 ? 6 : 3;
         CHECK_EQ(configuredSummonCount(registry.petal(egg), rarity, nullptr, 0), expected);
         CHECK(rig.tickUntil([&] { return rig.petCount() >= static_cast<std::size_t>(expected); }, 4000));
         int hatched = 0;
@@ -5400,13 +5421,13 @@ TEST(zorr_momy_egg_hatches_the_reference_brood_at_each_tier) {
         Query<Pet, MobType>{rig.world}.each([&](Entity e, Pet& pet, MobType& type) {
             if (pet.owner != rig.player) return;
             CHECK_EQ(type.configIndex, momy);
-            CHECK_EQ(rarityIndex(type.rarity), std::max(0, tier - 1));
+            CHECK_EQ(rarityIndex(type.rarity), tier == 9 ? 9 : std::max(0, tier - 1));
             ++hatched;
             health += rig.world.get<Health>(e).max;
             contact += rig.world.get<ContactDamage>(e).amount;
         });
         CHECK_EQ(hatched, expected);
-        const double localScale = tier < 9 ? std::pow(3.0, tier) : 27064.125;
+        const double localScale = tier < 9 ? std::pow(3.0, tier) : 54128.25;
         CHECK_NEAR(health / localScale, 5972.7, 1e-6);
         CHECK_NEAR(contact / localScale, 60.144, 1e-6);
     }
@@ -5734,21 +5755,24 @@ TEST(the_ring_flies_back_to_the_flower_when_its_moon_breaks) {
     CHECK(moonOf(rig) == NULL_ENTITY);
     CHECK(rig.slot(0).broken);
 
-    // Flown home on the glide, not flung past it on the spring: no tick of the
-    // trip carries it further from the flower than it started.
-    double gap = distance(rig.position(basic), rig.position(rig.player));
-    for (int i = 0; i < 10; ++i) {
+    // During the anchor switch the petal glides toward its place around
+    // the flower. The spring takes over after the glide and may overshoot.
+    double gap = rig.radiusOf(basic);
+    for (int i = 0; i < 5; ++i) {
         rig.tick();
-        const double now = distance(rig.position(basic), rig.position(rig.player));
-        CHECK(now <= gap + 1e-9);
-        gap = now;
+        const double next = rig.radiusOf(basic);
+        CHECK(next < gap);
+        gap = next;
     }
-    // Stay inside the reload window: a new Moon must not be mistaken for
-    // the old ring failing to return. The current reload talent is faster.
-    rig.settleRing(120);
+    const double reloadAt = rig.slot(0).reloadReadyAtMillis;
+    CHECK(rig.tickUntil([&] {
+        return std::abs(rig.radiusOf(basic) - kRestOrbit) < 1e-3;
+    }));
+    CHECK(rig.now < reloadAt);
     CHECK(rig.slot(0).broken);
     CHECK_NEAR(rig.ring().radius, kRestOrbit, 1e-9);
-    CHECK_NEAR(rig.radiusOf(basic), rig.ring().radius, 1e-3);
+    CHECK(rig.tickUntil([&] { return moonOf(rig) != NULL_ENTITY; }));
+    CHECK(rig.now >= reloadAt);
 }
 
 TEST(a_flower_has_one_moon_however_many_are_equipped) {
@@ -6317,7 +6341,7 @@ TEST(a_basil_grows_the_heal_an_amulet_keeps_the_overflow_of) {
     health.current = health.max - 10.0;
     CombatSystem::landHeal(rig.world, rig.player, health, 40.0);
     CHECK_NEAR(health.current, health.max, 1e-9);
-    CHECK_NEAR(shield.amount, (40.0 * kPlayerHealMultiplier * 1.5 - 10.0) * 0.25, 1e-9);
+    CHECK_NEAR(shield.amount, (40.0 * kPlayerHealMultiplier * 1.5 - 10.0) * 0.20, 1e-9);
 }
 
 TEST(a_disc_resists_collisions_by_florrs_curve_and_does_not_stack) {
@@ -7032,7 +7056,7 @@ TEST(shovel_burrow_allows_shipped_desert_centipedes_to_hit) {
     }
 }
 
-TEST(shovel_blocks_only_equipped_corruption_and_has_no_shared_surface_delay) {
+TEST(shovel_allows_equipped_corruption_and_has_no_shared_surface_delay) {
     const auto& registry = testsupport::shippedContent();
     for (bool equipped : {false, true}) {
         Rig rig(registry);
@@ -7046,8 +7070,8 @@ TEST(shovel_blocks_only_equipped_corruption_and_has_no_shared_surface_delay) {
         rig.setFlags(net::InputDefend);
         rig.tick();
         const auto* state = rig.world.tryGet<BurrowState>(rig.player);
-        CHECK_EQ(state && state->active, !equipped);
-        if (!equipped && state) {
+        CHECK(state && state->active);
+        if (state) {
             const double expires = state->untilMillis;
             while (rig.now <= expires) rig.tick();
             CHECK(rig.world.get<BurrowState>(rig.player).active);
@@ -8404,7 +8428,7 @@ Entity hyperContactMob(Rig& rig, Entity petal, Rarity tier = Rarity::Apex) {
 
 } // namespace
 
-TEST(hyper_dice_buffs_noncritical_hits_on_wounded_wild_mobs) {
+TEST(hyper_dice_buffs_noncritical_hits_on_wild_mobs) {
     const auto& registry = testsupport::shippedContent();
     for (const auto tier : {Rarity::Unique, Rarity::Apex, Rarity::PermanentHyper}) {
         Rig rig(registry);
@@ -8422,7 +8446,7 @@ TEST(hyper_dice_buffs_noncritical_hits_on_wounded_wild_mobs) {
                 CHECK_NEAR(dealt, base * 35.0, 1e-6);
             } else {
                 nonCritical = true;
-                CHECK_NEAR(dealt, base * (tier == Rarity::Unique ? 1.0 : 1.25), 1e-6);
+                CHECK_NEAR(dealt, base * (tier == Rarity::Unique ? 1.0 : 1.5), 1e-6);
             }
             rig.world.destroy(mob);
             rig.now += 2000.0;
@@ -8624,7 +8648,7 @@ TEST(hyper_followup_capacitor_extends_only_early_guard_discharges) {
         double radius = 0.0;
         Query<GroundEffect, LightningBurst> fields{rig.world};
         fields.each([&](Entity, GroundEffect& field, LightningBurst&) { radius = field.radius; });
-        CHECK_NEAR(radius, flag == net::InputDefend ? 1150.0 : 1000.0, 1e-7);
+        CHECK_NEAR(radius, flag == net::InputDefend ? 1300.0 : 1000.0, 1e-7);
         CHECK_NEAR(lastStrikeDamage(rig), net::kTickMillis * petalStrengthScale(Rarity::Apex), 1e-6);
     }
 }
@@ -8883,7 +8907,7 @@ TEST(hyper_final_rice_finishes_wild_mobs_only_while_attacking) {
     };
     const double base = damage(Rarity::Apex, net::InputAttack, 0.25);
     CHECK(base > 0.0);
-    CHECK_NEAR(damage(Rarity::Apex, net::InputAttack, 0.24), base * 1.08, 1e-6);
+    CHECK_NEAR(damage(Rarity::Apex, net::InputAttack, 0.24), base * 1.25, 1e-6);
     CHECK_NEAR(damage(Rarity::Apex, net::InputDefend, 0.24), base, 1e-6);
     CHECK_NEAR(damage(Rarity::Apex, net::InputAttack, 0.24, true), base, 1e-6);
     CHECK_NEAR(damage(Rarity::Unique, net::InputAttack, 0.24),
@@ -9250,4 +9274,68 @@ TEST(palm_leaf_retains_shield_cap_and_magic_mana) {
     CHECK(trial.shield() > cap * 0.99);
     CHECK(trial.shield() <= cap);
     CHECK(mana.current > 0.0);
+}
+
+TEST(egg_hatches_inside_a_ring_of_blockers_using_the_open_owner_pocket) {
+    Rig rig(testsupport::shippedContent());
+    rig.useHatchTerrain = true;
+    const Vec2 owner{10.5 * kTileSize, 10.5 * kTileSize};
+    rig.world.get<Transform>(rig.player).position = owner;
+    std::vector<Entity> blockers;
+    for (int i = 0; i < 16; ++i) {
+        const Vec2 centre = owner + Vec2::fromAngle(i * kTau / 16.0, 84.0);
+        const Entity blocker = addMob(rig, centre, "crab");
+        rig.world.get<Body>(blocker).radius = 30.0;
+        blockers.push_back(blocker);
+    }
+    rig.equip(0, "beetle_egg", Rarity::Ascendant);
+    CHECK(rig.tickUntil([&] { return rig.petCount() == 3; }, 1500));
+    Query<Pet, Transform, Body>{rig.world}.each([&](Entity, Pet&, Transform& at, Body& body) {
+        std::printf("crowd-ring hatch distance=%.3f radius=%.3f\n", distance(owner, at.position), body.radius);
+        CHECK(distance(owner, at.position) < 54.0);
+        CHECK(!rig.terrain.resolveWall(at.position, kMobWallRadius, at.realm).collided);
+    });
+    CombatSystem combat;
+    ricochetCombatTick(rig, combat);
+    CHECK(std::any_of(blockers.begin(), blockers.end(), [&](Entity blocker) {
+        const auto& hp = rig.world.get<Health>(blocker);
+        return hp.current < hp.max;
+    }));
+}
+
+TEST(slow_marble_reload_keeps_ready_and_replaced_slots_ready) {
+    std::string error;
+    if (!loadContent(testsupport::dataDir(), error)) { CHECK(false); return; }
+    const auto marble = content().petalIndex("marble");
+    const auto magic = content().petalIndex("magic_marble");
+    const auto peas = content().petalIndex("peas");
+    World world;
+    const Entity player = world.create();
+    world.add<Loadout>(player);
+    world.add<PetalSlotState>(player);
+    auto& worn = world.get<Loadout>(player);
+    auto& history = world.get<PetalSlotState>(player);
+    const std::array<std::uint16_t, 4> kinds{marble, magic, peas, marble};
+    for (std::size_t i = 0; i < kinds.size(); ++i) {
+        auto& slot = history.slots[i];
+        slot.configIndex = slot.equippedIndex = kinds[i];
+        slot.instanceReadyAtMillis = {0, 900, 1000, 1025};
+        worn.slots[i].configIndex = kinds[i];
+        worn.slots[i].reloadReadyAtMillis = 1300;
+    }
+    worn.slots[3].configIndex = peas;
+    const auto grain = world.create();
+    auto& instance = world.add<PetalInstance>(grain);
+    instance.configIndex = magic;
+    instance.nextProjectileMillis = 1050;
+    PetalSystem::advanceMarbleReloadsInSlowTick(world, content(), 1000, 350);
+    CHECK_EQ(instance.nextProjectileMillis, 1400.0);
+    for (std::size_t i = 0; i < kinds.size(); ++i) {
+        CHECK_EQ(worn.slots[i].reloadReadyAtMillis, i < 2 ? 1650.0 : 1300.0);
+        const auto& ready = history.slots[i].instanceReadyAtMillis;
+        CHECK_EQ(ready[0], 0.0);
+        CHECK_EQ(ready[1], 900.0);
+        CHECK_EQ(ready[2], 1000.0);
+        CHECK_EQ(ready[3], i < 2 ? 1375.0 : 1025.0);
+    }
 }

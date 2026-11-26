@@ -71,6 +71,11 @@ public:
     /// allocation-free.
     void clear();
 
+    /// Begins a rebuild in which the caller inserts each entity at most once.
+    /// One bucket can then be returned directly. A query spanning multiple
+    /// buckets still deduplicates entities whose footprints cross cell edges.
+    void clearForDistinctEntities();
+
     /// Files `e` under every cell its bounding circle touches, in its realm.
     ///
     /// Fat insertion, deliberately: filing a boss only under its centre cell
@@ -152,6 +157,7 @@ private:
     double invCellSize_ = 1.0 / kDefaultCellSize;
     std::array<Layer, kMaxRealms> layers_;
     std::uint32_t epoch_ = 1;
+    bool distinctEntities_ = false;
     std::size_t inserted_ = 0;
 
     /// Per-entity-index stamp, so a query can drop the duplicates that fat

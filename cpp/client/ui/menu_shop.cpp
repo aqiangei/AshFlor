@@ -860,8 +860,11 @@ bool ShopPanel::render(MenuContext& ctx) {
                     ? (i == 0 ? trEnZh("Unlock Super", "解锁超级") : i == 1 ? trEnZh("Unlock Eternal", "解锁永恒") : trEnZh("Unlock both", "解锁两档"))
                     : labels[i];
                 const Rect lock{right - (3-i) * (width+6), panel.y + kHeaderTop + kHeaderHeight-kLockHeight-5.0, width, kLockHeight};
-                lockButtons[i] = lock;
-                drawFlorrButton(canvas, lock, kLockFace, kButtonBorder, kButtonRadius, lock.contains(under), pressing(lock));
+                // Include the empty gutter so a short pen or finger movement
+                // between press and release stays on the same control.
+                const Rect hit{lock.x - 2.0, lock.y - 4.0, lock.w + 4.0, lock.h + 16.0};
+                lockButtons[i] = hit;
+                drawFlorrButton(canvas, lock, kLockFace, kButtonBorder, kButtonRadius, hit.contains(under), pressing(hit));
                 text(canvas, label, lock.x + lock.w*0.5, lock.y + lock.h*0.5, shopText(kLockSize));
             }
         }
@@ -959,9 +962,9 @@ bool ShopPanel::render(MenuContext& ctx) {
             std::max<std::int64_t>(0, now - ctx.net.dropBonusUpdatedAt) *
             ctx.net.dropBonusCountdownRate / net::kTicksPerSecond;
         const auto untilReset = ctx.net.dropBonusNextClaim - now;
-        // A paused balance stays fixed until midnight clears it.
-        const auto left = untilReset <= 0 ? 0 : ctx.net.dropBonusPaused ? reportedRemaining :
-            std::clamp<std::int64_t>(reportedRemaining - elapsed, 0, untilReset);
+        // Show the stored balance in both states. Midnight expires it separately.
+        const auto left = untilReset <= 0 ? 0 :
+            std::max<std::int64_t>(0, reportedRemaining - elapsed);
         bonusCanClaim = live && canClaim;
         bonusCanToggle = live && hasBonusTime;
         const char* petalLinkLabel = trEnZh("Petal Redemption Website", "花瓣兑换网站");

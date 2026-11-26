@@ -222,9 +222,9 @@ public:
     static void ignite(World& world, Entity victim, Entity emitter, Entity owner,
                        double rate, double duration, double now, bool fraction = false);
     std::function<std::uint32_t()> allocateNetId;
-    static void spawnPetalShard(World& world, Entity owner, const Transform& at, std::uint16_t index,
+    static Entity spawnPetalShard(World& world, Entity owner, const Transform& at, std::uint16_t index,
                                 Rarity rarity, double damage, std::uint8_t children, bool elemental,
-                                std::uint32_t netId);
+                                std::uint32_t netId, double health = 1.0);
     static void createSpill(World& world, Entity owner, Vec2 at, Rarity rarity,
                             const SpillSpec& spill, double scale, std::uint32_t netId,
                             double durabilityScale = 1.0, Rng* rng = nullptr);
@@ -494,6 +494,8 @@ private:
     /// bodies, flower bodies and petals all reduce to this, so there is one
     /// overlap-and-cooldown loop rather than three that drift apart.
     struct MeleeSource {
+        Vec2 sweepDelta{};
+        double sweepHalfLength = 0;
         Entity attacker = NULL_ENTITY;
         Vec2 position;
         double radius = 0;
@@ -790,7 +792,7 @@ private:
     /// petal a flat point, and shoving the victim away from the FLOWER rather
     /// than away from the petal. It carries neither poison nor slow.
     void resolvePetalPvp(World& world, const MeleeSource& source, Entity victim,
-                         Vec2 victimPosition, double victimRadius, double nowMillis);
+                         Vec2 victimPosition, double victimRadius, double nowMillis, double beanDamageScale);
     void tickProjectiles(World& world, const SpatialGrid& grid, const ContentRegistry& content,
                          double nowMillis, double dt, bool bodyGridOnly);
     static std::optional<ShotImpact> sweepShotTarget(const ShotSource& shot,
@@ -955,7 +957,6 @@ private:
         /// a contiguous run, found with one binary search.
         std::uint64_t key = 0;
         std::uint32_t slot = 0;
-        std::uint32_t nextNonPeaceful = 0;
     };
     std::vector<ShotCell> shotCells_;
     // A homogeneous cell can be skipped before enumerating a flower's own

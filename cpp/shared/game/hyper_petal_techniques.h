@@ -40,7 +40,7 @@ enum class HyperTechnique {
     BasicRally, BeanSolo, BloodRecovery, BroccoliBurst, CodeParity,
     CactusThorns, CardLastStand, ClawFollowup, ClayThrow, CogwheelLock,
     CoinSweep, ChipTracking, CoralFragments, CottonPadding, CubeBracing,
-    DeadLeafShelter, DiceFloor, DustWake, PowderRush, SingularityAnchor, TorchWildfire, AcidPoolBoost, GlassPhase, GlassPressure,
+    DeadLeafShelter, DiceFloor, DustWake, SingularityAnchor, TorchWildfire, AcidPoolBoost, GlassPhase, GlassPressure,
     GlitchJam, GoldenRecovery, HornetShot, ScriptCast, LaserPulse,
     LeafRecovery, LightRecovery, MagicCactusReserve, MagicNeedleReserve, PentagonShove,
     PokerOdds, RamRecovery, RiceCleanup, RubberGround, RubyEcho,
@@ -53,6 +53,8 @@ struct HyperTechniqueInfo {
     const char* english;
     const char* chinese;
     double amount;
+    // Keep catalogued but inactive release techniques out of gameplay lookups.
+    bool enabled = true;
 };
 
 inline constexpr HyperTechniqueInfo kAcidBombTechnique{"acid_bomb", HyperTechnique::AcidPoolBoost,
@@ -60,6 +62,7 @@ inline constexpr HyperTechniqueInfo kAcidBombTechnique{"acid_bomb", HyperTechniq
     "该炸弹的酸池每秒伤害提高 20%。", 1.2};
 
 inline constexpr HyperTechniqueInfo kHyperTechniques[] = {
+    kAcidBombTechnique,
     {"air", HyperTechnique::GuardAir,
      "Defending reduces Air’s extra flower size by 12%.",
      "防御时，空气附加的花朵体积缩小 12%。", 0.88},
@@ -121,8 +124,8 @@ inline constexpr HyperTechniqueInfo kHyperTechniques[] = {
      "While defending below half health, returns 8% of health lost to a wild body hit. Uses the stronger reflection if Salt also applies.",
      "防御且生命低于一半时，将野怪体撞造成实际掉血的 8% 返还。与盐的反伤取较强者。", 0.08},
     {"capacitor", HyperTechnique::CapacitorRelease,
-     "Defending when contact ends early spreads the stored discharge 15% farther. A fully charged discharge is unchanged.",
-     "防御时，提前脱离接触释放的未满电闪电范围扩大 15%，满电放电沿用原范围。", 1.3},
+     "Defending when contact ends early spreads the stored discharge 30% farther. A fully charged discharge is unchanged.",
+     "防御时，提前脱离接触释放的未满电闪电范围扩大 30%，满电放电沿用原范围。", 1.3},
     {"card", HyperTechnique::CardLastStand,
      "While defending, takes 12% less wild physical projectile damage when the card is at or below half durability.",
      "防御且扑克牌耐久不超过一半时，野怪物理弹幕对它的伤害减少 12%。", 0.88},
@@ -444,6 +447,9 @@ inline constexpr HyperTechniqueInfo kHyperTechniques[] = {
     {"tomato", HyperTechnique::TomatoRipening,
      "Once it has been out for 5 seconds, Tomato ripens one step ahead against wild mobs, with the same maximum.",
      "上场满 5 秒后，番茄对野怪提前获得一档成熟伤害，成熟上限相同。", 1000},
+    {"torch", HyperTechnique::TorchWildfire,
+     "Hyper Torch burn on wild mobs deals 20% more damage per second.",
+     "超凡火把对野怪的燃烧每秒伤害提高 20%。", 1.2, false},
     {"totem", HyperTechnique::LongTotem,
      "The recovery earned by a kill lasts 11 seconds.",
      "击杀触发的图腾恢复持续 11 秒。", 11000},
@@ -453,6 +459,9 @@ inline constexpr HyperTechniqueInfo kHyperTechniques[] = {
     {"uranium", HyperTechnique::WideRadiation,
      "Radiation reaches 25% farther at the same self-damage.",
      "辐射半径增加 25%，自伤规则相同。", 1.25},
+    {"void_singularity", HyperTechnique::SingularityAnchor,
+     "Hyper Singularity cuts monster gravity fields to 15% instead of 33%.",
+     "超凡奇点将怪物引力场强度降到 15%（永恒为 33%）。", 0.15, false},
     {"wasp_missile", HyperTechnique::WaspWeave,
      "Attack fires a weaving dart up to 350 units for 55% base contact damage against wild mobs.",
      "攻击时发射一枚摆动弹，射程 350 单位，对野怪造成基础接触伤害的 55%。", 0.55},
@@ -465,17 +474,6 @@ inline constexpr HyperTechniqueInfo kHyperTechniques[] = {
     {"wing", HyperTechnique::WingReach,
      "Attack lunges extend 20% farther beyond the ring.",
      "攻击时，冲出环外的距离增加 20%。", 0.0},
-
-    {"void_powder", HyperTechnique::PowderRush,
-     "Hyper Powder adds 25% more of its movement bonus.",
-     "超凡粉末的移速加成再提高 25%。", 1.25},
-    {"void_singularity", HyperTechnique::SingularityAnchor,
-     "Hyper Singularity cuts monster gravity fields to 15% instead of 33%.",
-     "超凡奇点将怪物引力场强度降到 15%（永恒为 33%）。", 0.15},
-    {"torch", HyperTechnique::TorchWildfire,
-     "Hyper Torch burn on wild mobs deals 20% more damage per second.",
-     "超凡火把对野怪的燃烧每秒伤害提高 20%。", 1.2},
-    kAcidBombTechnique,
     {"yggdrasil", HyperTechnique::RescueReach,
      "Extends revival reach by 25%. The extra reach needs a clear path.",
      "复活距离增加 25%。额外距离需要无遮挡。", 0.0},
@@ -487,15 +485,20 @@ inline constexpr HyperTechniqueInfo kHyperTechniques[] = {
      "生命低于 30% 时，中立姿态也能获得正常防御治疗量的四分之一。", 0.25},
 };
 
+static_assert([] {
+    for (std::size_t i = 1; i < std::size(kHyperTechniques); ++i)
+        if (!(kHyperTechniques[i - 1].id < kHyperTechniques[i].id)) return false;
+    return true;
+}(), "Hyper technique IDs must be sorted and unique for binary search");
+
 inline const HyperTechniqueInfo* hyperTechniqueInfo(std::string_view id, Rarity rarity,
                                                      bool copiedFromOtherTier = false) {
     if (!isHyperPetal(rarity) || copiedFromOtherTier) return nullptr;
     if (id == "arctic_stick") id = "mysterious_stick";
-    if (id == kAcidBombTechnique.id) return &kAcidBombTechnique;
     const auto* end = kHyperTechniques + sizeof(kHyperTechniques) / sizeof(*kHyperTechniques);
     const auto* entry = std::lower_bound(kHyperTechniques, end, id,
         [](const HyperTechniqueInfo& info, std::string_view key) { return info.id < key; });
-    return entry != end && entry->id == id ? entry : nullptr;
+    return entry != end && entry->id == id && entry->enabled ? entry : nullptr;
 }
 
 inline HyperTechnique hyperTechnique(std::string_view id, Rarity rarity, bool copiedFromOtherTier) {
@@ -618,7 +621,6 @@ inline const char* hyperMysteryHint(HyperTechnique technique, bool chinese) {
             return chinese ? "和其他叶片一起装备，防御时看谁留得更久。" : "Equip it beside other leaves and see which ones last longer when you guard.";
         case HyperTechnique::AcidPoolBoost:
             return chinese ? "酸池伤害独立于炸弹的接触伤害。" : "Pool damage is separate from the bomb's contact damage.";
-        case HyperTechnique::PowderRush:
         case HyperTechnique::TorchWildfire:
         case HyperTechnique::SingularityAnchor:
         case HyperTechnique::DiceFloor:

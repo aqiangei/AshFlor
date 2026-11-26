@@ -1587,62 +1587,23 @@ TEST(the_trader_refuses_a_contested_hyper_for_a_coin) {
     removeDataDir(dir);
 }
 
-TEST(the_trader_takes_ascendant_for_an_ascendant_coin_that_can_be_worn) {
+TEST(the_trader_accepts_five_mixed_apex_petals_during_the_daily_coin_cooldown) {
     const std::string dir = traderWorld("trader-ascendant");
     Harness h("trader-ascendant", [](const std::string& path) {
         seedAccount(path, "merchant");
-        seedStack(path, "merchant", "petal_magic_aztec_coin", Rarity::Ascendant, 1);
-        seedStack(path, "merchant", "petal_rose", Rarity::Ascendant, 1);
+        seedStack(path, "merchant", "petal_poker_chip", Rarity::Ascendant, 5);
+        seedStack(path, "merchant", "petal_leaf", Rarity::Ascendant, 5);
+        seedStack(path, "merchant", "petal_magic_aztec_coin", Rarity::Ascendant, 2);
+        seedStack(path, "merchant", "petal_rose", Rarity::Ascendant, 4);
         seedStack(path, "merchant", "petal_rose", Rarity::PermanentHyper, 1);
-        seedStack(path, "merchant", "petal_rose", Rarity::Admin, 1);
     }, dir, 0);
     if (!h.ready) { CHECK(false); removeDataDir(dir); return; }
-    const std::uint16_t rose = content().petalIndex("rose");
-    const std::uint16_t coin = content().petalIndex(kTraderCoinPetal);
-    if (rose == kInvalidIndex || coin == kInvalidIndex) { CHECK(false); removeDataDir(dir); return; }
-
+    const auto rose = content().petalIndex("rose");
+    const auto aztec = content().petalIndex("magic_aztec_coin");
+    const auto coin = content().petalIndex(kTraderCoinPetal);
     NetClient client;
     CHECK(joinAs(h, client, "merchant"));
-    h.step(3, {&client});
-    CHECK(awaitProfile(h, client, [&](const Profile& p) {
-        return p.stackCount(rose, Rarity::Ascendant) == 1u &&
-               p.stackCount(rose, Rarity::PermanentHyper) == 1u;
-    }));
-
-    // A refused admin trade starts no wait.
     TradeOutcome outcome;
-    standBeside(h, client, "trader");
-    client.requestTrade(rose, Rarity::Admin);
-    CHECK(awaitTrade(h, client, outcome));
-    CHECK(!outcome.success);
-    CHECK_EQ(outcome.receivedIndex, kNoPetal);
-    CHECK_EQ(client.traderCooldownRemainingMillis(), 0.0);
-
-    standBeside(h, client, "trader");
-    client.requestTrade(rose, Rarity::Ascendant);
-    CHECK(awaitTrade(h, client, outcome));
-    CHECK(outcome.success);
-    CHECK(outcome.rarity == Rarity::Ascendant);
-    CHECK_EQ(outcome.receivedIndex, coin);
-    CHECK(awaitProfile(h, client, [&](const Profile& p) {
-        return p.stackCount(rose, Rarity::Ascendant) == 0u &&
-               p.stackCount(coin, Rarity::Ascendant) == 1u;
-    }));
-    CHECK_EQ(client.profile().stackCount(rose, Rarity::PermanentHyper), 1u);
-    CHECK_EQ(client.traderCooldownRemainingMillis(), 0.0);
-
-    // The coin is a petal like any other at its tier: it goes on the bar.
-    client.setLoadoutSlot(0, coin, Rarity::Ascendant);
-    CHECK(awaitProfile(h, client, [&](const Profile& p) {
-        return !p.loadout.empty() && p.loadout[0].petalIndex == coin &&
-               p.loadout[0].rarity == Rarity::Ascendant &&
-               p.stackCount(coin, Rarity::Ascendant) == 0u;
-    }));
-    standBeside(h, client, "trader");
-    client.requestTrade(rose, Rarity::PermanentHyper);
-    CHECK(awaitTrade(h, client, outcome));
-    CHECK(outcome.success);
-    const auto aztec = content().petalIndex("magic_aztec_coin");
     standBeside(h, client, "trader");
     client.requestTrade(aztec, Rarity::Ascendant);
     CHECK(awaitTrade(h, client, outcome));
@@ -1650,23 +1611,54 @@ TEST(the_trader_takes_ascendant_for_an_ascendant_coin_that_can_be_worn) {
     CHECK(awaitProfile(h, client, [&](const Profile& p) {
         return p.stackCount(coin, Rarity::Ascendant) == 4u;
     }));
+    CHECK(client.traderCooldownRemainingMillis() > 0);
     standBeside(h, client, "trader");
-    client.requestTrade(coin, Rarity::Ascendant);
+    client.requestTrade(rose, Rarity::PermanentHyper);
     CHECK(awaitTrade(h, client, outcome));
-    CHECK(outcome.success);
-    CHECK(outcome.receivedIndex != coin);
-    CHECK(awaitProfile(h, client, [&](const Profile& p) {
-        return p.stackCount(coin, Rarity::Ascendant) == 0u &&
-               p.stackCount(outcome.receivedIndex, Rarity::Ascendant) == 1u;
-    }));
+    CHECK(!outcome.success);
     standBeside(h, client, "trader");
     client.requestTrade(coin, Rarity::Ascendant);
     CHECK(awaitTrade(h, client, outcome));
     CHECK(!outcome.success);
+    standBeside(h, client, "trader");
+    const auto chip = content().petalIndex("poker_chip");
+    CHECK(chip != kInvalidIndex);
+    client.requestApexDraw({rose, rose, rose, rose, chip});
+    CHECK(awaitTrade(h, client, outcome));
+    CHECK(!outcome.success);
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stackCount(chip, Rarity::Ascendant) == 5u &&
+               p.stackCount(rose, Rarity::Ascendant) == 4u;
+    }));
+    standBeside(h, client, "trader");
+    client.requestApexDraw({rose, rose, rose, rose, rose});
+    CHECK(awaitTrade(h, client, outcome));
+    CHECK(!outcome.success);
+    standBeside(h, client, "trader");
+    client.requestApexDraw({rose, rose, rose, rose, aztec});
+    CHECK(awaitTrade(h, client, outcome));
+    CHECK(outcome.success);
+    CHECK(outcome.receivedIndex != coin);
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stackCount(coin, Rarity::Ascendant) == 4u &&
+               p.stackCount(rose, Rarity::Ascendant) == unsigned(outcome.receivedIndex == rose) &&
+               p.stackCount(aztec, Rarity::Ascendant) == unsigned(outcome.receivedIndex == aztec) &&
+               p.stackCount(outcome.receivedIndex, Rarity::Ascendant) == 1u;
+    }));
+    const auto leaf = content().petalIndex("leaf");
+    standBeside(h, client, "trader");
+    client.requestApexDraw({leaf, leaf, leaf, leaf, leaf});
+    CHECK(awaitTrade(h, client, outcome));
+    CHECK(outcome.success);
     h.step(3, {&client});
-    CHECK_EQ(std::count_if(client.chat().begin(), client.chat().end(), [](const auto& message) {
-        return message.text.find("沙漠商人处用 4 枚 Apex 硬币抽到了") != std::string::npos;
-    }), 1);
+    char apexColor[8];
+    std::snprintf(apexColor, sizeof apexColor, "#%06x", rarityColor(Rarity::Ascendant));
+    CHECK_EQ(std::count_if(client.chat().begin(), client.chat().end(), [&](const auto& message) {
+        return message.text.rfind(std::string("<b style=\"color: ") + apexColor + ";\">", 0) == 0 &&
+               message.text.find("<b style=\"color: #00ff00;\">@merchant</b>") != std::string::npos &&
+               message.text.find("[<b style=\"color: yellow;\">") != std::string::npos &&
+               message.text.find("沙漠商人处用 5 片 Apex 花瓣换到了") != std::string::npos;
+    }), 2);
     removeDataDir(dir);
 }
 

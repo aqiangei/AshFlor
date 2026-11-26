@@ -197,7 +197,7 @@ enum Toggle : int {
     kToggleCount,
 };
 
-enum Slider : int { kRenderScale, kMobFramerate, kInterpolation, kUiScale, kCameraZoom };
+enum Slider : int { kRenderScale, kMobFramerate, kInterpolation, kUiScale, kCameraZoom, kRotationSpeed };
 
 enum Button : int {
     kSaveControls,
@@ -763,6 +763,14 @@ bool SettingsPanel::render(MenuContext& ctx) {
             p.checkbox(kNumberKeysUseItems, tr(Msg::NumberKeysUseItems));
             p.checkbox(kUseMouseControls, tr(Msg::UseMouseControls));
             p.checkbox(kRequestMobile, tr(Msg::RequestMobile));
+            double rotation = net::rotationPercent(settings.rotationStep);
+            p.sliderRow(kRotationSpeed, trEnZh("Petal rotation: ", "花瓣转速："), "%", rotation,
+                        25.0, 100.0, 1.0, 1.0, 0, kInk, 28.0);
+            const int code = net::rotationCode(static_cast<int>(rotation));
+            if (settings.rotationStep != code) {
+                settings.rotationStep = code;
+                settings.settingsDirty = true;
+            }
             p.checkbox(kMovementHelper, tr(Msg::MovementHelper));
             p.checkbox(kInvertAttack, tr(Msg::InvertAttack));
             p.checkbox(kInvertDefend, tr(Msg::InvertDefend));

@@ -316,7 +316,7 @@ void App::updateLobby() {
 
     const auto& streak = net_.dailyStreak();
     if (!streak.known) streakDetailsOpen_ = false;
-    if (streak.known && window_.mousePressed(MouseButton::Left)) {
+    if (!menus_.showingPlinko() && streak.known && window_.mousePressed(MouseButton::Left)) {
         const Rect card = streakCard(window_.width(), streakDetailsOpen_);
         if (card.contains(mouse)) {
             pressedControl_.clear();

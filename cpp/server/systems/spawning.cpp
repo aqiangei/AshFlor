@@ -1590,6 +1590,8 @@ void SpawnSystem::takeCensus(World& world, const ContentRegistry& content,
     // permissive default is what keeps an unattended server populated instead
     // of emptying itself and handing the next arrival a barren map.
     const bool unattended = viewers.empty();
+    std::array<std::vector<Viewer>, kMaxRealms> realmViewers;
+    for (const auto& viewer : viewers) realmViewers[realmIndex(viewer.realm)].push_back(viewer);
 
     connectedRoots_.clear();
     ambientChains_->each([&](Entity e, BodySegment& segment, Transform& at, AmbientMob&) {
@@ -1608,7 +1610,7 @@ void SpawnSystem::takeCensus(World& world, const ContentRegistry& content,
         connectedRoots_.emplace(e, root);
         // Seeing either end keeps the connected section alive. A broken
         // link has its own root and can go to sleep independently.
-        if (!unattended && seenBy(viewers, at.realm, at.position,
+        if (!unattended && seenBy(realmViewers[realmIndex(at.realm)], at.realm, at.position,
                                  latentWakeMargin + kLatentSleepMargin + (world.tryGet<Body>(e) ? world.get<Body>(e).radius : 0.0))) {
             activity->lastNearPlayerMillis = nowMillis;
         }
@@ -1647,7 +1649,7 @@ void SpawnSystem::takeCensus(World& world, const ContentRegistry& content,
         const bool nearAnyone =
             unattended || connectedRoots_.find(e) != connectedRoots_.end() ||
             world.has<KeepAwake>(e) || world.has<Undead>(e) ||
-            seenBy(viewers, transform.realm, transform.position,
+            seenBy(realmViewers[realmIndex(transform.realm)], transform.realm, transform.position,
                    latentWakeMargin + kLatentSleepMargin + body.radius);
 
         // A band mob goes back to being a record, which loses nothing, so it
@@ -1656,7 +1658,7 @@ void SpawnSystem::takeCensus(World& world, const ContentRegistry& content,
         const double graceMillis = sleeps ? kLatentSleepDelayMillis : kMobDespawnDelayMillis;
         const bool reclaimOffscreen = prioritiseVisible && !unattended && sleeps &&
             !world.has<BodySegment>(e) && !world.has<KeepAwake>(e) && !world.has<Undead>(e) &&
-            !seenBy(viewers, transform.realm, transform.position,
+            !seenBy(realmViewers[realmIndex(transform.realm)], transform.realm, transform.position,
                     std::max(0.0, body.radius) + kViewportBuffer);
         if (nearAnyone && !reclaimOffscreen) {
             ambient.lastNearPlayerMillis = nowMillis;
@@ -1674,7 +1676,7 @@ void SpawnSystem::takeCensus(World& world, const ContentRegistry& content,
             if (sleeps) {
                 Vec2 restAt = transform.position;
                 if (const auto* home = world.tryGet<SilverfishHome>(e);
-                    home && !seenBy(viewers, transform.realm, home->position,
+                    home && !seenBy(realmViewers[realmIndex(transform.realm)], transform.realm, home->position,
                                    latentWakeMargin + body.radius)) {
                     restAt = home->position;
                 }
@@ -3431,6 +3433,8 @@ void SpawnSystem::bankCasualties(World& world, const Terrain& terrain,
         ambient.zone = kInvalidIndex;
     });
 
+    if (casualtyList_.empty()) return;
+
     // Collected first, spent afterwards: stocking a boss creates an entity,
     // and a create() relocates the very rows the walk above is holding.
     //
@@ -3448,12 +3452,24 @@ void SpawnSystem::bankCasualties(World& world, const Terrain& terrain,
     };
     // One live-only spatial snapshot per casualty batch, not a full scan per
     // death. Dead bodies and dormant records cannot make a cleared room full.
-    SpatialGrid refillLiving;DensityRoots refillRoots{world};
-    const bool needsDensity = std::any_of(casualtyList_.begin(), casualtyList_.end(), densityRefill);
+    // This pass finishes before promoteLatent builds its own room census.
+    // Reuse the map-sized buckets and file only realms that lost a relevant mob.
+    SpatialGrid& refillLiving = roomLivingGrid_;
+    DensityRoots refillRoots{world};
+    std::array<bool, kMaxRealms> refillRealms{};
+    bool needsDensity = false;
+    for (const auto& casualty : casualtyList_) {
+        if (densityRefill(casualty)) {
+            refillRealms[realmIndex(zones_[casualty.zone].realm)] = true;
+            needsDensity = true;
+        }
+    }
     if (needsDensity) {
+        refillLiving.clear();
         Query<MobTag, Transform, Body, MobType> living{world};
         living.without<Dead, Pet>();
         living.each([&](Entity e, MobTag&, Transform& at, Body& body, MobType& type) {
+            if (!refillRealms[realmIndex(at.realm)]) return;
             const Entity root=refillRoots.get(e);if(root==NULL_ENTITY)return;
             // Independent ghosts are stocked separately and may be invisible.
             // They do not replace an ordinary mob in the local population.
@@ -3778,8 +3794,7 @@ void SpawnSystem::promoteLatent(World& world, const Terrain& terrain,
             // which is the "a mob spawned on me and killed me" report.
             //
             // Allow for the largest body and for the whole length of a chain.
-            const SpawnFootprint footprint =
-                spawnFootprint(content, record.mobIndex, record.rarity);
+            const SpawnFootprint& footprint = physicalFootprint;
             // A timed replacement behind a wall or just beyond the view stays
             // available to refill the player's cleared room. Cold stock and
             // previously awake animals still get the normal pre-wake margin.
@@ -3896,16 +3911,30 @@ void SpawnSystem::promoteLatent(World& world, const Terrain& terrain,
     // A band's remote stock cannot stand in for living mobs in an occupied
     // room. Move an eligible READY record within its own band, preserving its
     // type, tier and deadline. Never create a second slot or take live mobs.
-    const bool hasPrestigeViewer=std::any_of(seers.begin(),seers.end(),[&](const Viewer& viewer) {
-        const auto* map=worldMaps?worldMaps->forRealm(viewer.realm):nullptr;
-        return map && map->prestige() && std::any_of(wokenFrom_.begin(),wokenFrom_.end(),[&](const Viewer& old) {
-            return old.realm==viewer.realm && distanceSq(old.position,viewer.position)<350.0*350.0;
+    std::vector<const Viewer*> establishedViewers;
+    std::array<bool, kMaxRealms> needsRoomCensus{};
+    for (const auto& viewer : seers) {
+        const auto* map = worldMaps ? worldMaps->forRealm(viewer.realm) : nullptr;
+        if (!map || !map->prestige()) continue;
+        const bool established = std::any_of(wokenFrom_.begin(), wokenFrom_.end(), [&](const Viewer& old) {
+            return old.realm == viewer.realm && distanceSq(old.position, viewer.position) < 350.0 * 350.0;
         });
-    });
-    if(!hasPrestigeViewer)return;
+        if (established) {
+            establishedViewers.push_back(&viewer);
+            needsRoomCensus[realmIndex(viewer.realm)] = true;
+        }
+    }
+    if (establishedViewers.empty()) return;
+    std::array<std::vector<std::size_t>, kMaxRealms> roomZones;
+    for (std::size_t i = 0; i < zones_.size(); ++i) {
+        const auto& zone = zones_[i];
+        if (needsRoomCensus[realmIndex(zone.realm)] && !zone.singular && zone.forceRarity < 0)
+            roomZones[realmIndex(zone.realm)].push_back(i);
+    }
     SpatialGrid& roomLiving=roomLivingGrid_;roomLiving.clear();DensityRoots roomRoots{world};
     Query<MobTag,Transform,Body,MobType> roomMobs{world};roomMobs.without<Dead,Pet>();
     roomMobs.each([&](Entity e,MobTag&,Transform& at,Body& body,MobType& type) {
+        if (!needsRoomCensus[realmIndex(at.realm)]) return;
         const Entity root=roomRoots.get(e);if(root==NULL_ENTITY)return;
         const auto* rootType=world.tryGet<MobType>(root);
         if(rootType&&content.mob(rootType->configIndex).neverAmbient&&!world.has<BodySegment>(root))return;
@@ -3920,21 +3949,16 @@ void SpawnSystem::promoteLatent(World& world, const Terrain& terrain,
         double lowerTierRadius;
     };
     std::vector<ReservedRoomPoint> reservedPoints;
-    for(const auto& viewer:seers) {
-        const auto* map=worldMaps?worldMaps->forRealm(viewer.realm):nullptr;
-        if(!map || !map->prestige())continue;
-        const bool established=std::any_of(wokenFrom_.begin(),wokenFrom_.end(),[&](const Viewer& old){
-            return old.realm==viewer.realm && distanceSq(old.position,viewer.position)<350.0*350.0;
-        });
-        if(!established)continue;
+    for (const Viewer* established : establishedViewers) {
+        const auto& viewer = *established;
+        const auto* map = worldMaps->forRealm(viewer.realm);
         int viewerMoves=0, viewerAttempts=0, viewerDonorScans=0;
 #ifdef FLIX_DENSITY_DIAGNOSTICS
         int need=0,eligible=0,terrainRejected=0,rosterRejected=0,safetyRejected=0,crowdRejected=0;
 #endif
         std::vector<std::size_t> localZones;
-        for(std::size_t zi=0;zi<zones_.size();++zi) {
-            const auto& zone=zones_[zi];
-            if(zone.realm==viewer.realm && !zone.singular && zone.forceRarity<0 && !zone.latent.empty())localZones.push_back(zi);
+        for (std::size_t zi : roomZones[realmIndex(viewer.realm)]) {
+            if (!zones_[zi].latent.empty()) localZones.push_back(zi);
         }
         for(std::size_t n=localZones.size();n>1;--n)
             std::swap(localZones[n-1],localZones[rng.below(static_cast<std::uint32_t>(n))]);

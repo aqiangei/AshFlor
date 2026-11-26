@@ -442,7 +442,8 @@ TEST(petal_effect_panels_cover_the_shipped_catalog) {
                 CHECK_EQ(count(en ? "Pool lifetime: " : "液池持续："),
                          config.spill.kind != SpillKind::None ? 1 : 0);
                 CHECK_EQ(count(en ? "Base burn damage per second: " : "基础灼烧伤害/秒："),
-                         config.burnPerSecond > 0.0 && config.burnMillis > 0.0 ? 1 : 0);
+                         (config.burnPerSecond > 0.0 && config.burnMillis > 0.0) ||
+                         (config.id == "pyrite" && config.radiation.burnDamage > 0.0) ? 1 : 0);
                 CHECK_EQ(count(en ? "Base self-damage per landed contact: " : "每次有效接触的基础自伤："),
                          config.contactSelfDamage > 0.0 ? 1 : 0);
             }

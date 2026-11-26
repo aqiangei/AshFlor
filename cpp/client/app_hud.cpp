@@ -557,6 +557,7 @@ NearbyNpc App::nearbyNpc(Vec2 self) const {
     // and allows kNpcServiceSlack on top, so a panel opened here is never
     // refused for the frame of easing between the two.
     NearbyNpc nearest;
+    if (!net_.view().hasNpcs()) return nearest;
     double nearestGap = kNpcServiceReach;
     for (const auto& entry : net_.view().entities()) {
         const RemoteEntity& entity = entry.second;

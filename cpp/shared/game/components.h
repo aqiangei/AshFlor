@@ -538,11 +538,12 @@ struct Bounty {
         net::ConnectionId owner = 0;
         double damage = 0;
         std::string accountId;
+        bool arcticEmeraldHit = false;
     };
     std::vector<Share> contributors;
 
     void credit(Entity player, double damage, net::ConnectionId owner = 0,
-                std::string_view accountId = {}) {
+                std::string_view accountId = {}, bool arcticEmeraldHit = false) {
         for (Share& share : contributors) {
             const bool same = accountId.empty()
                 ? share.accountId.empty() && (owner != 0 ? share.owner == owner
@@ -552,9 +553,10 @@ struct Bounty {
             share.player = player;
             share.owner = owner;
             share.damage += damage;
+            share.arcticEmeraldHit |= arcticEmeraldHit;
             return;
         }
-        contributors.push_back({player, owner, damage, std::string(accountId)});
+        contributors.push_back({player, owner, damage, std::string(accountId), arcticEmeraldHit});
     }
 };
 
@@ -1315,6 +1317,7 @@ struct Spawner {
 struct PetalInstance {
     double combinationStrength = 1.0;
     std::uint8_t dominoPips = 0;
+    std::uint8_t cardSuit = 0;
     std::uint8_t diceFace = 0;
     double chromosomeShield = 0.0;
     double chromosomeShieldUntilMillis = 0.0;
@@ -1448,6 +1451,7 @@ struct PetalInstance {
     double citronScale = 1.0;
     bool skipPreparation = false;
     bool soaksOwnerLightning = false;
+    bool increasesMobExperience = false;
     /// PetalConfig::ignoresMobs, set at spawn for the same reason: canDamage,
     /// which refuses every pair of this petal and a mob's doing, has no
     /// registry to ask.

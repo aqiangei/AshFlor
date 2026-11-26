@@ -389,7 +389,7 @@ const char* rarityTrEn(const std::string& en) {
         {"Mythic", "神话"},     {"Ultra", "究极"},    {"Super", "超级"},
         {"Permanent Hyper", "永久超凡"}, {"Eternal", "永恒"}, {"Unique", "唯一"},
         {"Hyper", "超凡"},
-        {"Universal", "宇宙"},  {"Admin", "管理"},
+        {"Universal", "宇宙"},  {"Devine", "宇宙"}, {"Admin", "管理"},
     };
     for (const Pair& p : kR) {
         if (en == p.en) return p.zh;
@@ -418,7 +418,7 @@ std::string dropArticle(std::string s) {
 /// Split "Rarity Name" at the first space after a known rarity label.
 bool splitRarityName(const std::string& body, std::string& rarity, std::string& name) {
     static const char* kLabels[] = {
-        "Permanent Hyper", "Universal", "Uncommon", "Unusual", "Legendary", "Eternal", "Unique",
+        "Permanent Hyper", "Universal", "Devine", "Uncommon", "Unusual", "Legendary", "Eternal", "Unique",
         "Common", "Rare", "Epic", "Mythic", "Ultra", "Super", "Hyper", "Apex", "Admin",
     };
     for (const char* lab : kLabels) {
@@ -679,7 +679,9 @@ std::string localizeMarkupAware(std::string text) {
                 if (end != std::string::npos) mapId = prefix.substr(from, end - from);
             }
             std::string petalId;
-            constexpr std::string_view petalTag = "<b data-petal='";
+            constexpr std::string_view pickupTag = "<b data-pickup='";
+            const std::string_view petalTag = prefix.compare(0, pickupTag.size(), pickupTag) == 0
+                ? pickupTag : "<b data-petal='";
             if (prefix.compare(0, petalTag.size(), petalTag) == 0) {
                 const auto end = prefix.find('\'', petalTag.size());
                 if (end != std::string::npos) petalId = prefix.substr(petalTag.size(), end - petalTag.size());
@@ -695,7 +697,7 @@ std::string localizeMarkupAware(std::string text) {
                 const bool mobAnnouncement = verb == " has spawned" ||
                     verb == " has been summoned" || verb == " has been defeated";
                 const bool petalAnnouncement = verb == " has been crafted by " ||
-                    verb == " has been forged by ";
+                    verb == " has been forged by " || verb == " has been collected by ";
                 const std::string entity = trEntity(head, mobId, mobAnnouncement, petalId, petalAnnouncement);
                 const std::string rest = body.substr(at + std::char_traits<char>::length(enVerb));
                 // rest may be "!", " somewhere!", " in MAP!", " by MARKUP", " by MARKUP!</b>" already cut
@@ -828,7 +830,26 @@ std::string localizeChatText(std::string text) {
             at += std::char_traits<char>::length(pair.zh);
         }
     }
-    return localizeMarkupAware(std::move(text));
+    text = localizeMarkupAware(std::move(text));
+    // Trader rewards and other inline item labels carry a standalone
+    // "Rarity Name" span inside a sentence instead of tagging the sentence.
+    constexpr std::string_view tag = "<b data-petal='";
+    for (std::size_t at = 0; (at = text.find(tag, at)) != std::string::npos;) {
+        const auto idStart = at + tag.size();
+        const auto idEnd = text.find('\'', idStart);
+        const auto openEnd = text.find('>', idStart);
+        if (idEnd == std::string::npos || openEnd == std::string::npos || idEnd > openEnd) break;
+        at = openEnd + 1;
+        const auto close = text.find('<', at);
+        if (close == std::string::npos || text.compare(close, 4, "</b>") != 0) continue;
+        std::string rarity, name;
+        if (!splitRarityName(text.substr(at, close - at), rarity, name)) continue;
+        const auto localized = std::string(rarityTrEn(rarity)) + " " +
+            announcedPetalName(text.substr(idStart, idEnd - idStart), name);
+        text.replace(at, close - at, localized);
+        at += localized.size();
+    }
+    return text;
 }
 
 std::string localizeNotificationText(const std::string& text, const std::string& petalId) {

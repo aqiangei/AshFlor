@@ -308,6 +308,7 @@ add_library(flix_client STATIC
   client/ui/menu_slot_card.cpp
   client/ui/menu_absorb.cpp
   client/ui/menu_crafting.cpp
+  client/ui/menu_hel_plinko.cpp
   client/ui/menu_oracle.cpp
   client/ui/menu_trade.cpp
   client/ui/menu_assembler.cpp
@@ -752,8 +753,10 @@ if(EMSCRIPTEN)
     # and the script's fetch reads data/, boot/ and persist/ through FS.
     "-sEXPORTED_RUNTIME_METHODS=['callMain','FS']"
     ${FLIX_WEB_MODULARIZE}
+    "SHELL:--pre-js ${CMAKE_CURRENT_SOURCE_DIR}/third_party/cpp_canvas/raster_batch.js"
     "--shell-file" "${FLIX_CLIENT_SHELL}")
-  set_property(TARGET flowrix_client APPEND PROPERTY LINK_DEPENDS "${FLIX_CLIENT_SHELL}")
+  set_property(TARGET flowrix_client APPEND PROPERTY LINK_DEPENDS "${FLIX_CLIENT_SHELL}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/cpp_canvas/raster_batch.js")
 
   # The server runs under Node, where it can listen. It is the same program as
   # the native one -- the same tick, the same systems, the same database -- and

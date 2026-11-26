@@ -281,6 +281,7 @@ struct Session {
     /// Inventory, loadout and talent mutations share a budget: alternating
     /// opcodes must not bypass the limit or spend the movement budget.
     double inventoryAllowance = 20;
+    std::uint32_t lastHelPlinkoRequest = 0;
     double lastRefillMillis = 0;
 
     /// The lines this connection said to other players lately, oldest

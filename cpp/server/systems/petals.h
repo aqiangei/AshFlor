@@ -28,6 +28,8 @@
 
 namespace flix {
 
+struct ThornFlightStep { Vec2 start; Realm realm; };
+
 class Terrain;
 class WorldMaps;
 class SpawnSystem;
@@ -114,6 +116,9 @@ struct PetalSlotState {
         /// the only safe answer -- the per-grain timers are sized to the count,
         /// and a shared pool would charge every new copy as one just lost.
         int count = 0;
+        int splitBudget = 0;
+        int splitStage = 0;
+        bool splitOnNextTick = false;
         double combinationStrength = 1.0;
 
         /// How much of the slot is still standing, 1.0 for untouched. Derived
@@ -161,6 +166,7 @@ struct PetalSlotState {
     double nextLightningMillis = 0;
     double nextPharaohSummonMillis = 0;
     double nextMagicEyeMillis = 0;
+    double nextExplosionMillis = 0;
     std::vector<Entity> pollenClouds; // Oldest first, bounded when a cloud is released.
 
     /// The flower's position at the END of the previous tick, which is the
@@ -258,6 +264,8 @@ enum class PetalTrigger : std::uint8_t { Spawn, Collision, Interval, Break };
 class PetalSystem {
 public:
     int volleyEntityLimit = 0;
+    static void advanceMarbleReloadsInSlowTick(World& world, const ContentRegistry& registry,
+                                               double previousMillis, double excessMillis);
     void onKill(World&, const ContentRegistry&, Entity player, double nowMillis);
     /// Count the live borrowed Basics after combat, just before snapshots.
     void refreshCrownLoanCounters(World& world, const ContentRegistry& registry);
@@ -656,7 +664,7 @@ private:
     int summonPets(World& world, const ContentRegistry& registry, Entity player,
                     std::uint8_t slot, std::uint16_t mobIndex, Rarity rarity, int count, Vec2 at,
                     PetalSlotState& state, double strength, double expiresAtMillis = 0.0,
-                    bool crownSummon = false, bool allowTwin = true);
+                    bool crownSummon = false);
     /// One summoned body, every component a pet carries, at an already
     /// chosen spot and size -- and, if its config has one, its ammunition
     /// ring. summonPets lays chains and broods on top.
@@ -668,11 +676,6 @@ private:
     /// its maxAlive, each a timed pet of the same owner and slot.
     void runPetBroods(World& world, const ContentRegistry& registry, Entity player,
                       double nowMillis);
-
-    /// The flower petal opening on the mob it touched: it is spent, and either
-    /// the flower is corrupted or a squad of glitch flowers lands on the mob.
-    void crackFlowerPetal(World& world, const ContentRegistry& registry, Entity player,
-                          Entity petal, std::uint8_t slot, Rarity rarity, Vec2 at);
 
     /// A petal that broke this tick, held until its scripted break effect can
     /// safely run. The break is discovered while the player's columns are open
@@ -769,12 +772,6 @@ private:
     SpatialGrid attractionGrid_;
     std::vector<Entity> attractionCandidates_;
 
-    /// The whole server detonates at most once per kExplosionThrottleMillis.
-    /// A server-wide throttle rather than a per-petal one, exactly as the
-    /// reference states it: a ring of bombs going off together is ONE
-    /// explosion, and a port without this hits far harder than production.
-    double lastExplosionMillis_ = 0;
-
     /// Pet spawn jitter and the flower petal's corruption roll. Neither has to
     /// agree with the client, and a fixed seed makes a failing test
     /// reproducible.
@@ -785,3 +782,4 @@ private:
 
 FLIX_COMPONENT(flix::PetalSlotState);
 FLIX_COMPONENT(flix::ElementalOffenseShare);
+FLIX_COMPONENT(flix::ThornFlightStep);

@@ -1871,12 +1871,20 @@ TEST(parallel_projectile_sweeps_keep_live_shoves_and_hit_order) {
         std::vector<double> bodies;
         std::vector<std::pair<std::uint32_t, double>> damageEvents;
     };
-    const auto replay = [](unsigned workerCount) {
+    const auto replay = [](unsigned workerCount, bool fillPlans) {
         Arena a;
         ServerWorkers workers(workerCount);
         a.combat.workers = &workers;
         a.combat.workerLimit = workerCount;
         const Entity player = a.player({100, 100});
+        if (fillPlans) {
+            // Movable bodies must be considered even when their original position
+            // misses. These misses fill the worker buffers before the actual shoves.
+            for (int i = 0; i < 256; ++i)
+                a.mob({510, 510}, 100);
+            for (int i = 0; i < 400; ++i)
+                spawnShot(a, {480, 480}, {}, 10, 500, player, player);
+        }
         std::vector<Entity> victims;
         for (int i = 0; i < 80; ++i) {
             const Vec2 at{1000.0 + (i % 10) * 320, 1000.0 + (i / 10) * 320};
@@ -1906,11 +1914,16 @@ TEST(parallel_projectile_sweeps_keep_live_shoves_and_hit_order) {
                 trace.damageEvents.emplace_back(event.netId, event.amount);
         return trace;
     };
-    const auto serial = replay(0);
-    const auto parallel = replay(7);
+    const auto serial = replay(0, false);
+    const auto parallel = replay(7, false);
     CHECK_EQ(serial.damageEvents.size(), std::size_t{120});
     CHECK(serial.bodies == parallel.bodies);
     CHECK(serial.damageEvents == parallel.damageEvents);
+    const auto crowdedSerial = replay(0, true);
+    const auto crowdedParallel = replay(1, true);
+    CHECK_EQ(crowdedSerial.damageEvents.size(), std::size_t{120});
+    CHECK(crowdedSerial.bodies == crowdedParallel.bodies);
+    CHECK(crowdedSerial.damageEvents == crowdedParallel.damageEvents);
 }
 
 // ---------------------------------------------------------------------------
@@ -2240,45 +2253,49 @@ Entity equipPetal(Arena& a, Entity owner, std::uint16_t configIndex, Rarity rari
 
 TEST(cancer_marks_ordinary_wild_mobs_at_its_tier_or_below) {
     const auto& registry = testsupport::shippedContent();
-    for (const char* id : {"bio_bacteria", "rock"}) {
-        for (const auto rarity : {Rarity::Common, Rarity::Uncommon, Rarity::Rare}) {
-            Arena a;
-            const Entity player = a.player({1000, 1000});
-            const Entity target = a.mob({1040, 1000}, 1000.0);
-            a.world.add<MobType>(target, MobType{registry.mobIndex(id), rarity, 1.0});
-            a.world.add<Armor>(target, Armor{10000.0});
-            equipPetal(a, player, registry.petalIndex("cancer"), Rarity::Uncommon, {1040, 1000});
-            a.step(0.0, registry);
-            CHECK_EQ(a.world.has<CancerSubdivision>(target), rarity <= Rarity::Uncommon);
+    for (const char* petalId : {"cancer", "magic_cancer"}) {
+        for (const char* id : {"bio_bacteria", "rock"}) {
+            for (const auto rarity : {Rarity::Common, Rarity::Uncommon, Rarity::Rare}) {
+                Arena a;
+                const Entity player = a.player({1000, 1000});
+                const Entity target = a.mob({1040, 1000}, 1000.0);
+                a.world.add<MobType>(target, MobType{registry.mobIndex(id), rarity, 1.0});
+                a.world.add<Armor>(target, Armor{10000.0});
+                equipPetal(a, player, registry.petalIndex(petalId), Rarity::Uncommon, {1040, 1000});
+                a.step(0.0, registry);
+                CHECK_EQ(a.world.has<CancerSubdivision>(target), rarity <= Rarity::Uncommon);
+            }
         }
     }
 }
 
 TEST(cancer_lethal_contact_still_marks_while_challenge_mobs_remain_immune) {
     const auto& registry = testsupport::shippedContent();
-    for (const bool challenge : {false, true}) {
-        Arena a;
-        const Entity player = a.player({1000, 1000});
-        const Entity target = a.mob({1040, 1000}, 1.0);
-        a.world.add<MobType>(target, MobType{registry.mobIndex("rock"), Rarity::Common, 1.0});
-        if (challenge) a.world.add<WaveEnemy>(target);
-        equipPetal(a, player, registry.petalIndex("cancer"), Rarity::Uncommon, {1040, 1000});
-        a.step(0.0, registry);
-        CHECK(!isStanding(a.world, target));
-        CHECK_EQ(a.world.has<CancerSubdivision>(target), !challenge);
-        SpawnSystem spawning;
-        Terrain terrain;
-        Rng random{42};
-        spawning.answerDeaths(a.world, terrain, registry, {target}, random, 100, 0, a.commands);
-        int copies = 0;
-        Query<CancerSubdivision, Bounty>{a.world}.each([&](Entity e, CancerSubdivision& subdivision,
-                                                         Bounty& bounty) {
-            if (!subdivision.spawnedCopy) return;
-            ++copies;
-            CHECK_EQ(a.world.get<MobType>(e).configIndex, registry.mobIndex("rock"));
-            CHECK_EQ(bounty.xp, 0.0);
-        });
-        CHECK_EQ(copies, challenge ? 0 : 1);
+    for (const char* petalId : {"cancer", "magic_cancer"}) {
+        for (const bool challenge : {false, true}) {
+            Arena a;
+            const Entity player = a.player({1000, 1000});
+            const Entity target = a.mob({1040, 1000}, 1.0);
+            a.world.add<MobType>(target, MobType{registry.mobIndex("rock"), Rarity::Common, 1.0});
+            if (challenge) a.world.add<WaveEnemy>(target);
+            equipPetal(a, player, registry.petalIndex(petalId), Rarity::Uncommon, {1040, 1000});
+            a.step(0.0, registry);
+            CHECK(!isStanding(a.world, target));
+            CHECK_EQ(a.world.has<CancerSubdivision>(target), !challenge);
+            SpawnSystem spawning;
+            Terrain terrain;
+            Rng random{42};
+            spawning.answerDeaths(a.world, terrain, registry, {target}, random, 100, 0, a.commands);
+            int copies = 0;
+            Query<CancerSubdivision, Bounty>{a.world}.each([&](Entity e, CancerSubdivision& subdivision,
+                                                             Bounty& bounty) {
+                if (!subdivision.spawnedCopy) return;
+                ++copies;
+                CHECK_EQ(a.world.get<MobType>(e).configIndex, registry.mobIndex("rock"));
+                CHECK_EQ(bounty.xp, 0.0);
+            });
+            CHECK_EQ(copies, challenge ? 0 : 1);
+        }
     }
 }
 
@@ -3775,6 +3792,41 @@ TEST(a_flower_pushes_a_centipede_bead_off_it_and_the_pair_ends_just_touching) {
     CHECK(distance(plodder, plodderFlower) < 50.0);
 }
 
+TEST(parallel_contact_keeps_a_later_hit_after_a_chain_bead_yields) {
+    const auto& fixture = recoilFixture();
+    CHECK(fixture.ok);
+    if (!fixture.ok) return;
+    ServerWorkers workers(3);
+    for (bool parallel : {false, true}) {
+        Arena a;
+        if (parallel) {
+            a.combat.workers = &workers;
+            a.combat.workerLimit = 3;
+        }
+        const Entity bead = a.mob({1000, 1000}, 100, 0, 30);
+        a.world.add<MobType>(bead, MobType{fixture.bead, Rarity::Common, 1.0});
+        a.world.add<ContactDamage>(bead, ContactDamage{1, 0});
+        const Entity player = a.player({1022, 1000});
+        a.world.get<Body>(player).mass = 100;
+        const Entity striker = a.actor({950, 1000}, 4, 100, Team::Players);
+        a.world.add<ContactDamage>(striker, ContactDamage{7, 0});
+        // Enable parallel planning without introducing other contacts nearby.
+        for (int i = 0; i < 256; ++i) {
+            auto other = a.actor({3000.0 + i * 100.0, 3000}, 1, 100, Team::Players);
+            a.world.add<ContactDamage>(other, ContactDamage{1, 0});
+        }
+        a.rebuildGrid();
+        a.combat.beginTick(a.world, fixture.registry, 1000, net::kTickSeconds, a.events);
+        a.combat.runContactPhase(a.world, a.grid, fixture.registry, 1000, nullptr, true);
+        CHECK(a.world.get<Transform>(bead).position.x < 980);
+        CHECK_NEAR(a.health(bead), 93.0, 1e-9);
+        if (parallel) {
+            CHECK(a.combat.contactTiming().planned > 0);
+            CHECK(a.combat.contactTiming().fallback > 0);
+        }
+    }
+}
+
 TEST(a_mob_cannot_squish_a_flower_into_a_wall) {
     // A mob meets walls as a point, so it walks right up to a wall with the
     // flower it is chasing pinned in between. The flower's share of the
@@ -4138,6 +4190,41 @@ TEST(a_fang_heals_nothing_through_armor_a_lockout_or_a_full_bar) {
         a.step(0.0, f.registry);
         CHECK_NEAR(a.health(mob), 485.0, 1e-9);
         CHECK_NEAR(a.health(player), 100.0, 1e-9);
+    }
+}
+
+TEST(corruption_hits_burrowed_player_at_one_tenth) {
+    for (bool underground : {false, true}) {
+        Arena a;
+        const auto attacker = a.player({1000, 1000});
+        const auto victim = a.player({1200, 1000});
+        for (auto player : {attacker, victim}) a.world.get<PlayerProgress>(player).level = 20;
+        a.world.add<PlayerVisuals>(attacker).equippedCorruption = true;
+        a.world.add<BurrowState>(victim, BurrowState{2000, true});
+        a.world.add<BurrowState>(attacker, BurrowState{2000, underground});
+        const auto before = a.health(victim);
+        a.combat.applyDamage(a.world, victim, attacker, 100, 1000);
+        CHECK_NEAR(a.health(victim), before - (underground ? 10 : 0), 1e-9);
+    }
+}
+
+TEST(corruption_petal_center_hit_can_kill_a_squadmate) {
+    const auto& f = fixture();
+    CHECK(f.ok);
+    for (const bool equipped : {false, true}) {
+        Arena a;
+        const auto attacker = a.player({1000, 1000});
+        const auto victim = a.player({1200, 1000});
+        SquadEntityIndex squads;
+        squads.groups.push_back({SquadBody{attacker, 1}, SquadBody{victim, 2}});
+        squads.group[attacker] = squads.group[victim] = 0;
+        a.combat.squads = &squads;
+        for (auto player : {attacker, victim}) a.world.get<PlayerProgress>(player).level = 20;
+        a.world.add<PlayerVisuals>(attacker).equippedCorruption = equipped;
+        a.world.get<Health>(victim).current = 1.0;
+        equipPetal(a, attacker, f.fangy, Rarity::Common, {1200, 1000});
+        a.step(0.0, f.registry);
+        CHECK_EQ(a.world.has<Dead>(victim), equipped);
     }
 }
 
@@ -4757,20 +4844,46 @@ TEST(rubber_scales_the_knockback_its_flower_takes) {
                2.5 * a.world.get<Knockback>(plain).impulse.x, 1e-9);
 }
 
-TEST(player_dice_uses_its_authored_critical_hit_and_keeps_damage_talents){
- const auto& c=testsupport::shippedContent();const auto dice=c.petalIndex("dice");
- for(int tierIndex=0;tierIndex<kLadderRarityCount;++tierIndex)for(double scale:{1.0,1.4})for(bool dummy:{false,true}){
-  const auto tier=static_cast<Rarity>(tierIndex);
-  Arena a;const auto player=a.player({5000,5000}),mob=a.mob({1000,1000},1e15);
-  if(dummy)a.world.add<NpcTag>(mob);
-  PlayerModifiers mods;mods.petalDamageScale=scale;a.world.add<PlayerModifiers>(player,mods);
-  const auto petal=equipPetal(a,player,dice,tier,{1000,1000});int procs=0,normal=0;
-  const double base=c.petalStats(dice,tier).damage*scale;
-  auto total=[&](){const auto& shares=a.world.get<Bounty>(mob).contributors;return shares.empty()?0.0:shares[0].damage;};
-  for(int i=0;i<256;++i){const auto before=total();a.step(i*1000.0,c);const double hit=total()-before;
-   if(std::abs(hit-base*35)<0.2)++procs;else {CHECK_NEAR(hit,base,.2);++normal;}}
-  CHECK(procs>0&&procs<50);CHECK(normal>200);CHECK(a.world.isAlive(petal));
- }
+TEST(player_dice_uses_its_authored_critical_hit_and_keeps_damage_talents) {
+    const auto& content = testsupport::shippedContent();
+    const auto dice = content.petalIndex("dice");
+    for (int tierIndex = 0; tierIndex < kLadderRarityCount; ++tierIndex)
+        for (double talentScale : {1.0, 1.4})
+            for (bool dummy : {false, true}) {
+                const auto tier = static_cast<Rarity>(tierIndex);
+                Arena arena;
+                const Entity owner = arena.player({5000, 5000});
+                const Entity target = arena.mob({1000, 1000}, 1e15);
+                if (dummy) {
+                    arena.world.remove<MobTag>(target);
+                    arena.world.add<NpcTag>(target);
+                    arena.world.add<Npc>(target).configIndex = content.mobIndex("target_dummy");
+                }
+                arena.world.add<PlayerModifiers>(owner).petalDamageScale = talentScale;
+                const Entity petal = equipPetal(arena, owner, dice, tier, {1000, 1000});
+                const double base = content.petalStats(dice, tier).damage * talentScale;
+                const double normalHit = !dummy && isHyperPetal(tier) ? base * 1.5 : base;
+                const auto totalDamage = [&] {
+                    const auto& shares = arena.world.get<Bounty>(target).contributors;
+                    return shares.empty() ? 0.0 : shares.front().damage;
+                };
+                int criticalHits = 0;
+                int normalHits = 0;
+                for (int tick = 0; tick < 256; ++tick) {
+                    const double before = totalDamage();
+                    arena.step(tick * 1000.0, content);
+                    const double hit = totalDamage() - before;
+                    if (std::abs(hit - base * 35.0) < 0.2) {
+                        ++criticalHits;
+                    } else {
+                        CHECK_NEAR(hit, normalHit, 0.2);
+                        ++normalHits;
+                    }
+                }
+                CHECK(criticalHits > 0 && criticalHits < 50);
+                CHECK(normalHits > 200);
+                CHECK(arena.world.isAlive(petal));
+            }
 }
 
 TEST(training_dummy_reports_full_damage_regardless_of_health_pool){
@@ -4973,22 +5086,27 @@ TEST(breakable_liquid_fields_receive_enemy_projectiles_in_both_execution_modes) 
         }
         a.stepWithServerGrid(1000);
         std::vector<Entity> fields;
-        Query<GroundEffectTag, Health>{a.world}.without<Dead>().collect(fields);
+        Query<GroundEffectTag, Transform>{a.world}.without<Dead>().collect(fields);
         CHECK_EQ(fields.size(), std::size_t(2));
-        for (Entity field : fields)
-            CHECK_EQ(a.health(field), 5.0);
+        Entity ice = NULL_ENTITY;
+        Entity poison = NULL_ENTITY;
+        for (Entity field : fields) {
+            const auto at = a.world.get<Transform>(field).position;
+            if (at.x == iceAt.x && at.y == iceAt.y) ice = field;
+            if (at.x == poisonAt.x && at.y == poisonAt.y) poison = field;
+        }
+        CHECK(ice != NULL_ENTITY && poison != NULL_ENTITY);
+        if (ice == NULL_ENTITY || poison == NULL_ENTITY) continue;
+        CHECK_EQ(a.health(ice), 5.0);
+        CHECK(!a.world.has<Health>(poison));
         spawnShot(a, iceAt, {100, 0}, 6.0, 300.0, enemy, enemy);
         spawnShot(a, poisonAt, {100, 0}, 6.0, 300.0, enemy, enemy);
         for (int i = 0; i < 126; ++i)
             spawnShot(a, {5000.0 + (i % 12) * 250.0, 5000.0 + (i / 12) * 250.0},
                       {100, 0}, 6.0, 300.0, enemy, enemy);
         a.stepWithServerGrid(1050);
-        for (Entity field : fields) {
-            std::printf("workers=%u field=%u hp=%.1f destroyed=%d\n", workers,
-                        static_cast<unsigned>(a.world.get<GroundEffect>(field).kind),
-                        a.health(field), a.world.has<Dead>(field));
-            CHECK(a.world.has<Dead>(field));
-        }
+        CHECK(a.world.has<Dead>(ice));
+        CHECK(!a.world.has<Dead>(poison));
     }
 }
 TEST(blueberry_shot_lightning_talent_scales_actual_hit) {

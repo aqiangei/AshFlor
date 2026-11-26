@@ -540,7 +540,13 @@ TEST(a_magic_petal_is_drawn_at_the_size_of_the_petal_it_is_the_form_of) {
         const ui::PetalIconMetric want = ui::petalIconMetric(base, sizeStat);
         const ui::PetalIconMetric got = ui::petalIconMetric(magic, sizeStat);
         CHECK_NEAR(got.diameter, want.diameter, 1e-9);
-        CHECK_NEAR(got.tilt, want.tilt, 1e-12);
+        if (name == "missile") {
+            CHECK_NEAR(got.tilt, -54.0 * kPi / 180.0, 1e-12);
+        } else {
+            CHECK_NEAR(got.tilt, want.tilt, 1e-12);
+        }
+        if (name == "leaf") CHECK_NEAR(got.tilt, -0.40, 1e-12);
+        if (name == "mysterious_stick") CHECK_NEAR(got.tilt, 0.0, 1e-12);
         // And it is a real measurement rather than the fallback that happened
         // to agree: every one of these six is drawn at something other than
         // the basic-sized box an unscaled petal gardn does not have would take.

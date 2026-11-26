@@ -165,7 +165,7 @@ constexpr GardnIcon kGardnIcon[] = {
     {"heaviest",           35,   12,  0,       0,     1},
     {"honey",              25,   11,  0,       0,     1},
     {"iris",               17,    7,  0,       0,     1},
-    {"leaf",            38.25,   10,  0,   -1.40,     1},   // Local drawing already leans clockwise.
+    {"leaf",            38.25,   10,  0,   -0.40,     1},   // Florr card: stem at lower left, tip at upper right.
     {"light",             17,    7,  0,       0,     1},
     {"lightning",          21,   10,  0,       1,     1},
     {"lotus",            26.5,   12,  0,     0.1,     1},
@@ -182,7 +182,7 @@ constexpr GardnIcon kGardnIcon[] = {
     {"pincer",             23,   10,  0,     0.7,     1},
     {"pollen",             17,    7,  0,       0,     1},
     {"powder",           15.5,   10,  0,       0, 0.727},   // art fills 73% of its box
-    {"rice",               25,   13,  0,     0.7,     1},
+    {"rice",               25,   13,  0,       0,     1},
     {"rock",             29.5,   12,  0,       0, 0.986},   // art fills 99% of its box
     {"rose",               23,   10,  0,       0,     1},
     {"salt",            25.75,   10,  0,       0,  0.99},   // art fills 99% of its box
@@ -192,8 +192,8 @@ constexpr GardnIcon kGardnIcon[] = {
     {"sponge",           34.5,   12,  0,       1, 0.983},   // art fills 98% of its box
     {"square",           23.5,   15,  0,  1.7854, 0.969},   // art fills 97% of its box
     {"starfish",           26,    8,  0,       -1, 0.797},   // art fills 80% of its box
-    {"stick",              27,   15,  0,       1,     1},
-    {"mysterious_stick",   27,   15,  0,       1,     1},
+    {"stick",              27,   15,  0,       0,     1},
+    {"mysterious_stick",   27,   15,  0,       0,     1},
     {"stinger",          15.5,    7,  0,       0,     1},
     // gardn's drawing of this one hard-codes `ctx.scale(0.5)` and ignores the
     // radius, so its picture is a 10.75-unit speck -- the one place the
@@ -203,10 +203,10 @@ constexpr GardnIcon kGardnIcon[] = {
     {"uranium",            21,   10,  0,       0,     1},
     {"web",                24,   10,  0,       0, 0.957},   // art fills 96% of its box
     {"wing",               33,   10,  0,       1,     1},
-    {"yggdrasil",        26.5,   12,  0,     kPi, 0.932},   // art fills 93% of its box
+    {"yggdrasil",        26.5,   12,  0,   -1.36, 0.932},   // art fills 93% of its box
     {"yin_yang",           23,   10,  0,       0, 0.926},   // art fills 93% of its box
     {"yucca",              31,   10,  0,      -1, 0.969},   // art fills 97% of its box
-    {"fang",              31,   10,  0, -1.5708, 0.969},   // The restored source lies horizontally.
+    {"fang",              31,   10,  0,   -2.20, 0.969},   // The restored source lies horizontally.
     {"coral",              31,   10,  0,      1, 0.969},   // art fills 97% of its box
     {"golden_leaf",            38.25,   10,  0,      -1,     1},
     {"coin",              31,   10,  0,       0.2,     1},
@@ -248,21 +248,48 @@ struct ClusterShape {
     /// lies back, a square stands on its corner, yggdrasil is upside down --
     /// and without it they read as the same shapes lying flat.
     double tilt = 0;
+    bool keepFanPose = false;
 };
+
+struct ZorrCardPose {
+    std::string_view id;
+    double diameter, x, y;
+};
+
+// Original 80-unit Zorr card frame, adjusted for the transparent trim of each image.
+const ZorrCardPose* zorrCardPose(std::string_view id) {
+    static constexpr ZorrCardPose poses[] = {
+        {"magic_quartz", 42.50000, 0.00000, -6.00000},
+        {"magic_topaz", 42.50000, 0.00000, -6.00000},
+        {"magic_lightning", 32.00000, 0.00000, -6.00000},
+        {"magic_lily_pad", 41.00000, -1.25000, -6.00000},
+        {"magic_sunflower", 65.10000, 1.22500, -6.35000},
+        {"magic_hel_lightning", 32.00000, 0.00000, -6.00000},
+        {"magic_neurotoxin", 30.50000, 0.00000, -4.75000},
+        {"void_scythe", 104.85000, 6.75000, 21.22500},
+        {"magic_void_scythe", 104.85000, 6.75000, 21.22500},
+        {"void_blood_scythe", 89.21250, 2.75625, 22.51875},
+        {"magic_void_blood_scythe", 89.21250, 2.75625, 22.51875},
+        {"void_trident", 98.55000, 0.00000, 21.00000},
+        {"magic_void_trident", 98.55000, 0.00000, 21.00000},
+    };
+    for (const auto& pose : poses) if (pose.id == id) return &pose;
+    return nullptr;
+}
 
 double zorrIconTilt(std::string_view id) {
     struct Pose { std::string_view id; int degrees; };
     // Zorr's iconAngle is independent of its in-world rotation. The angles
     // below use the source pose, adjusted where the local art starts from a
-    // different baseline (carrot, trident and scythes).
+    // different baseline (carrot).
     constexpr Pose poses[] = {
         {"arctic_ears", 18}, {"arctic_frost", -20}, {"arctic_icicle", -20},
         {"arctic_lightsaber", -20}, {"arctic_nitro", -20}, {"arctic_visaber", -20},
-        {"carrot", 45}, {"coffee", -30}, {"compass", -60}, {"fire", -20},
+        {"carrot", 45}, {"coffee", -9}, {"compass", -60}, {"fire", -20},
         {"gas", -20}, {"laser", -20}, {"oxygen", -20}, {"pumpkin_seed", -90},
-        {"vampire_fang", -20}, {"void_attractor", -20}, {"void_blood_scythe", -60},
+        {"vampire_fang", -20}, {"void_attractor", -20},
         {"void_cyanide", -20}, {"void_knife", 60}, {"void_pipe_bomb", 60},
-        {"void_scythe", -60}, {"void_trident", -60}, {"wind", -20},
+        {"wind", -20},
     };
     if (id.substr(0, 6) == "magic_") id.remove_prefix(6);
     for (const auto& pose : poses) {
@@ -303,16 +330,8 @@ ClusterShape clusterShape(const SpriteCache* sprites, std::uint16_t petalIndex, 
                 }
             }
         }
-        // A magic petal takes the measurement of the petal it is the magic
-        // form of. Not a hand-tune and not a second table: the two share one
-        // picture down to the viewBox -- magic_leaf IS leaf's document in
-        // cyan -- so a measurement of one is a measurement of both, tilt
-        // included. Without this they fell through to the generic fallback and
-        // came out at 20 units flat: a magic leaf drawn at half a leaf's size
-        // and lying flat where a leaf lies back.
-        //
-        // A second pass, because the row a magic petal wants may belong to a
-        // petal the first pass had not reached yet.
+        // Recolours share layout measurements. A different source sprite can
+        // override its card rotation independently below.
         for (std::uint16_t i = 0; i < content().petalCount(); ++i) {
             if (out[i] != nullptr) continue;
             const std::uint16_t base = content().magicSourceOf(i);
@@ -323,10 +342,37 @@ ClusterShape clusterShape(const SpriteCache* sprites, std::uint16_t petalIndex, 
 
     ClusterShape out;
     const GardnIcon* gardn = petalIndex < byIndex.size() ? byIndex[petalIndex] : nullptr;
+    // Angles relative to the shipped sprite, measured against the original
+    // single-petal card. Some magic sprites are already drawn in card pose.
+    struct SpritePose { std::string_view id; double degrees; };
+    static constexpr SpritePose spritePoses[] = {
+        {"magic_battery", 27}, {"magic_bone", 0}, {"magic_fang", -180},
+        {"magic_missile", -54}, {"magic_rocket", -54}, {"magic_rubber", 42},
+        {"magic_starfish", 0}, {"rubber", 27}, {"triangle", -90},
+    };
+    static const auto byArtwork = [] {
+        std::vector<const SpritePose*> poses(content().petalCount(), nullptr);
+        for (std::uint16_t i = 0; i < poses.size(); ++i) {
+            for (const auto& pose : spritePoses) {
+                if (content().petal(i).id == pose.id) poses[i] = &pose;
+            }
+        }
+        return poses;
+    }();
+    if (petalIndex < content().petalCount()) {
+        if (const auto* pose = zorrCardPose(content().petal(petalIndex).id)) {
+            out.keepFanPose = true;
+            out.diameter = pose->diameter * kPlateSide / (80.0 * kItemTileIconScale);
+            out.ring = count > 1 ? kClusterRing : 0.0;
+            return out;
+        }
+    }
     if (gardn != nullptr) {
         out.diameter = gardn->drawn / (gardn->box > 0 ? gardn->box : 1.0);
         out.ring = count > 1 ? (gardn->clump > 0 ? gardn->clump : kClusterRing) : 0.0;
-        out.tilt = gardn->tilt;
+        const auto* pose = byArtwork[petalIndex];
+        out.tilt = pose ? pose->degrees * kPi / 180.0 : gardn->tilt;
+        out.keepFanPose = pose || gardn->id == "stick" || gardn->id == "mysterious_stick" || gardn->id == "rice";
         if (gardn->radius > kGardnShrinkAbove) out.shrink = kGardnShrinkAbove / gardn->radius;
         return out;
     }
@@ -357,6 +403,10 @@ ClusterShape clusterShape(const SpriteCache* sprites, std::uint16_t petalIndex, 
         return poses;
     }();
     if (petalIndex < zorrTilts.size()) out.tilt = zorrTilts[petalIndex];
+    if (petalIndex < byArtwork.size() && byArtwork[petalIndex]) {
+        out.tilt = byArtwork[petalIndex]->degrees * kPi / 180.0;
+        out.keepFanPose = true;
+    }
     return out;
 }
 
@@ -478,7 +528,7 @@ void drawPetalCluster(Canvas& canvas, const SpriteCache& sprites, std::uint16_t 
     const bool fan = drawCount == 2 || (canFan && !polygon && (egg || beetleEgg || battery || slender));
     ClusterShape shape = clusterShape(&sprites, petalIndex, sizeStat, drawCount);
     const double fanTilt = battery ? -kPi / 5.5 :
-        shape.tilt != 0.0 ? shape.tilt :
+        (shape.keepFanPose || shape.tilt != 0.0) ? shape.tilt :
         !egg && !beetleEgg && extent.x > extent.y ? -kPi * 0.5 : 0.0;
     const int authoredCount = std::max(1, content().petalStats(petalIndex, rarity).count);
     if (drawCount > authoredCount) {
@@ -540,6 +590,16 @@ void drawPetalCluster(Canvas& canvas, const SpriteCache& sprites, std::uint16_t 
                 sprites.drawPetal(into, petalIndex, rarity, 0, 0, diameter, 0, timeSeconds);
                 into.restore();
             }
+            return;
+        }
+        if (drawCount == 2 && iconId == "mysterious_powder") {
+            // Keep a gap between the opaque silhouettes throughout their motion.
+            const double size = maxDiameter > 0.0 ? std::min(diameter * 1.35, maxDiameter * .44)
+                                                   : diameter;
+            sprites.drawPetal(into, petalIndex, rarity, ox - size * .52, oy,
+                              size, -.65, timeSeconds);
+            sprites.drawPetal(into, petalIndex, rarity, ox + size * .52, oy,
+                              size, .65, timeSeconds + .137);
             return;
         }
         if (fan) {
@@ -742,7 +802,9 @@ void drawItemTile(Canvas& canvas, const SpriteCache& sprites, Rect rect, const I
         // part of save()/restore(), so it is put back by hand.
         const Color outerTint = canvas.colorTint();
         if (tile.flash.a != 0) canvas.setColorTint(tile.flash);
-        const double iconCap = kFaceSide / kItemTileIconScale;
+        const double faceRoom = uprightVoidWeapon(config.id) || config.id.compare(0, 6, "magic_") == 0
+            ? kFaceSide - 2.0 * (kItemTileIconRise + 1.0) : kFaceSide;
+        const double iconCap = faceRoom / kItemTileIconScale;
         if(tile.diceFace>=1&&tile.diceFace<=6){
             const int diceCount = std::max(1, copies);
             for(int i=0;i<diceCount;++i){
@@ -757,7 +819,12 @@ void drawItemTile(Canvas& canvas, const SpriteCache& sprites, Rect rect, const I
                 drawRollingDice(canvas,tile.diceFace,tile.timeSeconds,iconCap*(diceCount>1?.42:.72));
                 canvas.restore();
             }
-        }else drawPetalCluster(canvas, sprites, tile.petalIndex, tile.rarity, stats.size, copies,
+        } else if (const auto* pose = zorrCardPose(config.id); pose && copies <= 1) {
+            constexpr double unit = kPlateSide / (80.0 * kItemTileIconScale);
+            sprites.drawPetal(canvas, tile.petalIndex, tile.rarity, pose->x * unit,
+                              pose->y * unit + kItemTileIconRise / kItemTileIconScale,
+                              pose->diameter * unit, 0, tile.timeSeconds);
+        } else drawPetalCluster(canvas, sprites, tile.petalIndex, tile.rarity, stats.size, copies,
                          0.0, 0.0, iconCap, tile.timeSeconds, facesInward, tile.loadoutSlot >= 0);
         canvas.setColorTint(outerTint);
         canvas.restore();

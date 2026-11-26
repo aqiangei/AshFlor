@@ -34,7 +34,7 @@
 
 namespace flix {
 inline constexpr int baseLootTrialsForRarity(Rarity rarity, bool garbageBag = false) {
-    if (garbageBag) return 15;
+    if (garbageBag) return 10;
     return rarity == Rarity::Super ? 20 : kLootFeelCopies *
         (rarityIndex(rarity) >= rarityIndex(Rarity::Super) ? kLootFeelSuperMultiplier : 1);
 }
@@ -1365,10 +1365,6 @@ inline double petalContactDamage(const PetalConfig& config, const PetalStats& st
         ? damage * 0.75 : damage;
 }
 
-inline double uraniumRadiationDps(const PetalStats& stats, Rarity rarity) {
-    return stats.damage * (isHyperPetal(rarity) ? 1.50 : 1.20);
-}
-
 inline constexpr double kRadiationDamageScale = 1.25;
 inline constexpr double kFluidRadiusScale = 1.20;
 inline constexpr double kRadiationRadiusScale = 1.20;
@@ -1440,31 +1436,43 @@ inline double referenceOffenseScale(const PetalConfig& config,Rarity rarity) {
     return petalDamageScale(rarity);
 }
 
+inline double fractalBaseLightningDamage(const PetalConfig& config, Rarity rarity) {
+    return 70.0 * referenceOffenseScale(config, rarity);
+}
+
 inline bool isReferenceJet(std::string_view id) {
     return id=="gas" || id=="void_fire" || id=="arctic_nitro" ||
         id=="wind" || id=="void_attractor" || id=="arctic_frost" ||
         id=="arctic_lightsaber" || id=="arctic_visaber" ||
         id=="void_cyanide" || id=="oxygen";
 }
+inline bool uprightVoidWeapon(std::string_view id) {
+    if (id.substr(0, 6) == "magic_") id.remove_prefix(6);
+    return id == "void_scythe" || id == "void_blood_scythe" || id == "void_trident";
+}
+
+inline bool uprightWeaponTouches(Vec2 offset, double lengthRadius, double halfWidth, double targetRadius) {
+    const double spine = std::max(0.0, lengthRadius - halfWidth);
+    offset.y -= std::clamp(offset.y, -spine, spine);
+    return offset.lengthSq() <= (halfWidth + targetRadius) * (halfWidth + targetRadius);
+}
+
 inline double referencePetalHalfWidth(std::string_view id,Rarity rarity) {
-    if(id=="magic_void_trident")return 10.0;
+    if(uprightVoidWeapon(id))return 10.0;
     if(id=="void_gamma_ray")return 2.5*(1+.2*ladderIndex(rarity));
     if(isReferenceJet(id)) {
         const bool blade=id=="arctic_lightsaber" || id=="arctic_visaber";
         return 5.0*(blade?1.0:1.0+.2*ladderIndex(rarity));
     }
-    if(id=="void_scythe" || id=="void_blood_scythe" || id=="void_trident")return 10.0;
     return 0.0;
 }
 inline double referencePetalLengthRadius(std::string_view id,Rarity rarity) {
-    if(id=="magic_void_trident")return 100.0;
+    if(uprightVoidWeapon(id))return id.find("blood") == std::string_view::npos ? 100.0 : 85.0;
     if(id=="void_gamma_ray")return 40.0;
     if(isReferenceJet(id)) {
         const double base=(id=="arctic_lightsaber" || id=="arctic_visaber")?40.0:20.0;
         return base+20.0*ladderIndex(rarity);
     }
-    if(id=="void_scythe" || id=="void_trident")return 100.0;
-    if(id=="void_blood_scythe")return 85.0;
     return 0.0;
 }
 
@@ -1614,7 +1622,9 @@ inline bool petalSoaksLightning(const PetalConfig& config) { return config.id ==
 
 /// A relic's wearer shares the damage it takes with the other wearers in its
 /// squad.
-inline bool petalSharesFlowerDamage(const PetalConfig& config) { return config.id == "relic"; }
+inline bool petalSharesFlowerDamage(const PetalConfig& config) {
+    return config.id == "mysterious_relic" || config.id == "relic";
+}
 
 /// An amulet turns part of its flower's overheal into shield.
 inline bool petalConvertsOverheal(const PetalConfig& config) { return config.id == "amulet"; }
@@ -1654,6 +1664,16 @@ inline double iodineHealRadius(Rarity rarity) {
     return 300.0 + 35.0 * tier + 60.0 * std::max(0, tier - 7);
 }
 inline double iodineHealAmount(Rarity rarity) { return 0.6 * petalHealScale(rarity); }
+
+// Spades, hearts, clubs and diamonds preserve the average base stats.
+inline constexpr double cardDamageScale(std::uint8_t suit) {
+    constexpr double factors[]{1.0, 1.4, 0.6, 1.15, 0.85};
+    return suit < std::size(factors) ? factors[suit] : 1.0;
+}
+inline constexpr double cardHealthScale(std::uint8_t suit) {
+    constexpr double factors[]{1.0, 0.6, 1.4, 0.85, 1.15};
+    return suit < std::size(factors) ? factors[suit] : 1.0;
+}
 
 inline constexpr double kPassivePetHealIntervalMillis = 1000.0;
 inline double passivePetHealAmount(const PetalConfig& config, Rarity rarity) {
@@ -1785,12 +1805,12 @@ inline double eggSummonHealthScale(const PetalConfig& config) {
     // Restore one fifth of current hatchling health, retaining the
     // lower base multiplier for Zatan and the common scale for non-eggs.
     if (config.id == "void_zatan_egg") return 1.32;
-    return petalIsEgg(config) ? 3.0 : 1.0;
+    return (petalIsEgg(config) || config.id == "magic_blood_sacrifice") ? 3.0 : 1.0;
 }
 /// And both halves of the summons' combat worth, pool and bite, climb together:
 /// the shell's own stat block carries neither of them.
 inline double eggSummonCombatScale(const PetalConfig& config) {
-    return petalIsEgg(config) ? 2.0 : 1.0;
+    return (petalIsEgg(config) || config.id == "magic_blood_sacrifice") ? 2.0 : 1.0;
 }
 
 inline bool isPermanentSandstormStick(const PetalConfig& config) {
@@ -1829,7 +1849,8 @@ inline double configuredSummonStrength(const PetalConfig& config, Rarity rarity,
         const int brood = configuredSummonCount(config, rarity, skills, slot);
         const Rarity hatch = configuredSummonRarity(config, rarity);
         const double slotBudget = localCount * petalStatScale(rarity) * hyperSummonPromotionScale(config, rarity);
-        return strength * slotBudget / (brood * petalStatScale(hatch) * hyperSummonPromotionScale(config, hatch));
+        const double highTierBonus = ladderRarity(rarity) == Rarity::Apex ? 2.0 : 1.0;
+        return highTierBonus * strength * slotBudget / (brood * petalStatScale(hatch) * hyperSummonPromotionScale(config, hatch));
     }
     return apexEggHatchesHyper(config, rarity) ? strength / 1.1 : strength;
 }
@@ -2113,6 +2134,23 @@ inline bool petalCraftsToApex(const ContentRegistry& registry, std::uint16_t pet
 /// client, it culls mobs the client is drawing.
 double petalCameraZoom(const ContentRegistry& registry, std::uint16_t petalIndex, Rarity rarity);
 
+inline double importedManaRecoveryApexScale(std::string_view id, Rarity rarity) {
+    if (rarity != Rarity::Ascendant) return 1.0;
+    return (id == "magic_dahlia" || id == "magic_arctic_banana" ||
+            id == "magic_arctic_ice_rose" || id == "magic_fries" ||
+            id == "magic_sunflower" || id == "magic_starfish" ||
+            id == "magic_lily_pad" || id == "magic_vampire_fang") ? 1.40 : 1.0;
+}
+
+inline double uraniumRadiationDps(const ContentRegistry& registry, Rarity rarity) {
+    const auto plutonium = registry.petalIndex("arctic_plutonium");
+    if (plutonium == kInvalidIndex) return (196.0 * 2.0 / 3.0) * petalDamageScale(rarity);
+    const auto& config = registry.petal(plutonium);
+    // The pure poison benchmark is the sustained pure-fire rate after ignition.
+    return config.radiation.burnDamage * (2000.0 / kFireBombBurnMillis) *
+           referenceOffenseScale(config, rarity);
+}
+
 /// What one bar slot actually equips: the petal it puts on the field, the tier
 /// it is that petal at, and the tier whose reload it pays.
 ///
@@ -2162,12 +2200,13 @@ EquippedPetal resolveEquippedPetal(const ContentRegistry& registry, int slot, Sl
     if (!self.empty() && registry.petal(self.configIndex).id == "magic_mimic" && activeSlots > 1) {
         const int position = slot % kLoadoutActiveSlots;
         if (position >= activeSlots) return self;
-        const EquippedPetal right = slotAt(slot - position + (position + 1) % activeSlots);
-        if (right.empty()) return self;
-        const auto magic = registry.petal(right.configIndex).id == "rose" && registry.petalIndex("mana_orb") != kInvalidIndex
-            ? registry.petalIndex("mana_orb") : registry.magicFormOf(right.configIndex);
+        const EquippedPetal left = slotAt(slot - position + (position + activeSlots - 1) % activeSlots);
+        if (left.empty()) return self;
+        const auto magic = registry.isMagicForm(left.configIndex) ? left.configIndex :
+            registry.petal(left.configIndex).id == "rose" && registry.petalIndex("mana_orb") != kInvalidIndex
+            ? registry.petalIndex("mana_orb") : registry.magicFormOf(left.configIndex);
         if (magic != kInvalidIndex && registry.petal(magic).id != "magic_mimic" &&
-            petalComesAt(registry.petal(magic), self.rarity)) return {magic, self.rarity, self.rarity};
+            petalComesAt(registry.petal(magic), self.rarity)) return {magic, self.rarity, left.rarity};
         return self;
     }
     if (self.empty() || !petalMimicsLeft(registry.petal(self.configIndex))) return self;
