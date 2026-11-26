@@ -227,17 +227,15 @@ TEST(void_mark_can_target_a_corpse_near_the_flower_and_return_immediately) {
     CHECK_EQ(w.get<Transform>(f.target).realm, before.realm);
 }
 
-TEST(dark_mark_rejects_higher_tier_low_level_other_realms_and_dungeons) {
+TEST(dark_mark_ignores_equipment_tier_and_checks_level_realm_and_dungeon) {
     MarkFixture f; if (!f.ready) return;
     auto& w = f.server.world(); f.kill();
-    w.get<Loadout>(f.target).slots[0] = {};
-    auto& slot = w.get<Loadout>(f.target).slots[0];
-    slot.configIndex = content().petalIndex("rose"); slot.rarity = Rarity::Apex;
-    CHECK(!Peer::canMark(f.server, f.target, f.owner, Rarity::Unique));
-    CHECK(Peer::canMark(f.server, f.target, f.owner, Rarity::Apex));
-    slot.rarity = Rarity::Admin;
-    CHECK(!Peer::canMark(f.server, f.target, f.owner, Rarity::Apex));
-    slot.rarity = Rarity::Common;
+    for (int slot : {0, kLoadoutActiveSlots}) {
+        auto& equipped = w.get<Loadout>(f.target).slots[slot];
+        equipped = {content().petalIndex("rose"), Rarity::Ascendant};
+        CHECK(Peer::canMark(f.server, f.target, f.owner, Rarity::Common));
+        equipped = {};
+    }
     w.get<PlayerProgress>(f.target).level = 19;
     CHECK(!Peer::canMark(f.server, f.target, f.owner, Rarity::Apex));
     w.get<PlayerProgress>(f.target).level = 20;
@@ -357,6 +355,8 @@ TEST(placed_marks_take_priority_over_their_casters_nearby_rescue) {
         const Entity mark = equipRescueTestMark(f, id, commands);
         CHECK(mark != NULL_ENTITY);
         if (!mark) return;
+        w.get<Loadout>(f.target).slots[kLoadoutActiveSlots] = {
+            content().petalIndex("rose"), Rarity::Admin};
         startRescueBeforeMark(f, commands);
         CHECK_EQ(w.get<PetalInstance>(mark).markTarget, f.target);
         const double ready = w.get<PetalInstance>(mark).markReadyAtMillis;

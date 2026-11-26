@@ -15,6 +15,7 @@
 #include "client/chat_bubbles.h"
 #include "client/world_view.h"
 #include "shared/game/config.h"
+#include "shared/game/npc.h"
 #include "shared/game/shop.h"
 #include "shared/game/skin_format.h"
 #include "shared/game/skills.h"
@@ -25,6 +26,8 @@
 #include "shared/net/transport.h"
 
 namespace flix {
+
+enum class HelPlinkoAction : std::uint8_t;
 
 class WorldMaps;
 
@@ -631,6 +634,13 @@ public:
     Status status() const { return status_; }
     bool riftOpen() const { return riftOpen_; }
     bool inRiftMap() const;
+    std::uint32_t requestHelPlinko(HelPlinkoAction action, Rarity rarity);
+    struct HelPlinkoReply {
+        std::uint32_t request = 0;
+        std::uint8_t status = 0;
+        std::uint16_t path = 0;
+    };
+    std::vector<HelPlinkoReply> takeHelPlinkoReplies();
     /// Whether this client is holding an account: logged in, or in a game.
     /// Everything the server says about an account or a world is only
     /// meaningful while this holds.
@@ -730,6 +740,7 @@ public:
     double oracleCooldownRemainingMillis() const;
     /// Hands one petal of this tier to the trader the body is standing at, for
     /// one coin of the same tier.
+    void requestApexDraw(const std::array<std::uint16_t, kTraderApexDrawCost>& petals);
     void requestTrade(std::uint16_t petalIndex, Rarity rarity);
     /// How long until the account may trade again, counted down on this
     /// client's clock from the last profile; 0 when it may now.
@@ -930,7 +941,10 @@ public:
     /// map for the realm it is dropped into) collides against whole cells
     /// instead -- see installLocalCollision(). The pointer is borrowed and
     /// must outlive the connection; App owns the one this client uses.
-    void setWorldMaps(const WorldMaps* maps) { worldMaps_ = maps; }
+    void setWorldMaps(const WorldMaps* maps) {
+        worldMaps_ = maps;
+        installedCollision_.clear();
+    }
 
     /// True once after the body was moved to another realm -- through a
     /// teleporter, which leads to another map. Consumed by the App, which
@@ -1304,6 +1318,14 @@ private:
     /// Borrowed; see setWorldMaps(). Null is a client that collides against
     /// whole cells.
     const WorldMaps* worldMaps_ = nullptr;
+    struct CollisionSource {
+        std::string path;
+        std::uint32_t contentHash;
+        int cols, rows;
+    };
+    std::unordered_map<Realm, CollisionSource> installedCollision_;
+    std::uint32_t helPlinkoRequest_ = 0;
+    std::vector<HelPlinkoReply> helPlinkoReplies_;
     Vec2 realmArrival_;
     bool realmChanged_ = false;
     bool clearViewOnSnapshot_ = false;

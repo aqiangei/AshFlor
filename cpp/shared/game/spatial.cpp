@@ -61,6 +61,7 @@ void SpatialGrid::sizeToRealms(const Terrain& terrain) {
     // Every bucket is new or reused, and any that was reused may still hold
     // last tick's entities under a live epoch. Retire the lot.
     epoch_ = 1;
+    distinctEntities_ = false;
     for (Layer& layer : layers_) {
         std::fill(layer.bucketEpoch.begin(), layer.bucketEpoch.end(), 0);
     }
@@ -74,7 +75,8 @@ void SpatialGrid::fitEmptyRealm(Realm realm, double span) {
 }
 
 int SpatialGrid::cellIndex(double offset, double invCellSize, int axisCells) {
-    const double c = std::floor(offset * invCellSize);
+    // After clamping to the positive range, integer truncation is floor.
+    const double c = offset * invCellSize;
     // Written as failed comparisons so NaN lands in cell 0 instead of taking
     // an undefined trip through the cast.
     if (!(c > 0.0)) return 0;
@@ -82,7 +84,13 @@ int SpatialGrid::cellIndex(double offset, double invCellSize, int axisCells) {
     return static_cast<int>(c);
 }
 
+void SpatialGrid::clearForDistinctEntities() {
+    clear();
+    distinctEntities_ = true;
+}
+
 void SpatialGrid::clear() {
+    distinctEntities_ = false;
     inserted_ = 0;
     if (++epoch_ == 0) {
         // Once every four billion ticks the epoch wraps onto the value stale
@@ -110,18 +118,22 @@ void SpatialGrid::insert(Entity e, Realm realm, Vec2 position, double radius) {
     }
 
     Layer& target = layer(realm);
-    const int x0 = cellX(realm, position.x - radius);
-    const int x1 = cellX(realm, position.x + radius);
-    const int y0 = cellY(realm, position.y - radius);
-    const int y1 = cellY(realm, position.y + radius);
-    for (int cy = y0; cy <= y1; ++cy) {
-        for (int cx = x0; cx <= x1; ++cx) {
-            const std::size_t b = target.bucketAt(cx, cy);
-            if (target.bucketEpoch[b] != epoch_) {
-                target.buckets[b].clear();
-                target.bucketEpoch[b] = epoch_;
-            }
-            target.buckets[b].push_back(e);
+    const auto file = [&](std::size_t bucket) {
+        if (target.bucketEpoch[bucket] != epoch_) {
+            target.buckets[bucket].clear();
+            target.bucketEpoch[bucket] = epoch_;
+        }
+        target.buckets[bucket].push_back(e);
+    };
+    if (radius == 0.0) {
+        file(target.bucketAt(cellX(realm, position.x), cellY(realm, position.y)));
+    } else {
+        const int x0 = cellX(realm, position.x - radius);
+        const int x1 = cellX(realm, position.x + radius);
+        const int y0 = cellY(realm, position.y - radius);
+        const int y1 = cellY(realm, position.y + radius);
+        for (int cy = y0; cy <= y1; ++cy) {
+            for (int cx = x0; cx <= x1; ++cx) file(target.bucketAt(cx, cy));
         }
     }
     ++inserted_;
@@ -164,6 +176,20 @@ void SpatialGrid::queryBuckets(Realm realm, Vec2 min, Vec2 max, std::vector<Enti
     if (min.x > max.x) std::swap(min.x, max.x);
     if (min.y > max.y) std::swap(min.y, max.y);
 
+    const Layer& source = layer(realm);
+    const int x0 = cellX(realm, min.x);
+    const int x1 = cellX(realm, max.x);
+    const int y0 = cellY(realm, min.y);
+    const int y1 = cellY(realm, max.y);
+    if (distinctEntities_ && x0 == x1 && y0 == y1) {
+        const auto bucket = source.bucketAt(x0, y0);
+        if (source.bucketEpoch[bucket] == epoch_) {
+            const auto& entries = source.buckets[bucket];
+            out.assign(entries.begin(), entries.end());
+        }
+        return;
+    }
+
     if (scratch) {
         if (scratch->stamp.size() < defaultScratch_.stamp.size())
             scratch->stamp.resize(defaultScratch_.stamp.size(), 0);
@@ -173,21 +199,19 @@ void SpatialGrid::queryBuckets(Realm realm, Vec2 min, Vec2 max, std::vector<Enti
         }
     }
 
-    const Layer& source = layer(realm);
-    const int x0 = cellX(realm, min.x);
-    const int x1 = cellX(realm, max.x);
-    const int y0 = cellY(realm, min.y);
-    const int y1 = cellY(realm, max.y);
     for (int cy = y0; cy <= y1; ++cy) {
         for (int cx = x0; cx <= x1; ++cx) {
             const std::size_t b = source.bucketAt(cx, cy);
             if (source.bucketEpoch[b] != epoch_) continue;   // last tick's contents
-            for (const Entity e : source.buckets[b]) {
-                if (scratch) {
-                    const std::uint32_t idx = entityIndex(e);
-                    if (scratch->stamp[idx] == scratch->epoch) continue; // another of its cells
-                    scratch->stamp[idx] = scratch->epoch;
-                }
+            const auto& bucket = source.buckets[b];
+            if (!scratch) {
+                out.insert(out.end(), bucket.begin(), bucket.end());
+                continue;
+            }
+            for (const Entity e : bucket) {
+                const std::uint32_t idx = entityIndex(e);
+                if (scratch->stamp[idx] == scratch->epoch) continue;
+                scratch->stamp[idx] = scratch->epoch;
                 out.push_back(e);
             }
         }

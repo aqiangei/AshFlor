@@ -710,9 +710,9 @@ TEST(base_loot_uses_thirty_trials_and_preserves_personal_apex_rewards) {
     CHECK_EQ(total(eggDrops(Rarity::Common, 3), "egg"), 90);
     CHECK_EQ(total(eggDrops(Rarity::Super, 1), "egg"), 20);
 
-    CHECK_EQ(baseLootTrialsForRarity(Rarity::Unique, true), 15);
-    CHECK_EQ(baseLootTrialsForRarity(Rarity::Super, true), 15);
-    CHECK_EQ(bonusLootTrialsForRarity(Rarity::Unique, 2, true), 24);
+    CHECK_EQ(baseLootTrialsForRarity(Rarity::Unique, true), 10);
+    CHECK_EQ(baseLootTrialsForRarity(Rarity::Super, true), 10);
+    CHECK_EQ(bonusLootTrialsForRarity(Rarity::Unique, 2, true), 16);
 
     constexpr int count = 2000;
     const auto apex = [](int count) {

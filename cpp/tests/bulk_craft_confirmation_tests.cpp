@@ -243,7 +243,9 @@ TEST(craftable_filter_skips_understocked_rows_and_crafts_an_eligible_batch) {
     CHECK_EQ(client.profile().stackCount(fragment, Rarity::PermanentHyper), 5u);
 
     click(filterX, filterY);
-    click(fragmentX, gridY);
+    // The only eligible stack occupies the first cell in the filtered grid.
+    const double firstCellX = bounds.x + (bounds.w - gridWidth) * .5 + 35;
+    click(firstCellX, gridY);
     click(craftX, craftY);
     CHECK(server.stepUntil({&client}, [&]{ return client.craftOutcome().pending; }, 250));
     CHECK(client.profile().stackCount(fragment, Rarity::PermanentHyper) < 5u);

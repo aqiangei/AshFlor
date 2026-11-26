@@ -57,6 +57,10 @@ TEST(parallel_snapshots_match_serial_bytes_across_frames_and_membership_changes)
     loot.spawnDrop(world, 2, Rarity::Super, {640, 1000}, Realm::Arena, {});
     loot.spawnDrop(world, 2, Rarity::Super, {50000, 50000}, Realm::Overworld, {});
     SpatialGrid entityGrid;
+    std::vector<Replicator::VisibleEntity> indexed;
+    world.add<MobType>(mobs[2]);
+    world.add<GhostTag>(mobs[2]);
+    world.add<GhostSparkle>(mobs[3], GhostSparkle{mobs[2]});
     ServerWorkers workers(15);
     ParallelSnapshots parallel(workers, 15), serial(workers, 0);
 #if !defined(__EMSCRIPTEN__) || defined(__EMSCRIPTEN_PTHREADS__)
@@ -74,12 +78,22 @@ TEST(parallel_snapshots_match_serial_bytes_across_frames_and_membership_changes)
         if (frame == 9) world.get<Transform>(players[3]).realm = Realm::Arena;
         if (frame == 12) { parallelViews[2].reset(); serialViews[2].reset(); }
         world.get<Transform>(mobs.front()).position.x += 13;
+        // The indexed and direct readers must agree when a shared state bit
+        // expires, and when facing, health and body size change between frames.
+        world.get<Transform>(mobs.front()).angle += 0.25;
+        world.get<Health>(mobs.front()).flashUntilMillis = 1375;
+        world.get<Health>(mobs.front()).current = 100 - frame;
+        world.get<Body>(mobs.front()).radius = 30 + frame;
         if (frame == 4) world.get<DropItem>(stack).quantity += 3;
         if (frame == 8) world.get<Transform>(stack).position.x = 1300;
         if (frame == 11) world.destroy(stack);
+        if (frame == 10) world.remove<GhostTag>(mobs[2]);
         entityGrid.clear();
         Query<NetId, Replicated, Transform>{world}.each(
-            [&](Entity e, NetId&, Replicated&, Transform& at) {
+            [&](Entity e, NetId& id, Replicated& rep, Transform& at) {
+                const auto slot = entityIndex(e);
+                if (slot >= indexed.size()) indexed.resize(slot + 1);
+                indexed[slot] = Replicator::describe(world, e, id, rep, at, 1000 + frame * 50);
                 entityGrid.insert(e, at.realm, at.position);
             });
         for (unsigned i = 0; i < count; ++i) {
@@ -92,6 +106,7 @@ TEST(parallel_snapshots_match_serial_bytes_across_frames_and_membership_changes)
             a[i].frame.nowMillis = b[i].frame.nowMillis = 1000 + frame * 50;
             a[i].frame.events = b[i].frame.events = &events;
             a[i].frame.entityGrid = count > 1 ? &entityGrid : nullptr;
+            a[i].frame.indexedEntities = count > 1 ? &indexed : nullptr;
             if (i == 0) a[i].frame.viewport = b[i].frame.viewport = Vec2{2400, 1600};
         }
         serial.build(world, b);
@@ -101,6 +116,72 @@ TEST(parallel_snapshots_match_serial_bytes_across_frames_and_membership_changes)
             if (a[i].output.size() == b[i].output.size())
                 CHECK(std::memcmp(a[i].output.data(), b[i].output.data(), a[i].output.size()) == 0);
             CHECK_EQ(parallelViews[i].tracked.size(), serialViews[i].tracked.size());
+        }
+    }
+}
+
+TEST(capped_snapshot_keeps_priority_entities_and_recovers_after_a_view_change) {
+    World world;
+    NetIdAllocator ids;
+    auto add = [&](net::EntityKind kind, Vec2 position) {
+        const Entity e = world.create();
+        world.add<Transform>(e, Transform{position, 0});
+        world.add<Body>(e, Body{10, 1});
+        world.add<Replicated>(e).kind = kind;
+        world.add<NetId>(e, NetId{ids.next()});
+        return e;
+    };
+    const Entity viewer = add(net::EntityKind::Player, {1000, 1000});
+    const Entity squadmate = add(net::EntityKind::Player, {10000, 1000});
+    const Entity mob = add(net::EntityKind::Mob, {1600, 1000});
+    std::vector<Entity> shots;
+    for (int i = 0; i < 120; ++i)
+        shots.push_back(add(net::EntityKind::Projectile, {1010.0 + i * 5, 1000}));
+    LootSystem loot;
+    loot.netIds = &ids;
+    loot.spawnDrop(world, 0, Rarity::Super, {1550, 1000}, Realm::Overworld, {viewer});
+    loot.spawnDrop(world, 0, Rarity::Super, {1070, 1000}, Realm::Overworld, {squadmate});
+    const std::vector<Entity> squad{squadmate, viewer, squadmate};
+    ClientView fullView, limitedView;
+    Replicator full, limited;
+    full.maxEntities = limited.maxEntities = 16;
+    for (int tick = 0; tick < 5; ++tick) {
+        if (tick == 4) {
+            fullView.reset();
+            limitedView.reset();
+            full.maxEntities = limited.maxEntities = 80;
+        }
+        if (tick == 2) world.get<Transform>(viewer).position.x = 2300;
+        if (tick == 3)
+            for (auto e : shots) world.get<Transform>(e).position.x += 1250;
+        SpatialGrid grid;
+        std::vector<Replicator::VisibleEntity> index;
+        std::vector<Entity> priority;
+        Query<NetId, Replicated, Transform>{world}.each([&](Entity e, NetId& id, Replicated& rep, Transform& at) {
+            grid.insert(e, at.realm, at.position);
+            if (index.size() <= entityIndex(e)) index.resize(entityIndex(e) + 1);
+            auto& entry = index[entityIndex(e)] = Replicator::describe(world, e, id, rep, at, tick * 50.0);
+            if (rep.kind == net::EntityKind::Mob || entry.drop) priority.push_back(e);
+        });
+        Replicator::Frame frame{};
+        frame.tick = frame.snapshotIndex = tick;
+        frame.nowMillis = tick * 50.0;
+        frame.entityGrid = &grid;
+        frame.indexedEntities = &index;
+        frame.alwaysVisible = &squad;
+        ByteWriter expected, actual;
+        full.build(world, viewer, fullView, frame, expected);
+        frame.priorityEntities = &priority;
+        limited.build(world, viewer, limitedView, frame, actual);
+        CHECK_EQ(actual.size(), expected.size());
+        if (actual.size() == expected.size()) CHECK(std::memcmp(actual.data(), expected.data(), actual.size()) == 0);
+        CHECK(limitedView.trackedEntity(world.get<NetId>(mob).value));
+        CHECK(limitedView.trackedEntity(world.get<NetId>(squadmate).value));
+        if (tick == 4) {
+            CHECK_EQ(limitedView.tracked.size(), std::size_t{80});
+            CHECK_EQ(limitedView.selectionDistanceSq, 0.0);
+        } else {
+            CHECK(limitedView.selectionDistanceSq > 0.0);
         }
     }
 }

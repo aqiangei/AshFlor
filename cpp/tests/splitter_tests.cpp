@@ -1216,7 +1216,10 @@ TEST(dice_real_equipment_server_ticks_deliver_critical_damage) {
     world.add<Faction>(victim,Faction{Team::Hostiles});world.add<Bounty>(victim);
     double maximum=0,maximumOnClient=0;int hits=0;bool criticalFlag=false;const double base=content().petalStats(dice,Rarity::Unique).damage;
     auto total=[&]{double sum=0;for(const auto& v:world.get<Bounty>(victim).contributors)sum+=v.damage;return sum;};
-    for(int i=0;i<2400;++i){const auto before=total();h.step(1,{&alice});for(const auto& event:alice.view().events())if(event.kind==net::EventKind::Damage && event.netId==4000000001u){maximumOnClient=std::max(maximumOnClient,event.amount);if(event.amount>base*30)criticalFlag=criticalFlag||((event.flag&net::DamageCritical)!=0);}alice.view().events().clear();const double delta=total()-before;if(delta>0){++hits;maximum=std::max(maximum,delta);}}
+    // Keep the target in contact range even when ambient mobs push the flower.
+    for(int i=0;i<2400;++i){
+        world.get<Transform>(victim) = world.get<Transform>(owner);
+        const auto before=total();h.step(1,{&alice});for(const auto& event:alice.view().events())if(event.kind==net::EventKind::Damage && event.netId==4000000001u){maximumOnClient=std::max(maximumOnClient,event.amount);if(event.amount>base*30)criticalFlag=criticalFlag||((event.flag&net::DamageCritical)!=0);}alice.view().events().clear();const double delta=total()-before;if(delta>0){++hits;maximum=std::max(maximum,delta);}}
     CHECK(hits>=100);CHECK(maximum>base*30);CHECK(maximumOnClient>base*30);CHECK(criticalFlag);
 }
 

@@ -389,6 +389,7 @@ private:
     /// which locks the loadout for the run. Every loadout edit asks first.
     bool loadoutLockedInMaze(Session&);
     void handleCraft(Session&, net::Connection&, ByteReader&, bool quiet = false);
+    void handleHelPlinko(Session&, net::Connection&, ByteReader&);
     void handleBulkCraft(Session&, net::Connection&, ByteReader&);
     void handleBulkCraftMythicUltra(Session&, net::Connection&, ByteReader&);
     /// A guaranteed craft at an oracle. Refused unless the session's body is
@@ -1610,6 +1611,8 @@ private:
     std::vector<ContactBodyPlacement> contactBodies_;
     SpatialGrid pickupGrid_;
     SpatialGrid snapshotGrid_;
+    std::vector<Replicator::VisibleEntity> snapshotEntities_;
+    std::array<std::vector<Entity>, kMaxRealms> snapshotPriorityEntities_;
     Rng rng_;
     /// The bots' OWN stream, separate from the world's.
     ///

@@ -90,6 +90,33 @@ TEST(orbiting_dice_renders_its_replicated_face_and_rolls) {
     CHECK(testsupport::differingPixels(frame(1.2, 6), frame(1.2, 1)) > 3);
 }
 
+TEST(orbiting_card_draws_each_replicated_suit) {
+    const auto& registry = testsupport::shippedContent();
+    SpriteCache sprites;
+    CHECK(sprites.build(registry));
+    WorldRenderer renderer;
+    renderer.setContent(&registry);
+    renderer.setSprites(&sprites);
+    const auto frame = [&](std::uint8_t suit) {
+        RemoteEntity card;
+        card.netId = 2;
+        card.kind = net::EntityKind::Petal;
+        card.typeIndex = registry.petalIndex("card");
+        card.ownerNetId = 1;
+        card.petalVariant = suit;
+        card.radius = 18;
+        WorldView view;
+        view.seedForTest(card);
+        Canvas canvas = Canvas::createVirtual(160, 160);
+        renderer.draw(canvas, view, testsupport::frameCamera(160, {}), {}, 1.0);
+        return canvas.getImageData(0, 0, 160, 160);
+    };
+    const std::array frames{frame(1), frame(2), frame(3), frame(4)};
+    for (std::size_t i = 0; i < frames.size(); ++i)
+        for (std::size_t j = i + 1; j < frames.size(); ++j)
+            CHECK(testsupport::differingPixels(frames[i], frames[j]) > 10);
+}
+
 TEST(loaded_stinger_mobs_show_ammo_behind_the_body_until_firing) {
     const auto& registry = testsupport::shippedContent();
     SpriteCache sprites;
@@ -144,4 +171,42 @@ TEST(world_dust_is_small_and_does_not_change_inventory_art) {
  const auto wp=world.getImageData(0,0,100,100),ip=icon.getImageData(0,0,100,100);
  int w=0,i=0;for(std::size_t n=3;n<wp.size();n+=4){w+=wp[n]>128;i+=ip[n]>128;}
  CHECK(w>100);CHECK(w<i/4);
+}
+
+TEST(attached_mark_art_pulses_over_fallen_flower) {
+    const auto& registry = testsupport::shippedContent();
+    SpriteCache sprites;
+    CHECK(sprites.build(registry));
+    auto frame = [&](const char* mark, double time, bool dead) {
+        WorldRenderer renderer;
+        renderer.setContent(&registry);
+        renderer.setSprites(&sprites);
+        WorldView view;
+        RemoteEntity body;
+        body.netId = 1;
+        body.kind = net::EntityKind::Player;
+        body.radius = 25;
+        body.state = dead ? net::StateDead : 0;
+        view.seedForTest(body);
+        if (mark) {
+            RemoteEntity petal;
+            petal.kind = net::EntityKind::Petal;
+            petal.netId = 2;
+            petal.ownerNetId = 1;
+            petal.typeIndex = registry.petalIndex(mark);
+            petal.petalVariant = net::kAttachedMarkVariant;
+            petal.radius = 9;
+            view.seedForTest(petal);
+        }
+        Canvas canvas = Canvas::createVirtual(160, 160);
+        renderer.draw(canvas, view, testsupport::frameCamera(160, {}), {}, time);
+        return canvas.getImageData(48, 40, 64, 48);
+    };
+    const auto bare = frame(nullptr, 0, true);
+    for (auto mark : {"dark_mark", "void_mark", "void_void_mark", "arctic_frozen_mark"}) {
+        const auto attached = frame(mark, 0, true);
+        CHECK(testsupport::differingPixels(bare, attached) > 8);
+        CHECK(testsupport::differingPixels(attached, frame(mark, 0.3, true)) > 8);
+        CHECK_EQ(testsupport::differingPixels(frame(nullptr, 0, false), frame(mark, 0, false)), 0);
+    }
 }

@@ -48,10 +48,12 @@ inline std::vector<GarbagePetal> garbageContents(std::vector<std::uint16_t> pool
             const auto cppIndex = content->petalIndex("c++");
             pool.erase(std::remove(pool.begin(), pool.end(), cppIndex), pool.end());
         }
+        constexpr double mimicKeepChance = 0.85;
         constexpr struct {
             const char* id;
             double keepChance;
-        } rarePetals[] = {{"mimic", 0.85}, {"sawblade", 0.85}, {"golden_leaf", 0.85}, {"ruby", 0.60}};
+        } rarePetals[] = {{"mimic", mimicKeepChance}, {"sawblade", 0.85}, {"golden_leaf", 0.85}, {"ruby", 0.60},
+                          {"magic_mimic", mimicKeepChance}};
         for (const auto& petal : rarePetals) {
             if (rareRng.chance(petal.keepChance)) continue;
             const auto index = content->petalIndex(petal.id);

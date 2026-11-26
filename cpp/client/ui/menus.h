@@ -29,6 +29,7 @@
 #include "svg.h"
 #include "window.h"
 
+#include "shared/game/hel_plinko.h"
 #include "client/net_client.h"
 #include "client/render/sprites.h"
 #include "client/interpolation.h"
@@ -872,7 +873,46 @@ int slotBurstGrains(Rarity rarity);
 /// its slot spinning; a craft spins the ring up and shakes it in and out while
 /// the server rolls; a success shrinks the ring away and grows the upgrade in
 /// its middle. See menu_crafting.cpp.
+class HelPlinkoPanel {
+public:
+    bool render(MenuContext&, bool interactive);
+    static double pointScale(const Window&);
+    static Rect bounds(const Window&);
+    void stop() { nextAutoDrop_.fill(-1.0); }
+    bool takeCraftTab() { return std::exchange(craftTab_, false); }
+private:
+    struct Request {
+        std::uint32_t id;
+        HelPlinkoAction action;
+        Rarity rarity;
+        double sentAt;
+    };
+    struct FallingChip {
+        std::uint16_t path;
+        Rarity rarity;
+        double startsAt;
+    };
+    std::vector<Request> pending_;
+    std::vector<FallingChip> falling_;
+    std::string message_;
+    std::array<double, kPlinkoTiers.size()> nextAutoDrop_ = [] {
+        std::array<double, kPlinkoTiers.size()> times{};
+        times.fill(-1.0);
+        return times;
+    }();
+    std::size_t autoStart_ = 0;
+    double latestLanding_ = -10.0;
+    int latestSlot_ = -1;
+    bool shopExpanded_ = false;
+    std::size_t buySizeIndex_ = 0;
+    bool craftTab_ = false;
+};
+
 class CraftingPanel {
+public:
+    bool takePlinkoTab() { return std::exchange(plinkoTab_, false); }
+private:
+    bool plinkoTab_ = false;
 public:
     bool render(MenuContext&);
     void update(NetClient&, double timeSeconds);
@@ -1111,6 +1151,8 @@ private:
 
     bool shopForecastOpen_ = false;
     std::string shopSearch_;
+    std::string craftSearch_;
+    ui::TextFieldState craftSearchField_;
     ui::TextFieldState shopSearchField_;
     std::vector<std::uint16_t> shopSearchMatches_;
     std::uint16_t shopPetal_ = kNoPetal;
@@ -1167,7 +1209,9 @@ private:
 
     SlotGrid grid_;
     SlotMotion motion_;
-    /// The petal in the slot: one of it, which is what one trade takes.
+    bool drawMode_ = true;
+    std::vector<std::uint16_t> ingredients_;
+    /// The petal in the slot for a coin sale.
     std::uint16_t stagedPetal_ = kNoPetal;
     Rarity stagedRarity_ = Rarity::Common;
 
@@ -1794,6 +1838,7 @@ public:
     void toggle(MenuId);
     void close();
     MenuId open() const { return open_; }
+    bool showingPlinko() const { return drawn_ == MenuId::Crafting && helPlinkoOpen_; }
     bool anyOpen() const { return open_ != MenuId::None; }
 
     /// True when the cursor is over menu furniture, so the game must not treat
@@ -2179,6 +2224,8 @@ private:
 
     InventoryPanel inventory_;
     CraftingPanel crafting_;
+    HelPlinkoPanel helPlinko_;
+    bool helPlinkoOpen_ = false;
     AbsorbPanel absorb_;
     /// Which side of the forge's window shows: Craft or Absorb. Kept across
     /// openings, as florr's old client kept it.

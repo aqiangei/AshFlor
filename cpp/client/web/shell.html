@@ -252,6 +252,20 @@
         @keyframes landscape-blink{50%{filter:brightness(1.4);box-shadow:0 0 22px #caff8c99;}}
         @media(prefers-reduced-motion:reduce){#landscape-btn{animation:none;}}
     </style>
+
+<style>
+  #ashflor-server-renewal {
+    position: fixed;
+    z-index: 5;
+    width: max-content;
+    pointer-events: none;
+    white-space: nowrap;
+    color: #f4ffdc;
+    font: 700 13px/1.2 system-ui, sans-serif;
+    text-shadow: 0 1px 2px #16341c;
+    transform-origin: right center;
+  }
+</style>
 </head>
 <body>
     <nav id="lobby-links" hidden aria-label="游戏入口与议会">
@@ -459,6 +473,31 @@
     </dialog>
     <canvas id="canvas" oncontextmenu="return false;"></canvas>
     <button id="ashflor-shop-link" type="button" hidden data-store-url="https://wzyp.cn/shop/FZ7ZPILX">前往链动小铺获取花瓣</button>
+<span id="ashflor-server-renewal" hidden>游戏服务器已续租半年3113元</span>
+<script>
+(() => {
+  const notice = document.getElementById('ashflor-server-renewal');
+  const storeLink = document.getElementById('ashflor-shop-link');
+  const alignRenewal = () => {
+    const button = storeLink.getBoundingClientRect();
+    notice.hidden = storeLink.hidden || button.height === 0;
+    if (notice.hidden) return;
+
+    const gap = Math.max(5, Math.min(10, button.height * 0.23));
+    const available = button.left - gap - 6;
+    notice.style.fontSize = Math.max(10, Math.min(14, button.height * 0.43)) + 'px';
+    notice.style.left = (button.left - gap) + 'px';
+    notice.style.top = (button.top + button.height / 2) + 'px';
+    const scale = Math.max(0, Math.min(1, available / notice.offsetWidth));
+    notice.style.transform = 'translate(-100%, -50%) scaleX(' + scale + ')';
+  };
+  new MutationObserver(alignRenewal).observe(storeLink, {
+    attributes: true, attributeFilter: ['style', 'hidden']
+  });
+  window.addEventListener('resize', alignRenewal);
+  document.fonts.ready.then(alignRenewal);
+})();
+</script>
     <a id="ashflor-petal-redeem-link" hidden href="https://154.8.157.208/redeem/" target="_blank" rel="noopener noreferrer">花瓣兑换网站</a>
     <script>
 (() => {

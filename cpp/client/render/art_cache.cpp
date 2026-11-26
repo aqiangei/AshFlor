@@ -80,12 +80,12 @@ Cache& cache() {
     return instance;
 }
 
-void evictIfNeeded() {
+void makeRoom(std::size_t bytes) {
     Cache& c = cache();
     // Least recently used, one at a time. The live set is tiny and every
     // member of it was touched this frame, so this only ever reaches sizes
     // nothing is drawing at any more.
-    while (c.bytes > kMaxBytes && c.entries.size() > 1) {
+    while (c.bytes + bytes > kMaxBytes && !c.entries.empty()) {
         auto oldest = c.entries.begin();
         for (auto it = c.entries.begin(); it != c.entries.end(); ++it) {
             if (it->second.lastUsed < oldest->second.lastUsed) oldest = it;
@@ -179,20 +179,26 @@ bool drawCached(Canvas& canvas, const void* owner, std::uint64_t variant, double
     Cache& c = cache();
     const Key key{owner, variant, bakeW, bakeH, phaseX, phaseY};
     auto found = c.entries.find(key);
+    if (found != c.entries.end() && !found->second.bitmap.canDraw()) {
+        c.bytes -= found->second.bytes;
+        c.entries.erase(found);
+        found = c.entries.end();
+    }
     if (found == c.entries.end()) {
-        // Baked at DEVICE resolution and drawn back into a user-space box of
-        // exactly w x h, so the browser samples it one texel to one pixel.
+        const auto bytes = static_cast<std::size_t>(bakeW + pad) * (bakeH + pad) * 4;
+        // Release old backing stores before asking the browser for another.
+        makeRoom(bytes);
         Canvas bitmap = Canvas::createVirtual(bakeW + pad, bakeH + pad);
+        if (!bitmap.canDraw()) return false;
         if (phaseX != 0 || phaseY != 0) {
             bitmap.translate(static_cast<float>(static_cast<double>(phaseX) / kPhaseBuckets),
                              static_cast<float>(static_cast<double>(phaseY) / kPhaseBuckets));
         }
         paint(bitmap, bakeW, bakeH);
-        Entry entry{std::move(bitmap),
-                    static_cast<std::size_t>(bakeW + pad) * (bakeH + pad) * 4, ++c.clock};
-        c.bytes += entry.bytes;
-        found = c.entries.emplace(key, std::move(entry)).first;
-        evictIfNeeded();
+        // A painter can populate the same shared cache during its bake.
+        makeRoom(bytes);
+        found = c.entries.emplace(key, Entry{std::move(bitmap), bytes, ++c.clock}).first;
+        c.bytes += bytes;
     } else {
         found->second.lastUsed = ++c.clock;
     }

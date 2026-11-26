@@ -1,6 +1,6 @@
 // The trader.
 //
-// Apex sales and draws stay available during the lower-tier cooldown.
+// Five-petal draws stay available during the daily coin-sale cooldown.
 //
 // The slot moves the way florr's trade window moves it (its draw,
 // 0x100849600; ~/florr_images/menus_skia.json):
@@ -26,6 +26,7 @@
 #include "client/ui/menus.h"
 #include "shared/game/config.h"
 #include "shared/game/npc.h"
+#include "shared/game/hel_plinko.h"
 
 namespace flix {
 
@@ -47,7 +48,9 @@ constexpr double kRefusalSeconds = 3.0;
 constexpr double kTradeConfirmDelay = 0.35;
 
 bool tradable(std::uint16_t petalIndex) {
-    return knownPetal(petalIndex) && content().petal(petalIndex).tradable;
+    if (!knownPetal(petalIndex)) return false;
+    const auto& petal = content().petal(petalIndex);
+    return petal.tradable && petal.id != kPlinkoChipPetal;
 }
 
 std::uint32_t tileKey(std::uint16_t petalIndex, Rarity rarity) {
@@ -63,6 +66,8 @@ Vec2 TradePanel::size(const Profile& profile) {
 }
 
 void TradePanel::reset() {
+    ingredients_.clear();
+    drawMode_ = true;
     grid_.reset();
     motion_.clear();
     stagedPetal_ = kNoPetal;
@@ -87,8 +92,8 @@ bool TradePanel::render(MenuContext& ctx) {
     const auto coinIndex = content().petalIndex(kTraderCoinPetal);
     const auto eligible = [&](std::uint16_t index, Rarity rarity, unsigned owned) {
         if (!knownPetal(index)) return false;
-        if (index == coinIndex) return rarity == Rarity::Ascendant && owned >= kTraderApexDrawCost;
-        return owned > 0 && tradable(index) && traderTakes(rarity) && (!waiting || rarity == Rarity::Ascendant);
+        if (index == coinIndex) return false;
+        return owned > 0 && tradable(index) && traderTakes(rarity) && !waiting;
     };
 
     // A result the server sent while this face of the menu was not showing
@@ -97,6 +102,7 @@ bool TradePanel::render(MenuContext& ctx) {
     if (outcome.pending) {
         outcome.pending = false;
         if (outcome.success && knownPetal(outcome.receivedIndex)) {
+            ingredients_.clear();
             resultPetal_ = outcome.receivedIndex;
             resultRarity_ = outcome.rarity;
             resultPending_ = true;
@@ -141,6 +147,78 @@ bool TradePanel::render(MenuContext& ctx) {
                      trEnZh("Trade", "兑换"), mouse);
     const Rect panel = card.panel;
 
+    if (phase_ == Phase::Idle) {
+        const Rect mode{panel.x + 14, card.close.y, 120, card.close.h};
+        drawSlotButton(canvas, mode, drawMode_ ? trEnZh("Coin exchange", "切换到换币") :
+            trEnZh("Random Apex", "切换到随机 Apex"), 0xa57836, mode.contains(mouse), false);
+        if (ctx.pressed() && mode.contains(mouse)) {
+            drawMode_ = !drawMode_;
+            ingredients_.clear();
+            stagedPetal_ = kNoPetal;
+            tradeConfirmReady_.reset();
+            return true;
+        }
+    }
+    if (drawMode_ && phase_ == Phase::Idle) {
+        constexpr auto tier = Rarity::Ascendant;
+        const auto selected = [&](auto index) {
+            return static_cast<unsigned>(std::count(ingredients_.begin(), ingredients_.end(), index));
+        };
+        const bool valid = ingredients_.size() == kTraderApexDrawCost &&
+            std::all_of(ingredients_.begin(), ingredients_.end(), [&](auto index) {
+                return selected(index) <= profile.stackCount(index, tier);
+            });
+        for (std::size_t i = 0; i < ingredients_.size(); ++i) {
+            const Rect box{card.slot.x - 52 + (i % 3) * 52, card.slot.y - 52 + (i / 3) * 52, 50, 50};
+            ItemTile tile;
+            tile.petalIndex = ingredients_[i];
+            tile.rarity = tier;
+            drawItemTile(canvas, ctx.sprites, box, tile);
+            if (ctx.pressed() && box.contains(mouse)) {
+                ingredients_.erase(ingredients_.begin() + i);
+                tradeConfirmReady_.reset();
+                return true;
+            }
+        }
+        drawSlotLine(canvas, card, trEnZh("Pick 5 Apex petals. Tap a selected petal to remove it.",
+            "选 5 片 Apex，可混搭；点已选花瓣可撤回。") + std::string(" (") +
+            std::to_string(ingredients_.size()) + "/5)");
+        if (!refusal_.empty() && now < refusalUntil_) drawSlotRefusal(canvas, card, refusal_);
+        drawSlotButton(canvas, card.button, tradeConfirmReady_ ? trEnZh("Confirm", "确认") :
+            trEnZh("Draw", "兑换"), valid ? std::optional<std::uint32_t>(rarityColor(tier)) :
+            std::nullopt, card.button.contains(mouse), false);
+        const auto picked = grid_.render(ctx, card, kTraderSkin, SlotGridTiers::Trader,
+            [&](std::uint16_t index, Rarity rarity, std::uint32_t owned) {
+                SlotCell cell;
+                cell.count = owned - (rarity == tier ? std::min(owned, selected(index)) : 0);
+                cell.greyed = rarity != tier || !tradable(index) || index == coinIndex ||
+                    content().petal(index).isAdminPetal || !petalCraftsToApex(content(), index) ||
+                    cell.count == 0 || ingredients_.size() == kTraderApexDrawCost;
+                if (cell.count > 1) cell.badge = "x" + stackCountText(cell.count);
+                return cell;
+            }, true);
+        if (!ctx.pressed()) return true;
+        if (card.close.contains(mouse)) return false;
+        if (picked) {
+            ingredients_.push_back(picked->petalIndex);
+            tradeConfirmReady_.reset();
+        } else if (valid && card.button.contains(mouse)) {
+            if (!tradeConfirmReady_) tradeConfirmReady_ = now + kTradeConfirmDelay;
+            else if (now >= *tradeConfirmReady_) {
+                std::array<std::uint16_t, kTraderApexDrawCost> items;
+                std::copy(ingredients_.begin(), ingredients_.end(), items.begin());
+                ctx.net.requestApexDraw(items);
+                offeredPetal_ = items.front();
+                offeredRarity_ = tier;
+                phase_ = Phase::Trading;
+                phaseStarted_ = now;
+                tradeConfirmReady_.reset();
+                refusal_.clear();
+            }
+        }
+        return true;
+    }
+
     // --- the slot ----------------------------------------------------------
     // The petal in the slot -- staged, or out with the trader -- until the
     // coin replaces it. One petal, so no badge.
@@ -148,7 +226,6 @@ bool TradePanel::render(MenuContext& ctx) {
     const Rarity shownRarity = trading ? offeredRarity_ : stagedRarity_;
     ItemTile shownTile;
     shownTile.petalIndex = shown;
-    if (shown == coinIndex) shownTile.badge = "4";
     shownTile.rarity = shownRarity;
     shownTile.timeSeconds = now;
     // Lit under the cursor only while the slot is at rest.
@@ -158,7 +235,7 @@ bool TradePanel::render(MenuContext& ctx) {
     coinTile.petalIndex = resultPetal_;
     coinTile.rarity = resultRarity_;
     coinTile.timeSeconds = now;
-    if (coin && knownPetal(offeredPetal_) && content().petal(offeredPetal_).id == "magic_aztec_coin")
+    if (!drawMode_ && coin && knownPetal(offeredPetal_) && content().petal(offeredPetal_).id == "magic_aztec_coin")
         coinTile.badge = "4";
     motion_.drawSlotScene(canvas, ctx.sprites, card, kTraderSkin, (now - phaseStarted_) * 1000.0,
                           dtMs, !coin && knownPetal(shown) ? &shownTile : nullptr,
@@ -186,17 +263,15 @@ bool TradePanel::render(MenuContext& ctx) {
                    overButton, overButton && ctx.window.mouseDown(MouseButton::Left));
 
     if (waiting && !canTrade) {
-        drawSlotLine(canvas, card, traderCooldownText(cooldown) + trEnZh(" (Apex unlimited)", "（Apex 仍可兑换）"), kSlotCardWaitInk);
+        drawSlotLine(canvas, card, traderCooldownText(cooldown), kSlotCardWaitInk);
     } else if (confirming) {
-        if (stagedPetal_ == coinIndex)
-            drawSlotLine(canvas, card, trEnZh("Spend 4 Apex coins for a random Apex?", "用 4 枚 Apex 硬币抽一个随机 Apex？"));
-        else if (knownPetal(stagedPetal_) && content().petal(stagedPetal_).id == "magic_aztec_coin")
+        if (knownPetal(stagedPetal_) && content().petal(stagedPetal_).id == "magic_aztec_coin")
             drawSlotLine(canvas, card, trEnZh("Trade this petal for 4 coins? Tap the slot to cancel.", "兑换四枚同品质硬币？点花瓣槽取消。"));
         else drawSlotLine(canvas, card, trEnZh("Trade 1 petal for 1 coin? Tap the slot to cancel.",
                                         "用 1 个花瓣兑换 1 枚硬币？点花瓣槽取消。"));
     } else {
-        drawSlotLine(canvas, card, trEnZh("4 Apex coins per draw. Apex unlimited, other tiers share 1 trade per 24h.",
-                                         "4 枚 Apex 硬币抽一次；Apex 换币不限，其余品质每 24 小时共一次"));
+        drawSlotLine(canvas, card, trEnZh("All tiers share one coin exchange every 24 hours.",
+                                         "所有品质每账号每 24 小时合计换币一次"));
     }
 
     // --- the grid ----------------------------------------------------------
@@ -209,7 +284,7 @@ bool TradePanel::render(MenuContext& ctx) {
             cell.count = owned;
             // The staged petal is in the slot, not in its stack.
             if (petalIndex == stagedPetal_ && rarity == stagedRarity_ && owned > 0)
-                cell.count -= std::min(owned, petalIndex == coinIndex ? kTraderApexDrawCost : 1u);
+                --cell.count;
             cell.greyed = !eligible(petalIndex, rarity, owned);
             // A lone petal carries no badge, as in the inventory.
             if (cell.count > 1) cell.badge = "x" + stackCountText(cell.count);

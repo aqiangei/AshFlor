@@ -933,18 +933,6 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     } else if (stats.modifiers.magnetism > 0) {
         special("拾取范围：+", "Pickup range: +", stats.modifiers.magnetism);
     }
-    if (config.id == "flower") {
-        const auto glitchFlower = content().mobIndex("glitch_flower");
-        if (glitchFlower != kInvalidIndex) {
-            const auto& summon = content().mob(glitchFlower);
-            const double scale = petalStatScale(rarity) * strengthBoost(rarity) *
-                eggSummonCombatScale(config) * hyperSummonPromotionScale(config, rarity);
-            const double contactDamage = summon.damage * scale * summon.petDamageScale *
-                summonDamageScale(config, rarity) * configuredSummonDamageScale(config, rarity) *
-                skills.effectScale(SkillId::PetDamage);
-            special("单只故障花接触伤害：", "Contact damage per Glitch Flower: ", contactDamage);
-        }
-    }
     if (config.id == "pharaoh_s_crown") {
         const auto summonRarity = pharaohCrownSummonLabelRarity(rarity);
         lines.push_back({std::string(chinese ? "召唤物稀有度：" : "Summon rarity: ") +
@@ -1016,7 +1004,7 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         } else {
             lines.push_back({chinese ? "靠近倒下的玩家并按攻击放置印记。目标提前复活或印记被打破时取消。" : "Attack near a fallen flower to place a mark. Revival or breaking the mark during the charge cancels it.",12.0});
         }
-        lines.push_back({chinese ? "双方需20级；不作用于更高阶装备、分身、副本或已在地狱的玩家。成功后目标5分钟免疫印记。" : "Both flowers must be level 20+. Cannot target higher-tier equipment, split flowers, dungeon runs or flowers in Hel. Target gains 5 minutes of Mark immunity.",12.0});
+        lines.push_back({chinese ? "双方需20级；不作用于分身、副本或已在地狱的玩家。成功后目标5分钟免疫印记。" : "Both flowers must be level 20+. Cannot target split flowers, dungeon runs or flowers in Hel. Target gains 5 minutes of Mark immunity.",12.0});
     }
     if (darkMark || voidMark || config.id == "arctic_frozen_mark") {
         if (markHoldsOnArrival(rarity)) {
@@ -1054,6 +1042,8 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
                                    "After landing a contact hit on a wild mob, a surviving petal strikes again at half damage and takes half recoil.", 12.0});
     }
     if (stats.count > 1) special("每组花瓣数量：", "Petals per cluster: ", stats.count);
+    if (config.id == "magic_blood_stinger" && stats.count > 1)
+        special("每根血刺的基础生成耗魔：", "Base mana per stinger formed: ", stats.requiredMana);
     if (stats.armorPerStack > 0) {
         special("每层护甲：", "Armor per stack: ", stats.armorPerStack);
         special("护甲叠层间隔：", "Armor stack interval: ", 2.0, "s");
@@ -1179,7 +1169,7 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         const double radiationReach = skills.effectScale(SkillId::RadiationReach);
         const double radiationPower = skills.effectScale(SkillId::RadiationPower);
         if (config.id == "uranium")
-            special("基础辐射伤害/秒：", "Base radiation damage per second: ", uraniumRadiationDps(stats, rarity) * kRadiationDamageScale);
+            special("基础辐射伤害/秒：", "Base radiation damage per second: ", uraniumRadiationDps(content(), rarity) * kRadiationDamageScale);
         if(config.id=="uranium")
             special("辐射自伤上限（每秒最大生命）：", "Self-radiation cap (% max HP/s): ", 4.0, "%");
         const double poison = config.radiation.burnDamage > 0.0 ? config.radiation.poisonDamage :
@@ -1193,7 +1183,16 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         if (config.radiation.burnDamage > 0.0) {
             const double baseBurn = config.radiation.burnDamage * referenceOffenseScale(config, rarity) *
                 kRadiationDamageScale;
-            special("基础辐射灼烧强度：", "Base radiation burn strength: ", baseBurn);
+            if (config.id == "pyrite") {
+                const double rate = baseBurn * (2000.0 / kFireBombBurnMillis);
+                special("基础灼烧伤害/秒：", "Base burn damage per second: ", rate);
+                if (damageScale * radiationPower * fireScale != 1.0)
+                    special("灼烧伤害/秒（含天赋）：", "Burn damage per second with talents: ",
+                            rate * damageScale * radiationPower * fireScale);
+                special("离开火圈后的灼烧持续：", "Burn after leaving the ring: ", kFireBombBurnMillis / 1000.0, "s");
+            } else {
+                special("基础辐射灼烧强度：", "Base radiation burn strength: ", baseBurn);
+            }
             if (config.id == "arctic_plutonium") {
                 special("辐射灼烧强度（含伤害天赋）：", "Radiation burn strength with talents: ",
                         baseBurn * damageScale * radiationPower * fireScale);
@@ -1235,6 +1234,8 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         special("每次击杀增加回血：", "Heal per kill: ", stats.totemHealPerSecond * healTalent * kPlayerHealMultiplier,
                 chinese ? "/秒，持续10秒，可叠加" : "/s for 10s, stacking");
     }
+    if (config.id == "fractal")
+        special("单目标基础闪电伤害：", "Base lightning damage per target: ", fractalBaseLightningDamage(config, rarity));
     if (stats.lightningDamagePerHit > 0) {
         if (config.id == "magic_peas") {
             lines.push_back({chinese ? "四颗蓝莓分别造成闪电伤害，不会连锁跳跃。" :
@@ -1766,7 +1767,7 @@ bool InventoryPanel::render(MenuContext& ctx) {
                           std::max(60.0, searchRight - searchX), kControlsHeight};
     if (canViewRunLoot) {
         const bool hovered = runLootButton.contains(mouse);
-        drawSlotButton(canvas, runLootButton, "This Run", kInventorySkin.fill,
+        drawSlotButton(canvas, runLootButton, trEnZh("This Run", "本局收集"), kInventorySkin.fill,
                        hovered, hovered && ctx.pressed());
         if (hovered && ctx.pressed()) {
             openRunLoot(ctx.drag);
@@ -2009,35 +2010,31 @@ bool InventoryPanel::render(MenuContext& ctx) {
         if (rect.y >= viewBottom) break;
         if (rect.bottom() <= view.y) continue;
 
-        ItemTile tile;
-        tile.petalIndex = cell.petalIndex;
-        tile.rarity = cell.rarity;
-        // The badge is how many the ACCOUNT owns; the cluster the tile draws is
-        // how many one equipped slot spawns. Two different counts, deliberately.
-        // Admin omni bags are capped at kMaxStackCount — the x2.1B spam is noise.
-        if (!ctx.net.isSkinAdmin() && cell.count > 1) {
-            tile.badge = "x" + stackCountText(cell.count);
-        }
-        // No hover wash: the pointer turning into a hand is what says a cell
-        // can be picked up (below), and the tile itself stays its own colour.
-        tile.timeSeconds = ctx.timeSeconds;
+        const std::uint32_t badgeCount = !ctx.net.isSkinAdmin() && cell.count > 1 ? cell.count : 0;
+        const auto paintTile = [&](Canvas& target, Rect bounds) {
+            ItemTile tile;
+            tile.petalIndex = cell.petalIndex;
+            tile.rarity = cell.rarity;
+            tile.timeSeconds = ctx.timeSeconds;
+            if (badgeCount) tile.badge = "x" + stackCountText(badgeCount);
+            drawItemTile(target, ctx.sprites, bounds, tile);
+        };
 #ifdef __EMSCRIPTEN__
         if (settled && Fonts::ready() && !ctx.sprites.petalAnimated(cell.petalIndex)) {
             // Only inventory cells have this fixed appearance. The padding
             // includes the tilted count badge outside the upper corner.
             static const char inventoryArt = 0;
-            const std::uint32_t count = tile.badge.empty() ? 0 : cell.count;
-            const std::uint64_t variant = (std::uint64_t{count} << 32) |
+            const std::uint64_t variant = (std::uint64_t{badgeCount} << 32) |
                 (static_cast<std::uint64_t>(language()) << 24) |
                 (static_cast<std::uint64_t>(cell.rarity) << 16) | cell.petalIndex;
             const double pad = rect.w * 0.25;
             if (drawCachedPicture(canvas, &inventoryArt, variant, rect.x - pad, rect.y - pad,
                                   rect.w + 2 * pad, rect.h + 2 * pad, [&](Canvas& bitmap) {
-                    drawItemTile(bitmap, ctx.sprites, {pad, pad, rect.w, rect.h}, tile);
+                    paintTile(bitmap, {pad, pad, rect.w, rect.h});
                 })) continue;
         }
 #endif
-        drawItemTile(canvas, ctx.sprites, rect, tile);
+        paintTile(canvas, rect);
     }
     canvas.restore();
 

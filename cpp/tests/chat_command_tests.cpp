@@ -2293,6 +2293,7 @@ TEST(a_player_squadded_with_a_bot_is_paid_for_what_the_bot_kills) {
     CHECK(loginAs(h, owner, "owner", "password7"));
     owner.joinGame(1280, 720, "garden", "owner");
     CHECK(h.stepUntil({&owner}, [&] { return owner.status() == NetClient::Status::Playing; }));
+    CHECK(say(h, owner, "/admin god on"));
     h.step(120, {&owner});
 
     World& world = h.server.world();
@@ -2354,11 +2355,13 @@ TEST(a_player_squadded_with_a_bot_is_paid_for_what_the_bot_kills) {
 
     // Which bot shares the squad.
     Entity botBody = NULL_ENTITY;
-    for (const auto& candidate : bots) {
+    // Bots may have respawned while the squad formed. Resolve the current body.
+    flowers.each([&](Entity e, PlayerTag&, PlayerAccount& account, Transform& where) {
+        if (!account.userId.empty() || where.realm != Realm::Overworld) return;
         for (const auto& member : owner.squad().members) {
-            if (member.bot && member.name == candidate.second) botBody = candidate.first;
+            if (member.bot && member.name == account.username) botBody = e;
         }
-    }
+    });
     CHECK(botBody != NULL_ENTITY);
     if (botBody == NULL_ENTITY) return;
 
@@ -3611,6 +3614,7 @@ TEST(termites_out_in_the_open_share_a_hit_with_the_ones_near_them) {
 }
 
 TEST(an_apex_pickup_is_announced_with_the_kill_lines_credit) {
+    const EnglishChat english;
     // Picking up an apex petal tells the server, crediting the collector the
     // way a boss kill credits its top dealer. A unique is collected silently.
     Harness h("cmd-apex-pickup", [](const std::string& path) {
@@ -3633,32 +3637,38 @@ TEST(an_apex_pickup_is_announced_with_the_kill_lines_credit) {
     if (body == NULL_ENTITY) return;
 
     const std::uint16_t rose = content().petalIndex("rose");
-    const auto dropUnder = [&](Rarity rarity) {
+    const auto dropUnder = [&](std::uint16_t index, Rarity rarity) {
         const Transform& at = world.get<Transform>(body);
         const Entity drop = world.create();
         world.add<DropTag>(drop);
         world.add<Transform>(drop, Transform{at.position, 0.0, at.realm});
         world.add<Body>(drop, Body{10.0, 1.0});
         DropItem item;
-        item.configIndex = rose;
+        item.configIndex = index;
         item.rarity = rarity;
         world.add<DropItem>(drop, std::move(item));
         world.add<Lifetime>(drop, Lifetime{30.0});
-        world.add<Replicated>(drop, Replicated{net::EntityKind::Drop, 0, rose, rarity, 0});
+        world.add<Replicated>(drop, Replicated{net::EntityKind::Drop, 0, index, rarity, 0});
     };
 
-    dropUnder(Rarity::Unique);
+    dropUnder(rose, Rarity::Unique);
     CHECK(h.stepUntil({&client}, [&] {
         return client.profile().stackCount(rose, Rarity::Unique) == 1;
     }, 120));
     h.step(10, {&client});
     CHECK(!sawText(client, "has been collected by"));
 
-    dropUnder(Rarity::Apex);
+    dropUnder(rose, Rarity::Ascendant);
     CHECK(h.stepUntil({&client}, [&] {
-        return sawText(client, "<b style=\"color: #ff00ff;\">An Apex Rose has been collected by "
+        return sawText(client, "<b data-pickup='rose' style=\"color: #ff00ff;\">An Apex Rose has been collected by "
                                "<span style=\"color: #00ff00;\">@boss</span> "
                                "[<span style=\"color: yellow;\">Boss</span>]!</b>");
+    }, 120));
+    ui::setLanguage(ui::Language::Zh);
+    dropUnder(content().petalIndex("magic_air"), Rarity::Ascendant);
+    CHECK(h.stepUntil({&client}, [&] {
+        return sawText(client, "<b data-pickup='magic_air' style=\"color: #ff00ff;\">Apex 魔法空气 已被 "
+                               "<span style=\"color: #00ff00;\">@boss</span>");
     }, 120));
 }
 

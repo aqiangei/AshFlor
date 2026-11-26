@@ -3,6 +3,7 @@
 #include "server/systems/combat.h"
 #include "server/systems/petals.h"
 #include "server/systems/loot.h"
+#include "server/systems/movement.h"
 #include "client/ui/content_i18n.h"
 #include "client/ui/i18n.h"
 using namespace flix;
@@ -190,6 +191,122 @@ TEST(zorr_completion_honey_addons_affect_real_bait_and_do_not_stack) {
  r.tickPetals(7200);CHECK_EQ(r.w.get<GroundEffect>(bait).radius,0.0);
 }
 
+TEST(zorr_completion_honey_bait_uses_the_mimics_rarity_for_burn_and_poison) {
+    for (const bool copy : {false, true}) {
+        RingWorld rig;
+        rig.equip(0, "honey");
+        rig.equip(1, "hel_honey", copy ? Rarity::Common : Rarity::Rare);
+        rig.equip(3, "irey", copy ? Rarity::Common : Rarity::Rare);
+        if (copy) {
+            rig.equip(2, "mimic", Rarity::Rare);
+            rig.equip(4, "mimic", Rarity::Rare);
+        }
+        rig.tickPetals(0.0);
+        rig.tickPetals(7000.0);
+        rig.w.get<PlayerInput>(rig.player).current.flags = net::InputAttack;
+        rig.tickPetals(7050.0);
+        rig.w.get<PlayerInput>(rig.player).current.flags = 0;
+        const auto baits = Query<HoneyBait>{rig.w}.collect();
+        CHECK_EQ(baits.size(), 1u);
+        if (baits.empty()) continue;
+        const Entity bait = baits.front();
+        rig.tickPetals(7100.0);
+        const auto& field = rig.w.get<GroundEffect>(bait);
+        const double scale = petalDamageScale(Rarity::Rare);
+        CHECK_NEAR(field.burnPerSecond, 35.0 * scale, 1e-8);
+        CHECK_NEAR(field.damagePerSecond, 40.0 * scale, 1e-8);
+        const Vec2 position = rig.w.get<Transform>(bait).position;
+        const Entity mob = rig.w.create();
+        rig.w.add<MobTag>(mob);
+        rig.w.add<Transform>(mob, Transform{position, 0.0});
+        rig.w.add<Body>(mob, Body{5.0, 1.0});
+        rig.w.add<Health>(mob, Health{1000.0, 1000.0});
+        rig.w.add<Faction>(mob, Faction{Team::Hostiles, false});
+        rig.tickCombat(7150.0);
+        const auto* status = rig.w.tryGet<Afflictions>(mob);
+        CHECK(status && status->poisoned(7150.0));
+        if (status) CHECK_NEAR(status->burnPerSecond, 35.0 * scale, 1e-8);
+        rig.tickCombat(7200.0);
+        CHECK(rig.w.get<Health>(mob).current < 1000.0);
+    }
+}
+
+TEST(zorr_completion_mimic_grants_the_copied_petal_durability_bonus) {
+    for (const char* id : {"golden_cactus", "dead_leaf"}) {
+        for (const bool copy : {false, true}) {
+            RingWorld rig;
+            rig.equip(0, "basic");
+            rig.equip(1, id, copy ? Rarity::Mythic : Rarity::Unique);
+            if (copy) rig.equip(2, "mimic", Rarity::Unique);
+            rig.tickPetals(0.0);
+            rig.tickPetals(7000.0);
+            double health = 0.0;
+            Query<PetalInstance, Health>{rig.w}.each(
+                [&](Entity, PetalInstance& petal, Health& body) {
+                    if (petal.owner == rig.player && petal.slot == 0) health = body.max;
+                });
+            const double base = rig.c.petalStats(rig.c.petalIndex("basic"), Rarity::Common).health;
+            const double multiplier = std::string_view(id) == "golden_cactus" ? 1.55 : 1.28;
+            CHECK_NEAR(health, std::round(base * multiplier), 1e-8);
+        }
+    }
+}
+
+TEST(zorr_completion_arctic_ice_reduces_total_burn_across_all_sources) {
+    for (const bool ice : {false, true}) {
+        for (const int legacyRate : {0, 10, 20, 40}) {
+            RingWorld rig;
+            if (ice) rig.equip(0, "arctic_ice");
+            rig.tickPetals(0.0);
+            rig.tickPetals(6000.0);
+            const double before = rig.w.get<Health>(rig.player).current;
+            if (legacyRate > 0) {
+                rig.w.add<Burn>(rig.player,
+                    Burn{NULL_ENTITY, legacyRate * 1.5, 3500.0, 6600.0});
+            }
+            for (int rate = legacyRate; rate < 40; rate += 20) {
+                const Entity emitter = rig.w.create();
+                CombatSystem::ignite(rig.w, rig.player, emitter, NULL_ENTITY,
+                    std::min(20, 40 - rate), 3000.0, 6400.0);
+            }
+            rig.tickCombat(6500.0);
+            const double damage = before - rig.w.get<Health>(rig.player).current;
+            std::printf("ARCTIC ICE equipped=%d legacy=%d rate=%.2f\n",
+                int(ice), legacyRate, damage / net::kTickSeconds);
+            CHECK_NEAR(damage, (ice ? 25.0 : 40.0) * net::kTickSeconds, 1e-8);
+        }
+    }
+}
+
+TEST(zorr_completion_magic_nitro_boosts_the_actual_player_movement_phase) {
+    const auto travelWithMana = [](double mana) {
+        RingWorld rig;
+        rig.equip(0, "magic_arctic_nitro");
+        rig.w.add<Motion>(rig.player);
+        rig.tickPetals(0.0);
+        rig.tickPetals(5000.0);
+        CHECK_EQ(Query<PetalInstance>{rig.w}.count(), 1u);
+        rig.w.get<Motion>(rig.player).velocity = {kPlayerMaxSpeed, 0.0};
+        rig.w.get<PlayerInput>(rig.player).current.moveStrength = 1.0;
+        rig.w.get<ManaPool>(rig.player).current = mana;
+        const Vec2 start = rig.w.get<Transform>(rig.player).position;
+        Terrain terrain;
+        terrain.fill(Tile::Open);
+        MovementSystem movement;
+        rig.petals.foldModifiers(rig.w, rig.c, 5050.0, net::kTickSeconds);
+        movement.runPlayerPhase(rig.w, terrain, 5050.0, net::kTickSeconds);
+        rig.tickPetals(5050.0);
+        CHECK_NEAR(mana - rig.w.get<ManaPool>(rig.player).current,
+            mana > 0.0 ? 2.0 * net::kTickSeconds : 0.0, 1e-8);
+        const double travelled = rig.w.get<Transform>(rig.player).position.x - start.x;
+        std::printf("MAGIC NITRO funded=%d distance=%.6f\n", int(mana > 0.0), travelled);
+        return travelled;
+    };
+    const double unfunded = travelWithMana(0.0);
+    const double funded = travelWithMana(10.0);
+    CHECK(funded > unfunded);
+}
+
 TEST(ring_speed_pickup_time_from_outer_edge) {
  for (const auto rarity : {Rarity::Common, Rarity::Unique, Rarity::Apex}) {
   RingWorld r;
@@ -266,5 +383,39 @@ TEST(zorr_completion_apex_ring_magnet_pulls_loot_from_beyond_ph_range) {
         const double moved = apex ? expected / 2.5 * net::kTickSeconds : 0.0;
         CHECK_NEAR(r.w.get<Transform>(drop).position.x, at - moved, 1e-6);
         CHECK(r.loot.pickups().empty());
+    }
+}
+
+TEST(magic_cancer_duplicates_a_whole_eligible_brood_for_one_mana_payment) {
+    for (bool withDna : {false, true}) {
+        RingWorld r;
+        r.equip(0, "beetle_egg", Rarity::Apex);
+        r.equip(1, "magic_cancer", Rarity::Apex);
+        r.equip(2, "magic_soil", Rarity::Apex);
+        if (withDna) r.equip(3, "dna", Rarity::Apex);
+        const auto step = [&](double now) {
+            r.petals.run(r.w, r.c, now, 0.0, r.commands);
+            r.commands.flush();
+        };
+        const auto mana = [&]() -> ManaPool& { return r.w.get<ManaPool>(r.player); };
+        step(0.0);
+        mana().current = mana().max;
+        step(10000.0);
+        int doubled = 0;
+        for (int batch = 0; batch < 128; ++batch) {
+            const double now = 72000.0 + batch * 100000.0;
+            const bool funded = (batch % 2 == 0);
+            mana().current = funded ? mana().max : 0.0;
+            const double before = mana().current;
+            step(now);
+            const auto pets = Query<Pet>{r.w}.collect();
+            const bool twin = pets.size() == 6;
+            CHECK(pets.size() == 3 || (funded && twin));
+            CHECK_NEAR(before - mana().current, twin ? 3.0 * petalManaScale(Rarity::Apex) : 0.0, 1e-8);
+            if (twin) ++doubled;
+            for (Entity pet : pets) r.w.destroy(pet);
+            step(now + 50.0);
+        }
+        CHECK(doubled > 0);
     }
 }

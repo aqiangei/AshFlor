@@ -531,13 +531,30 @@ void App::pollNetwork() {
                 returnToTitle();
             }
             screen_ = Screen::Lobby;
+        } else if (screen_ == Screen::Lobby && autoLogin_ == AutoLogin::ResumingAfterDrop &&
+                   net_.authStatus == net::AuthStatus::ServerError && !shards.switching) {
+            autoLogin_ = AutoLogin::WaitingToRetryResume;
+            autoAuthSentAt_ = timeSeconds_;
         } else if (screen_ == Screen::Lobby) {
+            autoLogin_ = AutoLogin::Failed;
             // A reconnection's resume, refused -- the token was revoked while
             // the socket was down. onReconnected put the lobby up on the
             // strength of that token; without it this is the form's screen.
             screen_ = Screen::Login;
         }
         if(net_.authStatus==net::AuthStatus::SessionExpired){storedToken_.clear();saveSession();}
+    }
+    if (autoLogin_ == AutoLogin::WaitingToRetryResume) {
+        if (screen_ != Screen::Lobby || menus_.shardSelection().switching ||
+            net_.status() != NetClient::Status::Ready) {
+            autoLogin_ = AutoLogin::Idle;
+        } else if (timeSeconds_ - autoAuthSentAt_ >= 2.0) {
+            const auto& token = net_.sessionToken().empty() ? storedToken_ : net_.sessionToken();
+            autoLogin_ = AutoLogin::Done;
+            autoAuthSentAt_ = -1;
+            if (!token.empty()) net_.resumeSession(token);
+            else screen_ = Screen::Login;
+        }
     }
     serviceShardSwitch();
     if (net_.sessionTokenRenewed) {
@@ -1096,7 +1113,8 @@ void App::frame(double dt) {
             // rather than the world, so there is nothing for them to miss here.
             menus_.render(canvas, window_, net_, sprites_, renderer_, timeSeconds_, dt);
             // The wide changelog needs its close button and scrollbar unobstructed.
-            if (menus_.open() != MenuId::Changelog) drawDailyStreak(canvas, timeSeconds_);
+            if (menus_.open() != MenuId::Changelog && !menus_.showingPlinko())
+                drawDailyStreak(canvas, timeSeconds_);
         }
         else if (screen_ == Screen::Replaced) drawSessionReplaced(canvas, timeSeconds_);
         else drawConnectionState(canvas, timeSeconds_);
@@ -1496,6 +1514,7 @@ void App::onReconnected() {
         net_.sessionToken().empty() ? storedToken_ : net_.sessionToken();
     screen_ = token.empty() ? Screen::Login : Screen::Lobby;
     if (!token.empty()) {
+        autoLogin_ = AutoLogin::ResumingAfterDrop;
         net_.resumeSession(token);
         net_.addSystemMessage("Reconnected to the server.");
     } else {

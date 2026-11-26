@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "fixture_content.h"
+#include "test_data.h"
 
 using namespace flix;
 
@@ -273,6 +274,27 @@ TEST(snapshot_ghost_ring_has_the_same_visibility_as_its_owner) {
     CHECK(client.entities().find(ghostId) != client.entities().end());
     CHECK(client.entities().find(petalId) != client.entities().end());
 }
+TEST(attached_mark_snapshot_anchors_to_target_and_leaves_orbit) {
+    Fixture f;
+    const Entity petal = f.world.create();
+    f.world.add<Transform>(petal, Transform{{1020, 1000}, 0});
+    f.world.add<NetId>(petal, NetId{f.ids.next()});
+    auto& rep = f.world.add<Replicated>(petal);
+    rep.kind = net::EntityKind::Petal;
+    rep.spawnFlags = net::SpawnRingPetal;
+    auto& mark = f.world.add<PetalInstance>(petal);
+    mark.owner = f.viewer;
+    const auto id = netIdOf(f.world, petal);
+    WorldView client;
+    f.tick(client, 1, 1000);
+    CHECK(client.entities().at(id).isRingPetal());
+    mark.markTarget = f.viewer;
+    f.tick(client, 2, 1050);
+    CHECK(!client.entities().at(id).isRingPetal());
+    CHECK_EQ(client.entities().at(id).ownerNetId, netIdOf(f.world, f.viewer));
+    CHECK_EQ(client.entities().at(id).petalVariant, net::kAttachedMarkVariant);
+}
+
 TEST(equipped_dice_replicates_a_new_face_without_respawning) {
     Fixture fixture;
     const Entity petal = fixture.world.create();
@@ -812,8 +834,12 @@ TEST(chained_position_deltas_land_where_the_server_thinks_they_did) {
         transform.position.y = 1000.7 + 200.0 * std::cos(0.07 * t) - t / 3.0;
         f.tick(client, t, 1000 + 40.0 * t);
         const Vec2 held = client.entities().at(id).targetPosition;
-        CHECK(held.x == f.view.tracked.at(id).position.x);
-        CHECK(held.y == f.view.tracked.at(id).position.y);
+        const auto* tracked = f.view.trackedEntity(id);
+        CHECK(tracked != nullptr);
+        if (tracked) {
+            CHECK(held.x == tracked->position.x);
+            CHECK(held.y == tracked->position.y);
+        }
         CHECK_NEAR(held.x, transform.position.x, 0.5 / net::kPositionShortDeltaScale + 1e-9);
         CHECK_NEAR(held.y, transform.position.y, 0.5 / net::kPositionShortDeltaScale + 1e-9);
     }
@@ -2536,6 +2562,46 @@ TEST(craft_quantity_and_cost_are_translated_in_replayed_system_messages) {
     const auto old=ui::language();ui::setLanguage(ui::Language::Zh);
     const auto text=ui::localizeChatText("<b style=\"color: #2bffa3;\">A Super Rose has been crafted by <b style=\"color: #00ff00;\">@smith</b> [<b style=\"color: yellow;\">smith</b>]</b> (crafted x85, consumed x19996)");
     CHECK(text.find("crafted")==std::string::npos);CHECK(text.find("合成 ×85")!=std::string::npos);CHECK(text.find("消耗 ×19996")!=std::string::npos);
+    ui::setLanguage(old);
+}
+
+TEST(magic_petal_names_are_localized_in_system_broadcasts_and_notifications) {
+    std::string error;
+    if (!loadContent(testsupport::dataDir(), error)) { CHECK(false); return; }
+    const auto old = ui::language();
+    ui::setLanguage(ui::Language::Zh);
+    std::size_t checked = 0;
+    for (std::uint16_t i = 0; i < content().petalCount(); ++i) {
+        const auto& petal = content().petal(i);
+        if (petal.id.rfind("magic_", 0) != 0) continue;
+        ++checked;
+        const std::string name = ui::petalNameTr(petal.id, petal.name.c_str());
+        CHECK(name != petal.name);
+        const std::string tag = "<b data-petal='" + petal.id + "'";
+        const std::string subject = "Apex " + petal.name;
+        for (const std::string_view verb : {" has been collected by ", " has been crafted by ", " has been forged by "}) {
+            const std::string opening = verb == " has been collected by " ? "<b data-pickup='" + petal.id + "'" : tag;
+            const auto message = opening + " style=\"color: #ff00ff;\">An " + subject +
+                std::string(verb) + "<span style=\"color: #00ff00;\">@tester</span>!</b>";
+            const auto shown = ui::localizeChatText(message);
+            CHECK(shown.find("Apex " + name) != std::string::npos);
+            CHECK(shown.find("@tester") != std::string::npos);
+        }
+        const std::string trader = "测试 在沙漠商人处抽到了 " + tag + ">" + subject + "</b>。";
+        CHECK_EQ(ui::localizeChatText(trader), "测试 在沙漠商人处抽到了 " + tag + ">Apex " + name + "</b>。");
+        const auto feed = ui::localizeNotificationText(
+            "An " + subject + " has been crafted by @tester (crafted x1)", petal.id);
+        CHECK(feed.find("Apex " + name) != std::string::npos);
+    }
+    CHECK(checked >= 123);
+    CHECK_EQ(std::string(ui::petalNameTr("magic_void_zodiac", "Magic Zodiac")), std::string("魔法星座"));
+    const std::string oldPickup = "<b style=\"color: #ff00ff;\">An Apex Magic Air has been collected by @tester!</b>";
+    CHECK(ui::localizeChatText(oldPickup).find("Apex 魔法空气") != std::string::npos);
+    CHECK(ui::localizeChatText(
+        "<b data-pickup='magic_air' style=\"color: #29292f;\">The Devine Magic Air has been collected by @tester!</b>")
+        .find("宇宙 魔法空气") != std::string::npos);
+    ui::setLanguage(ui::Language::En);
+    CHECK_EQ(ui::localizeChatText(oldPickup), oldPickup);
     ui::setLanguage(old);
 }
 

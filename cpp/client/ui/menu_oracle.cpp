@@ -73,6 +73,8 @@ void OraclePanel::reset() {
     resultPending_ = false;
     refusal_.clear();
     shopForecastOpen_ = false;
+    craftSearch_.clear();
+    craftSearchField_.blur();
     shopSearch_.clear();
     shopSearchField_.blur();
     shopSearchMatches_.clear();
@@ -244,6 +246,7 @@ bool OraclePanel::render(MenuContext& ctx) {
                        std::nullopt, over, over && ctx.window.mouseDown(MouseButton::Left));
         if (over && ctx.pressed()) {
             shopForecastOpen_ = !shopForecastOpen_;
+            craftSearchField_.blur();
             shopSearchField_.blur();
             return true;
         }
@@ -357,6 +360,10 @@ bool OraclePanel::render(MenuContext& ctx) {
             ? static_cast<std::uint32_t>(std::max(0, crafts_)) *
                   static_cast<std::uint32_t>(oracleCraftCost(stagedRarity_))
             : 0u;
+    const Rect searchRect{panel.x + 16, card.listView.y, panel.w - 32, 26};
+    if (editSlotSearch(ctx, searchRect, craftSearch_, craftSearchField_)) grid_.reset();
+    card.listView.y += 30;
+    card.listView.h = std::max(0.0, card.listView.h - 30);
     const std::optional<SlotGrid::Pick> hovered = grid_.render(
         ctx, card, kOracleSkin, SlotGridTiers::PermanentHyper,
         [&](std::uint16_t petalIndex, Rarity rarity, std::uint32_t owned) {
@@ -373,7 +380,7 @@ bool OraclePanel::render(MenuContext& ctx) {
                                  : stackCountText(cell.count) + "/" + std::to_string(price);
             cell.badgeCentred = true;
             return cell;
-        });
+        }, true, nullptr, craftSearch_);
 
     // Tiles on their way out go over everything but the words.
     motion_.drawVanishing(canvas, ctx.sprites, dtMs);

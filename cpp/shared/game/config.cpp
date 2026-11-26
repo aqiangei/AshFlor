@@ -2090,6 +2090,10 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
         boost(stats.armorReduction, 1.25);
         boost(stats.armorPerStack, 1.25);
         boost(stats.health, kAscendantPetalHealthScale);
+        if (c.id == "sawblade") {
+            stats.health *= 2.0;
+            stats.damage *= 1.10;
+        }
         boost(stats.petalArmor, 1.30);
         boost(stats.flowerHealthBonus, 1.30);
         boost(stats.heal, 1.15);
@@ -2100,9 +2104,11 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
         boost(stats.overhealShield, 1.15);
         boost(stats.healBonus, 1.15);
         boost(stats.lifesteal, 1.15);
-        boost(stats.maxMana, 1.15);
-        boost(stats.mana, 1.15);
-        boost(stats.passiveManaPerSecond, 1.15);
+        const double recoveryRatio = importedManaRecoveryApexScale(c.id, r);
+        const double manaBoost = recoveryRatio > 1.0 ? recoveryRatio : 1.15;
+        boost(stats.maxMana, manaBoost);
+        boost(stats.mana, manaBoost);
+        boost(stats.passiveManaPerSecond, manaBoost);
         if (c.id == "magnet" || c.id == "ring_magnet") {
             boost(stats.modifiers.magnetism, 1.10);
         }

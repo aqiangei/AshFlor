@@ -40,7 +40,7 @@ inline PetalStats computerSetStats(const ContentRegistry& registry, World& world
  if(const auto* loadout=world.tryGet<Loadout>(owner)) {
   static constexpr double cactus[]={.01,.02,.03,.05,.08,.13,.21,.34,.55,.825};
   for(int slot=0;slot<std::min(loadout->activeSlots,kLoadoutActiveSlots);++slot) {
-   const auto& item=loadout->slots[slot];
+   const auto item=equippedPetal(registry,*loadout,slot);
    if(item.empty()) continue;
    const auto& id=registry.petal(item.configIndex).id;
    const int tier=ladderIndex(item.rarity);

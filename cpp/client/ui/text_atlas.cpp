@@ -24,6 +24,7 @@ using textrun::KeyHash;
 // 4M pixels: under the ~8M at which Chrome starts rastering one canvas in
 // pieces, and room for a few thousand labels.
 constexpr int kAtlasSide = 2048;
+constexpr int kPageHeight = 512;
 // One run bigger than this is drawn live.
 constexpr int kMaxCellWidth = 1024;
 constexpr int kMaxCellHeight = 256;
@@ -128,7 +129,7 @@ struct Shelf {
 };
 
 struct Atlas {
-    std::unique_ptr<Canvas> canvas;
+    std::vector<std::unique_ptr<Canvas>> pages;
     std::unordered_map<Key, Cell, KeyHash> cells;
     std::unordered_map<Key, std::uint64_t, KeyHash> misses;
     std::unordered_map<Key, Waiting, KeyHash> waiting;
@@ -149,12 +150,7 @@ void clear(Atlas& a) {
     a.cells.clear();
     a.shelves.clear();
     a.nextShelfY = 0;
-    if (a.canvas) {
-        a.canvas->save();
-        a.canvas->resetTransform();
-        a.canvas->clearRect(0, 0, kAtlasSide, kAtlasSide);
-        a.canvas->restore();
-    }
+    a.pages.clear();
 }
 
 /// A free w x h rectangle, or false when the atlas is full.
@@ -170,7 +166,10 @@ bool allocate(Atlas& a, int w, int h, int& x, int& y) {
         shelf.x += w;
         return true;
     }
-    if (a.nextShelfY + height > kAtlasSide) return false;
+    const int remaining = kPageHeight - a.nextShelfY % kPageHeight;
+    const int shelfY = remaining < height ? a.nextShelfY + remaining : a.nextShelfY;
+    if (shelfY + height > kAtlasSide) return false;
+    a.nextShelfY = shelfY;
     a.shelves.push_back(Shelf{a.nextShelfY, height, w});
     x = 0;
     y = a.nextShelfY;
@@ -217,14 +216,17 @@ Baked bake(Atlas& a, const Key& key, const Waiting& run) {
     // glyph edges -- while a run drawn through the same matrix and copied 1:1
     // comes out within 2/255 of drawing it in place. Only the translation is
     // the atlas's: the cell, the pad, and the pen's subpixel part.
-    Canvas& canvas = *a.canvas;
+    const auto page = static_cast<std::size_t>(cell.y / kPageHeight);
+    if (page == a.pages.size())
+        a.pages.push_back(std::make_unique<Canvas>(Canvas::createVirtual(kAtlasSide, kPageHeight)));
+    Canvas& canvas = *a.pages[page];
     const double subX = static_cast<double>(run.bucketX) / textrun::kSubpixel;
     const double subY = static_cast<double>(run.bucketY) / textrun::kSubpixel;
     const double cs = std::cos(run.angle) * run.scale, sn = std::sin(run.angle) * run.scale;
     canvas.save();
     canvas.setTransform(static_cast<float>(cs), static_cast<float>(sn), static_cast<float>(-sn),
                         static_cast<float>(cs), static_cast<float>(cell.x + padLeft + subX),
-                        static_cast<float>(cell.y + padTop + subY));
+                        static_cast<float>(cell.y % kPageHeight + padTop + subY));
     // The caller's globalAlpha goes on each pass here, and the copy is laid
     // down at full alpha. Source-over is associative, so that composites to
     // what fading the stroke and the fill separately onto the page would
@@ -359,7 +361,8 @@ bool paintRunFromAtlas(Canvas& canvas, const std::string& s, double penX, double
     canvas.save();
     canvas.setGlobalAlpha(1.0f);
     canvas.setTransform(1, 0, 0, 1, 0, 0);
-    canvas.drawCanvas(*a.canvas, static_cast<float>(cell.x), static_cast<float>(cell.y),
+    canvas.drawCanvas(*a.pages[cell.y / kPageHeight], static_cast<float>(cell.x),
+                      static_cast<float>(cell.y % kPageHeight),
                       static_cast<float>(cell.w), static_cast<float>(cell.h),
                       static_cast<float>(at.originX - cell.padLeft),
                       static_cast<float>(at.originY - cell.padTop), static_cast<float>(cell.w),
@@ -382,8 +385,6 @@ void prepareTextAtlas() {
         clear(a);
     }
     if (a.waiting.empty()) return;
-
-    if (!a.canvas) a.canvas = std::make_unique<Canvas>(Canvas::createVirtual(kAtlasSide, kAtlasSide));
 
     for (auto it = a.waiting.begin(); it != a.waiting.end() && a.bakedLastFrame < kMaxBakesPerFrame;) {
         if (a.cells.count(it->first)) { it = a.waiting.erase(it); continue; }

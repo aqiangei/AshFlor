@@ -846,7 +846,7 @@ bool ClientSettings::load(const std::string& path) {
         else if (key == "invertAttack") invertAttack = number != 0;
         else if (key == "invertDefend") invertDefend = number != 0;
         else if (key == "classicLoadout") classicLoadoutBar = number != 0;
-        else if (key == "rotationStep") rotationStep = std::clamp(static_cast<int>(number), 1, 4);
+        else if (key == "rotationStep") rotationStep = net::rotationCode(net::rotationPercent(static_cast<int>(number)));
         // The key being on disk at all is the choice: an absent one leaves the
         // device to answer, which is what touchControlsWanted does with it.
         else if (key == "requestMobile") { requestMobile = number != 0; requestMobileChosen = true; }
@@ -976,6 +976,7 @@ void MenuSystem::toggle(MenuId id) {
         // frame by where the flower is standing, so any of them may be the
         // one this open ends up drawing.
         case MenuId::Crafting:
+            helPlinkoOpen_ = false;
             crafting_.reopen();
             absorb_.reset();
             oracle_.reset();
@@ -1125,8 +1126,8 @@ bool MenuSystem::handleKeys(Window& window, NetClient& net) {
                 return true;
             }
         }
-        if (window.keyPressed(Key::Q)) { settings_.rotationStep = std::max(1, settings_.rotationStep - 1); return true; }
-        if (window.keyPressed(Key::E)) { settings_.rotationStep = std::min(4, settings_.rotationStep + 1); return true; }
+        if (window.keyPressed(Key::Q)) { settings_.rotationStep = net::nextRotationPreset(settings_.rotationStep, -1); return true; }
+        if (window.keyPressed(Key::E)) { settings_.rotationStep = net::nextRotationPreset(settings_.rotationStep, 1); return true; }
         // T changes movement mode; Delete remains the explicit unequip key.
         // Never let this gesture delete an armed secondary slot.
         if (mouseToggleOwnsT(settings_) && window.keyPressed(Key::T)) {
@@ -2352,11 +2353,11 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
         canvas.beginPath();canvas.arc(cx,cy,12,-kPi*.8,kPi*.8);canvas.stroke();
         for(int n=0;n<4;++n){
             const double a=-kPi*.8+n*kPi*1.6/3;
-            ui::setFill(canvas,n<settings_.rotationStep?0xF8E687u:0x678776u);
+            ui::setFill(canvas,n*25<net::rotationPercent(settings_.rotationStep)?0xF8E687u:0x678776u);
             canvas.beginPath();canvas.arc(cx+std::cos(a)*12,cy+std::sin(a)*12,2.5,0,kTau);canvas.fill();
         }
         TextStyle dialText;dialText.size=11;dialText.fill=0xFFFFFFu;dialText.align=Align::Centre;dialText.baseline=Baseline::Middle;
-        text(canvas,std::to_string(settings_.rotationStep*25),cx,cy,dialText);
+        text(canvas,std::to_string(net::rotationPercent(settings_.rotationStep)),cx,cy,dialText);
         dialText.size=14;text(canvas,"−",18,cy,dialText);text(canvas,"+",86,cy,dialText);
         if(!touch){dialText.size=9;text(canvas,"Q",18,35,dialText);text(canvas,"E",86,35,dialText);}
         canvas.restore();
@@ -2585,7 +2586,7 @@ void MenuSystem::updateLoadoutInput(Window& window, NetClient& net, double timeS
         const auto adjustRotation = [&](Vec2 point) {
             if (!rotationDial_.contains(point) || panelRect_.contains(point)) return false;
             const int step = point.x < rotationDial_.x + rotationDial_.w * 0.5 ? -1 : 1;
-            settings_.rotationStep = std::clamp(settings_.rotationStep + step, 1, 4);
+            settings_.rotationStep = net::nextRotationPreset(settings_.rotationStep, step);
             return true;
         };
         for (const auto& event : window.touchEvents()) {
@@ -3266,6 +3267,7 @@ void MenuSystem::renderOpenPanel(Canvas& canvas, Window& window, NetClient& net,
                                  const SpriteCache& sprites, const WorldRenderer& renderer,
                                  double timeSeconds, double dt) {
     scrollbarOwnsPointer_ = false;
+    if (!helPlinkoOpen_ || open_ != MenuId::Crafting) helPlinko_.stop();
     if (drawn_ == MenuId::None) return;
     MenuContext ctx{canvas,    window,      net, sprites,    renderer, settings_,
                     drag_,     timeSeconds, dt,  panelRect_, false};
@@ -3319,6 +3321,11 @@ void MenuSystem::renderOpenPanel(Canvas& canvas, Window& window, NetClient& net,
             // trader the trader, and at the titan its universal forge. It is
             // the same menu -- one key, one card, one anchor -- showing what
             // the ground under the flower offers.
+            if (helPlinkoOpen_) {
+                keepOpen = helPlinko_.render(ctx, open_ == MenuId::Crafting);
+                if (helPlinko_.takeCraftTab()) helPlinkoOpen_ = false;
+                break;
+            }
             keepOpen = nearbyNpc_ == NpcService::Oracle   ? oracle_.render(ctx)
                        : nearbyNpc_ == NpcService::Trader ? trader_.render(ctx)
                        : nearbyNpc_ == NpcService::Titan  ? titan_.render(ctx)
@@ -3327,6 +3334,7 @@ void MenuSystem::renderOpenPanel(Canvas& canvas, Window& window, NetClient& net,
                                                nearbyNextRecipe_, nearbyRecipeRemaining_)
                        : absorbMode_ ? absorb_.render(ctx)
                                      : crafting_.render(ctx);
+            if (crafting_.takePlinkoTab()) helPlinkoOpen_ = true;
             // The forge's Switch turns the window over between Craft and
             // Absorb; whichever side is showing can ask.
             if (crafting_.takeSwitch() || absorb_.takeSwitch()) absorbMode_ = !absorbMode_;
@@ -3486,7 +3494,11 @@ void MenuSystem::render(Canvas& canvas, Window& window, NetClient& net, const Sp
         const Profile& bag = nearbyNpc_ == NpcService::None && !absorbMode_ && !net.inRiftMap()
             ? crafting_.visibleInventory(net.profile()) : net.profile();
         craftSize_ = craftWindowSize(nearbyNpc_, absorbMode_, bag);
-        panelRect_ = craftPanelBounds(canvas.width(), canvas.height());
+        if (helPlinkoOpen_) {
+            panelRect_ = HelPlinkoPanel::bounds(window);
+        } else {
+            panelRect_ = craftPanelBounds(canvas.width(), canvas.height());
+        }
         const double below = static_cast<double>(canvas.height()) + kSlotCardClosedDrop;
         panelRect_.y += (1.0 - clamp(craftOpen_, 0.0, 1.0)) * (below - panelRect_.y);
     } else if (slidesFromLeft(drawn_)) {

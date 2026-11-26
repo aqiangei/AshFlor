@@ -1034,11 +1034,11 @@ TEST(neutral_mob_retaliates_only_after_it_is_hurt) {
 
 TEST(a_glowing_flower_draws_a_neutral_mob_inside_its_raised_circle) {
     CHECK(contentReady());
-    // 400 from a worker ant: past its own 300, inside the 450 a 150 bulb
-    // bonus raises it to. Unprovoked, it comes anyway.
+    // 480 from a worker ant: past its 390 notice range, inside the 540 a 150 bonus
+    // raises it to. Unprovoked, it comes anyway.
     Sim seen;
     const Entity mob = seen.spawnMob("worker_ant", kOrigin);     // neutral, range 300
-    const Entity glowing = seen.spawnPlayer(kOrigin + Vec2{400, 0}, 150.0);
+    const Entity glowing = seen.spawnPlayer(kOrigin + Vec2{480, 0}, 150.0);
     seen.tickIntent(5);
     CHECK_EQ(seen.brainOf(mob).target, glowing);
     CHECK(seen.velocityOf(mob).x > 0.0);
@@ -1046,14 +1046,14 @@ TEST(a_glowing_flower_draws_a_neutral_mob_inside_its_raised_circle) {
     // Past the raised circle it is left alone, as a hostile mob would leave it.
     Sim far;
     const Entity distant = far.spawnMob("worker_ant", kOrigin);
-    far.spawnPlayer(kOrigin + Vec2{500, 0}, 150.0);
+    far.spawnPlayer(kOrigin + Vec2{550, 0}, 150.0);
     far.tickIntent(5);
     CHECK_EQ(far.brainOf(distant).target, NULL_ENTITY);
 
     // A raised RANGE glows as well as a raised radius does.
     Sim scaled;
     const Entity ranged = scaled.spawnMob("worker_ant", kOrigin);
-    const Entity bright = scaled.spawnPlayer(kOrigin + Vec2{350, 0}, 0.0, 1.25);
+    const Entity bright = scaled.spawnPlayer(kOrigin + Vec2{420, 0}, 0.0, 1.25);
     scaled.tickIntent(5);
     CHECK_EQ(scaled.brainOf(ranged).target, bright);
 }
@@ -4209,9 +4209,13 @@ TEST(a_bumble_bee_drops_still_pollen_at_its_tail_once_a_second) {
     CHECK(going.lengthSq() > 0.0);
     CHECK(back.x * going.x + back.y * going.y < 0.0);
 
-    // Sustained aggro must not create another field during the old fast cadence.
-    sim.tickIntent(75);
-    CHECK_EQ(shotCount(sim), 3);
+    // Verify both sides of the deadline at the server's normal tick rate.
+    for (int count = 1; count <= 3; ++count) {
+        sim.tickIntent(net::kTicksPerSecond - 1);
+        CHECK_EQ(shotCount(sim), count);
+        sim.tickIntent();
+        CHECK_EQ(shotCount(sim), count + 1);
+    }
 }
 
 TEST(dropped_pollen_lies_where_it_fell_for_three_seconds_then_goes) {
@@ -4864,7 +4868,19 @@ TEST(deep_bulb_limits_notice_to_lit_bulbs_and_ordinary_enemies_in_deep_prestige_
     const Realm normal = maps.realmOfId("sewers", found);
     CHECK(found);
     if (!found) return;
-    const Vec2 at{18000, 3800};
+    const auto* prestigeMap = maps.forRealm(deep);
+    CHECK(prestigeMap != nullptr);
+    if (!prestigeMap) return;
+    const auto& bands = prestigeMap->elements();
+    const auto deepBand = std::find_if(bands.begin(), bands.end(), [](const MapElement& band) {
+        return band.isSpawnBand() && !band.singular && band.forceRarity < 0 && band.difficulty >= 70.0;
+    });
+    CHECK(deepBand != bands.end());
+    if (deepBand == bands.end()) return;
+    const Rect& bounds = deepBand->bounds;
+    const Vec2 at{bounds.x + bounds.w * 0.5, bounds.y + bounds.h * 0.5};
+    CHECK(deepBand->contains(at));
+    if (!deepBand->contains(at)) return;
     const auto check = [&](Realm realm, Vec2 origin, bool bulb, Rarity rarity, bool wall,
                            double baseRange, double gap) {
         Sim sim;
@@ -4884,8 +4900,9 @@ TEST(deep_bulb_limits_notice_to_lit_bulbs_and_ordinary_enemies_in_deep_prestige_
         modifiers.litAggroBulb = bulb;
         modifiers.aggroRangeScale = 1.2;
         if (wall) {
-            const int tx = static_cast<int>((origin.x + gap * .5) / kTileSize);
-            const int ty = static_cast<int>(origin.y / kTileSize);
+            const double scale = sim.terrain.mapScale(realm);
+            const int tx = Terrain::toTileCoord(origin.x + gap * .5, scale);
+            const int ty = Terrain::toTileCoord(origin.y, scale);
             sim.terrain.setTile(tx, ty, Tile::Solid, realm);
         }
         sim.grid.insert(flower, realm, origin + Vec2{gap,0}, kPlayerBaseRadius);

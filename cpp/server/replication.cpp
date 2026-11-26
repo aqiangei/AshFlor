@@ -23,8 +23,15 @@ void ClientView::deferPickup(const WireEvent& pickup) {
     deferredPickups.push_back(pickup);
 }
 
+const ClientView::Tracked* ClientView::trackedEntity(std::uint32_t id) const {
+    const auto found = std::lower_bound(tracked.begin(), tracked.end(), id,
+        [](const Tracked& entry, std::uint32_t key) { return entry.netId < key; });
+    return found != tracked.end() && found->netId == id ? &*found : nullptr;
+}
+
 void ClientView::reset() {
     tracked.clear();
+    selectionDistanceSq = 0;
     deferredPickups.clear();
     selfSent = false;
 }
@@ -322,6 +329,20 @@ PlayerVisualState computePlayerVisuals(World& world, Entity e, double nowMillis)
     return out;
 }
 
+static double snapshotMobRadius(const World& world, Entity e, const Replicated& info) {
+    const auto* body = info.kind == net::EntityKind::Mob ? world.tryGet<Body>(e) : nullptr;
+    return body && std::isfinite(body->radius) ? std::max(0.0, body->radius) : 0.0;
+}
+
+Replicator::VisibleEntity Replicator::describe(World& world, Entity e, const NetId& id,
+                                                const Replicated& info, const Transform& at, double nowMillis) {
+    return {at.position, at.realm, id.value, &info, world.tryGet<DropItem>(e),
+            world.tryGet<GhostSparkle>(e), ghostBodyOrRing(world, e), snapshotMobRadius(world, e, info),
+            replicatedAngle(world, e, at), replicatedRadius(world, e),
+            static_cast<std::uint8_t>(computeEntityState(world, e, nowMillis) & net::kReplicatedStateBits),
+            world.tryGet<Health>(e)};
+}
+
 void Replicator::prepareParallelReads() {
     (void)componentId<Afflictions>();
     (void)componentId<ArenaScore>();
@@ -357,6 +378,43 @@ void Replicator::prepareParallelReads() {
     (void)componentId<TeleporterState>();
     (void)componentId<Transform>();
     (void)componentId<Undead>();
+}
+
+void Replicator::sortCandidatesByNetId() {
+    if (candidates_.size() < 256) {
+        std::sort(candidates_.begin(), candidates_.end(),
+                  [](const Candidate& a, const Candidate& b) { return a.netId < b.netId; });
+        return;
+    }
+
+    // Count each byte in one scan. Stable passes from low to high byte
+    // produce unsigned ID order; a byte shared by every ID needs no pass.
+    std::array<std::array<unsigned, 256>, 4> counts{};
+    const auto firstId = candidates_.front().netId;
+    std::uint32_t differing = 0;
+    for (const Candidate& candidate : candidates_) {
+        const std::uint32_t id = candidate.netId;
+        differing |= id ^ firstId;
+        ++counts[0][id & 255];
+        ++counts[1][(id >> 8) & 255];
+        ++counts[2][(id >> 16) & 255];
+        ++counts[3][id >> 24];
+    }
+    sortScratch_.resize(candidates_.size());
+    for (unsigned byte = 0; byte < 4; ++byte) {
+        const unsigned shift = 8 * byte;
+        if (((differing >> shift) & 255) == 0) continue;
+        auto& offset = counts[byte];
+        unsigned next = 0;
+        for (unsigned& count : offset) {
+            const unsigned length = count;
+            count = next;
+            next += length;
+        }
+        for (const Candidate& candidate : candidates_)
+            sortScratch_[offset[(candidate.netId >> shift) & 255]++] = candidate;
+        candidates_.swap(sortScratch_);
+    }
 }
 
 void Replicator::build(World& world, Entity viewer, ClientView& view,
@@ -473,15 +531,13 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
             return teammate && teammate->connection == account->connection;
         });
     };
-    const auto gather = [&](Entity e, const NetId& id, const Transform& transform) {
-        // Cull before looking up claim and ghost components. Only in-view
-        // drops can consume a viewer's snapshot budget.
-        if (e != viewer && transform.realm != realm) return;
-        const auto& info = world.get<Replicated>(e);
+    const auto gather = [&](Entity e, const VisibleEntity& entry, bool indexed,
+                            double knownDistanceSq = -1.0) {
+        if (e != viewer && entry.realm != realm) return;
+        const auto& info = *entry.info;
         const bool mob = info.kind == net::EntityKind::Mob;
-        const auto* body = mob ? world.tryGet<Body>(e) : nullptr;
-        const double radius = body && std::isfinite(body->radius) ? std::max(0.0, body->radius) : 0.0;
-        if (e != viewer && outsideView(transform.position, radius * kMobVisualReachPerRadius) && !exempt(e)) return;
+        const double radius = entry.radius;
+        if (e != viewer && outsideView(entry.position, radius * kMobVisualReachPerRadius) && !exempt(e)) return;
         bool beamOnly = false;
         if (frame.visibility) {
             Entity owner = NULL_ENTITY;
@@ -494,16 +550,16 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
                 if (!beamOnly) return;
             }
         }
-        if (const auto* sparkle = world.tryGet<GhostSparkle>(e)) {
+        if (const auto* sparkle = indexed ? entry.sparkle : world.tryGet<GhostSparkle>(e)) {
             if (!isStanding(world, sparkle->ghost)) return;
             const auto* visuals = world.tryGet<PlayerVisuals>(viewer);
             if (visuals && visuals->canSeeGhost(world.tryGet<MobType>(sparkle->ghost)->rarity)) return;
         }
-        if (const auto* ghost = ghostBodyOrRing(world, e)) {
+        if (const auto* ghost = indexed ? entry.ghost : ghostBodyOrRing(world, e)) {
             const auto* visuals = world.tryGet<PlayerVisuals>(viewer);
             if (!visuals || !visuals->canSeeGhost(ghost->rarity)) return;
         }
-        const DropItem* drop = world.tryGet<DropItem>(e);
+        const DropItem* drop = indexed ? entry.drop : world.tryGet<DropItem>(e);
         if (drop) {
             if (!drop->eligible.empty() && !claimed(drop->eligible, viewer, viewerOwner)) return;
             if (claimed(drop->pickedUpBy, viewer, viewerOwner)) return;
@@ -514,12 +570,12 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         // A squadmate is exempt for its own reason -- see Frame::alwaysVisible
         // -- but only within the viewer's realm: a party member in the maze has
         // no position that means anything on an overworld screen.
-        const double distanceSq = flix::distanceSq(transform.position, flower);
-        if (drop && !frame.showAllVisibleLoot && world.get<Replicated>(e).rarity < Rarity::Ultra) {
+        const double distanceSq = knownDistanceSq >= 0 ? knownDistanceSq : flix::distanceSq(entry.position, flower);
+        if (drop && !frame.showAllVisibleLoot && info.rarity < Rarity::Ultra) {
             if (distanceSq > kNearbyLootReach * kNearbyLootReach) return;
             // Keep only the nearest low-tier stacks. High tiers and the
             // observer keep their existing priority in the snapshot.
-            const Candidate candidate{e, id.value, distanceSq};
+            const Candidate candidate{e, distanceSq, entry.netId, false, info.kind};
             auto end = nearbyLoot.begin() + nearbyLootCount;
             if (nearbyLootCount < nearbyLoot.size()) {
                 *end = candidate;
@@ -537,56 +593,108 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         double selectionKey = distanceSq;
         if (e == viewer) selectionKey = -4.0;
         else if (exempt(e)) selectionKey = -3.5;
-        else if (mob && !outsideNearBox(transform.position, radius, true))
+        else if (mob && !outsideNearBox(entry.position, radius, true))
             selectionKey = -2.0 - 1.0 / (1.0 + distanceSq);
-        else if (drop && !outsideNearBox(transform.position, 0.0))
+        else if (drop && !outsideNearBox(entry.position, 0.0))
             selectionKey = -1.0 / (1.0 + distanceSq);
-        candidates_.push_back({e, id.value, selectionKey, beamOnly});
+        candidates_.push_back({e, selectionKey, entry.netId, beamOnly, info.kind});
+    };
+
+    const auto gatherUnindexed = [&](Entity e, const NetId& id, const Replicated& info, const Transform& at) {
+        if (at.realm != realm && e != viewer) return;
+        gather(e, {at.position, at.realm, id.value, &info, nullptr, nullptr, nullptr,
+                   snapshotMobRadius(world, e, info)}, false);
     };
 
     const Vec2 corner{reachX + frame.mobRadiusPadding, reachY + frame.mobRadiusPadding};
     const Vec2 min = centre - corner;
     const Vec2 max = centre + corner;
-    if (frame.entityGrid &&
-        std::isfinite(min.x) && std::isfinite(min.y) && std::isfinite(max.x) && std::isfinite(max.y)) {
-        frame.entityGrid->queryPointBuckets(realm, min, max, nearbyEntities_);
-        for (Entity e : nearbyEntities_) gather(e, world.get<NetId>(e), world.get<Transform>(e));
-
-        // A watched body and same-realm squadmates can be visible beyond the
-        // indexed rectangle. Add them once if they did not come from a bucket.
-        const auto gatherExempt = [&](Entity e) {
-            if (!world.has<Replicated>(e) ||
-                std::find(nearbyEntities_.begin(), nearbyEntities_.end(), e) != nearbyEntities_.end()) return;
+    const auto gatherExtraBodies = [&](bool alreadyQueried) {
+        const auto addBody = [&](Entity e) {
+            if (alreadyQueried && std::find(nearbyEntities_.begin(), nearbyEntities_.end(), e) != nearbyEntities_.end())
+                return;
             const auto* id = world.tryGet<NetId>(e);
             const auto* at = world.tryGet<Transform>(e);
-            if (id && at) gather(e, *id, *at);
+            const auto* info = world.tryGet<Replicated>(e);
+            if (id && at && info) gatherUnindexed(e, *id, *info, *at);
         };
-        gatherExempt(viewer);
-        if (frame.alwaysVisible) {
-            const auto& always = *frame.alwaysVisible;
-            for (auto it = always.begin(); it != always.end(); ++it)
-                if (*it != viewer && std::find(always.begin(), it, *it) == it) gatherExempt(*it);
-        }
-    } else {
-        Query<NetId, Replicated, Transform>{world}.each(
-            [&](Entity e, NetId& id, Replicated&, Transform& at) { gather(e, id, at); });
-    }
+        addBody(viewer);
+        if (!frame.alwaysVisible) return;
+        const auto& group = *frame.alwaysVisible;
+        for (auto it = group.begin(); it != group.end(); ++it)
+            if (*it != viewer && std::find(group.begin(), it, *it) == it) addBody(*it);
+    };
 
+    // An earlier crowded snapshot suggests a search radius. Mobs, loot and
+    // watched bodies can outrank nearby projectiles at any distance. Include
+    // those separately and require a full budget of eligible current winners
+    // before accepting the smaller query.
+    const double limit = view.selectionDistanceSq;
+    const auto gatherLimited = [&]() {
+        if (!(limit > 0.0) || !frame.entityGrid || !frame.indexedEntities ||
+            !frame.priorityEntities || frame.priorityEntities->size() > maxEntities || !std::isfinite(limit) ||
+            !std::isfinite(flower.x) || !std::isfinite(flower.y)) return false;
+        const double radius = std::sqrt(limit);
+        const Vec2 extent{radius + 1.0, radius + 1.0};
+        frame.entityGrid->queryPointBuckets(realm, flower - extent, flower + extent, nearbyEntities_);
+        const auto& entries = *frame.indexedEntities;
+        for (Entity e : nearbyEntities_) {
+            const auto& entry = entries[entityIndex(e)];
+            if (entry.info->kind == net::EntityKind::Mob || entry.drop || e == viewer || exempt(e)) continue;
+            const double distanceSq = flix::distanceSq(entry.position, flower);
+            if (distanceSq <= limit) gather(e, entry, true, distanceSq);
+        }
+        const auto ordinary = candidates_.size();
+        for (Entity e : *frame.priorityEntities)
+            if (e != viewer && !exempt(e)) gather(e, entries[entityIndex(e)], true);
+        gatherExtraBodies(false);
+        const auto inside = [&](const Candidate& c) { return c.selectionKey <= limit; };
+        const auto priorityInside = std::count_if(candidates_.begin() + ordinary, candidates_.end(), inside) +
+            std::count_if(nearbyLoot.begin(), nearbyLoot.begin() + nearbyLootCount, inside);
+        if (ordinary + static_cast<std::size_t>(priorityInside) >= maxEntities) return true;
+        nearbyLootCount = 0;
+        candidates_.clear();
+        return false;
+    };
+    const bool limited = gatherLimited();
+    if (!limited) {
+        if (frame.entityGrid &&
+            std::isfinite(min.x) && std::isfinite(min.y) && std::isfinite(max.x) && std::isfinite(max.y)) {
+            frame.entityGrid->queryPointBuckets(realm, min, max, nearbyEntities_);
+            if (frame.indexedEntities) {
+                for (Entity e : nearbyEntities_) gather(e, (*frame.indexedEntities)[entityIndex(e)], true);
+            } else {
+                for (Entity e : nearbyEntities_)
+                    gatherUnindexed(e, world.get<NetId>(e), world.get<Replicated>(e), world.get<Transform>(e));
+            }
+
+            // A watched body and same-realm squadmates can be visible beyond the
+            // indexed rectangle. Add them once if they did not come from a bucket.
+            gatherExtraBodies(true);
+        } else {
+            Query<NetId, Replicated, Transform>{world}.each(
+                [&](Entity e, NetId& id, Replicated& info, Transform& at) { gatherUnindexed(e, id, info, at); });
+        }
+    }
     candidates_.insert(candidates_.end(), nearbyLoot.begin(), nearbyLoot.begin() + nearbyLootCount);
+    view.selectionDistanceSq = limited ? limit : 0.0;
     if (candidates_.size() > maxEntities) {
         // Reserve the squad, then keep the existing viewport priorities.
         std::nth_element(candidates_.begin(),
                          candidates_.begin() + static_cast<std::ptrdiff_t>(maxEntities),
                          candidates_.end(),
                          nearer);
+        const double edge = candidates_[maxEntities].selectionKey;
+        // Near the cap the full gather is cheaper than searching twice. A
+        // successful limited search already proved the dense population.
+        if ((limited || candidates_.size() - maxEntities >= maxEntities) &&
+            edge > 0.0 && std::isfinite(edge))
+            view.selectionDistanceSq = edge * 1.25;
         candidates_.resize(maxEntities);
     }
     // In net id order, so each record can name its entity by the gap from the
     // one before (see the Snapshots layout in protocol.h).
-    std::sort(candidates_.begin(), candidates_.end(),
-              [](const Candidate& a, const Candidate& b) { return a.netId < b.netId; });
-
-    for (auto& tracked : view.tracked) tracked.second.seenThisTick = false;
+    sortCandidatesByNetId();
 
     WireMeter meter;
     const std::size_t wireStartAt = out.size();
@@ -840,34 +948,47 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
     // Two passes over the same candidate list rather than two gathers: the
     // client must create an entity before it can be updated, and interleaving
     // the two record types would force it to tolerate either order.
+    // Both sequences are sorted. Merge the previous view and this one once
+    // to classify arrivals, departures and replacements in wire order.
+    std::size_t previous = 0;
+    nextTracked_.clear();
+    removals_.clear();
     std::uint32_t previousSpawnId = 0;
     for (const Candidate& candidate : candidates_) {
-        const Replicated& info = world.get<Replicated>(candidate.entity);
-        const auto* petal = info.kind == net::EntityKind::Petal
+        const auto* petal = candidate.kind == net::EntityKind::Petal
             ? world.tryGet<PetalInstance>(candidate.entity) : nullptr;
         const auto* wearer = petal ? world.tryGet<PlayerAccount>(petal->owner) : nullptr;
         const bool petalTypeHidden = candidate.beamOnly || (wearer && wearer->hidePetalTypes &&
             petal->owner != viewer && (viewerOwner == 0 || wearer->connection != viewerOwner));
+        const Entity markTarget = petal ? petal->markTarget : NULL_ENTITY;
         const bool foreignLoan = petal && petal->slot == kLentPetalSlot &&
             (ownershipFlags(world, candidate.entity, viewer, viewerOwner) & net::SpawnForeign);
-        auto it = view.tracked.find(candidate.netId);
-        if (it != view.tracked.end() && it->second.petalTypeHidden == petalTypeHidden &&
-            it->second.foreignLoan == foreignLoan && it->second.beamOnly == candidate.beamOnly) {
-            it->second.seenThisTick = true;
-            continue;
+        while (previous < view.tracked.size() && view.tracked[previous].netId < candidate.netId)
+            removals_.push_back(view.tracked[previous++].netId);
+        if (previous < view.tracked.size() && view.tracked[previous].netId == candidate.netId) {
+            const auto& last = view.tracked[previous++];
+            if (last.petalTypeHidden == petalTypeHidden && last.markTarget == markTarget && last.foreignLoan == foreignLoan &&
+                last.beamOnly == candidate.beamOnly) {
+                nextTracked_.push_back(last);
+                continue;
+            }
         }
         // A privacy or lender change replaces the client's record with a fresh
         // spawn of the same ID, including its current position and health.
-        const Transform& transform = world.get<Transform>(candidate.entity);
-        const double radius = replicatedRadius(world, candidate.entity);
+        const auto* entry = frame.indexedEntities ? &(*frame.indexedEntities)[entityIndex(candidate.entity)] : nullptr;
+        const Transform* direct = entry ? nullptr : &world.get<Transform>(candidate.entity);
+        const Vec2 position = entry ? entry->position : direct->position;
+        const double radius = entry ? entry->wireRadius : replicatedRadius(world, candidate.entity);
 
+        const Replicated& info = entry ? *entry->info : world.get<Replicated>(candidate.entity);
         std::uint8_t flags = info.spawnFlags;
         if (candidate.entity == viewer) flags |= net::SpawnIsSelf;
         flags |= ownershipFlags(world, candidate.entity, viewer, viewerOwner);
         // Decided here rather than beside the field itself: `flags` is written
         // near the top of the record and the health fraction near the bottom,
         // and the flag is what tells the reader how many bytes the latter is.
-        const Health* preHealth = world.tryGet<Health>(candidate.entity);
+        if (markTarget != NULL_ENTITY) flags &= ~net::SpawnRingPetal;
+        const Health* preHealth = entry ? entry->health : world.tryGet<Health>(candidate.entity);
         const bool spawnWide = net::healthFieldIsWide(preHealth ? preHealth->max : 1.0);
         if (spawnWide) flags |= net::SpawnHealthWide;
         const PlayerAccount* account = world.tryGet<PlayerAccount>(candidate.entity);
@@ -879,18 +1000,19 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         out.u16(petalTypeHidden ? kNoPetal : info.typeIndex);
         out.u8(static_cast<std::uint8_t>(info.rarity));
         out.u8(flags);
-        const double angle = replicatedAngle(world, candidate.entity, transform);
-        out.position(transform.position);
+        const double angle = entry ? entry->angle : replicatedAngle(world, candidate.entity, *direct);
+        out.position(position);
         out.angle(angle);
         out.f32(static_cast<float>(radius));
         // Current health and state travel WITH the spawn. Without them an
         // entity that enters view already hurt draws a full health bar until
         // it next changes, which for a fleeing mob may be never.
-        const Health* spawnHealth = world.tryGet<Health>(candidate.entity);
+        const Health* spawnHealth = preHealth;
         const double spawnFraction = spawnHealth ? spawnHealth->fraction() : 1.0;
         const double spawnSent = net::writeHealthFraction(out, spawnFraction, spawnWide);
-        out.u8(computeEntityState(world, candidate.entity, frame.nowMillis) &
-               net::kReplicatedStateBits);
+        const auto state = entry ? entry->state :
+            static_cast<std::uint8_t>(computeEntityState(world, candidate.entity, frame.nowMillis) & net::kReplicatedStateBits);
+        out.u8(state);
         if (info.kind == net::EntityKind::Drop)
             out.u32(world.get<DropItem>(candidate.entity).quantity);
         const PlayerVisualState visuals =
@@ -916,7 +1038,7 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
             // reason a seed is replicated as a Petal at all.
             Entity owner = NULL_ENTITY;
             if (const PetalInstance* instance = world.tryGet<PetalInstance>(candidate.entity)) {
-                owner = instance->owner;
+                owner = markTarget != NULL_ENTITY ? markTarget : instance->owner;
             } else if (const MobRingPetal* seed = world.tryGet<MobRingPetal>(candidate.entity)) {
                 owner = seed->mob;
             }
@@ -931,11 +1053,12 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
                     cues |= net::PrivatePetalInvisible;
                 if (petalIsLaser(config)) cues |= net::PrivatePetalBeam;
                 if (candidate.beamOnly) cues |= net::PrivatePetalBeamOnly;
+                if (markTarget != NULL_ENTITY) cues |= net::PrivatePetalAttachedMark;
                 out.u8(cues);
             } else {
-                out.u8(petalInstance ? (petalInstance->diceFace != 0 ? petalInstance->diceFace
-                                                                   : petalInstance->dominoPips)
-                                    : 255);
+                out.u8(markTarget != NULL_ENTITY ? net::kAttachedMarkVariant : !petalInstance ? 255
+                    : petalInstance->cardSuit ? petalInstance->cardSuit
+                    : petalInstance->diceFace ? petalInstance->diceFace : petalInstance->dominoPips);
             }
         }
         if (info.kind == net::EntityKind::Npc) {
@@ -951,14 +1074,13 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         // Seed the tracked values from what the spawn record just carried, so
         // this tick's update pass has nothing left to say about it.
         ClientView::Tracked tracked;
-        tracked.position = wirePosition(transform.position);
+        tracked.position = wirePosition(position);
         tracked.angle = angle;
         tracked.radius = radius;
         if (const auto* drop = world.tryGet<DropItem>(candidate.entity)) tracked.dropQuantity = drop->quantity;
-        tracked.seenThisTick = true;
+        tracked.netId = candidate.netId;
         tracked.healthFraction = spawnSent;
-        tracked.state = computeEntityState(world, candidate.entity, frame.nowMillis) &
-                        net::kReplicatedStateBits;
+        tracked.state = state;
         tracked.faceFlags = visuals.faceFlags;
         tracked.equipFlags = visuals.equipFlags;
         tracked.renderFlags = visuals.renderFlags;
@@ -969,13 +1091,14 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         tracked.petalTypeHidden = petalTypeHidden;
         tracked.beamOnly = candidate.beamOnly;
         tracked.foreignLoan = foreignLoan;
+        tracked.markTarget = markTarget;
         if (!petalTypeHidden && petalInstance &&
             (petalInstance->diceFace != 0 || content().petal(info.typeIndex).id == "dice")) {
             tracked.rollingDice = true;
             tracked.petalVariant = petalInstance->diceFace;
         }
         tracked.skinIdHash = skinIdHash(skinIdOf(visuals));
-        view.tracked.insert_or_assign(candidate.netId, tracked);
+        nextTracked_.push_back(tracked);
     }
     out.patchU16(spawnCountAt, spawnCount);
     const std::size_t wireUpdatesAt = out.size();
@@ -984,12 +1107,14 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
 
     const int farStride = frame.loadShedding ? 6 : std::max(1, farSnapshotStride);
     std::uint32_t previousUpdateId = 0;
-    for (const Candidate& candidate : candidates_) {
-        auto it = view.tracked.find(candidate.netId);
-        if (it == view.tracked.end()) continue;
-        ClientView::Tracked& tracked = it->second;
+    for (std::size_t i = 0; i < candidates_.size(); ++i) {
+        const Candidate& candidate = candidates_[i];
+        ClientView::Tracked& tracked = nextTracked_[i];
 
-        const Transform& transform = world.get<Transform>(candidate.entity);
+        const auto* entry = frame.indexedEntities ? &(*frame.indexedEntities)[entityIndex(candidate.entity)] : nullptr;
+        const Transform* direct = entry ? nullptr : &world.get<Transform>(candidate.entity);
+        const Vec2 position = entry ? entry->position : direct->position;
+        const auto kind = candidate.kind;
         // Off-screen and not due this snapshot: say nothing about it at all.
         //
         // Skipping the whole record rather than trimming its fields is the
@@ -1005,29 +1130,27 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         // it (see Frame::alwaysVisible). The radius is the one the client
         // holds, which is the size it draws the body at.
         if (candidate.entity != viewer && !exempt(candidate.entity) &&
-            outsideNearBox(transform.position, tracked.radius,
-                           world.get<Replicated>(candidate.entity).kind == net::EntityKind::Mob) &&
+            outsideNearBox(position, tracked.radius,
+                           kind == net::EntityKind::Mob) &&
             (frame.snapshotIndex + candidate.netId) % static_cast<std::uint32_t>(farStride) != 0) {
             continue;
         }
-        const Health* health = world.tryGet<Health>(candidate.entity);
-        const Body* body = world.tryGet<Body>(candidate.entity);
-        const std::uint8_t state =
-            computeEntityState(world, candidate.entity, frame.nowMillis) &
-            net::kReplicatedStateBits;
-        const PlayerVisualState visuals =
-            computePlayerVisuals(world, candidate.entity, frame.nowMillis);
+        const Health* health = entry ? entry->health : world.tryGet<Health>(candidate.entity);
+        const auto state = entry ? entry->state :
+            computeEntityState(world, candidate.entity, frame.nowMillis) & net::kReplicatedStateBits;
+        const PlayerVisualState visuals = kind == net::EntityKind::Player
+            ? computePlayerVisuals(world, candidate.entity, frame.nowMillis) : PlayerVisualState{};
 
         std::uint16_t mask = 0;
         const auto* dice = tracked.rollingDice ? world.tryGet<PetalInstance>(candidate.entity) : nullptr;
         if (dice && dice->diceFace != tracked.petalVariant) mask |= net::FieldPetalVariant;
-        const auto* stack = world.tryGet<DropItem>(candidate.entity);
+        const auto* stack = entry ? entry->drop : world.tryGet<DropItem>(candidate.entity);
         if (stack && stack->quantity != tracked.dropQuantity) mask |= net::FieldDropQuantity;
-        if (distanceSq(transform.position, tracked.position) >
+        if (distanceSq(position, tracked.position) >
             tolerances.position * tolerances.position) {
             mask |= net::FieldPosition;
         }
-        const double angle = replicatedAngle(world, candidate.entity, transform);
+        const double angle = entry ? entry->angle : replicatedAngle(world, candidate.entity, *direct);
         if (std::fabs(wrapAngle(angle - tracked.angle)) > tolerances.angle) {
             mask |= net::FieldAngle;
         }
@@ -1046,10 +1169,11 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
             if (healthWide) mask |= net::FieldHealthWide;
         }
         if (state != tracked.state) mask |= net::FieldState;
-        if (std::fabs(replicatedRadius(world, candidate.entity) - tracked.radius) > tolerances.radius) {
+        const double radius = entry ? entry->wireRadius : replicatedRadius(world, candidate.entity);
+        if (std::fabs(radius - tracked.radius) > tolerances.radius) {
             mask |= net::FieldSize;
         }
-        if (world.get<Replicated>(candidate.entity).kind == net::EntityKind::Player &&
+        if (kind == net::EntityKind::Player &&
             (visuals.faceFlags != tracked.faceFlags ||
              visuals.equipFlags != tracked.equipFlags ||
              visuals.renderFlags != tracked.renderFlags ||
@@ -1059,30 +1183,24 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
              skinIdHash(skinIdOf(visuals)) != tracked.skinIdHash)) {
             mask |= net::FieldPlayerVisuals;
         }
-        // The move as FieldPositionDelta would carry it, rounded to its step.
-        // `tracked` advances by exactly what the client will add, so the two
-        // stay in step however many deltas are chained.
-        const double deltaX =
-            std::round((transform.position.x - tracked.position.x) * net::kPositionDeltaScale);
-        const double deltaY =
-            std::round((transform.position.y - tracked.position.y) * net::kPositionDeltaScale);
-        // The same move in the short form's coarser step. Taken when it fits
-        // and moves the entity at all: a move that rounds to nothing here is
-        // either a crawl or the remainder of the last short move, and both
-        // want the full-resolution delta, which closes the gap.
-        const double shortX = std::round((transform.position.x - tracked.position.x) *
-                                         net::kPositionShortDeltaScale);
-        const double shortY = std::round((transform.position.y - tracked.position.y) *
-                                         net::kPositionShortDeltaScale);
+        // Prefer the compact movement record. Only quantize at the finer
+        // step when a changed position cannot use the short encoding.
+        double shortX = 0, shortY = 0, deltaX = 0, deltaY = 0;
         bool shortMove = false;
         if (mask & net::FieldPosition) {
+            const Vec2 movement = position - tracked.position;
+            shortX = std::round(movement.x * net::kPositionShortDeltaScale);
+            shortY = std::round(movement.y * net::kPositionShortDeltaScale);
             if ((shortX != 0.0 || shortY != 0.0) && std::fabs(shortX) <= 127.0 &&
                 std::fabs(shortY) <= 127.0) {
                 shortMove = true;
                 mask = static_cast<std::uint16_t>((mask & ~net::FieldPosition) |
                                                   net::FieldPositionDelta);
-            } else if (std::fabs(deltaX) <= 32767.0 && std::fabs(deltaY) <= 32767.0) {
-                mask |= net::FieldPositionDelta;
+            } else {
+                deltaX = std::round(movement.x * net::kPositionDeltaScale);
+                deltaY = std::round(movement.y * net::kPositionDeltaScale);
+                if (std::fabs(deltaX) <= 32767.0 && std::fabs(deltaY) <= 32767.0)
+                    mask |= net::FieldPositionDelta;
             }
         }
         if (mask == 0) continue;
@@ -1102,8 +1220,8 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
             tracked.position.x += deltaX / net::kPositionDeltaScale;
             tracked.position.y += deltaY / net::kPositionDeltaScale;
         } else if (mask & net::FieldPosition) {
-            out.position(transform.position);
-            tracked.position = wirePosition(transform.position);
+            out.position(position);
+            tracked.position = wirePosition(position);
         }
         if (mask & net::FieldDropQuantity) {
             out.u32(stack->quantity);
@@ -1122,8 +1240,8 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
             tracked.state = state;
         }
         if (mask & net::FieldSize) {
-            out.f32(static_cast<float>(replicatedRadius(world, candidate.entity)));
-            tracked.radius = replicatedRadius(world, candidate.entity);
+            out.f32(static_cast<float>(radius));
+            tracked.radius = radius;
         }
         if (mask & net::FieldPlayerVisuals) {
             out.u8(visuals.faceFlags);
@@ -1147,7 +1265,7 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
             out.u8(dice->diceFace);
             tracked.petalVariant = dice->diceFace;
         }
-        meter.update(world.get<Replicated>(candidate.entity).kind, mask, out.size() - recordAt);
+        meter.update(kind, mask, out.size() - recordAt);
         ++updateCount;
     }
     out.patchU16(updateCountAt, updateCount);
@@ -1157,21 +1275,15 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
 
     // --- removals ---------------------------------------------------------
     //
-    // Anything tracked that this tick did not see has left view or died. The
-    // erase happens only after the removal is written, and the transport is
-    // ordered and reliable, so the client cannot be left believing in an
-    // entity the server has forgotten.
-    removals_.clear();
-    for (const auto& entry : view.tracked) {
-        if (!entry.second.seenThisTick) removals_.push_back(entry.first);
-    }
-    std::sort(removals_.begin(), removals_.end());
+    // IDs skipped during the merge are already in wire order. The remaining
+    // suffix also left view; publish this snapshot's view for event filtering.
+    while (previous < view.tracked.size()) removals_.push_back(view.tracked[previous++].netId);
+    view.tracked.swap(nextTracked_);
     out.u16(static_cast<std::uint16_t>(std::min<std::size_t>(removals_.size(), 0xFFFF)));
     std::uint32_t previousRemovalId = 0;
     for (const std::uint32_t netId : removals_) {
         out.varU32(netId - previousRemovalId);
         previousRemovalId = netId;
-        view.tracked.erase(netId);
     }
 
     const std::size_t wireEventsAt = out.size();
@@ -1183,7 +1295,7 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
     std::uint16_t eventCount = 0;
     for (const auto& meter : frame.practiceMeters) {
         if (eventCount == UINT16_MAX) break;
-        if (view.tracked.find(meter.netId) == view.tracked.end()) continue;
+        if (!view.trackedEntity(meter.netId)) continue;
         out.u8(static_cast<std::uint8_t>(net::EventKind::PracticeMeter));
         out.varU32(meter.netId);
         out.f64(meter.dps);

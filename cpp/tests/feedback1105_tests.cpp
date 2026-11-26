@@ -47,7 +47,7 @@ TEST(mechanics1105_loot_stress_preserves_stacks_and_entitlements) {
 
 TEST(mechanics1105_rotation_wire_bounds_and_actual_ring_speed) {
     const auto& c=testsupport::shippedContent();
-    for(const int step:{0,1,2,3,4,255}) {
+    for(const int step:{0,1,2,3,4,26,37,62,99,100,255}) {
         net::InputFrame sent;sent.rotationStep=step;sent.sequence=123;sent.aimDistance=456;
         ByteWriter bytes;sent.write(bytes);ByteReader reader(bytes.data(),bytes.size());
         auto got=net::InputFrame::read(reader);CHECK(reader.ok());CHECK_EQ(got.rotationStep,step);
@@ -57,7 +57,7 @@ TEST(mechanics1105_rotation_wire_bounds_and_actual_ring_speed) {
         w.add<Health>(p,Health{100,100});w.add<PlayerModifiers>(p);w.add<Loadout>(p);w.add<PetalRing>(p);
         w.add<PlayerInput>(p).current=got;
         petals.run(w,c,1000,.05,commands);
-        CHECK_NEAR(w.get<PetalRing>(p).spin,kPetalSpinRate*.05*std::clamp(step,1,4)*.25,1e-8);
+        CHECK_NEAR(w.get<PetalRing>(p).spin,kPetalSpinRate*.05*(step == 0 ? .25 : step <= 4 ? step * .25 : std::min(step,100) / 100.0),1e-8);
     }
 }
 

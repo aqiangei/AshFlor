@@ -59,12 +59,15 @@ TEST(garbage_cpp_is_rarer_but_visible_cpp_still_really_drops) {
 TEST(todo1107_garbage_rare_items_remain_visible_but_less_frequent) {
     const auto& c = garbageRegistry();
     const auto pool = garbageEligiblePetals(c, Rarity::Super);
-    std::array<int, 4> before{}, after{};
+    std::array<int, 5> before{}, after{};
     const auto ruby = c.petalIndex("ruby");
     const std::array ids{c.petalIndex("mimic"), c.petalIndex("sawblade"),
-                         c.petalIndex("golden_leaf"), ruby};
+                         c.petalIndex("golden_leaf"), ruby, c.petalIndex("magic_mimic")};
     unsigned visibleRuby = 0;
     unsigned hiddenRuby = 0;
+    const auto magic = c.petalIndex("magic_mimic");
+    unsigned visibleMagic = 0;
+    unsigned hiddenMagic = 0;
     for (unsigned seed = 1; seed <= 50000; ++seed) {
         const auto original = garbageContents(pool, seed, {1000, 1000}, nullptr);
         const auto adjusted = garbageContents(pool, seed, {1000, 1000}, &c);
@@ -74,6 +77,10 @@ TEST(todo1107_garbage_rare_items_remain_visible_but_less_frequent) {
             const bool shown = std::any_of(adjusted.begin(), adjusted.end(), matches);
             before[i] += originallyShown;
             after[i] += shown;
+            if (ids[i] == magic) {
+                if (shown) visibleMagic = seed;
+                if (originallyShown && !shown) hiddenMagic = seed;
+            }
             if (ids[i] == ruby) {
                 if (shown) visibleRuby = seed;
                 if (originallyShown && !shown) hiddenRuby = seed;
@@ -84,6 +91,13 @@ TEST(todo1107_garbage_rare_items_remain_visible_but_less_frequent) {
         const bool isRuby = ids[i] == ruby;
         CHECK(after[i] > before[i] * (isRuby ? 0.54 : 0.77));
         CHECK(after[i] < before[i] * (isRuby ? 0.67 : 0.93));
+    }
+    CHECK(visibleMagic != 0 && hiddenMagic != 0);
+    if (visibleMagic && hiddenMagic) {
+        const auto shown = openBag(c, Rarity::Super, visibleMagic, 1, 1);
+        const auto hidden = openBag(c, Rarity::Super, hiddenMagic, 1, 1);
+        CHECK(shown.loot[0].count(magic) == 1);
+        CHECK(hidden.loot[0].count(magic) == 0);
     }
     CHECK(visibleRuby != 0 && hiddenRuby != 0);
     for (const int bonus : {1, 3}) {

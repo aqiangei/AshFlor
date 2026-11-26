@@ -27,7 +27,7 @@ using ConnectionId = std::uint32_t;
 // Version 128: snapshot update records are smaller. The mask is a varint with
 // the common fields in its low seven bits, a short move is two bytes, and the
 // state byte carries only the bits a client draws from.
-inline constexpr std::uint16_t kProtocolVersion = 149; // Extends large loadout counters.
+inline constexpr std::uint16_t kProtocolVersion = 154; // Five-petal trader draws and sixteen-row Hel Plinko paths.
 inline constexpr std::size_t kBossDamageRows = 3;
 inline constexpr std::size_t kBossDamageTargets = 6;
 inline constexpr std::uint32_t kBossDamageOwnUnavailable = UINT32_MAX;
@@ -161,14 +161,8 @@ enum class ClientMessage : std::uint8_t {
                         ///< not there. Resolved server-side in one pass: the
                         ///< client does not know the presets, and a string of
                         ///< SetLoadouts could not move a petal between two slots.
-    Trade,              ///< u16 itemType, u8 rarity -- ONE petal handed to a
-                        ///< trader NPC for one kTraderCoinPetal of the same
-                        ///< tier. One trade per kTraderCooldownMillis, per
-                        ///< account, and only a petal petals.json does not
-                        ///< mark `"tradable": false`, at a tier traderTakes
-                        ///< (the ladder and Ascendant). Found and reached exactly
-                        ///< as OracleCraft's oracle is: the server looks for
-                        ///< the trader itself. (Version 41.)
+    Trade,              ///< u16 itemType, u8 rarity. A petal index sells one for coins.
+                        ///< kNoPetal at Ascendant adds five u16 material indices for a random draw.
     AdminDb,            ///< u8 AdminDbOp, then that op's payload -- the admin
                         ///< database editor (shared/net/admin_db.h). Refused,
                         ///< silently, for anyone the database does not flag
@@ -263,6 +257,7 @@ enum class ClientMessage : std::uint8_t {
     OracleShopForecast, ///< u16 itemType.
     SetPetalPrivacy,    ///< bool hide the owner’s equipped petal types from other players.
     BulkCraftMythicUltra, ///< u8 action. 0: u32 request, u16 count, then {u16 item, u8 rarity, u32 count} per stack. 1: u64 ticket.
+    HelPlinko,          ///< u32 request ID, u8 HelPlinkoAction, u8 chip rarity.
 };
 
 enum class ServerMessage : std::uint8_t {
@@ -504,6 +499,7 @@ enum class ServerMessage : std::uint8_t {
                         ///< f64 own damage if a real rank is outside the public rows}*.
     OracleShopForecast, ///< u16 itemType, bool available, i64 superAt, i64 eternalAt (Unix seconds, -1 if absent).
     BulkCraftTicket,    ///< u32 request, u64 ticket (zero on refusal).
+    HelPlinko,          ///< u32 request ID, u8 HelPlinkoStatus, u16 path bits.
 };
 
 // ---------------------------------------------------------------------------
@@ -637,6 +633,21 @@ static_assert((kInputVisibilityMask & InputPetMoveDirection) == 0);
 /// one at or below the session's lastInputSequence is ignored. Snapshots used
 /// to echo the last one applied, for a client that predicted its own movement;
 /// it predicts nothing now, and version 53 took the echo off the wire.
+// Codes 1..4 are the original saved presets. Other speeds use their percentage.
+inline constexpr bool validRotation(int code) {
+    return (code >= 1 && code <= 4) || (code >= 25 && code <= 100);
+}
+inline constexpr int rotationPercent(int code) {
+    return code < 1 ? 25 : code <= 4 ? code * 25 : code < 25 ? 25 : code > 100 ? 100 : code;
+}
+inline constexpr int rotationCode(int percent) {
+    return percent % 25 == 0 ? percent / 25 : percent;
+}
+inline constexpr int nextRotationPreset(int code, int direction) {
+    const int percent = rotationPercent(code);
+    const int step = direction > 0 ? percent / 25 + 1 : (percent - 1) / 25;
+    return step < 1 ? 1 : step > 4 ? 4 : step;
+}
 struct InputFrame {
     std::uint32_t sequence = 0;
     double moveAngle = 0;      ///< radians; meaningless when moveStrength is 0
@@ -662,7 +673,7 @@ struct InputFrame {
     /// a bot, which has no pointer, sends.
     std::uint16_t aimDistance = 0;
     std::uint8_t rotationStep = 4; // 1..4 = 25%, 50%, 75%, normal speed
-    double rotationScale() const { return (rotationStep < 1 ? 1 : rotationStep > 4 ? 4 : rotationStep) * 0.25; }
+    double rotationScale() const { return rotationPercent(rotationStep) / 100.0; }
 
     void write(ByteWriter& w) const {
         w.u32(sequence);
@@ -803,10 +814,13 @@ enum class EntityKind : std::uint8_t {
 /// u8 nextRecipe and f64 recipeRefreshAtMillis (server clock) after that byte.
 /// For a foreign equipped Petal with type 0xFFFF, the variant byte carries
 /// only the rendering hints needed to preserve readable combat cues.
+inline constexpr std::uint8_t kAttachedMarkVariant = 254;
+
 enum PrivatePetalCue : std::uint8_t {
     PrivatePetalInvisible = 1u << 0,
     PrivatePetalBeam = 1u << 1,
     PrivatePetalBeamOnly = 1u << 2,
+    PrivatePetalAttachedMark = 1u << 3,
 };
 
 enum SpawnFlags : std::uint8_t {

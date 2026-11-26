@@ -540,22 +540,25 @@ std::optional<SlotGrid::Pick> SlotGrid::render(
     const auto craftable = [&](const SlotCell& cell) {
         return !cell.greyed && cell.count >= minimumCraftMaterials;
     };
+    std::vector<std::pair<std::uint16_t, Rarity>> compact;
     if (minimumCraftMaterials > 0) {
-        types.erase(std::remove_if(types.begin(), types.end(), [&](std::uint16_t petalIndex) {
+        for (const auto petal : types) {
             for (std::size_t column = 0; column < columns; ++column) {
-                const Rarity rarity = searchRarity.value_or(slotGridRarity(tiers, column));
-                const auto owned = counts[petalIndex][rarityIndex(rarity)];
-                if (owned >= minimumCraftMaterials && craftable(look(petalIndex, rarity, owned))) return false;
+                const auto rarity = searchRarity.value_or(slotGridRarity(tiers, column));
+                const auto owned = counts[petal][rarityIndex(rarity)];
+                if (owned >= minimumCraftMaterials && craftable(look(petal, rarity, owned)))
+                    compact.emplace_back(petal, rarity);
             }
-            return true;
-        }), types.end());
+        }
     }
+    const auto displayColumns = minimumCraftMaterials ? tierColumns(tiers) : columns;
+    const auto rows = minimumCraftMaterials ? (compact.size() + displayColumns - 1) / displayColumns : types.size();
 
-    Rect clip = listClip(layout, columns);
+    Rect clip = listClip(layout, displayColumns);
     const double scale = fitWidth ? clamp((layout.panel.w - 2.0 * kScrollbarHitWidth) / clip.w, 0.0, 1.0) : 1.0;
     clip.x += (1.0 - scale) * clip.w * 0.5;
     clip.w *= scale;
-    const double contentHeight = contentHeightFor(types.size(), layout.listInsetY) * scale;
+    const double contentHeight = contentHeightFor(rows, layout.listInsetY) * scale;
     const bool scrollable = showScrollbar && clip.h > 0.0 && contentHeight > clip.h;
     // A narrow viewport may crop the panel's right gutter.
     const bool leftBar = layout.panel.right() > canvas.width();
@@ -606,7 +609,7 @@ std::optional<SlotGrid::Pick> SlotGrid::render(
                 static_cast<float>(clip.h));
     canvas.clip();
 
-    if (types.empty() && craftSearch &&
+    if (rows == 0 && craftSearch &&
         (!craftSearch->name.empty() || searchRarity || minimumCraftMaterials > 0)) {
         TextStyle hint;
         hint.size = 14.0;
@@ -616,17 +619,20 @@ std::optional<SlotGrid::Pick> SlotGrid::render(
     }
 
     std::optional<Pick> hovered;
-    for (std::size_t row = 0; row < types.size(); ++row) {
-        const std::uint16_t petalIndex = types[row];
+    for (std::size_t row = 0; row < rows; ++row) {
         const double y = clip.y - scroll_.offset +
                          (layout.listInsetY + static_cast<double>(row) * kGridPitch) * scale;
         if (y + kGridCell * scale < clip.y || y > clip.bottom()) continue;
         // Each row RIGHT TO LEFT, as florr paints it: the oracle's
         // "owned/price" labels hang past a cell's right edge over the next
         // one, and painting that cell after it would cut the label off.
-        for (std::size_t k = 0; k < columns; ++k) {
-            const std::size_t column = columns - 1 - k;
-            const Rarity rarity = searchRarity.value_or(slotGridRarity(tiers, column));
+        for (std::size_t k = 0; k < displayColumns; ++k) {
+            const std::size_t column = displayColumns - 1 - k;
+            const auto index = row * displayColumns + column;
+            if (minimumCraftMaterials && index >= compact.size()) continue;
+            const auto petalIndex = minimumCraftMaterials ? compact[index].first : types[row];
+            const Rarity rarity = minimumCraftMaterials ? compact[index].second :
+                searchRarity.value_or(slotGridRarity(tiers, column));
             const Rect rect{clip.x + (kCellInsetX + static_cast<double>(column) * kGridPitch) * scale,
                             y, kGridCell * scale, kGridCell * scale};
             const SlotCell cell = look(petalIndex, rarity, counts[petalIndex][rarityIndex(rarity)]);

@@ -218,7 +218,7 @@ void App::sendInputFrame(double dt, bool periodic) {
     // whether the cursor half is there at all. The arrows are not a binding:
     // the reference reads them beside whatever the four keys are bound to.
     const ClientSettings& settings = menus_.settings();
-    input.rotationStep = static_cast<std::uint8_t>(std::clamp(settings.rotationStep, 1, 4));
+    input.rotationStep = static_cast<std::uint8_t>(settings.rotationStep);
     if (settings.render.hideOtherPetals) input.flags |= net::InputHideForeignPetals;
     if (settings.render.hideOtherPets) input.flags |= net::InputHideForeignPets;
     if (settings.hideOutsideSquad) input.flags |= net::InputHideOutsideSquad;

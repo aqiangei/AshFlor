@@ -31,6 +31,8 @@
 #include <limits>
 #include <optional>
 #include <random>
+
+#include "shared/game/hel_plinko.h"
 #include <string_view>
 #include <utility>
 #ifdef __EMSCRIPTEN__
@@ -220,9 +222,8 @@ void giveToInventory(PlayerRecord& record, std::uint16_t petalIndex, Rarity rari
 /// (an item from a newer server, or a non-petal) is skipped for the wire but
 /// left untouched in the record, so it survives the next save. sendProfile
 /// writes what this visits and profileDigest folds it, so the bag a client is
-/// checked against is the bag it would be sent. `only` skips every tier that
-/// is not it: the walk a ProfileDelta makes for one group, which has to see
-/// exactly what the Profile's walk sees there.
+/// checked against is the bag it would be sent. Delta lookups below must
+/// preserve this traversal order when several stored keys represent one cell.
 template <typename Visit>
 void forEachProfileStack(const PlayerRecord& record, Visit&& visit,
                          std::optional<Rarity> only = std::nullopt) {
@@ -2264,8 +2265,9 @@ void GameServer::tick(double wallMillis, double nowMillis) {
     // Movement advances wild projectiles by one fixed step. During sustained
     // overload, advancing the launch timer by the entire wall-time gap would
     // put extra volleys into the same distance of flight.
-    const double excessVolleyMillis = lastMeasuredTps_ > 0.0 && lastMeasuredTps_ < 15.0
+    const double excessVolleyMillis = lastMeasuredTps_ > 0.0 && lastMeasuredTps_ < 19.0
         ? std::max(0.0, nowMillis - clockMillis_ - net::kTickMillis) : 0.0;
+    const double previousMillis = clockMillis_;
     wallClockMillis_ = wallMillis;
     clockMillis_ = nowMillis;
     tickPhaseCount_ = 0;
@@ -2273,6 +2275,8 @@ void GameServer::tick(double wallMillis, double nowMillis) {
     sessionPhaseCount_ = 0;
     if (!bossClocksRestored_) restoreBossClocks(nowMillis);
     tickStartedMillis_ = monotonicMillis();
+    if (excessVolleyMillis > 0.0 && tick_ > 1)
+        PetalSystem::advanceMarbleReloadsInSlowTick(world_, content(), previousMillis, excessVolleyMillis);
     const auto editsBeforeSessions = config_.tickProbe ? database_.snapshotEdits()
         : Database::SnapshotEditTiming{};
     const auto markSessionPhase = [&](const char* name) {
@@ -2697,9 +2701,9 @@ void GameServer::runSystems(double nowMillis, double dt, double excessVolleyMill
         });
     };
     refreshActivePlayers();
-    grid_.clear();
-    mobTargetGrid_.clear();
-    playerTargetGrid_.clear();
+    grid_.clearForDistinctEntities();
+    mobTargetGrid_.clearForDistinctEntities();
+    playerTargetGrid_.clearForDistinctEntities();
     // Every body but the projectiles, which combat files in a broadphase of
     // its own (CombatSystem::fileShots): nothing else that asks this grid
     // wants a shot, and a flower on a full loadout of gas would otherwise put
@@ -2713,18 +2717,21 @@ void GameServer::runSystems(double nowMillis, double dt, double excessVolleyMill
     // in the contact and AI queries that run against this one.
     afterPlayers.without<ProjectileTag, Intangible, DropTag>();
     contactBodies_.clear();
-    afterPlayers.each([&](Entity e, Transform& transform, Body& body) {
-        grid_.insert(e, transform.realm, transform.position, body.radius);
-        contactBodies_.push_back({e, transform.realm, transform.position, body.radius});
-        // Wild mobs look for flowers; summoned mobs look for wild mobs or
-        // training posts. Both scans used to walk every petal and summon in
-        // a crowded cell before finding those candidates. Use the same
-        // cells and insertion order to preserve equal-score target choices.
-        const bool isPlayer = world_.has<PlayerTag>(e);
-        if (isPlayer) playerTargetGrid_.insert(e, transform.realm, transform.position, body.radius);
-        if (isPlayer ||
-            ((world_.has<MobTag>(e) || world_.has<Npc>(e)) && !world_.has<Pet>(e))) {
-            mobTargetGrid_.insert(e, transform.realm, transform.position, body.radius);
+    afterPlayers.eachArchetype([&](Archetype& layout) {
+        const bool player = layout.has(componentId<PlayerTag>());
+        const bool mobTarget = player || ((layout.has(componentId<MobTag>()) ||
+            layout.has(componentId<Npc>())) && !layout.has(componentId<Pet>()));
+        const Entity* entities = layout.entities();
+        const Transform* transforms = layout.data<Transform>();
+        const Body* bodies = layout.data<Body>();
+        for (std::size_t i = 0; i < layout.count(); ++i) {
+            const Entity e = entities[i];
+            const Transform& transform = transforms[i];
+            const double radius = bodies[i].radius;
+            grid_.insert(e, transform.realm, transform.position, radius);
+            contactBodies_.push_back({e, transform.realm, transform.position, radius});
+            if (player) playerTargetGrid_.insert(e, transform.realm, transform.position, radius);
+            if (mobTarget) mobTargetGrid_.insert(e, transform.realm, transform.position, radius);
         }
     });
     markTickPhase("broadphase");
@@ -2767,7 +2774,7 @@ void GameServer::runSystems(double nowMillis, double dt, double excessVolleyMill
     // Combat exact-tests current transforms, but its candidate set comes from
     // this grid. Rebuild after mob/projectile flight so a cell crossing cannot
     // make a real overlap invisible for one tick.
-    grid_.clear();
+    grid_.clearForDistinctEntities();
     Query<Transform, Body> afterMovement{world_};
     afterMovement.without<ProjectileTag, Intangible, DropTag>();
     afterMovement.each([&](Entity e, Transform& transform, Body& body) {
@@ -2816,7 +2823,7 @@ void GameServer::runSystems(double nowMillis, double dt, double excessVolleyMill
     markTickPhase("modes+npcs");
     // Pickups can only collect drops. Keeping them out of the body grid
     // also keeps stationary loot out of projectile and aura queries.
-    pickupGrid_.clear();
+    pickupGrid_.clearForDistinctEntities();
     Query<DropTag, Transform, Body>{world_}.each(
         [&](Entity e, DropTag&, Transform& transform, Body& body) {
             pickupGrid_.insert(e, transform.realm, transform.position, body.radius);
@@ -3168,26 +3175,44 @@ void GameServer::replicate(double nowMillis, double wallMillis) {
     // viewer can walk the world directly. Several viewers reuse the index.
     if (count > 1) {
         snapshotGrid_.clear();
+        // On sparsely watched maps, viewers touch only a small fraction of the
+        // grid. Precomputing metadata for the entire map costs more there.
+        constexpr unsigned minSharedViews = 8;
+        std::array<unsigned, kMaxRealms> viewersPerRealm{};
+        for (const auto& job : snapshotJobs_)
+            ++viewersPerRealm[realmIndex(world_.get<Transform>(job.viewer).realm)];
         bool complete = true;
+        for (auto& entities : snapshotPriorityEntities_) entities.clear();
         std::array<double, kMaxRealms> mobPadding{};
         Query<NetId, Replicated, Transform>{world_}.each(
-            [&](Entity e, NetId&, Replicated& rep, Transform& at) {
+            [&](Entity e, NetId& id, Replicated& rep, Transform& at) {
                 if (!std::isfinite(at.position.x) || !std::isfinite(at.position.y)) {
                     complete = false;
                     return;
                 }
                 snapshotGrid_.insert(e, at.realm, at.position);
-                if (rep.kind == net::EntityKind::Mob) {
-                    if (const auto* body = world_.tryGet<Body>(e); body && std::isfinite(body->radius)) {
-                        auto& padding = mobPadding[realmIndex(at.realm)];
-                        padding = std::max(padding, body->radius * Replicator::kMobVisualReachPerRadius);
-                    }
+                const auto realm = realmIndex(at.realm);
+                if (viewersPerRealm[realm] >= minSharedViews) {
+                    const auto slot = entityIndex(e);
+                    if (slot >= snapshotEntities_.size()) snapshotEntities_.resize(slot + 1);
+                    const auto& entry = snapshotEntities_[slot] = Replicator::describe(world_, e, id, rep, at, nowMillis);
+                    if (rep.kind == net::EntityKind::Mob || entry.drop) snapshotPriorityEntities_[realm].push_back(e);
+                    mobPadding[realm] = std::max(mobPadding[realm], entry.radius * Replicator::kMobVisualReachPerRadius);
+                } else if (rep.kind == net::EntityKind::Mob) {
+                    const auto* body = world_.tryGet<Body>(e);
+                    if (body && std::isfinite(body->radius))
+                        mobPadding[realm] = std::max(mobPadding[realm], body->radius * Replicator::kMobVisualReachPerRadius);
                 }
             });
         if (complete) {
             for (auto& job : snapshotJobs_) {
                 job.frame.entityGrid = &snapshotGrid_;
-                job.frame.mobRadiusPadding = mobPadding[realmIndex(world_.get<Transform>(job.viewer).realm)];
+                const auto realm = realmIndex(world_.get<Transform>(job.viewer).realm);
+                if (viewersPerRealm[realm] >= minSharedViews) {
+                    job.frame.indexedEntities = &snapshotEntities_;
+                    job.frame.priorityEntities = &snapshotPriorityEntities_[realm];
+                }
+                job.frame.mobRadiusPadding = mobPadding[realm];
             }
         }
     }
@@ -3268,7 +3293,7 @@ void GameServer::sendBossDamage() {
         if (!connection || !viewer || !recipient || job.output.empty()) continue;
         visible.clear();
         for (const auto& rank : rankings) {
-            if (rank.at->realm == viewer->realm && job.view->tracked.count(rank.netId))
+            if (rank.at->realm == viewer->realm && job.view->trackedEntity(rank.netId))
                 visible.push_back(&rank);
         }
         const auto count = std::min(visible.size(), net::kBossDamageTargets);
@@ -3590,6 +3615,7 @@ void GameServer::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ClientMessage::AccountQQ:
         case net::ClientMessage::SkinReview:
         case net::ClientMessage::Craft:
+        case net::ClientMessage::HelPlinko:
         case net::ClientMessage::OracleCraft:
         case net::ClientMessage::OracleShopForecast:
         case net::ClientMessage::Trade:
@@ -3696,6 +3722,7 @@ void GameServer::onMessage(net::Connection& connection, ByteReader& reader) {
             break;
         case net::ClientMessage::UsePetal:      handleUsePetal(*session, reader); break;
         case net::ClientMessage::Craft:         handleCraft(*session, connection, reader); break;
+        case net::ClientMessage::HelPlinko:     handleHelPlinko(*session, connection, reader); break;
         case net::ClientMessage::OracleCraft:   handleOracleCraft(*session, connection, reader); break;
         case net::ClientMessage::OracleShopForecast:
             handleOracleShopForecast(*session, connection, reader);
@@ -4613,7 +4640,7 @@ void GameServer::clearProfileDue(Session& session) {
 
 void GameServer::sendProfileDelta(Session& session, net::Connection& connection) {
     // Read exactly as sendProfile reads them -- the same record, the same
-    // track, the same walkers -- so a client that applies this holds what the
+    // track and stack order -- so a client that applies this holds what the
     // whole Profile would have given it, and the digests still agree.
     const PlayerRecord& record = liveRecord(session);
     const bool onMazeTrack = session.playing() && session.realm == Realm::Maze;
@@ -4628,34 +4655,35 @@ void GameServer::sendProfileDelta(Session& session, net::Connection& connection)
     w.u32(onMazeTrack ? 0 : static_cast<std::uint32_t>(record.talentPointBonus));
 
     w.u16(static_cast<std::uint16_t>(session.stacksDue.size()));
-    const auto stackKey = [](std::uint16_t index, Rarity rarity) {
-        return (static_cast<std::uint32_t>(index) << 8) | static_cast<std::uint32_t>(rarity);
-    };
-    std::array<bool, kRarityCount> tiers{};
-    std::unordered_map<std::uint32_t, std::size_t> stackGroups;
-    stackGroups.reserve(session.stacksDue.size());
-    std::vector<std::vector<std::uint32_t>> counts(session.stacksDue.size());
-    for (std::size_t i = 0; i < session.stacksDue.size(); ++i) {
-        const auto& group = session.stacksDue[i];
-        stackGroups.emplace(stackKey(group.index, group.rarity), i);
-        tiers[rarityIndex(group.rarity)] = true;
-    }
-    for (std::size_t tier = 0; tier < tiers.size(); ++tier) {
-        if (!tiers[tier]) continue;
-        forEachProfileStack(record, [&](std::uint16_t index, Rarity, std::uint32_t count) {
-            const auto found = stackGroups.find(stackKey(index, static_cast<Rarity>(tier)));
-            if (found != stackGroups.end() && counts[found->second].size() < 0xFF) {
-                counts[found->second].push_back(count);
-            }
-        }, static_cast<Rarity>(tier));
-    }
-    for (std::size_t i = 0; i < session.stacksDue.size(); ++i) {
-        const auto& group = session.stacksDue[i];
+    for (const auto& group : session.stacksDue) {
         w.u16(group.index);
         w.u8(static_cast<std::uint8_t>(group.rarity));
-        // Retain the full Profile's order when both legacy names map here.
-        w.u8(static_cast<std::uint8_t>(counts[i].size()));
-        for (const auto count : counts[i]) w.u32(count);
+        std::array<std::uint32_t, 255> counts;
+        std::size_t size = 0;
+        if (group.index < content().petalCount()) {
+            const auto& id = content().petal(group.index).id;
+            const auto key = inventoryKey(group.index);
+            for (const auto& tier : record.inventory.keys()) {
+                if (parseRarity(tier) != group.rarity) continue;
+                const auto& bucket = record.inventory[tier];
+                const auto canonical = PlayerRecord::stackCount(bucket[key]);
+                const auto legacy = id.rfind("petal_", 0) == 0 ? 0 : PlayerRecord::stackCount(bucket[id]);
+                // Full profiles visit keys in saved order, including two names
+                // for one petal and multiple buckets for one parsed rarity.
+                if (canonical && legacy) {
+                    for (const auto& name : bucket.keys()) {
+                        if (size == counts.size()) break;
+                        if (name == key) counts[size++] = canonical;
+                        else if (name == id) counts[size++] = legacy;
+                    }
+                } else if (size < counts.size() && (canonical || legacy)) {
+                    counts[size++] = canonical ? canonical : legacy;
+                }
+                if (size == counts.size()) break;
+            }
+        }
+        w.u8(static_cast<std::uint8_t>(size));
+        for (std::size_t i = 0; i < size; ++i) w.u32(counts[i]);
     }
 
     w.u16(static_cast<std::uint16_t>(session.killsDue.size()));
@@ -5418,7 +5446,7 @@ void GameServer::handleSaveLoadoutPreset(Session& session, net::Connection& conn
                                          ByteReader& reader) {
     const std::uint8_t preset = reader.u8();
     const std::uint8_t rotationStep = reader.u8();
-    if (rotationStep < 1 || rotationStep > 4) return;
+    if (!net::validRotation(rotationStep)) return;
     if (!reader.ok() || !session.authenticated()) return;
     if (preset >= kLoadoutPresetCount) return;
     // An arena run wears a scratch ring out of a scratch bag, and that is not
@@ -5455,7 +5483,7 @@ void GameServer::handleLoadLoadoutPreset(Session& session, net::Connection& conn
                                          ByteReader& reader) {
     const std::uint8_t preset = reader.u8();
     const std::uint8_t rotationStep = reader.u8();
-    if (rotationStep < 1 || rotationStep > 4) return;
+    if (!net::validRotation(rotationStep)) return;
     if (!reader.ok() || !session.authenticated()) return;
     if (preset >= kLoadoutPresetCount) return;
     // Loaded against the run's bag, a preset of the account's petals would
@@ -5495,7 +5523,7 @@ void GameServer::handleLoadLoadoutPreset(Session& session, net::Connection& conn
         sendNotice(connection, net::NoticeSeverity::Warning, "库存叠放已满，无法切换配装。");
         return;
     }
-    session.pendingPresetRotationStep = savedRotationStep >= 1 && savedRotationStep <= 4
+    session.pendingPresetRotationStep = net::validRotation(savedRotationStep)
         ? static_cast<std::uint8_t>(savedRotationStep) : 0;
     // Stay on this preset so petal edits still autosave. If talents did not
     // fit, lock skill autosave so the saved tree is not overwritten by the
@@ -5528,6 +5556,85 @@ void GameServer::handleLoadLoadoutPreset(Session& session, net::Connection& conn
 namespace {
 constexpr const char* kOwnApexRefusal = "This petal's Apex only comes from its own source.";
 }  // namespace
+
+void GameServer::handleHelPlinko(Session& session, net::Connection& connection, ByteReader& reader) {
+    const std::uint32_t request = reader.u32();
+    const auto action = static_cast<HelPlinkoAction>(reader.u8());
+    const auto rarity = static_cast<Rarity>(reader.u8());
+    if (!reader.ok() || !session.authenticated() || request <= session.lastHelPlinkoRequest) return;
+    session.lastHelPlinkoRequest = request;
+
+    const auto reply = [&](HelPlinkoStatus status, std::uint16_t path = 0) {
+        ByteWriter writer;
+        writer.u8(static_cast<std::uint8_t>(net::ServerMessage::HelPlinko));
+        writer.u32(request);
+        writer.u8(static_cast<std::uint8_t>(status));
+        writer.u16(path);
+        connection.send(writer);
+    };
+    if (session.arena || session.inRift) return reply(HelPlinkoStatus::Unavailable);
+    const auto chip = content().petalIndex(kPlinkoChipPetal);
+    if (chip == kInvalidIndex) return reply(HelPlinkoStatus::Unavailable);
+
+    auto& record = liveRecord(session);
+    std::uint16_t path = 0;
+    int payout = 0;
+    switch (action) {
+        case HelPlinkoAction::Drop: {
+            if (!plinkoAccepts(rarity)) return reply(HelPlinkoStatus::InvalidTier);
+            const int count = record.itemCount(rarity, inventoryKey(chip));
+            if (count > kMaxStackCount - kHelPlinkoMaxPayout + 1)
+                return reply(HelPlinkoStatus::StackFull);
+            if (!takeFromInventory(record, chip, rarity, 1)) return reply(HelPlinkoStatus::NoChips);
+            path = static_cast<std::uint16_t>(rng_.below(kHelPlinkoPaths));
+            payout = kHelPlinkoPayout[helPlinkoSlot(path)];
+            if (payout != 0) giveToInventory(record, chip, rarity, payout);
+            break;
+        }
+        case HelPlinkoAction::Buy:
+        case HelPlinkoAction::BuyTen:
+        case HelPlinkoAction::BuyHundred: {
+            const int quantity = plinkoBuyCount(action);
+            const int price = plinkoStarPrice(rarity) * quantity;
+            if (price == 0) return reply(HelPlinkoStatus::InvalidTier);
+            if (record.itemCount(rarity, inventoryKey(chip)) > kMaxStackCount - quantity)
+                return reply(HelPlinkoStatus::StackFull);
+            syncSplitProgress(session);
+            const auto* live = world_.tryGet<PlayerProgress>(session.entity);
+            const double stars = live ? live->stars : record.stars;
+            if (!std::isfinite(stars) || stars < price) return reply(HelPlinkoStatus::NoStars);
+            record.stars = stars - price;
+            for (const Entity body : bodiesOf(session)) {
+                if (auto* progress = world_.tryGet<PlayerProgress>(body))
+                    progress->stars = record.stars;
+            }
+            giveToInventory(record, chip, rarity, quantity);
+            break;
+        }
+        case HelPlinkoAction::Exchange: {
+            if (rarity != Rarity::Ascendant) return reply(HelPlinkoStatus::InvalidTier);
+            const auto coin = content().petalIndex(kTraderCoinPetal);
+            if (coin == kInvalidIndex) return reply(HelPlinkoStatus::Unavailable);
+            if (record.itemCount(rarity, inventoryKey(coin)) >= kMaxStackCount)
+                return reply(HelPlinkoStatus::StackFull);
+            if (!takeFromInventory(record, chip, rarity, 1)) return reply(HelPlinkoStatus::NoChips);
+            giveToInventory(record, coin, rarity, 1);
+            break;
+        }
+        default: return reply(HelPlinkoStatus::Unavailable);
+    }
+    database_.markDirty();
+    resyncProfile(session, connection);
+    reply(HelPlinkoStatus::Success, path);
+    if (plinkoAnnouncesWin(rarity, payout)) {
+        char color[8];
+        std::snprintf(color, sizeof color, "#%06x", rarityColor(rarity));
+        broadcastChat(net::ChatChannel::System, "",
+            std::string("<b style=\"color: ") + color + ";\">" + creditedPlayerMarkup(session) +
+            " 在弹珠中投出 Apex 筹码 " + std::to_string(payout) + "x，获得 " +
+            std::to_string(payout) + " 枚 Apex 筹码！</b>");
+    }
+}
 
 void GameServer::handleCraft(Session& session, net::Connection& connection, ByteReader& reader, bool quiet) {
     const std::uint16_t petalIndex = reader.u16();
@@ -5962,7 +6069,8 @@ double GameServer::oracleWaitMillis(const std::string& /*userId*/) {
 
 void GameServer::handleTrade(Session& session, net::Connection& connection, ByteReader& reader) {
     const std::uint16_t petalIndex = reader.u16();
-    const Rarity rarity = clampRarity(reader.u8());
+    const auto rawRarity = reader.u8();
+    const Rarity rarity = clampRarity(rawRarity);
     if (!reader.ok() || !session.authenticated()) return;
 
     const auto refuse = [&](const std::string& reason) {
@@ -5992,14 +6100,23 @@ void GameServer::handleTrade(Session& session, net::Connection& connection, Byte
     }
 
     const auto coin = content().petalIndex(kTraderCoinPetal);
-    const bool apex = rarity == Rarity::Ascendant;
-    const bool draw = apex && petalIndex == coin;
-    if (coin == kInvalidIndex || petalIndex >= content().petalCount() ||
-        !traderTakes(rarity) || (!draw && !content().petal(petalIndex).tradable)) {
-        refuse("The trader will not take that.");
+    const bool draw = petalIndex == kNoPetal && rarity == Rarity::Ascendant;
+    if (rawRarity != static_cast<unsigned>(rarity) || coin == kInvalidIndex || !traderTakes(rarity) ||
+        reader.remaining() != (draw ? 2 * kTraderApexDrawCost : 0)) {
+        refuse("Invalid trade.");
         return;
     }
-    const double wait = apex ? 0.0 : traderWaitMillis(session.userId);
+    std::map<std::uint16_t, int> materials;
+    for (unsigned i = 0; i < (draw ? kTraderApexDrawCost : 1u); ++i) {
+        const auto index = draw ? reader.u16() : petalIndex;
+        if (index >= content().petalCount() || index == coin || content().petal(index).id == kPlinkoChipPetal || !content().petal(index).tradable ||
+            (draw && (content().petal(index).isAdminPetal || !petalCraftsToApex(content(), index)))) {
+            refuse("The trader will not take that.");
+            return;
+        }
+        ++materials[index];
+    }
+    const double wait = draw ? 0.0 : traderWaitMillis(session.userId);
     if (wait > 0.0) {
         refuse(traderCooldownText(wait));
         return;
@@ -6007,35 +6124,38 @@ void GameServer::handleTrade(Session& session, net::Connection& connection, Byte
     PlayerRecord& record = liveRecord(session);
     // Contested (titan-forged) Hypers cannot be traded for coins. Drop Hypers
     // with no forge claim still can.
-    if (hyperClaimCount(database_, session.userId, content().petal(petalIndex).id, rarity) > 0) {
-        refuse("争夺中的超凡不能换成硬币；请先在泰坦处解除。");
-        return;
-    }
-    const int cost = draw ? kTraderApexDrawCost : 1;
-    if (record.itemCount(rarity, inventoryKey(petalIndex)) < cost) {
-        refuse(draw ? "需要 4 枚 Apex 硬币。" : "You don't have that petal.");
-        resyncProfile(session, connection);
-        return;
+    for (const auto& [index, needed] : materials) {
+        if (hyperClaimCount(database_, session.userId, content().petal(index).id, rarity) > 0) {
+            refuse("争夺中的超凡不能兑换。");
+            return;
+        }
+        if (record.itemCount(rarity, inventoryKey(index)) < needed) {
+            refuse("库存中的花瓣不足。");
+            resyncProfile(session, connection);
+            return;
+        }
     }
     auto received = coin;
-    const int quantity = content().petal(petalIndex).id == "magic_aztec_coin" ? 4 : 1;
+    const int quantity = !draw && content().petal(petalIndex).id == "magic_aztec_coin" ? 4 : 1;
     if (draw) {
         std::vector<std::uint16_t> candidates;
         for (std::uint16_t i = 0; i < content().petalCount(); ++i) {
             const auto& petal = content().petal(i);
-            if (i != coin && !petal.isAdminPetal && petalComesAt(petal, rarity) &&
+            if (i != coin && petal.id != kPlinkoChipPetal && !petal.isAdminPetal && petalComesAt(petal, rarity) &&
                 petalCraftsToApex(content(), i)) candidates.push_back(i);
         }
         if (candidates.empty()) { refuse("No Apex petals available."); return; }
         received = candidates[rng_.below(static_cast<std::uint32_t>(candidates.size()))];
     }
-    if (record.itemCount(rarity, inventoryKey(received)) > kMaxStackCount - quantity) {
+    const auto consumed = materials.find(received);
+    const int freed = consumed == materials.end() ? 0 : consumed->second;
+    if (record.itemCount(rarity, inventoryKey(received)) - freed > kMaxStackCount - quantity) {
         refuse("背包中该物品已达上限。");
         return;
     }
-    takeFromInventory(record, petalIndex, rarity, cost);
+    for (const auto& [index, needed] : materials) takeFromInventory(record, index, rarity, needed);
     giveToInventory(record, received, rarity, quantity);
-    if (!apex) {
+    if (!draw) {
         traderReadyAt_[session.userId] = wallClockMillis_ + kTraderCooldownMillis;
         record.extra["traderReadyAt"] = database_.nowMillis() + kTraderCooldownMillis;
     }
@@ -6051,9 +6171,15 @@ void GameServer::handleTrade(Session& session, net::Connection& connection, Byte
     connection.send(w);
     if (draw) {
         const auto& reward = content().petal(received);
-        broadcastChat(net::ChatChannel::System, "", escapedMarkup(session.displayName.empty() ?
-            session.username : session.displayName) + " 在沙漠商人处用 4 枚 Apex 硬币抽到了 <b data-petal='" +
-            escapedMarkup(reward.id) + "'>Apex " + escapedMarkup(reward.name) + "</b>。");
+        char tierColor[8];
+        std::snprintf(tierColor, sizeof tierColor, "#%06x", rarityColor(rarity));
+        const auto& name = session.displayName.empty() ? session.username : session.displayName;
+        const std::string marked = std::string("<b style=\"color: ") + tierColor +
+            ";\"><b style=\"color: #00ff00;\">@" + escapedMarkup(session.username) +
+            "</b> [<b style=\"color: yellow;\">" + escapedMarkup(name) +
+            "</b>] 在沙漠商人处用 5 片 Apex 花瓣换到了 <b data-petal='" +
+            escapedMarkup(reward.id) + "'>Apex " + escapedMarkup(reward.name) + "</b>。</b>";
+        broadcastChat(net::ChatChannel::System, "", marked);
     }
     sendProfile(session, connection);
 }
@@ -7070,9 +7196,10 @@ void GameServer::announceRarePickup(const Session& session, std::uint16_t petalI
     // "The Universal", as the forge says it: there is only ever one of each
     // petal at universal.
     const char* article = rarity == Rarity::Universal ? "The" : "An";
+    const auto& petal = content().petal(petalIndex);
     broadcastChat(net::ChatChannel::System, "",
-                  std::string("<b style=\"color: ") + colorAttribute + ";\">" + article + " " +
-                      rarityLabel(rarity) + " " + content().petal(petalIndex).name +
+                  "<b data-pickup='" + petal.id + "' style=\"color: " + colorAttribute + ";\">" + article + " " +
+                      rarityLabel(rarity) + " " + petal.name +
                       " has been collected by " + creditedPlayerMarkup(session) + "!</b>");
 }
 
@@ -9970,7 +10097,7 @@ void GameServer::collectSpawnBlockers(Realm realm, std::vector<MobDisc>& out) co
     });
 }
 
-bool GameServer::canMarkPlayer(Entity target, Entity marker, Rarity rarity) {
+bool GameServer::canMarkPlayer(Entity target, Entity marker, Rarity) {
     if (target == marker || !isStanding(world_, marker) || !world_.has<Dead>(target) ||
         world_.has<WavePlayer>(target) || world_.has<WavePlayer>(marker)) return false;
     Session* victim = sessionForEntity(target);
@@ -9992,12 +10119,6 @@ bool GameServer::canMarkPlayer(Entity target, Entity marker, Rarity rarity) {
         bool hasPrestigeTwin = false;
         worldMaps_.prestigeRealm(at->realm, hasPrestigeTwin);
         if (!hasPrestigeTwin) return false;
-    }
-    if (const auto* loadout = world_.tryGet<Loadout>(target)) {
-        for (const auto& slot : loadout->slots) {
-            if (slot.configIndex != kNoPetal &&
-                petalTier(slot.rarity) > petalTier(rarity)) return false;
-        }
     }
     const auto found = markStatus_.find(victim->userId);
     return found == markStatus_.end() ||

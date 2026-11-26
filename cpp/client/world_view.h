@@ -364,7 +364,7 @@ public:
     /// The health bar starts settled on the record's own health and shield,
     /// as a spawn's does, and so does a mob's plate, which a spawn's does not.
     void seedForTest(const RemoteEntity& entity) {
-        RemoteEntity& seeded = entities_[entity.netId] = entity;
+        RemoteEntity& seeded = spawnSlot(entity.netId, entity.kind) = entity;
         const auto guild=guildNames_.find(seeded.name);
         if(guild!=guildNames_.end()) seeded.guildName=guild->second;
         if (seeded.kind == net::EntityKind::Player) {
@@ -394,6 +394,7 @@ public:
     }
 
     const std::unordered_map<std::uint32_t, RemoteEntity>& entities() const { return entities_; }
+    bool hasNpcs() const { return npcCount_ != 0; }
     struct BossDamageRanking {
         std::vector<net::BossDamageRow> rows;
         std::uint32_t ownRank = 0;
@@ -483,10 +484,13 @@ private:
     /// the centipede and leech bodies. Without content every mob is labelled.
     bool plateShows(const RemoteEntity&) const;
 
+    RemoteEntity& spawnSlot(std::uint32_t id, net::EntityKind kind);
+    std::size_t npcCount_ = 0;
     std::unordered_map<std::uint32_t, RemoteEntity> entities_;
     const ContentRegistry* content_ = nullptr;
     /// Owner net id -> the net id of the moon its ring orbits, rebuilt every
     /// frame by interpolate(). A member so a frame does not allocate it.
+    std::vector<RemoteEntity*> framePetals_;
     std::unordered_map<std::uint32_t, std::uint32_t> ringAnchors_;
     std::unordered_map<std::string,std::string> guildNames_;
     std::vector<ViewEvent> events_;
