@@ -704,6 +704,22 @@ TEST(waterspout_is_present_in_the_ocean_spawn_and_gallery_distribution) {
         });
     });
     CHECK_EQ(count, 36);
+    const auto checkFocusedBands = [](const MapData& map) {
+        const auto focused = std::count_if(map.elements().begin(), map.elements().end(), [](const auto& band) {
+            return std::any_of(band.mobDistribution.begin(), band.mobDistribution.end(), [](const auto& row) {
+                return row.name == "waterspout" &&
+                    std::abs(row.weight - 0.25) < 1e-7;
+            });
+        });
+        CHECK_EQ(focused, 6);
+    };
+    checkFocusedBands(*ocean);
+    for (int level : {1, 2}) {
+        bool hasPrestige = false;
+        const auto prestige = h.server.worldMaps().prestigeRealm(realm, hasPrestige, level);
+        CHECK(hasPrestige);
+        if (const auto* map = h.server.worldMaps().forRealm(prestige)) checkFocusedBands(*map);
+    }
     const auto waterspout = content().mobIndex("waterspout");
     const auto galleryMobs = mapMobIndices(*ocean);
     CHECK(std::find(galleryMobs.begin(), galleryMobs.end(), waterspout) != galleryMobs.end());

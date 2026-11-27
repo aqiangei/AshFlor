@@ -444,8 +444,10 @@ std::vector<TipRow> description(SkillId skill, int tier) {
             row({{cn ? "提升宠物体伤及发射物伤害，不增加数量或攻速。" : "Boosts pet contact and projectile damage, without more pets or faster attacks."}});
             break;
         case SkillId::Prestige:
-            row({{cn ? "角色等级要求 " : "Player level required "},
+            row({{cn ? "购买所需角色等级：" : "Player level to purchase: "},
                  {std::to_string(skillTierRequiredPlayerLevel(skill, tier)), kStatDamage}});
+            row({{cn ? "进入地图时按已解锁的声望等级判定。"
+                     : "Map access uses your unlocked Prestige tier."}});
             row({{tier == 1 ? (cn ? "解锁二级声望：普通怪物提高两个稀有度，最高永恒。" : "Unlock Prestige II: ordinary enemies rise two rarities, up to Eternal.")
                             : (cn ? "解锁声望地图：常规升阶提高一档，最高超级。" : "Unlock Prestige worlds: ordinary promotion raises mobs one tier, up to Super.")}});
             if (tier == 0) {

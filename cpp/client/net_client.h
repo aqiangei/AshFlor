@@ -15,6 +15,7 @@
 #include "client/chat_bubbles.h"
 #include "client/world_view.h"
 #include "shared/game/config.h"
+#include "shared/game/hel_plinko.h"
 #include "shared/game/npc.h"
 #include "shared/game/shop.h"
 #include "shared/game/skin_format.h"
@@ -26,8 +27,6 @@
 #include "shared/net/transport.h"
 
 namespace flix {
-
-enum class HelPlinkoAction : std::uint8_t;
 
 class WorldMaps;
 
@@ -55,8 +54,6 @@ struct Profile {
         std::uint16_t petalIndex = 0;
         Rarity rarity = Rarity::Common;
         std::uint32_t count = 0;
-        std::uint32_t craftLocked = 0;
-        std::uint32_t craftable() const { return count - std::min(count, craftLocked); }
     };
     std::vector<Stack> inventory;
     std::unordered_map<std::uint16_t, unsigned> titanForgeCounts;
@@ -125,12 +122,6 @@ struct Profile {
         return 0;
     }
 
-    std::uint32_t craftableCount(std::uint16_t petalIndex, Rarity rarity) const {
-        for (const Stack& stack : inventory) {
-            if (stack.petalIndex == petalIndex && stack.rarity == rarity) return stack.craftable();
-        }
-        return 0;
-    }
 };
 
 /// One row of the account leaderboard.
@@ -648,6 +639,7 @@ public:
         std::uint32_t request = 0;
         std::uint8_t status = 0;
         std::uint16_t path = 0;
+        std::array<std::uint32_t, kPlinkoTiers.size()> chipBalances{};
     };
     std::vector<HelPlinkoReply> takeHelPlinkoReplies();
     /// Whether this client is holding an account: logged in, or in a game.
@@ -809,7 +801,6 @@ public:
     /// price is the server's to decide -- the slot says which card, not what
     /// it costs.
     void requestBuyPetal(std::uint16_t petalIndex, Rarity rarity, int offerSlot = -1, std::uint32_t quantity = 1);
-    void requestUnlockCraftStack(std::uint16_t petalIndex, Rarity rarity, std::uint32_t locked);
     /// Redeems a star code. The answer lands in shopOutcome().
     void requestRedeemCode(const std::string& code);
     /// Changes this session's account password. The answer lands in

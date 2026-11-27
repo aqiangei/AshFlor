@@ -258,7 +258,7 @@ enum class ClientMessage : std::uint8_t {
     SetPetalPrivacy,    ///< bool hide the owner’s equipped petal types from other players.
     BulkCraftMythicUltra, ///< u8 action. 0: u32 request, u16 count, then {u16 item, u8 rarity, u32 count} per stack. 1: u64 ticket.
     HelPlinko,          ///< u32 request ID, u8 HelPlinkoAction, u8 chip rarity.
-    UnlockCraftStack,  ///< u16 petal, u8 rarity, u32 locked count, u32 profile revision.
+    ReservedCraftLock, ///< Retired shopping-lock request ID.
     TraderAccess,       ///< u32 request, str password (empty closes authorization).
 };
 
@@ -267,7 +267,7 @@ enum class ServerMessage : std::uint8_t {
     AuthResult,         ///< u8 status(AuthStatus), str token, str username, str reason
     Profile,            ///< u32 revision (see ProfileDelta), str username,
                         ///< u8 accountFlags (AccountFlags), then
-                        ///< the full account state: xp, level, stars, inventory (count and locked count per stack), loadout,
+                        ///< the full account state: xp, level, stars, inventory (count and a reserved u32 per stack), loadout,
                         ///< skins, the talent tree and the mob-kill ledger,
                         ///< then u32 milliseconds until the account may craft
                         ///< at an oracle again (0 when it may now), u32 the
@@ -1193,12 +1193,9 @@ inline constexpr double kProfileCheckMillis = 2000.0;
 /// checked against the server's record whatever a client says this is.
 class ProfileDigest {
 public:
-    void stack(std::uint16_t petalIndex, std::uint8_t rarity, std::uint32_t count, std::uint32_t locked = 0) {
+    void stack(std::uint16_t petalIndex, std::uint8_t rarity, std::uint32_t count) {
         sum_ += mix((std::uint64_t{1} << 56) | (std::uint64_t{rarity} << 48) |
                     (std::uint64_t{petalIndex} << 32) | count);
-        if (locked != 0)
-            sum_ += mix((std::uint64_t{3} << 56) | (std::uint64_t{rarity} << 48) |
-                        (std::uint64_t{petalIndex} << 32) | locked);
     }
     void slot(std::size_t slot, std::uint16_t petalIndex, std::uint8_t rarity) {
         sum_ += mix((std::uint64_t{2} << 56) | ((std::uint64_t{slot} & 0xFFFFu) << 32) |

@@ -5,17 +5,20 @@
 using namespace flix;
 using namespace flix::testsupport;
 
-TEST(shop_purchases_require_manual_unlock_for_crafting_even_after_equipping) {
+TEST(shop_purchases_and_legacy_locked_petals_can_be_crafted) {
     constexpr auto tier = Rarity::Mythic;
     Harness h("shop-protection", [](const std::string& path) {
         seedUser(path, "buyer", "password");
         seedStack(path, "buyer", "petal_rose", Rarity::Mythic, 4);
+        seedStack(path, "buyer", "petal_rose", Rarity::Super, 20);
         Database db;
         std::string error;
         CHECK(db.load(path, error));
         const auto* user = db.findUser("buyer");
         if (!user) return;
-        db.progress(user->id).stars = 1000000;
+        auto& record = db.progress(user->id);
+        record.stars = 1000000;
+        record.extra["craftLocks"]["mythic"]["petal_rose"] = 4;
         db.markDirty();
         CHECK(db.save());
     }, dataDir(), 0);
@@ -28,59 +31,37 @@ TEST(shop_purchases_require_manual_unlock_for_crafting_even_after_equipping) {
     CHECK(h.stepUntil({&buyer}, [&] { return buyer.shopOutcome().pending; }));
     CHECK(buyer.shopOutcome().ok);
     CHECK_EQ(buyer.profile().stackCount(rose, tier), 10u);
-    CHECK_EQ(buyer.profile().craftableCount(rose, tier), 4u);
+    const auto request = buyer.prepareMythicUltraCraft({{rose, tier, 5}});
+    CHECK(h.stepUntil({&buyer}, [&] { return buyer.mythicUltraTicket(request).has_value(); }));
+    CHECK(buyer.mythicUltraTicket(request).value_or(0) > 0u);
 
-    buyer.requestCraft(rose, tier, 5);
+    buyer.requestCraft(rose, tier, 10);
+    CHECK(h.stepUntil({&buyer}, [&] { return buyer.craftOutcome().pending; }));
+    CHECK(buyer.craftOutcome().attempts >= 2);
+    const int remaining = buyer.craftOutcome().petalsReturned;
+    CHECK_EQ(buyer.craftOutcome().consumed, static_cast<unsigned>(10 - remaining));
+    CHECK(awaitProfile(h, buyer, [&](const Profile& profile) {
+        return profile.stackCount(rose, tier) == static_cast<unsigned>(remaining);
+    }));
+
+    buyer.craftOutcome().pending = false;
+    buyer.requestCraft(rose, Rarity::Super, 20);
     CHECK(h.stepUntil({&buyer}, [&] { return buyer.craftOutcome().pending; }));
     CHECK_EQ(buyer.craftOutcome().attempts, 0u);
     CHECK_EQ(buyer.craftOutcome().consumed, 0u);
-    const auto request = buyer.prepareMythicUltraCraft({{rose, tier, 5}});
-    CHECK(h.stepUntil({&buyer}, [&] { return buyer.mythicUltraTicket(request).has_value(); }));
-    CHECK_EQ(buyer.mythicUltraTicket(request).value_or(1), 0u);
-    const auto revision = buyer.profile().revision;
-    buyer.requestBulkCraft(Rarity::Ultra);
-    CHECK(awaitProfile(h, buyer, [&](const Profile& p) { return p.revision > revision; }));
-    CHECK_EQ(buyer.profile().stackCount(rose, tier), 10u);
-
-    for (int slot = 0; slot < 5; ++slot) {
-        buyer.setLoadoutSlot(slot, rose, tier);
-        CHECK(awaitProfile(h, buyer, [&](const Profile& p) {
-            return p.stackCount(rose, tier) == static_cast<unsigned>(9 - slot);
-        }));
-    }
-    CHECK_EQ(buyer.profile().craftableCount(rose, tier), 0u);
     h.server.persistAll();
-    {
-        Database saved;
-        std::string error;
-        CHECK(saved.load(h.dbPath, error));
-        const auto* user = saved.findUser("buyer");
-        CHECK(user != nullptr);
-        const auto* record = user ? saved.findProgress(user->id) : nullptr;
-        CHECK(record != nullptr);
-        if (record) {
-            CHECK_EQ(record->craftLockedCount(tier, "petal_rose"), 5);
-            CHECK(record->loadout.size() > 4 && record->loadout[4] && record->loadout[4]->craftLocked());
-        }
+    Database saved;
+    std::string error;
+    CHECK(saved.load(h.dbPath, error));
+    const auto* user = saved.findUser("buyer");
+    const auto* record = user ? saved.findProgress(user->id) : nullptr;
+    CHECK(record != nullptr);
+    if (record) {
+        CHECK_EQ(record->itemCount(tier, "petal_rose"), remaining);
+        CHECK_EQ(record->itemCount(Rarity::Super, "petal_rose"), 20);
+        CHECK_EQ(record->itemCount(Rarity::Unique, "petal_rose"), 0);
+        CHECK(!record->extra.contains("craftLocks"));
     }
-    buyer.disconnect();
-    h.step(3, {});
-    NetClient returning;
-    CHECK(loginAs(h, returning, "buyer", "password"));
-    CHECK_EQ(returning.profile().craftableCount(rose, tier), 0u);
-    returning.setLoadoutSlot(4, kNoPetal, Rarity::Common);
-    CHECK(awaitProfile(h, returning, [&](const Profile& p) { return p.stackCount(rose, tier) == 6; }));
-    CHECK_EQ(returning.profile().craftableCount(rose, tier), 0u);
-    const auto lockedRevision = returning.profile().revision;
-    returning.requestUnlockCraftStack(rose, tier, 5);
-    CHECK(awaitProfile(h, returning, [&](const Profile& p) { return p.revision > lockedRevision; }));
-    CHECK_EQ(returning.profile().craftableCount(rose, tier), 0u);
-    returning.requestUnlockCraftStack(rose, tier, 6);
-    CHECK(awaitProfile(h, returning, [&](const Profile& p) { return p.craftableCount(rose, tier) == 6; }));
-    returning.requestCraft(rose, tier, 5);
-    CHECK(h.stepUntil({&returning}, [&] { return returning.craftOutcome().pending; }));
-    CHECK(returning.craftOutcome().attempts > 0);
-    CHECK(returning.craftOutcome().consumed > 0);
 }
 
 TEST(shop_stock_locked_moon_rock_uses_the_new_discounted_price) {

@@ -22,7 +22,7 @@
 using namespace flix;
 namespace {
 struct ArcticBlast {
-    const ContentRegistry& registry = testsupport::shippedContent();
+    const ContentRegistry& registry;
     World world;
     CommandBuffer commands{world};
     SpatialGrid grid;
@@ -31,7 +31,9 @@ struct ArcticBlast {
     CombatSystem combat;
     Entity player = NULL_ENTITY;
 
-    explicit ArcticBlast(const char* id, Rarity rarity = Rarity::Common, const char* manaSource = nullptr) {
+    explicit ArcticBlast(const char* id, Rarity rarity = Rarity::Common, const char* manaSource = nullptr,
+                         const ContentRegistry& content = testsupport::shippedContent())
+        : registry(content) {
         player = world.create();
         world.add<PlayerTag>(player);
         world.add<Transform>(player, Transform{{5000,5000},0});
@@ -450,6 +452,42 @@ TEST(zorr_feedback_worn_magic_is_paid_once_per_tick_even_while_broken) {
         CHECK(!effectActive(rig.world.get<PlayerModifiers>(rig.player)));
         if (name == "magic_cutter")
             CHECK_NEAR(activeContact - rig.world.get<ContactDamage>(rig.player).amount, 8.0, 1e-8);
+    }
+}
+
+TEST(magic_opal_preserves_direct_damage_on_a_missed_roll) {
+    for (Rarity rarity : {Rarity::Common, Rarity::Ultra, Rarity::Ascendant}) {
+        ArcticBlast rig("magic_void_opal", rarity);
+        rig.equip(1, "basic", rarity);
+        rig.tickPetals(5000.0);
+        rig.tickPetals(9000.0);
+        rig.world.get<PlayerInput>(rig.player).current.flags = net::InputAttack;
+        const auto stats = rig.registry.petalStats(rig.registry.petalIndex("basic"), rarity);
+        bool sawNormal = false;
+        bool sawTriple = false;
+        for (int i = 0; i < 40; ++i) {
+            const double now = 10000.0 + i * 5000.0;
+            rig.world.get<ManaPool>(rig.player).current = 1e9;
+            rig.tickPetals(now);
+            rig.world.get<ManaPool>(rig.player).current = 1e9;
+            rig.tickPetals(now + 2000.0);
+            CHECK_EQ(rig.world.get<PlayerModifiers>(rig.player).magicOpalTier, petalTier(rarity));
+            const auto live = rig.liveIn(1);
+            CHECK_EQ(live.size(), 1u);
+            if (live.empty()) break;
+            const double rolled = rig.world.get<MagicOpalRoll>(rig.player).multiplier;
+            CHECK(rolled == 1.0 || rolled == 3.0);
+            sawNormal |= rolled == 1.0;
+            sawTriple |= rolled == 3.0;
+            const auto target = rig.mob(rig.world.get<Transform>(live.front()).position);
+            constexpr double health = 1e9;
+            rig.world.get<Health>(target) = Health{health, health};
+            rig.combatTick(now + 2050.0);
+            CHECK_NEAR(health - rig.world.get<Health>(target).current, stats.damage * rolled, 1e-5);
+            rig.world.destroy(target);
+        }
+        CHECK(sawNormal);
+        CHECK(sawTriple);
     }
 }
 
@@ -1279,7 +1317,12 @@ TEST(magic_fission_rebuilds_the_actual_right_hand_petal_before_reload) {
 }
 
 TEST(magic_variant_mimic_uses_left_neighbor_without_recursing_or_creating_items) {
-    ArcticBlast rig("magic_mimic");
+    ContentRegistry content;
+    std::string error;
+    const bool loaded = content.load(testsupport::dataDir(), error);
+    CHECK(loaded);
+    if (!loaded) return;
+    ArcticBlast rig("magic_mimic", Rarity::Common, nullptr, content);
     const int left = rig.world.get<Loadout>(rig.player).activeSlots - 1;
     rig.equip(1, "fission");
     rig.equip(left,"rose", Rarity::Rare);
@@ -1295,6 +1338,22 @@ TEST(magic_variant_mimic_uses_left_neighbor_without_recursing_or_creating_items)
     CHECK(rig.world.get<ManaPool>(rig.player).has());
     rig.equip(left, "claw");
     CHECK_EQ(equippedPetal(rig.registry, loadout, 0).configIndex, rig.registry.petalIndex("magic_claw"));
+    rig.equip(left, "arctic_snow_stick", Rarity::Rare);
+    CHECK_EQ(equippedPetal(rig.registry, loadout, 0).configIndex, rig.registry.petalIndex("magic_stick"));
+    rig.equip(left, "glass", Rarity::Rare);
+    CHECK_EQ(equippedPetal(rig.registry, loadout, 0).configIndex,
+             rig.registry.petalIndex("magic_microplastics"));
+    rig.equip(left, "dead_leaf", Rarity::Rare);
+    CHECK_EQ(equippedPetal(rig.registry, loadout, 0).configIndex, rig.registry.petalIndex("magic_leaf"));
+    rig.equip(left, "mecha_missile", Rarity::Epic);
+    CHECK_EQ(equippedPetal(rig.registry, loadout, 0).configIndex, rig.registry.petalIndex("magic_missile"));
+    rig.equip(left, "third_eye", Rarity::Mythic);
+    CHECK_EQ(equippedPetal(rig.registry, loadout, 0).configIndex, rig.registry.petalIndex("magic_mimic"));
+    rig.equip(0, "magic_mimic", Rarity::Mythic);
+    CHECK_EQ(equippedPetal(rig.registry, loadout, 0).configIndex, rig.registry.petalIndex("magic_eye"));
+    rig.equip(0, "magic_mimic", Rarity::Common);
+    rig.equip(left, "corn", Rarity::Rare);
+    CHECK_EQ(equippedPetal(rig.registry, loadout, 0).configIndex, rig.registry.petalIndex("magic_mimic"));
     rig.equip(left, "magic_claw", Rarity::Rare);
     CHECK_EQ(equippedPetal(rig.registry, loadout, 0).configIndex, rig.registry.petalIndex("magic_claw"));
     CHECK_EQ(equippedPetal(rig.registry, loadout, 0).rarity, Rarity::Common);

@@ -609,6 +609,7 @@ struct PlayerInput {
     Entity summonFocus = NULL_ENTITY; ///< Wild mob most recently hit by the flower itself.
     double summonFocusUntilMillis = 0.0;
     std::optional<double> mirroredBubbleHeading; ///< Steering for a parked split half's bubble only.
+    Entity coordinateInputSource = NULL_ENTITY; ///< Active half supplying pet commands, never walk input.
 };
 
 /// Account-scoped identity. Cold: read on join, on save, and when someone

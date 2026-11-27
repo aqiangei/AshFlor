@@ -348,7 +348,11 @@ TEST(a_client_that_picks_the_maze_arrives_in_it_and_cannot_walk_through_its_wall
         // leader every tick, so the move below would be undone at once.
         const BodySegment* segment = world.tryGet<BodySegment>(e);
         const bool follower = segment != nullptr && !segment->head;
-        if (d < nearestDist && !follower) { nearestDist = d; nearest = e; }
+        // A ghost can be close while remaining invisible at this player's tier.
+        if (d < nearestDist && !follower && !world.has<GhostTag>(e) && !world.has<Dead>(e)) {
+            nearestDist = d;
+            nearest = e;
+        }
         farthestDist = std::max(farthestDist, d);
     });
     CHECK(farthestDist > maze.worldSize() * 0.4);

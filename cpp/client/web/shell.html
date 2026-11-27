@@ -250,6 +250,8 @@
         #landscape-hint{position:fixed;z-index:9;left:50%;bottom:max(85px,env(safe-area-inset-bottom,0px));
             transform:translateX(-50%);width:min(360px,calc(100vw - 32px));padding:14px;border-radius:12px;
             color:#fff;background:#123d27f5;font:14px/1.7 sans-serif;box-shadow:0 4px 18px #0006;}
+        .florr-game-ready #landscape-btn{top:max(12px,env(safe-area-inset-top,0px));bottom:auto;}
+        .florr-game-ready #landscape-hint{top:max(74px,calc(env(safe-area-inset-top,0px) + 62px));bottom:auto;}
         #landscape-hint button{float:right;color:white;background:transparent;border:0;font-size:20px;}
         @keyframes landscape-blink{50%{filter:brightness(1.4);box-shadow:0 0 22px #caff8c99;}}
         @media(prefers-reduced-motion:reduce){#landscape-btn{animation:none;}}
@@ -438,6 +440,7 @@
     finally{btn.disabled=false;}
   };
   window.florrMobileReady=function(){
+    document.body.classList.add('florr-game-ready');
     if(mobile&&!clicked){btn.hidden=false;clearTimeout(hideTimer);hideTimer=setTimeout(()=>{btn.hidden=true;},10000);}
   };
   // Keep the shortcut visible while loading, then for ten seconds in the game.

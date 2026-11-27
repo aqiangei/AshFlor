@@ -211,12 +211,6 @@ bool takeFromInventory(PlayerRecord& record, std::uint16_t petalIndex, Rarity ra
     return true;
 }
 
-bool takeCraftMaterials(PlayerRecord& record, std::uint16_t petalIndex, Rarity rarity, int count) {
-    return petalIndex < content().petalCount() && count > 0 &&
-           record.craftableCount(rarity, inventoryKey(petalIndex)) >= count &&
-           takeFromInventory(record, petalIndex, rarity, count);
-}
-
 void giveToInventory(PlayerRecord& record, std::uint16_t petalIndex, Rarity rarity, int count) {
     if (petalIndex == kNoPetal || count <= 0) return;
     record.addItem(rarity, inventoryKey(petalIndex), count);
@@ -403,22 +397,18 @@ PresetLoad equipPreset(PlayerRecord& record, const std::vector<std::optional<Sto
     const auto& previous = record.loadout;
     // Stage only the stacks this switch touches. A returned petal can be
     // equipped again before the final bag is checked against its stack cap.
-    struct Stack { std::int64_t count = 0; std::int64_t locked = 0; };
+    struct Stack { std::int64_t count = 0; };
     std::map<std::pair<Rarity, std::string>, Stack> stagedCounts;
     const auto countFor = [&](Rarity rarity, const std::string& key) -> Stack& {
         auto [it, inserted] = stagedCounts.try_emplace({rarity, key});
-        if (inserted) it->second = {record.itemCount(rarity, key), record.craftLockedCount(rarity, key)};
+        if (inserted) it->second = {record.itemCount(rarity, key)};
         return it->second;
     };
     const auto takeOne = [&](std::uint16_t index, Rarity rarity) -> std::optional<StoredItem> {
         auto& stack = countFor(rarity, inventoryKey(index));
         if (stack.count <= 0) return std::nullopt;
-        const bool locked = stack.count == stack.locked;
         --stack.count;
-        if (locked) --stack.locked;
-        auto item = presetItem(content().petal(index).id, rarity);
-        item.setCraftLocked(locked);
-        return item;
+        return presetItem(content().petal(index).id, rarity);
     };
     for (const std::optional<StoredItem>& worn : previous) {
         // Under its raw key, not via the index: a petal this build no longer
@@ -426,7 +416,6 @@ PresetLoad equipPreset(PlayerRecord& record, const std::vector<std::optional<Sto
         if (worn && !worn->petalType.empty()) {
             auto& stack = countFor(worn->rarity, "petal_" + worn->petalType);
             ++stack.count;
-            if (worn->craftLocked()) ++stack.locked;
         }
     }
 
@@ -459,9 +448,7 @@ PresetLoad equipPreset(PlayerRecord& record, const std::vector<std::optional<Sto
     for (std::size_t i = 0; i < next.size() && i < previous.size(); ++i) {
         if (next[i] && previous[i] && previous[i]->petalType == next[i]->petalType &&
             previous[i]->rarity == next[i]->rarity) {
-            const bool locked = next[i]->craftLocked();
             next[i] = previous[i];
-            next[i]->setCraftLocked(locked);
         }
     }
     for (const auto& [key, stack] : stagedCounts) {
@@ -472,7 +459,6 @@ PresetLoad equipPreset(PlayerRecord& record, const std::vector<std::optional<Sto
     }
     for (const auto& [key, stack] : stagedCounts) {
         record.setItemCount(key.first, key.second, static_cast<int>(stack.count));
-        record.setCraftLockedCount(key.first, key.second, static_cast<int>(stack.locked));
     }
     record.loadout = std::move(next);
     return result;
@@ -697,7 +683,7 @@ bool hasHighRarityTransferItems(const PlayerRecord& progress) {
 Json transferableProgress(const PlayerRecord& record) {
     const Json source = playerRecordJson(record);
     Json result = Json::object();
-    for (const char* field : {"totalXP", "stars", "inventory", "craftLocks", "mobKills", "loadout",
+    for (const char* field : {"totalXP", "stars", "inventory", "mobKills", "loadout",
             "loadoutInInventory", "loadoutPresets", "skills", "tp", "talentPointBonus",
             "mazeTotalXP", "mazeSkills", "mazeTp", "dailyStreak", "lastStreakDate",
             "lastStreakReward", "loadoutPresetSkills", "presetAutosaveOff",
@@ -710,7 +696,6 @@ Json transferableProgress(const PlayerRecord& record) {
         if (source.contains(field)) result[field] = source[field];
     }
     if (result["inventory"].isObject()) result["inventory"].erase("admin");
-    if (result.contains("craftLocks")) result["craftLocks"].erase("admin");
     stripTransferSlots(result["loadout"]);
     if (result["loadoutPresets"].isObject()) {
         for (const auto& name : result["loadoutPresets"].keys())
@@ -3146,7 +3131,7 @@ void GameServer::replicate(double nowMillis, double wallMillis) {
         auto& job = snapshotJobs_[count++];
         job.connection = session.connection;
         job.view = &views_.at(session.connection);
-        collectSquadBodies(session, job.squad);
+        collectSquadBodies(session, job.alwaysVisible);
 
         // Built around the flower this client is WATCHING, which is another
         // player's while an admin steers it -- and culled to the window this
@@ -3156,6 +3141,12 @@ void GameServer::replicate(double nowMillis, double wallMillis) {
         // serviceControl did, this tick, and every way out of it since has
         // ended it on the spot.
         const Entity viewpoint = viewpointOf(session);
+        // Keep the nearby trader in the snapshot even on a narrow or zoomed-in viewport.
+        if (const auto* at = world_.tryGet<Transform>(viewpoint)) {
+            const Entity trader = npcs_->findService(world_, NpcService::Trader, at->position,
+                                                     at->realm, kTraderServiceReach + kNpcServiceSlack);
+            if (trader != NULL_ENTITY) job.alwaysVisible.push_back(trader);
+        }
         frame.splitOther = viewpoint == session.entity ? session.splitOther : NULL_ENTITY;
         frame.wave = dungeons_ ? dungeons_->waveHudFor(world_, viewpoint, frame.nowMillis) : net::WaveHud{};
         frame.viewport.reset();
@@ -3643,7 +3634,6 @@ void GameServer::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ClientMessage::Assemble:
         case net::ClientMessage::Absorb:
         case net::ClientMessage::BuyPetal:
-        case net::ClientMessage::UnlockCraftStack:
         case net::ClientMessage::UpgradeSkill:
         case net::ClientMessage::DowngradeSkill:
         case net::ClientMessage::ResetSkills:
@@ -3744,7 +3734,6 @@ void GameServer::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ClientMessage::UsePetal:      handleUsePetal(*session, reader); break;
         case net::ClientMessage::Craft:         handleCraft(*session, connection, reader); break;
         case net::ClientMessage::HelPlinko:     handleHelPlinko(*session, connection, reader); break;
-        case net::ClientMessage::UnlockCraftStack: handleUnlockCraftStack(*session, connection, reader); break;
         case net::ClientMessage::OracleCraft:   handleOracleCraft(*session, connection, reader); break;
         case net::ClientMessage::OracleShopForecast:
             handleOracleShopForecast(*session, connection, reader);
@@ -4563,7 +4552,7 @@ void GameServer::sendProfile(Session& session, net::Connection& connection) {
         w.u16(index);
         w.u8(static_cast<std::uint8_t>(rarity));
         w.u32(count);
-        w.u32(static_cast<std::uint32_t>(record.craftLockedCount(rarity, inventoryKey(index))));
+        w.u32(0); // Reserved inventory field, formerly the shopping lock count.
         ++stackCount;
     });
     w.patchU16(stackCountAt, stackCount);
@@ -5358,8 +5347,6 @@ void GameServer::handleSetLoadout(Session& session, ByteReader& reader) {
     // counts: a stack the client shows and this record does not hold was
     // edited into its memory or is a Profile out of date, and either way it is
     // put right.
-    const bool equippingLocked = petalIndex != kNoPetal &&
-        record.craftableCount(rarity, inventoryKey(petalIndex)) == 0;
     if (petalIndex != kNoPetal && !takeFromInventory(record, petalIndex, rarity, 1)) {
         if (net::Connection* connection = listener_.find(session.connection)) {
             resyncProfile(session, *connection);
@@ -5374,10 +5361,6 @@ void GameServer::handleSetLoadout(Session& session, ByteReader& reader) {
         const std::uint16_t previousIndex = content().petalIndex(previous.petalType);
         if (previousIndex != kInvalidIndex) {
             giveToInventory(record, previousIndex, previous.rarity, 1);
-            if (previous.craftLocked()) {
-                const auto key = inventoryKey(previousIndex);
-                record.setCraftLockedCount(previous.rarity, key, record.craftLockedCount(previous.rarity, key) + 1);
-            }
         }
     }
 
@@ -5388,7 +5371,6 @@ void GameServer::handleSetLoadout(Session& session, ByteReader& reader) {
         item.type = "petal";
         item.petalType = content().petal(petalIndex).id;
         item.rarity = rarity;
-        item.setCraftLocked(equippingLocked);
         record.loadout[slot] = item;
     }
     autoSaveActivePreset(record, PresetSlots{}.set(slot));
@@ -5404,8 +5386,7 @@ std::uint32_t GameServer::profileDigest(Session& session) {
     const PlayerRecord& record = liveRecord(session);
     net::ProfileDigest digest;
     forEachProfileStack(record, [&](std::uint16_t index, Rarity rarity, std::uint32_t count) {
-        digest.stack(index, static_cast<std::uint8_t>(rarity), count,
-                     static_cast<std::uint32_t>(record.craftLockedCount(rarity, inventoryKey(index))));
+        digest.stack(index, static_cast<std::uint8_t>(rarity), count);
     });
     // The bar as sendProfile writes it: the maze's ring is the account's one
     // tier down.
@@ -5709,7 +5690,7 @@ void GameServer::handleCraft(Session& session, net::Connection& connection, Byte
                         (petalCraftsToApex(content(), petalIndex) &&
                          record.itemCount(Rarity::Ascendant, inventoryKey(petalIndex)) <=
                              kMaxStackCount - static_cast<int>(count / kCraftBatch)));
-    if (!valid || !takeCraftMaterials(record, petalIndex, rarity, static_cast<int>(count))) {
+    if (!valid || !takeFromInventory(record, petalIndex, rarity, static_cast<int>(count))) {
         w.boolean(false);
         w.u16(petalIndex);
         w.u8(static_cast<std::uint8_t>(rarity));
@@ -5717,9 +5698,8 @@ void GameServer::handleCraft(Session& session, net::Connection& connection, Byte
         w.u8(0);
         const bool ownApex = rarity == Rarity::PermanentHyper && petalIndex < content().petalCount() &&
                              !petalCraftsToApex(content(), petalIndex);
-        const bool locked = valid && record.itemCount(rarity, inventoryKey(petalIndex)) >= static_cast<int>(count);
-        w.str(ownApex ? kOwnApexRefusal : locked ? "Unlock the shop purchases before crafting."
-                                               : "Not enough petals to craft.");
+
+        w.str(ownApex ? kOwnApexRefusal : "Not enough petals to craft.");
         w.u32(0); w.u32(0);
         if (!quiet) connection.send(w);
         if (!quiet) resyncProfile(session, connection);
@@ -5835,7 +5815,7 @@ void GameServer::handleBulkCraft(Session& session, net::Connection& connection, 
             if (toApex ? !petalCraftsToApex(content(), petal)
                        : config.id == "timed_mjolnir" || !petalComesAt(config, rarity)) continue;
             const auto key = inventoryKey(petal);
-            const auto owned = record.craftableCount(rarity, key);
+            const auto owned = record.itemCount(rarity, key);
             std::int64_t materials = std::min<std::int64_t>(owned, kMaxStackCount);
             int previousApex = 0;
             if (toApex) {
@@ -5855,7 +5835,7 @@ void GameServer::handleBulkCraft(Session& session, net::Connection& connection, 
 
             if (toApex) {
                 apexCrafted += record.itemCount(Rarity::Ascendant, key) - previousApex;
-                phConsumed += owned - record.craftableCount(rarity, key);
+                phConsumed += owned - record.itemCount(rarity, key);
             }
         }
     }
@@ -5946,7 +5926,7 @@ void GameServer::handleBulkCraftMythicUltra(Session& session, net::Connection& c
             if (count == 0) continue;
             const auto key = inventoryKey(petal);
             // A ticket approves only the listed quantities. Extra stock is left alone.
-            if (record.craftableCount(rarity, key) < static_cast<int>(count)) {
+            if (record.itemCount(rarity, key) < static_cast<int>(count)) {
                 resyncProfile(session, connection);
                 refuse("合成材料已变化，请核对数量后重新确认。");
                 return;
@@ -6090,7 +6070,7 @@ void GameServer::handleOracleCraft(Session& session, net::Connection& connection
         refuse("The resulting stack would be too large.");
         return;
     }
-    if (!takeCraftMaterials(record, petalIndex, rarity, cost)) {
+    if (!takeFromInventory(record, petalIndex, rarity, cost)) {
         refuse("Not enough petals.");
         resyncProfile(session, connection);
         return;
@@ -6147,7 +6127,7 @@ void GameServer::handleTrade(Session& session, net::Connection& connection, Byte
         return;
     }
     if (npcs_->findService(world_, NpcService::Trader, body->position, body->realm,
-                           kNpcServiceReach + kNpcServiceSlack) == NULL_ENTITY) {
+                           kTraderServiceReach + kNpcServiceSlack) == NULL_ENTITY) {
         refuse("You are too far from the trader.");
         return;
     }
@@ -6388,7 +6368,7 @@ void GameServer::handleAssemble(Session& session, net::Connection& connection,
     for (const AssemblyRecipe::Stack& input : recipe.inputs) {
         const std::int64_t need = takes(input.petal) * count;
         if (!petalComesAt(content().petal(input.petal),rarity) || need > kMaxStackCount ||
-            record.craftableCount(rarity, inventoryKey(input.petal)) < need) {
+            record.itemCount(rarity, inventoryKey(input.petal)) < need) {
             reply(0, "You don't have enough " + content().petal(input.petal).name + ".");
             resyncProfile(session, connection);
             return;
@@ -6399,7 +6379,7 @@ void GameServer::handleAssemble(Session& session, net::Connection& connection,
     std::vector<std::uint16_t> taken;
     for (const AssemblyRecipe::Stack& input : recipe.inputs) {
         if (std::find(taken.begin(), taken.end(), input.petal) != taken.end()) continue;
-        takeCraftMaterials(record, input.petal, rarity,
+        takeFromInventory(record, input.petal, rarity,
                           static_cast<int>(takes(input.petal) * count));
         taken.push_back(input.petal);
     }
@@ -6622,7 +6602,7 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
                 : titanForgeEligible(id);
             if (!eligible) continue;
             const auto key = inventoryKey(index);
-            const int owned = record.craftableCount(inputTier, key);
+            const int owned = record.itemCount(inputTier, key);
             if (owned == 0) continue;
             const int space = kMaxStackCount - record.itemCount(outputTier, key);
             TitanForgeBatch exchange;
@@ -6635,7 +6615,7 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
                 exchange = titanForgeBatch(owned, space, completed, id);
             }
             if (exchange.quantity <= 0 ||
-                !takeCraftMaterials(record, index, inputTier, exchange.cost)) continue;
+                !takeFromInventory(record, index, inputTier, exchange.cost)) continue;
             giveToInventory(record, index, outputTier, exchange.quantity);
             if (!permanentHyper)
                 record.extra["titanForgeCounts"][id] = std::min(2, completed + exchange.quantity);
@@ -6674,7 +6654,7 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
             reply(false, "永久超凡堆叠已满。");
             return;
         }
-        if (!takeCraftMaterials(record, petalIndex, Rarity::Unique, kPermanentHyperCost)) {
+        if (!takeFromInventory(record, petalIndex, Rarity::Unique, kPermanentHyperCost)) {
             reply(false, "需要 30 个未装备的同种永恒花瓣。");
             resyncProfile(session, connection);
             return;
@@ -6770,10 +6750,10 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
     }
     const int firstCost = titanForgeCost(completed, petal.id);
     const auto exchange = batch
-        ? titanForgeBatch(record.craftableCount(kTitanInputRarity, inventoryKey(petalIndex)),
+        ? titanForgeBatch(record.itemCount(kTitanInputRarity, inventoryKey(petalIndex)),
                           space, completed, petal.id)
         : TitanForgeBatch{1, firstCost};
-    if (exchange.quantity == 0 || !takeCraftMaterials(record, petalIndex, kTitanInputRarity, exchange.cost)) {
+    if (exchange.quantity == 0 || !takeFromInventory(record, petalIndex, kTitanInputRarity, exchange.cost)) {
         reply(false, "需要 " + std::to_string(firstCost) + " 个同种超级花瓣。");
         resyncProfile(session, connection);
         return;
@@ -7515,33 +7495,11 @@ void GameServer::handleBuyPetal(Session& session, net::Connection& connection, B
             }
         }
     }
-    const auto boughtKey = inventoryKey(petalIndex);
     giveToInventory(record, petalIndex, rarity, quantity);
-    record.setCraftLockedCount(rarity, boughtKey, record.craftLockedCount(rarity, boughtKey) + static_cast<int>(quantity));
     database_.markDirty();
     sendProfile(session, connection);
     sendDropBonus(session, connection);
     sendShopResult(connection, net::ShopResultKind::Purchase, true, 0, {});
-}
-
-void GameServer::handleUnlockCraftStack(Session& session, net::Connection& connection, ByteReader& reader) {
-    const auto petal = reader.u16();
-    const auto rawRarity = reader.u8();
-    const auto expected = reader.u32();
-    const auto revision = reader.u32();
-    if (!reader.ok() || reader.remaining() != 0 || !session.authenticated() || session.inRift ||
-        session.arena || petal >= content().petalCount() || rawRarity >= kRarityCount || expected == 0)
-        return;
-
-    auto& record = database_.progress(session.userId);
-    const auto rarity = static_cast<Rarity>(rawRarity);
-    const auto key = inventoryKey(petal);
-    if (revision == session.profileRevision &&
-        expected == static_cast<std::uint32_t>(record.craftLockedCount(rarity, key))) {
-        record.setCraftLockedCount(rarity, key, 0);
-        database_.markDirty();
-    }
-    sendProfile(session, connection);
 }
 
 /// Redeems a star code.

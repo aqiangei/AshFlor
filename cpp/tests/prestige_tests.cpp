@@ -4693,13 +4693,14 @@ TEST(zorr_dna_hatches_bio_and_other_eggs_at_the_actual_tier) {
         auto& bar = world.get<Loadout>(flower).slots;
         const auto eggIndex = registry.petalIndex(id);
         CHECK(eggIndex < registry.petalCount());
-        if (eggIndex >= registry.petalCount()) return;
+        if (eggIndex >= registry.petalCount()) return std::pair{0.0, 0.0};
         bar[0] = {eggIndex, eggTier};
         for (int slot = 1; slot <= dnaCopies; ++slot) {
             bar[slot] = {registry.petalIndex("dna"), dnaTier};
         }
 
         int checked = 0, upgraded = 0;
+        std::pair<double, double> stats{};
         for (int tick = 1; tick < 10000 && checked < 4000; ++tick) {
             petals.run(world, registry, tick * 60000.0, net::kTickSeconds, commands);
             commands.flush();
@@ -4710,6 +4711,7 @@ TEST(zorr_dna_hatches_bio_and_other_eggs_at_the_actual_tier) {
                     CHECK(type.rarity == normal || higher);
                     upgraded += higher;
                     ++checked;
+                    stats = {world.get<Health>(entity).max, world.get<ContactDamage>(entity).amount};
                 }
                 world.destroy(entity);
             }
@@ -4719,6 +4721,7 @@ TEST(zorr_dna_hatches_bio_and_other_eggs_at_the_actual_tier) {
                     rarityIndex(normal), checked, upgraded);
         CHECK(checked >= 4000);
         CHECK(upgraded >= minUpgrades && upgraded <= maxUpgrades);
+        return stats;
     };
     trial("bio_bacteria_egg", Rarity::Rare, Rarity::Rare, Rarity::Rare, 1, Rarity::Epic, 20, 65);
     trial("arctic_spider_egg", Rarity::Mythic, Rarity::Mythic, Rarity::Legendary, 1, Rarity::Mythic, 20, 65);
@@ -4730,8 +4733,17 @@ TEST(zorr_dna_hatches_bio_and_other_eggs_at_the_actual_tier) {
           Rarity::Apex, 1, Rarity::Ascendant, 20, 65);
     trial("jurassic_tyrannosaurus_egg", Rarity::PermanentHyper, Rarity::PermanentHyper,
           Rarity::Apex, 8, Rarity::Ascendant, 245, 410);
-    trial("jurassic_tyrannosaurus_egg", Rarity::Ascendant, Rarity::Ascendant,
-          Rarity::Ascendant, 8, Rarity::Ascendant, 0, 0);
+    const auto base = trial("jurassic_tyrannosaurus_egg", Rarity::Ascendant, Rarity::Ascendant,
+                            Rarity::Ascendant, 0, Rarity::Ascendant, 0, 0);
+    for (const auto& [tier, copies, scale] : {
+             std::tuple{Rarity::PermanentHyper, 1, 1.0},
+             std::tuple{Rarity::Ascendant, 1, 1.05},
+             std::tuple{Rarity::Ascendant, 8, 1.20}}) {
+        const auto scaled = trial("jurassic_tyrannosaurus_egg", Rarity::Ascendant, tier,
+                                  Rarity::Ascendant, copies, Rarity::Ascendant, 0, 0);
+        CHECK_NEAR(scaled.first / base.first, scale, 1e-9);
+        CHECK_NEAR(scaled.second / base.second, scale, 1e-9);
+    }
 }
 
 TEST(zorr_bio_blood_cells_fire_their_own_ammo) {

@@ -79,7 +79,6 @@ const char* clientMessageName(std::uint8_t id) {
         case net::ClientMessage::BulkCraftMythicUltra: return "bulkCraftMythicUltra";
         case net::ClientMessage::HelPlinko: return "helPlinko";
         case net::ClientMessage::TraderAccess: return "traderAccess";
-        case net::ClientMessage::UnlockCraftStack: return "unlockCraftStack";
         case net::ClientMessage::LoadLoadoutPreset:   return "loadLoadoutPreset";
         case net::ClientMessage::Trade:               return "trade";
         case net::ClientMessage::AdminDb:             return "adminDb";
@@ -776,15 +775,6 @@ void NetClient::requestBuyPetal(std::uint16_t petalIndex, Rarity rarity, int off
     send(w);
 }
 
-void NetClient::requestUnlockCraftStack(std::uint16_t petalIndex, Rarity rarity, std::uint32_t locked) {
-    ByteWriter w;
-    beginMessage(w, net::ClientMessage::UnlockCraftStack);
-    w.u16(petalIndex);
-    w.u8(static_cast<std::uint8_t>(rarity));
-    w.u32(locked);
-    w.u32(profile_.revision);
-    send(w);
-}
 
 void NetClient::requestRedeemCode(const std::string& code) {
     ByteWriter w;
@@ -1364,7 +1354,7 @@ void NetClient::sendProfileCheck() {
     // count edited in place since is exactly what the server is asked about.
     net::ProfileDigest digest;
     for (const Profile::Stack& stack : profile_.inventory) {
-        digest.stack(stack.petalIndex, static_cast<std::uint8_t>(stack.rarity), stack.count, stack.craftLocked);
+        digest.stack(stack.petalIndex, static_cast<std::uint8_t>(stack.rarity), stack.count);
     }
     for (std::size_t i = 0; i < profile_.loadout.size(); ++i) {
         const Profile::Slot& slot = profile_.loadout[i];
@@ -1441,9 +1431,13 @@ void NetClient::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ServerMessage::Profile:      handleProfile(reader); break;
         case net::ServerMessage::ProfileDelta: handleProfileDelta(reader); break;
         case net::ServerMessage::HelPlinko: {
-            const HelPlinkoReply result{reader.u32(), reader.u8(), reader.u16()};
+            HelPlinkoReply result{reader.u32(), reader.u8(), reader.u16()};
             if (reader.ok() && result.request != 0 && result.request <= helPlinkoRequest_ &&
                 helPlinkoReplies_.size() < 32) {
+                // The corresponding inventory update precedes this reply on the wire.
+                const auto chip = content().petalIndex(kPlinkoChipPetal);
+                for (std::size_t i = 0; i < kPlinkoTiers.size(); ++i)
+                    result.chipBalances[i] = profile_.stackCount(chip, kPlinkoTiers[i]);
                 helPlinkoReplies_.push_back(result);
             }
             break;
@@ -1725,7 +1719,7 @@ void NetClient::handleProfile(ByteReader& reader) {
         stack.petalIndex = reader.u16();
         stack.rarity = clampRarity(reader.u8());
         stack.count = reader.u32();
-        stack.craftLocked = std::min(stack.count, reader.u32());
+        reader.u32(); // Reserved inventory field.
         next.inventory.push_back(stack);
     }
 

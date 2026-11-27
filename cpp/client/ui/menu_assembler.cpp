@@ -154,7 +154,7 @@ int affordable(const Profile& profile, const AssemblyRecipe& recipe, Rarity tier
         if (!knownPetal(input.petal)) return 0;
         const std::int64_t takes = assemblerInputCount(recipe, content(), tier, input.petal,
                                                        recipe.takes(input.petal));
-        const std::int64_t held = static_cast<std::int64_t>(profile.craftableCount(input.petal, tier));
+        const std::int64_t held = static_cast<std::int64_t>(profile.stackCount(input.petal, tier));
         most = static_cast<int>(std::min<std::int64_t>(most, held / takes));
     }
     return most;
@@ -464,7 +464,7 @@ bool AssemblerPanel::render(MenuContext& ctx, std::uint16_t mobIndex, Rarity tie
         tile.timeSeconds = now;
         // florr's "held/needed": what the bag holds, and what the count in
         // the field takes of it -- one run's worth while the field reads 0.
-        const std::uint64_t held = profile.craftableCount(input, tier);
+        const std::uint64_t held = profile.stackCount(input, tier);
         const auto perRun = assemblerInputCount(recipe, content(), tier, input, recipe.inputs[i].count);
         const std::uint64_t needed = static_cast<std::uint64_t>(perRun) *
                                      static_cast<std::uint64_t>(std::max(1, count));

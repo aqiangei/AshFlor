@@ -99,7 +99,7 @@ TEST(parallel_snapshots_match_serial_bytes_across_frames_and_membership_changes)
         for (unsigned i = 0; i < count; ++i) {
             a[i].viewer = b[i].viewer = players[i];
             a[i].view = &parallelViews[i]; b[i].view = &serialViews[i];
-            a[i].squad = b[i].squad = {players[(i + 1) % players.size()],
+            a[i].alwaysVisible = b[i].alwaysVisible = {players[(i + 1) % players.size()],
                                         players[(i + 13) % players.size()]};
             a[i].frame.tick = b[i].frame.tick = frame * 3;
             a[i].frame.snapshotIndex = b[i].frame.snapshotIndex = frame;

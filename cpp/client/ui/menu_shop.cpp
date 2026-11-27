@@ -94,7 +94,6 @@ constexpr double kHeaderHeight = (kOffersHeadingSize + kSubSize) * kLineHeight +
 /// Lock: 25 tall and its label plus 25 wide, right-aligned with the cards and
 /// centred on the two header lines.
 constexpr double kLockHeight = 25.0;
-constexpr double kLockExtra = 25.0;
 constexpr double kLockSize = 14.0;
 constexpr std::uint32_t kLockFace = 0x72D862u;
 
@@ -704,8 +703,8 @@ bool ShopPanel::render(MenuContext& ctx) {
         } else {
             state.modal = ShopState::Modal::Alert;
             state.lines = wrapMessage(trEnZh(
-                "Purchased. Use Shop locks in the crafting menu to unlock these petals.",
-                "购买成功，花瓣已锁定。需要合成时，去合成面板点「解锁购物花瓣」。"),
+                "Purchase successful.",
+                "购买成功。"),
                 kDialogLineSize, 260.0);
         }
     }

@@ -1793,7 +1793,7 @@ TEST(the_trader_serves_only_a_flower_standing_at_it) {
     CHECK(awaitTrade(h, client, outcome));
     CHECK(!outcome.success);
 
-    client.joinGame(1920, 1080, {}, "merchant");
+    client.joinGame(480, 480, {}, "merchant");
     CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; },
                       200));
     h.step(3, {&client});
@@ -1808,18 +1808,26 @@ TEST(the_trader_serves_only_a_flower_standing_at_it) {
     // has cruised to: refused...
     Vec2 at = world.get<Transform>(trader).position;
     world.get<Transform>(player).position =
-        Vec2{at.x + radius + kNpcServiceReach + kNpcServiceSlack + 40.0, at.y};
+        Vec2{at.x + radius + kTraderServiceReach + kNpcServiceSlack + 40.0, at.y};
     h.step(1, {&client});
     client.requestTrade(rose, Rarity::Common);
     CHECK(awaitTrade(h, client, outcome));
     CHECK(!outcome.success);
     CHECK(outcome.reason.find("far") != std::string::npos);
 
+    // Within the expanded client range, the trader is replicated off screen.
+    at = world.get<Transform>(trader).position;
+    world.get<Transform>(player).position =
+        Vec2{at.x, at.y + radius + kTraderServiceReach - 40.0};
+    const auto traderId = world.get<NetId>(trader).value;
+    CHECK(h.stepUntil({&client}, [&] {
+        return client.view().entities().count(traderId) != 0;
+    }));
     // ...and just inside, served. It has flown on while the refusal came
     // back, so "at the trader" is looked up again.
     at = world.get<Transform>(trader).position;
     world.get<Transform>(player).position =
-        Vec2{at.x + radius + kNpcServiceReach + kNpcServiceSlack - 40.0, at.y};
+        Vec2{at.x + radius + kTraderServiceReach + kNpcServiceSlack - 40.0, at.y};
     h.step(1, {&client});
     client.requestTrade(rose, Rarity::Common);
     CHECK(awaitTrade(h, client, outcome));

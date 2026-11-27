@@ -1695,6 +1695,8 @@ inline double stemCellHealChance(Rarity rarity) {
 }
 inline constexpr double kStemCellHealChanceCap = .25;
 inline constexpr double kDnaChancePerSource = .01;
+inline constexpr double kApexDnaStrengthPerSource = .05;
+inline constexpr int kApexDnaStrengthMaxSources = 4;
 inline constexpr double kAfflictionExtensionCapMillis = 6000.0;
 inline double oxygenBurnExtensionMillis(Rarity rarity) { return 100.0 * (1 + ladderIndex(rarity)); }
 inline double cyanidePoisonExtensionMillis(Rarity rarity) { return 150.0 * (1 + ladderIndex(rarity)); }
@@ -2070,6 +2072,13 @@ public:
         return index < magicForm_.size() ? magicForm_[index] : kInvalidIndex;
     }
 
+    /// Mimic also recognizes a source with one unambiguous mob-specific form.
+    std::uint16_t magicMimicFormOf(std::uint16_t index) const {
+        const auto standard = magicFormOf(index);
+        if (standard != kInvalidIndex || index >= mimicMagicForm_.size()) return standard;
+        return mimicMagicForm_[index];
+    }
+
     /// Whether this petal is some other petal's magic form -- a petal that is
     /// only ever OBTAINED by converting one, never dropped on its own.
     bool isMagicForm(std::uint16_t index) const {
@@ -2108,6 +2117,7 @@ private:
     std::vector<std::uint16_t> magicForm_;
     /// The reverse: a magic petal -> the ordinary one it is the form of.
     std::vector<std::uint16_t> magicSource_;
+    std::vector<std::uint16_t> mimicMagicForm_;
     /// See standInMobs().
     std::vector<std::uint16_t> standIns_;
     /// Petal index -> petalStats() at every tier. See there.
@@ -2209,9 +2219,8 @@ EquippedPetal resolveEquippedPetal(const ContentRegistry& registry, int slot, Sl
         if (position >= activeSlots) return self;
         const EquippedPetal left = slotAt(slot - position + (position + activeSlots - 1) % activeSlots);
         if (left.empty()) return self;
-        const auto magic = registry.isMagicForm(left.configIndex) ? left.configIndex :
-            registry.petal(left.configIndex).id == "rose" && registry.petalIndex("mana_orb") != kInvalidIndex
-            ? registry.petalIndex("mana_orb") : registry.magicFormOf(left.configIndex);
+        const auto magic = registry.isMagicForm(left.configIndex)
+            ? left.configIndex : registry.magicMimicFormOf(left.configIndex);
         if (magic != kInvalidIndex && registry.petal(magic).id != "magic_mimic" &&
             petalComesAt(registry.petal(magic), self.rarity)) return {magic, self.rarity, left.rarity};
         return self;

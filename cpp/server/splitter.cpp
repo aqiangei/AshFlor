@@ -90,6 +90,7 @@ void GameServer::parkBody(Entity body, bool stopMotion) {
         input->current.rotationStep = previous.rotationStep;
         input->current.flags = net::InputNoPetPointer;
         input->mirroredBubbleHeading.reset();
+        input->coordinateInputSource = NULL_ENTITY;
     }
     if (stopMotion) {
         if (Motion* motion = world_.tryGet<Motion>(body)) motion->velocity = {0, 0};
@@ -284,6 +285,8 @@ void GameServer::endSplit(Session& session, double nowMillis, bool armReload) {
     if (!session.split()) return;
     const Entity parked = session.splitOther;
     session.splitOther = NULL_ENTITY;
+    if (auto* input = world_.tryGet<PlayerInput>(session.entity))
+        input->coordinateInputSource = NULL_ENTITY;
     // Released attacks outlive this body. Keep their credit on the surviving
     // half before removing the old owner, or later kills have no loot claimant.
     if (world_.isAlive(session.entity) && !world_.has<Dead>(session.entity)) {
@@ -351,6 +354,7 @@ void GameServer::switchSplitHalf(Session& session, double nowMillis) {
     if (auto* input = world_.tryGet<PlayerInput>(session.entity)) {
         input->current = heldInput;
         input->mirroredBubbleHeading.reset();
+        input->coordinateInputSource = NULL_ENTITY;
     }
 
     // The client learns which flower is its own from the SELF FLAG on a spawn
@@ -444,6 +448,7 @@ void GameServer::serviceSplitters(double nowMillis) {
                 spareInput->current.aimAngle = activeInput->current.aimAngle;
                 spareInput->current.aimDistance = activeInput->current.aimDistance;
                 spareInput->current.rotationStep = activeInput->current.rotationStep;
+                spareInput->coordinateInputSource = session.entity;
                 if (activeInput->current.moveStrength > 0.0)
                     spareInput->mirroredBubbleHeading = activeInput->current.moveAngle;
             }

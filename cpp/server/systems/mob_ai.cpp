@@ -72,20 +72,35 @@ bool petPointer(World& world, Entity owner, Rarity petRarity, Vec2 ownerPosition
     const auto* mods = world.tryGet<PlayerModifiers>(owner);
     const auto* input = world.tryGet<PlayerInput>(owner);
     if (!mods || !mods->controlsPets || !input) return false;
-    const auto& frame = input->current;
     const bool coordinate = petalTier(petRarity) <= mods->coordinateControlTier;
+    Entity source = owner;
+    Vec2 sourcePosition = ownerPosition;
+    if (coordinate && input->coordinateInputSource != NULL_ENTITY) {
+        const Entity active = input->coordinateInputSource;
+        const auto* activeInput = world.tryGet<PlayerInput>(active);
+        const auto* activeAt = world.tryGet<Transform>(active);
+        const auto* ownerAt = world.tryGet<Transform>(owner);
+        if (activeInput && activeAt && ownerAt && activeAt->realm == ownerAt->realm &&
+            !world.has<Dead>(active)) {
+            input = activeInput;
+            source = active;
+            sourcePosition = activeAt->position;
+        }
+    }
+    const auto& frame = input->current;
     const bool directional = coordinate && (frame.flags & net::InputPetMoveDirection) &&
                              frame.moveStrength > 0.0;
-    if (!directional && ((!coordinate && !(petRarity < mods->petControlRarity)) ||
+    if (!directional && ((!coordinate && petalTier(petRarity) >= petalTier(mods->petControlRarity)) ||
                          (frame.flags & net::InputNoPetPointer))) return false;
 
-    const auto* location = world.tryGet<PlayerLocation>(owner);
+    const auto* location = world.tryGet<PlayerLocation>(source);
     const Vec2 half = (location ? location->viewport : Vec2{kViewportWidth, kViewportHeight}) * 0.5;
+    const Vec2 centre = directional ? ownerPosition : sourcePosition;
     const Vec2 offset = directional
-        ? petPosition - ownerPosition + Vec2::fromAngle(frame.moveAngle,
+        ? petPosition - centre + Vec2::fromAngle(frame.moveAngle,
               kPetPointerSlowDistance * std::min(1.0, frame.moveStrength))
         : Vec2::fromAngle(frame.aimAngle, frame.aimDistance);
-    pointer = ownerPosition + Vec2{clamp(offset.x, -half.x, half.x), clamp(offset.y, -half.y, half.y)};
+    pointer = centre + Vec2{clamp(offset.x, -half.x, half.x), clamp(offset.y, -half.y, half.y)};
     return true;
 }
 

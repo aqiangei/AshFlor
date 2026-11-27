@@ -2350,6 +2350,37 @@ TEST(a_worn_cursor_walks_pets_below_its_tier_to_the_pointer) {
     CHECK_EQ(sim.brainOf(below).target, NULL_ENTITY);
 }
 
+TEST(hyper_and_apex_cursor_control_summons_using_gameplay_rarity) {
+    CHECK(contentReady());
+    Sim sim;
+    PetalSystem petals;
+    const Entity owner = sim.spawnPlayer(kOrigin);
+    sim.world.add<Loadout>(owner);
+    sim.world.add<PetalRing>(owner);
+    const auto cursor = content().petalIndex("cursor");
+    const Entity permanent = sim.spawnMob("soldier_ant", kOrigin + Vec2{0, 100}, Rarity::PermanentHyper);
+    const Entity apex = sim.spawnMob("soldier_ant", kOrigin + Vec2{0, -100}, Rarity::Ascendant);
+    sim.world.add<Pet>(permanent, Pet{owner, 0});
+    sim.world.add<Pet>(apex, Pet{owner, 0});
+    sim.world.ensure<PlayerInput>(owner).current.aimDistance = 500;
+    const Entity prey = sim.spawnMob("rock", kOrigin - Vec2{300, 0});
+
+    sim.world.get<Loadout>(owner).slots[0] = {cursor, Rarity::PermanentHyper};
+    petals.foldModifiers(sim.world, content());
+    CHECK_EQ(sim.world.get<PlayerModifiers>(owner).petControlRarity, Rarity::Universal);
+    sim.tick(150);
+    CHECK(distance(sim.positionOf(permanent), kOrigin + Vec2{500, 0}) < 15.0);
+    CHECK_EQ(sim.brainOf(apex).target, prey);
+
+    sim.world.get<Loadout>(owner).slots[0] = {cursor, Rarity::Ascendant};
+    petals.foldModifiers(sim.world, content());
+    CHECK_EQ(sim.world.get<PlayerModifiers>(owner).petControlRarity, Rarity::Ascendant);
+    sim.world.get<PlayerInput>(owner).current.aimAngle = kPi * 0.5;
+    sim.tick(240);
+    CHECK(distance(sim.positionOf(permanent), kOrigin + Vec2{0, 500}) < 15.0);
+    CHECK_EQ(sim.brainOf(apex).target, prey);
+}
+
 TEST(coordinate_routes_directional_input_at_its_own_tier_and_returns_to_pointer) {
     CHECK(contentReady());
     Sim sim;

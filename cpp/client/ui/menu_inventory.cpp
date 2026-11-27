@@ -767,6 +767,12 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         special("单片每次孵化基础突变概率：", "Base mutation chance per hatch with one DNA: ",
                 kDnaChancePerSource * 100.0, "%");
     }
+    if ((config.id == "dna" || config.id == "magic_dna") && rarity == Rarity::Ascendant) {
+        special("每片为原生 Apex 蛋宠增加生命与伤害：+", "Health and damage per copy for eggs that hatch at Apex: +",
+                kApexDnaStrengthPerSource * 100.0, "%");
+        special("原生 Apex 蛋宠加成上限：+", "Apex hatchling bonus cap: +",
+                kApexDnaStrengthPerSource * kApexDnaStrengthMaxSources * 100.0, "%");
+    }
     if (config.id == "oxygen" || config.id == "void_cyanide") {
         if (config.id == "oxygen")
             special("每次延长已有灼烧：", "Existing burn extension per hit: ",

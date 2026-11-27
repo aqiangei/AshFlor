@@ -381,10 +381,10 @@ TEST(apex_bulk_craft_confirmation_only_spends_eligible_permanent_hyper_inventory
     }));
 }
 
-TEST(plinko_holds_the_board_and_badge_until_the_chip_lands) {
+TEST(plinko_pipelines_drops_and_reveals_each_payout_at_its_own_landing) {
     Harness server("plinko-badge", [](const std::string& path) {
         seedUser(path, "plinko", "Fixture42!");
-        seedStack(path, "plinko", "petal_poker_chip", Rarity::Common, 1);
+        seedStack(path, "plinko", "petal_poker_chip", Rarity::Common, 2);
         seedStack(path, "plinko", "petal_poker_chip", Rarity::Uncommon, 3);
     }, dataDir(), 0);
     CHECK(server.ready);
@@ -435,44 +435,78 @@ TEST(plinko_holds_the_board_and_badge_until_the_chip_lands) {
         std::uint32_t received = 0, sent = 0;
         std::vector<NetClient::WireEvent> messages;
         client.takeWireStats(received, sent, messages, 512);
-        for (const auto& event : messages) {
-            if (!event.incoming && std::string(event.name) == "helPlinko") return event.bytes;
+        std::uint32_t bytes = 0;
+        for (const auto& event : messages)
+            if (!event.incoming && std::string(event.name) == "helPlinko") bytes += event.bytes;
+        return bytes;
+    };
+    const auto chip = content().petalIndex(kPlinkoChipPetal);
+    const auto balance = [&](Rarity rarity) {
+        return panel.displayedChips(client.profile(), rarity, ctx.timeSeconds);
+    };
+    const auto result = [&] {
+        std::pair<std::uint64_t, std::uint64_t> totals{};
+        for (std::size_t i = 0; i < kHelPlinkoPayout.size(); ++i) {
+            totals.first += panel.landedChips(i);
+            totals.second += panel.landedChips(i) * kHelPlinkoPayout[i];
         }
-        return std::uint32_t{0};
+        return totals;
+    };
+    const auto at = [&](double time) {
+        ctx.timeSeconds = time - .016;
+        frame();
     };
     constexpr unsigned oneDropBytes = 4 + 1 + 4 + 1 + 1; // frame, opcode, request ID, action, tier
     frame();
-    CHECK_EQ(panel.displayedChips(client.profile(), Rarity::Common, ctx.timeSeconds), 1u);
+    CHECK_EQ(balance(Rarity::Common), 2u);
     click(0, false);
-    CHECK_EQ(panel.displayedChips(client.profile(), Rarity::Common, ctx.timeSeconds), 0u);
+    const auto firstDrop = ctx.timeSeconds;
+    CHECK_EQ(balance(Rarity::Common), 1u);
+    ctx.timeSeconds += .17;
     click(0, false);
-    click(1, true);
-    frame();
-    CHECK_EQ(dropBytes(), oneDropBytes);
+    const auto secondDrop = ctx.timeSeconds;
+    click(0, false);
+    CHECK_EQ(dropBytes(), 2 * oneDropBytes);
+    CHECK_EQ(balance(Rarity::Common), 0u);
+    CHECK_EQ(panel.chipsInPlay(ctx.timeSeconds), 2u);
+    CHECK_EQ(result().first, 0u);
+    Profile early;
+    early.inventory.push_back({chip, Rarity::Common, 200});
+    CHECK_EQ(panel.displayedChips(early, Rarity::Common, ctx.timeSeconds), 0u);
     server.step(10, {&client});
     frame();
-    click(1, false);
-    ctx.timeSeconds += 3;
+    CHECK_EQ(balance(Rarity::Common), 0u);
+    CHECK_EQ(panel.chipsInPlay(ctx.timeSeconds), 2u);
+    click(1, true);
     frame();
-    CHECK_EQ(panel.displayedChips(client.profile(), Rarity::Common, ctx.timeSeconds), 0u);
-    CHECK_EQ(dropBytes(), 0u);
-    // An early inventory snapshot must not leak a winning (or losing) result.
-    const auto chip = content().petalIndex(kPlinkoChipPetal);
-    for (const auto returned : {0u, 1u, 20u}) {
-        Profile settled;
-        settled.inventory.push_back({chip, Rarity::Common, returned});
-        CHECK_EQ(panel.displayedChips(settled, Rarity::Common, ctx.timeSeconds), 0u);
-        CHECK_EQ(panel.displayedChips(settled, Rarity::Common, ctx.timeSeconds + 4), returned);
-    }
-    ctx.timeSeconds += 4;
-    frame();
-    CHECK_EQ(panel.displayedChips(client.profile(), Rarity::Common, ctx.timeSeconds),
-             client.profile().stackCount(chip, Rarity::Common));
-    CHECK_EQ(dropBytes(), 0u);
-    ctx.timeSeconds += .3;
-    frame();
+    const auto thirdDrop = ctx.timeSeconds;
     CHECK_EQ(dropBytes(), oneDropBytes);
-    CHECK_EQ(panel.displayedChips(client.profile(), Rarity::Uncommon, ctx.timeSeconds), 2u);
-    click(1, false);
+    CHECK_EQ(balance(Rarity::Uncommon), 2u);
+    CHECK_EQ(panel.chipsInPlay(ctx.timeSeconds), 3u);
+    click(1, true);
+    server.step(10, {&client});
+    frame();
+
+    at(firstDrop + kHelPlinkoDropSeconds + .02);
+    CHECK_EQ(panel.chipsInPlay(ctx.timeSeconds), 2u);
+    CHECK_EQ(result().first, 1u);
+    CHECK_EQ(balance(Rarity::Common), result().second);
+    CHECK_EQ(balance(Rarity::Uncommon), 2u);
+
+    at(secondDrop + kHelPlinkoDropSeconds + .02);
+    const auto [commonLandings, commonPayout] = result();
+    CHECK_EQ(commonLandings, 2u);
+    CHECK_EQ(panel.chipsInPlay(ctx.timeSeconds), 1u);
+    CHECK_EQ(balance(Rarity::Common), commonPayout);
+    CHECK_EQ(balance(Rarity::Uncommon), 2u);
+
+    at(thirdDrop + kHelPlinkoDropSeconds + .03);
+    CHECK_EQ(panel.chipsInPlay(ctx.timeSeconds), 0u);
+    CHECK_EQ(result().first, 3u);
+    CHECK_EQ(balance(Rarity::Uncommon), 2u + result().second - commonPayout);
+    CHECK_EQ(balance(Rarity::Common), client.profile().stackCount(chip, Rarity::Common));
+    CHECK_EQ(balance(Rarity::Uncommon), client.profile().stackCount(chip, Rarity::Uncommon));
+    at(thirdDrop + kHelPlinkoDropSeconds + 1.0);
+    CHECK_EQ(result().first, 3u);
     CHECK_EQ(dropBytes(), 0u);
 }

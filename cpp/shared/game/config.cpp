@@ -1675,6 +1675,49 @@ double scaledMultiplier(double value, double scale) {
 // ContentRegistry
 // ---------------------------------------------------------------------------
 
+namespace {
+
+std::vector<std::uint16_t> buildMimicMagicForms(
+    const std::vector<PetalConfig>& petals,
+    const std::unordered_map<std::string, std::uint16_t>& ids,
+    const Json* drops = nullptr) {
+    std::vector<std::uint16_t> forms(petals.size(), kInvalidIndex);
+    std::vector<bool> ambiguous(petals.size(), false);
+    const auto consider = [&](const std::string& sourceId, std::uint16_t target) {
+        const auto source = ids.find(sourceId);
+        if (source == ids.end() || ambiguous[source->second]) return;
+        auto& form = forms[source->second];
+        if (form == kInvalidIndex || form == target) {
+            form = target;
+        } else {
+            form = kInvalidIndex;
+            ambiguous[source->second] = true;
+        }
+    };
+    for (std::size_t i = 0; i < petals.size(); ++i) {
+        if (!petals[i].magicDropSource.empty())
+            consider(petals[i].magicDropSource, static_cast<std::uint16_t>(i));
+    }
+    if (drops) {
+        std::vector<bool> declared(petals.size(), false);
+        for (std::size_t i = 0; i < petals.size(); ++i)
+            declared[i] = forms[i] != kInvalidIndex || ambiguous[i];
+        for (const auto& mob : drops->keys()) {
+            for (const auto& row : (*drops)[mob]["drops"].items()) {
+                if (!row.contains("magicItemType")) continue;
+                const auto sourceId = row["itemType"].asString();
+                const auto source = ids.find(sourceId);
+                if (source == ids.end() || declared[source->second]) continue;
+                const auto target = ids.find(row["magicItemType"].asString());
+                if (target != ids.end()) consider(sourceId, target->second);
+            }
+        }
+    }
+    return forms;
+}
+
+} // namespace
+
 bool ContentRegistry::load(const std::string& dataDir, std::string& errorOut) {
     if (!loadFiles(joinPath(dataDir, "mobs.json"), joinPath(dataDir, "petals.json"), errorOut)) {
         return false;
@@ -1693,6 +1736,7 @@ bool ContentRegistry::load(const std::string& dataDir, std::string& errorOut) {
         hash_ = net::contentHash(dropsText, hash_);
         Json drops; std::string ignored;
         if (Json::parse(dropsText, drops, ignored)) {
+            mimicMagicForm_ = buildMimicMagicForms(petals_, petalIds_, &drops);
             for (const auto& row : drops["garbage"]["drops"].items()) {
                 if (row.contains("rarityChances") && parseDropRates(row["rarityChances"], garbageDropRates_)) break;
             }
@@ -1904,6 +1948,7 @@ bool ContentRegistry::loadFiles(const std::string& mobsPath, const std::string& 
     // drop: a mob dying is a hot path and this is a straight index.
     magicForm_.assign(petals_.size(), kInvalidIndex);
     magicSource_.assign(petals_.size(), kInvalidIndex);
+    mimicMagicForm_ = buildMimicMagicForms(petals_, petalIds_);
     {
         const std::string prefix = "magic_";
         for (std::size_t i = 0; i < petals_.size(); ++i) {
@@ -1911,7 +1956,7 @@ bool ContentRegistry::loadFiles(const std::string& mobsPath, const std::string& 
             if (!petals_[i].magicDropSource.empty()) {
                 const auto source = petalIds_.find(petals_[i].magicDropSource);
                 if (source != petalIds_.end()) magicSource_[i] = source->second;
-                continue; // Only the named mob's drop row converts this source.
+                continue;
             }
             if (id.compare(0, prefix.size(), prefix) != 0) continue;
             // See ContentRegistry::magicFormOf for why the orb is the one
@@ -1921,6 +1966,12 @@ bool ContentRegistry::loadFiles(const std::string& mobsPath, const std::string& 
             if (found == petalIds_.end()) continue;
             magicForm_[found->second] = static_cast<std::uint16_t>(i);
             magicSource_[i] = found->second;
+        }
+    }
+    if (const auto magicStick = petalIds_.find("magic_stick"); magicStick != petalIds_.end()) {
+        for (const char* id : {"mysterious_stick", "arctic_stick", "arctic_snow_stick", "water_stick"}) {
+            const auto source = petalIds_.find(id);
+            if (source != petalIds_.end()) magicForm_[source->second] = magicStick->second;
         }
     }
     // Magic Bone's armour is Bone's at every tier. Bone's data writes its tiers
@@ -2087,7 +2138,9 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
         boost(stats.critDamage, kAscendantPetalDamageScale);
         boost(stats.poisonPerSecond, kAscendantPetalDamageScale);
         boost(stats.lightningDamagePerHit, kAscendantPetalDamageScale);
-        if (c.id == "mjolnir") stats.wildLightningScale *= 1.05;
+        // The contested Apex hammer is a single-slot PvE weapon. Its
+        // contact lightning must compete with several ordinary melee slots.
+        if (c.id == "mjolnir") stats.wildLightningScale = 12.0;
         boost(stats.armorReduction, 1.25);
         boost(stats.armorPerStack, 1.25);
         boost(stats.health, kAscendantPetalHealthScale);

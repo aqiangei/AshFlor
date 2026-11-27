@@ -2560,6 +2560,31 @@ TEST(ported_petal_names_are_translated_in_inventory) {
     ui::setLanguage(old);
 }
 #include "client/ui/chat_i18n.h"
+TEST(petal_catalog_chinese_names_and_pterodactyl_copy_agree) {
+    std::string error;
+    if (!loadContent(testsupport::dataDir(), error)) { CHECK(false); return; }
+    const auto old = ui::language();
+    ui::setLanguage(ui::Language::Zh);
+    for (std::uint16_t i = 0; i < content().petalCount(); ++i) {
+        const auto& petal = content().petal(i);
+        const std::string name = ui::petalNameZh(petal.id);
+        CHECK(!name.empty());
+        CHECK_EQ(ui::petalNameTr(petal.id, petal.name.c_str()), name);
+    }
+    const std::string id = "jurassic_pteranodon_egg";
+    CHECK_EQ(std::string(ui::petalNameZh(id)), "翼龙蛋");
+    CHECK_EQ(std::string(ui::petalDescTr(id, "")), "孵化出翼龙协助战斗。");
+    CHECK_EQ(std::string(ui::mobNameTr("jurassic_pteranodon", "")), "翼龙");
+    CHECK(std::string(ui::petalSearchAliases(id)).find("翼手龙蛋") != std::string::npos);
+    CHECK_EQ(std::string(ui::petalNameZh("waterspout_spray")), "水雾弹");
+    CHECK(ui::localizeChatText(
+        "<b data-pickup='jurassic_pteranodon_egg' style=\"color: #ff00ff;\">An Apex Pterodactyl Egg has been collected by @tester!</b>")
+        .find("Apex 翼龙蛋") != std::string::npos);
+    ui::setLanguage(ui::Language::En);
+    CHECK_EQ(std::string(ui::petalNameTr(id, "Pterodactyl Egg")), "Pterodactyl Egg");
+    ui::setLanguage(old);
+}
+
 TEST(craft_quantity_and_cost_are_translated_in_replayed_system_messages) {
     const auto old=ui::language();ui::setLanguage(ui::Language::Zh);
     const auto text=ui::localizeChatText("<b style=\"color: #2bffa3;\">A Super Rose has been crafted by <b style=\"color: #00ff00;\">@smith</b> [<b style=\"color: yellow;\">smith</b>]</b> (crafted x85, consumed x19996)");
