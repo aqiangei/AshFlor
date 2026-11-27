@@ -509,7 +509,8 @@ void filterSlotTypes(std::vector<std::uint16_t>& types, const std::string& searc
         return lowerCase(petal.id).find(needle) == std::string::npos &&
                lowerCase(petal.name).find(needle) == std::string::npos &&
                lowerCase(petalNameTr(petal.id, petal.name.c_str())).find(needle) == std::string::npos &&
-               (!bilingual || lowerCase(petalNameZh(petal.id)).find(needle) == std::string::npos);
+               (!bilingual || (lowerCase(petalNameZh(petal.id)).find(needle) == std::string::npos &&
+                               lowerCase(petalSearchAliases(petal.id)).find(needle) == std::string::npos));
     }), types.end());
 }
 

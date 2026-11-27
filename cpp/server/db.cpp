@@ -301,6 +301,7 @@ PlayerRecord playerFromJson(const Json& value) {
                           "equippedSkinId", "inventory", "mobKills", "loadout",
                           "loadoutInInventory", "loadoutPresets", "skills", "tp", "talentPointBonus", "mazeTotalXP", "mazeSkills", "mazeTp"},
                   record.extra);
+    record.extra.erase("craftLocks");
     compactTitanForgeCounts(record.extra);
     return record;
 }
@@ -507,7 +508,7 @@ StoredItem StoredItem::fromJson(const Json& value) {
         item.maxHealth = value["maxHealth"].asDouble();
         item.hasMaxHealth = true;
     }
-    collectExtras(value, {"type", "rarity", "petalType", "health", "maxHealth"}, item.extra);
+    collectExtras(value, {"type", "rarity", "petalType", "health", "maxHealth", "craftLocked"}, item.extra);
     return item;
 }
 
@@ -540,30 +541,8 @@ int PlayerRecord::itemCount(Rarity rarity, const std::string& itemType) const {
     return stackCount(bucket[itemType]);
 }
 
-int PlayerRecord::craftLockedCount(Rarity rarity, const std::string& itemType) const {
-    const auto& locked = extra["craftLocks"][rarityName(rarity)][itemType];
-    return std::min(stackCount(locked), itemCount(rarity, itemType));
-}
-
-void PlayerRecord::setCraftLockedCount(Rarity rarity, const std::string& itemType, int count) {
-    const std::string tier = rarityName(rarity);
-    count = std::min(count, itemCount(rarity, itemType));
-    if (count > 0) {
-        extra["craftLocks"][tier][itemType] = count;
-    } else if (extra.contains("craftLocks")) {
-        auto& locks = extra["craftLocks"];
-        if (locks.contains(tier)) {
-            auto& bucket = locks[tier];
-            bucket.erase(itemType);
-            if (bucket.size() == 0) locks.erase(tier);
-        }
-        if (locks.size() == 0) extra.erase("craftLocks");
-    }
-}
-
 void PlayerRecord::setItemCount(Rarity rarity, const std::string& itemType, int count) {
     const std::string tier = rarityName(rarity);
-    const int locked = craftLockedCount(rarity, itemType);
     if (count <= 0) {
         if (!inventory.contains(tier)) return;
         Json& bucket = inventory[tier];
@@ -572,12 +551,10 @@ void PlayerRecord::setItemCount(Rarity rarity, const std::string& itemType, int 
         // An empty tier is dropped so the file does not accumulate rubble from
         // every petal a player has ever crafted away.
         if (bucket.size() == 0) inventory.erase(tier);
-        if (locked > 0) setCraftLockedCount(rarity, itemType, 0);
         return;
     }
     // operator[] promotes a missing or non-object tier into an object.
     inventory[tier][itemType] = count;
-    if (locked > count) setCraftLockedCount(rarity, itemType, count);
 }
 
 void PlayerRecord::addItem(Rarity rarity, const std::string& itemType, int delta) {

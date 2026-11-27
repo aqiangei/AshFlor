@@ -4033,6 +4033,11 @@ TEST(the_magic_form_table_is_derived_from_the_petal_ids) {
     CHECK_EQ(shipped().magicSourceOf(shipped().petalIndex("mana_orb")),shipped().petalIndex("rose"));
     CHECK_EQ(shipped().magicSourceOf(shipped().petalIndex("magic_stick")),shipped().petalIndex("mysterious_stick"));
 
+    for (const char* id : {"mysterious_stick", "arctic_stick", "arctic_snow_stick", "water_stick"}) {
+        CHECK_EQ(shipped().magicFormOf(shipped().petalIndex(id)), shipped().petalIndex("magic_stick"));
+    }
+    CHECK_EQ(shipped().magicFormOf(shipped().petalIndex("glass")), kInvalidIndex);
+
     // A petal with no magic counterpart converts into nothing, and a magic
     // petal is a destination rather than a source.
     CHECK_EQ(shipped().magicFormOf(shipped().petalIndex("basic")), kInvalidIndex);

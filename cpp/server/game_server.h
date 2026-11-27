@@ -427,7 +427,6 @@ private:
     void handleDowngradeSkill(Session&, net::Connection&, ByteReader&);
     void handleResetSkills(Session&, net::Connection&);
     void handleBuyPetal(Session&, net::Connection&, ByteReader&);
-    void handleUnlockCraftStack(Session&, net::Connection&, ByteReader&);
     void handleRedeemCode(Session&, net::Connection&, ByteReader&);
     void handleSetSkin(Session&, net::Connection&, ByteReader&);
     void handlePublishSkin(Session&, net::Connection&, ByteReader&);

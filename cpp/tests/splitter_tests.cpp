@@ -597,6 +597,66 @@ TEST(losing_a_half_ends_the_split_and_the_splitter_reloads) {
     CHECK(h.stepUntil({&alice}, [&] { return bodiesNamed(world, "alice").size() == 2; }, 600));
 }
 
+TEST(coordinate_sends_one_clients_commands_to_both_split_halfs_pets) {
+    Harness h("splitter-coordinate", {}, flix::testsupport::dataDir(), 0);
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient client;
+    CHECK(loginNew(h, client, "alice", "hunter2!"));
+    client.joinGame(1280, 720, {}, "alice");
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; }));
+    World& world = h.server.world();
+    const Entity parked = splitWithPetsOnBothHalves(h, client, "alice");
+    CHECK(parked != NULL_ENTITY);
+    if (parked == NULL_ENTITY) return;
+    const auto bodies = bodiesNamed(world, "alice");
+    CHECK_EQ(bodies.size(), 2u);
+    if (bodies.size() != 2) return;
+    const Entity active = bodies[0] == parked ? bodies[1] : bodies[0];
+    const Entity activePet = petsOf(world, active).front();
+    const Entity parkedPet = petsOf(world, parked).front();
+    const auto coordinate = content().petalIndex("coordinate");
+    client.sendChat("/admin give alice coordinate common 1");
+    CHECK(h.stepUntil({&client}, [&] {
+        return client.profile().stackCount(coordinate, Rarity::Common) == 1;
+    }));
+    client.setLoadoutSlot(2, coordinate, Rarity::Common);
+    CHECK(h.stepUntil({&client}, [&] {
+        return world.get<PlayerModifiers>(active).coordinateControlTier >= 0 &&
+               world.get<PlayerModifiers>(parked).coordinateControlTier >= 0;
+    }));
+    const auto position = [&](Entity body) { return world.get<Transform>(body).position; };
+    const auto parkedInput = [&]() -> const PlayerInput& { return world.get<PlayerInput>(parked); };
+    net::InputFrame input;
+    input.sequence = 1;
+    input.moveAngle = kPi * 0.5;
+    input.moveStrength = 1;
+    input.flags = net::InputPetMoveDirection | net::InputNoPetPointer;
+    client.sendInput(input);
+    CHECK(h.stepUntil({&client}, [&] {
+        return world.get<Motion>(activePet).velocity.y > 1.0 &&
+               world.get<Motion>(parkedPet).velocity.y > 1.0;
+    }, 60));
+    CHECK_EQ(parkedInput().coordinateInputSource, active);
+    CHECK_EQ(parkedInput().current.moveStrength, 0.0);
+
+    ++input.sequence;
+    input.moveStrength = 0.0;
+    input.flags = 0;
+    input.aimDistance = 500;
+    client.sendInput(input);
+    CHECK(h.stepUntil({&client}, [&] {
+        const Vec2 pointer = position(active) + Vec2{500, 0};
+        const auto movesToward = [&](Entity pet) {
+            const Vec2 delta = pointer - position(pet);
+            const Vec2 velocity = world.get<Motion>(pet).velocity;
+            return velocity.x * delta.x + velocity.y * delta.y > 0.0;
+        };
+        return movesToward(activePet) && movesToward(parkedPet);
+    }, 60));
+    CHECK_EQ(parkedInput().current.moveStrength, 0.0);
+}
+
 TEST(taking_the_splitter_off_takes_the_parked_halfs_pets_with_it) {
     // The dupe: let the parked half hatch its own squad, take the splitter
     // off, and the half went but its pets stayed -- ownerless, wandering, and

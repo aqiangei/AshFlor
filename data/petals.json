@@ -375,7 +375,7 @@
     "color": "#8B0000",
     "count": 4,
     "clumped": true,
-    "image": "<svg width=\"32\" height=\"32\" viewBox=\"-10 -10 20 20\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M-7 1 -5-4 -1-6 4-5 7-2 7 2 3 6 -3 6 -6 4Z\" fill=\"#e5bd72\" stroke=\"#a5763e\" stroke-width=\"2\" stroke-linejoin=\"round\"/><path d=\"M-4-1 -1-3 3-2\" fill=\"none\" stroke=\"#ffe2a3\" stroke-width=\"1.8\" stroke-linecap=\"round\"/><circle cx=\"2\" cy=\"3\" r=\"1.1\" fill=\"#bc894b\"/></svg>",
+    "image": "<svg width=\"32\" height=\"32\" viewBox=\"-10 -10 20 20\" xmlns=\"http://www.w3.org/2000/svg\">\n  <path\n    d=\"M 7 0 L 3.5 6.062 L -3.5 6.062 L -7 0 L -3.5 -6.062 L 3.5 -6.062 Z\"\n    fill=\"#e0c85c\"\n    stroke=\"#b5a24b\"\n    stroke-width=\"3\"\n    stroke-linecap=\"round\"\n    stroke-linejoin=\"round\"\n  />\n</svg>",
     "zh": "沙子",
     "rarityStats": {
       "0": {
@@ -15535,7 +15535,7 @@
     "count": 1,
     "name": "Magic Opal",
     "zh": "魔法蛋白石",
-    "description": "Every five seconds rolls a shared damage multiplier for petals up to its rarity: 25% for fivefold direct damage, otherwise zero.",
+    "description": "Every five seconds, petals up to its rarity share a 25% chance to deal triple direct damage. Otherwise they deal their normal direct damage.",
     "visual_scale": 2.5
   },
   "magic_compass": {

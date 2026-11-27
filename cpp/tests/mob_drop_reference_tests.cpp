@@ -300,8 +300,12 @@ TEST(arctic_stick_drops_from_snowman_and_snow_stick_drops_from_snowstorm) {
     CHECK(total(snowstorm, "arctic_snow_stick") > 0);
     CHECK_EQ(total(snowstorm, "arctic_stick"), 0);
     CHECK_EQ(total(snowman, "mysterious_stick"), 0);
-    CHECK_EQ(total(kills("arctic_snowman", Rarity::Common, 20, true), "arctic_stick"),
-             total(snowman, "arctic_stick"));
+    const auto magicSnowman = kills("arctic_snowman", Rarity::Common, 20, true);
+    const auto magicSnowstorm = kills("arctic_snowstorm", Rarity::Common, 20, true);
+    CHECK_EQ(total(magicSnowman, "arctic_stick"), 0);
+    CHECK_EQ(total(magicSnowstorm, "arctic_snow_stick"), 0);
+    CHECK_EQ(total(magicSnowman, "magic_stick"), total(snowman, "arctic_stick"));
+    CHECK_EQ(total(magicSnowstorm, "magic_stick"), total(snowstorm, "arctic_snow_stick"));
 }
 
 TEST(super_sandstorm_drops_only_sand_glass_and_stick_at_reference_tiers){

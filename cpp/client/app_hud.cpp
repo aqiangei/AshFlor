@@ -21,6 +21,7 @@
 #include "client/ui/menu_widgets.h"
 
 #include <algorithm>
+#include <limits>
 #include <cmath>
 #include <string>
 #include <vector>
@@ -558,7 +559,7 @@ NearbyNpc App::nearbyNpc(Vec2 self) const {
     // refused for the frame of easing between the two.
     NearbyNpc nearest;
     if (!net_.view().hasNpcs()) return nearest;
-    double nearestGap = kNpcServiceReach;
+    double nearestGap = std::numeric_limits<double>::infinity();
     for (const auto& entry : net_.view().entities()) {
         const RemoteEntity& entity = entry.second;
         if (entity.kind != net::EntityKind::Npc) continue;
@@ -567,7 +568,8 @@ NearbyNpc App::nearbyNpc(Vec2 self) const {
         const double serviceRadius = service == NpcService::Assembler
             ? content().mobStats(entity.typeIndex, entity.rarity).radius : entity.radius;
         const double gap = distance(self, entity.position) - serviceRadius;
-        if (gap > nearestGap) continue;
+        const double reach = service == NpcService::Trader ? kTraderServiceReach : kNpcServiceReach;
+        if (gap > reach || gap > nearestGap) continue;
         nearest = {service, entity.typeIndex, entity.rarity, entity.npcRecipe,
                    entity.npcNextRecipe,
                    std::max(0.0, entity.npcRecipeRefreshAtMillis - renderClockMillis())};

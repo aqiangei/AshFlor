@@ -234,7 +234,8 @@ TEST(real_hammers_hit_wild_mobs_harder_and_keep_duel_damage) {
     struct HammerCase { const char* id; Rarity tier; double wildBase; double duelBase; double recoil; };
     for (const auto& test : {HammerCase{"timed_mjolnir", Rarity::Unique, 70.0, 12.0, 0.50},
                              {"mjolnir", Rarity::Unique, 60.0, 12.0, 0.50},
-                             {"mjolnir", Rarity::Apex, 80.0, 60.0, 0.35}}) {
+                             {"mjolnir", Rarity::Apex, 80.0, 60.0, 0.35},
+                             {"mjolnir", Rarity::Ascendant, 720.0, 60.0, 0.35}}) {
         for (const bool wild : {false, true}) {
             CombatFeedback r;
             r.w.get<Faction>(r.player).friendlyFireEnabled = true;
@@ -257,7 +258,7 @@ TEST(real_hammers_hit_wild_mobs_harder_and_keep_duel_damage) {
             const double durability = r.w.get<Health>(hammer).current;
             r.hit(10000.0);
             CHECK_NEAR(1e12 - r.w.get<Health>(target).current,
-                       (wild ? test.wildBase : test.duelBase) * petalStrengthScale(test.tier), 1e-5);
+                       (wild ? test.wildBase : test.duelBase) * petalDamageScale(test.tier), 1e-5);
             if (wild) {
                 CHECK_NEAR(durability - r.w.get<Health>(hammer).current, 10000.0 * test.recoil, 1e-7);
             }

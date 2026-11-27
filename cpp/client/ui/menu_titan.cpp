@@ -65,7 +65,7 @@ int forgeCost(const Profile& profile, std::uint16_t index, bool hyper, const Net
         index < content().petalCount() ? content().petal(index).id : std::string());
 }
 std::uint32_t forgeInputOwned(const Profile& profile, std::uint16_t petalIndex, Rarity tier=kTitanInputRarity) {
-    return std::min<std::uint32_t>(profile.craftableCount(petalIndex, tier),
+    return std::min<std::uint32_t>(profile.stackCount(petalIndex, tier),
                                    static_cast<std::uint32_t>(kMaxStackCount));
 }
 
@@ -338,7 +338,7 @@ bool TitanPanel::render(MenuContext& ctx) {
             if (stack.rarity != inputTier || !knownPetal(stack.petalIndex) ||
                 !canUse(stack.petalIndex)) return false;
             if (permanentHyper_ && content().petal(stack.petalIndex).id == "fragment") return false;
-            return stack.craftable() >= static_cast<std::uint32_t>(costOf(stack.petalIndex)) &&
+            return stack.count >= static_cast<std::uint32_t>(costOf(stack.petalIndex)) &&
                 profile.stackCount(stack.petalIndex, outputTier) <
                     static_cast<std::uint32_t>(kMaxStackCount);
         });

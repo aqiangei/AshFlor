@@ -1183,7 +1183,7 @@ void PetalSystem::run(World& world, const ContentRegistry& registry, double nowM
         if (aggregate.modifiers.magicOpalTier >= 0) {
             auto& roll = world.ensure<MagicOpalRoll>(player);
             if (nowMillis >= roll.nextMillis) {
-                roll.multiplier = rng_.chance(.25) ? 5.0 : 0.0;
+                roll.multiplier = rng_.chance(.25) ? 3.0 : 1.0;
                 roll.nextMillis = nowMillis + 5000.0;
             }
         }
@@ -2982,12 +2982,14 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
             // the tier a pet has to be below to answer the pointer.
             if (petalControlsPets(registry.petal(equipped.configIndex))) {
                 PlayerModifiers& out = aggregate.modifiers;
-                auto commandTier = technique && technique->technique == HyperTechnique::CommandApex
+                const auto commandTier = technique && technique->technique == HyperTechnique::CommandApex &&
+                                         petalTier(equipped.rarity) < petalTier(Rarity::Universal)
                     ? Rarity::Universal : equipped.rarity;
                 if (registry.petal(equipped.configIndex).id == "coordinate") {
                     out.coordinateControlTier = std::max(out.coordinateControlTier, petalTier(equipped.rarity));
                 } else {
-                    out.petControlRarity = std::max(out.petControlRarity, commandTier);
+                    if (petalTier(commandTier) > petalTier(out.petControlRarity))
+                        out.petControlRarity = commandTier;
                 }
                 out.controlsPets = true;
             }
@@ -6586,7 +6588,7 @@ void PetalSystem::maintainPets(World& world, const ContentRegistry& registry, En
     const int missing = std::min(wanted - current, room - current);
     // Offset the Hyper promotion factor to preserve the existing contact damage
     // and health budget.
-    const double strength = configuredSummonStrength(config, rarity, tree ? &tree->skills : nullptr, slot);
+    double strength = configuredSummonStrength(config, rarity, tree ? &tree->skills : nullptr, slot);
     const auto* modifiers = world.tryGet<PlayerModifiers>(player);
     const int eggTier = petalTier(rarity);
     const Rarity hatchTier = petalGameplayRarity(petRarity);
@@ -6594,6 +6596,11 @@ void PetalSystem::maintainPets(World& world, const ContentRegistry& registry, En
     // DNA applies to eggs at its own tier or below. Mutate the actual
     // hatchling, including eggs whose normal summon is one tier lower.
     const bool egg = petalIsEgg(config);
+    if (egg && modifiers && hatchTier == Rarity::Ascendant) {
+        const int copies = std::min<int>(modifiers->eggMutationSources[petalTier(Rarity::Ascendant)],
+                                         kApexDnaStrengthMaxSources);
+        strength *= 1.0 + kApexDnaStrengthPerSource * copies;
+    }
     const bool canTwin = egg && modifiers && modifiers->twinHatchTier >= eggTier;
     const double mutationChance = egg && modifiers && mutation != hatchTier
         ? kDnaChancePerSource * modifiers->eggMutationSources[eggTier] * std::max(1.0, modifiers->luck)

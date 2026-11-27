@@ -161,7 +161,7 @@ std::string percentText(double percent) {
 /// is deeper than kMaxStackCount, and a count past it cast straight to int
 /// would stage a negative number of batches.
 int ownedCount(const Profile& profile, std::uint16_t petalIndex, Rarity rarity) {
-    return static_cast<int>(std::min<std::uint32_t>(profile.craftableCount(petalIndex, rarity),
+    return static_cast<int>(std::min<std::uint32_t>(profile.stackCount(petalIndex, rarity),
                                                     static_cast<std::uint32_t>(kMaxStackCount)));
 }
 
@@ -197,8 +197,6 @@ void CraftingPanel::reopen() {
     // Keep the staged stack, scroll position and any server result on the ring.
     bulkArmed_ = false;
     editingBlacklist_ = false;
-    unlockingShopPurchases_ = false;
-    unlockSelection_.reset();
     mythicUltraMaterials_.reset();
     grid_.endDrag();
     searchField_.blur();
@@ -349,22 +347,6 @@ bool CraftingPanel::render(MenuContext& ctx) {
     const bool inRift = ctx.net.inRiftMap();
     const CraftOutcome& outcome = ctx.net.craftOutcome();
     const bool waiting = spinPetal_ != kNoPetal;
-    const auto stackKey = [](std::uint16_t petal, Rarity rarity) {
-        return static_cast<std::uint32_t>(petal) * kRarityCount + rarityIndex(rarity);
-    };
-    std::unordered_map<std::uint32_t, std::uint32_t> shopLocks;
-    for (const auto& stack : profile.inventory) {
-        if (stack.craftLocked != 0)
-            shopLocks.emplace(stackKey(stack.petalIndex, stack.rarity), stack.craftLocked);
-    }
-    const auto lockedCount = [&](std::uint16_t petal, Rarity rarity) {
-        const auto found = shopLocks.find(stackKey(petal, rarity));
-        return found == shopLocks.end() ? 0u : found->second;
-    };
-    if (inRift || shopLocks.empty()) unlockingShopPurchases_ = false;
-    if (!unlockingShopPurchases_ || (unlockSelection_ &&
-        lockedCount(unlockSelection_->petalIndex, unlockSelection_->rarity) != unlockSelection_->count))
-        unlockSelection_.reset();
     if (inRift) {
         bulkArmed_ = false;
         editingBlacklist_ = false;
@@ -418,7 +400,7 @@ bool CraftingPanel::render(MenuContext& ctx) {
                 // preview and another click before the server can spend anything.
                 const bool shortOnMaterials = std::any_of(
                     mythicUltraMaterials_->begin(), mythicUltraMaterials_->end(), [&](const auto& stack) {
-                        return profile.craftableCount(stack.petalIndex, stack.rarity) < stack.count;
+                        return profile.stackCount(stack.petalIndex, stack.rarity) < stack.count;
                     });
                 if (state == MythicUltraCraftState::Refresh || shortOnMaterials) {
                     *mythicUltraMaterials_ = mythicUltraCraftMaterials(profile, ctx.settings.craftBlacklist);
@@ -674,7 +656,7 @@ bool CraftingPanel::render(MenuContext& ctx) {
     if (editingBlacklist_) drawSlotButton(canvas, clearBlacklist, bulkChinese ? "清空名单" : "Clear list",
                                           0xCC6644u, clearBlacklist.contains(mouse), false);
     const bool canOpenMythicUltra = !inRift && !waiting && !editingBlacklist_ &&
-                                    !unlockingShopPurchases_ && ctx.net.haveSession();
+                                    ctx.net.haveSession();
     if (!editingBlacklist_) {
         const auto tint = canOpenMythicUltra ? std::optional<std::uint32_t>{0x5A9FDBu} : std::nullopt;
         drawSlotButton(canvas, mythicUltraEntry, trEnZh("Craft Mythic & Ultra", "仅合成神话、究极"),
@@ -687,7 +669,7 @@ bool CraftingPanel::render(MenuContext& ctx) {
     const Rect searchRect{panel.x + 12.0, bulkCard.listView.y - kSearchBandHeight,
                           panel.w - 162.0, 28.0};
     const Rect craftableRect{searchRect.right() + 6.0, searchRect.y, 132.0, searchRect.h};
-    const bool canFilter = !inRift && !editingBlacklist_ && !unlockingShopPurchases_;
+    const bool canFilter = !inRift && !editingBlacklist_;
     if (editSlotSearch(ctx, searchRect, search_, searchField_,
                        trEnZh("Petal name or rarity", "查找花瓣名称或品质"))) grid_.reset();
     const bool craftableHover = canFilter && craftableRect.contains(mouse);
@@ -710,30 +692,20 @@ bool CraftingPanel::render(MenuContext& ctx) {
         ctx, bulkCard, kCraftingSkin, SlotGridTiers::Absorption,
         [&](std::uint16_t petalIndex, Rarity rarity, std::uint32_t owned) {
             SlotCell cell;
-            const auto locked = std::min(owned, lockedCount(petalIndex, rarity));
-            const auto available = owned - locked;
             const auto staged = petalIndex == stagedPetal_ && rarity == stagedRarity_ ? held : 0u;
-            const auto remaining = available > staged ? available - staged : 0u;
-            cell.count = remaining != 0 ? remaining : locked;
+            const auto remaining = owned > staged ? owned - staged : 0u;
+            cell.count = remaining;
             cell.greyed = !craftsOutOf(rarity) ||
                 (rarity == Rarity::PermanentHyper && !petalCraftsToApex(content(), petalIndex));
             // Staged petals are gone from the player's point of view the
             // moment they land in the ring, so the badge counts down with each
             // click.
-            if ((rarity == Rarity::PermanentHyper || locked != 0) && remaining < kBatch)
+            if (rarity == Rarity::PermanentHyper && remaining < kBatch)
                 cell.greyed = true;
             // A lone petal carries no badge; "x1" is noise on every cell of a
             // fresh account.
             if (cell.count > 1) cell.badge = "x" + stackCountText(cell.count);
-            if (locked != 0) cell.badge = std::string(trEnZh("Lock ", "锁 ")) + stackCountText(locked);
             if (isExcluded(petalIndex)) cell.badge = bulkChinese ? "排除" : "Skip";
-            if (unlockingShopPurchases_) {
-                cell.count = owned;
-                cell.greyed = locked == 0;
-                if (unlockSelection_ && unlockSelection_->petalIndex == petalIndex &&
-                    unlockSelection_->rarity == rarity)
-                    cell.badge = trEnZh("Selected", "已选");
-            }
             return cell;
         }, true, &inspected, {}, &query, expanded_);
 
@@ -745,20 +717,13 @@ bool CraftingPanel::render(MenuContext& ctx) {
     const char* craftAllLabel = tr(Msg::CraftAll);
     const double craftW = measure(craftLabel, kCraftButtonLabelSize) + kCraftButtonPadX * 2.0;
     const double craftAllW = measure(craftAllLabel, kCraftButtonLabelSize) + kCraftButtonPadX * 2.0;
-    const bool showUnlock = !inRift && !shopLocks.empty();
-    const std::string unlockLabel = unlockSelection_
-        ? std::string(trEnZh("Unlock ", "解锁 ")) + stackCountText(unlockSelection_->count)
-        : unlockingShopPurchases_ ? trEnZh("Cancel", "取消解锁") : trEnZh("Shop locks", "解锁购物花瓣");
-    const double unlockW = showUnlock ? measure(unlockLabel, kCraftButtonLabelSize) + kCraftButtonPadX * 2.0 : 0;
-    const double craftPairW = craftW + kCraftButtonGap + craftAllW +
-        (showUnlock ? kCraftButtonGap + unlockW : 0);
+    const double craftPairW = craftW + kCraftButtonGap + craftAllW;
     const double craftPairX = card.button.x + card.button.w * 0.5 - craftPairW * 0.5;
     const Rect craftRect{craftPairX, card.button.y, craftW, card.button.h};
     const Rect craftAllRect{craftPairX + craftW + kCraftButtonGap, card.button.y, craftAllW,
                             card.button.h};
-    const Rect unlockRect{craftAllRect.right() + kCraftButtonGap, card.button.y, unlockW, card.button.h};
     const bool mouseDown = ctx.window.mouseDown(MouseButton::Left);
-    const bool canCraft = !inRift && !waiting && !unlockingShopPurchases_ && phase_ == Phase::Idle &&
+    const bool canCraft = !inRift && !waiting && phase_ == Phase::Idle &&
                           stagedPetal_ != kNoPetal && stagedCount_ >= kBatch;
     const bool craftActionEnabled = canCraft || canSkipRoll;
     const auto craftTint =
@@ -773,11 +738,6 @@ bool CraftingPanel::render(MenuContext& ctx) {
     drawSlotButton(canvas, craftAllRect, craftAllLabel, craftAllTint,
                    !inRift && (craftAllRect.contains(mouse) || fillAllMode_),
                    !inRift && ((craftAllRect.contains(mouse) && mouseDown) || fillAllMode_));
-    if (showUnlock) {
-        drawSlotButton(canvas, unlockRect, unlockLabel.c_str(), 0xCC8844u,
-                       !waiting && unlockRect.contains(mouse), false);
-    }
-
     // Tiles on their way out go over everything.
     fx_.drawVanishing(canvas, ctx.sprites, ctx.dt * 1000.0);
 
@@ -793,12 +753,6 @@ bool CraftingPanel::render(MenuContext& ctx) {
         const double reloadScale = profile.skills.reloadScale() *
             (1.0 - barReloadCut(content(), [&](int i) { return profile.equipped(content(), i); }, &profile.skills));
         auto lines = petalTooltipLines(inspected.petalIndex, inspected.rarity, profile.skills, reloadScale);
-        if (const auto locked = lockedCount(inspected.petalIndex, inspected.rarity); locked != 0) {
-            TooltipLine note{std::string(trEnZh("Shop purchases locked for crafting: ", "购物锁定，不能合成：")) +
-                             stackCountText(locked), 12.0};
-            note.maxWidth = 230.0;
-            lines.push_back(note);
-        }
         if (inspected.rarity == Rarity::PermanentHyper && !petalCraftsToApex(content(), inspected.petalIndex)) {
             TooltipLine note{tr(Msg::ApexOwnSource), 12.0, kPaper, 6.0};
             note.alpha = 0.78;
@@ -851,29 +805,6 @@ bool CraftingPanel::render(MenuContext& ctx) {
     }
     // Rift materials remain inspectable, but no crafting input can change the panel.
     if (inRift) return true;
-    if (showUnlock && !waiting && ctx.pressed() && unlockRect.contains(mouse)) {
-        if (unlockSelection_) {
-            const auto chosen = *unlockSelection_;
-            ctx.net.requestUnlockCraftStack(chosen.petalIndex, chosen.rarity, chosen.count);
-            unlockSelection_.reset();
-            unlockingShopPurchases_ = false;
-        } else {
-            unlockingShopPurchases_ = !unlockingShopPurchases_;
-        }
-        editingBlacklist_ = false;
-        heldPetal_ = kNoPetal;
-        bulkArmed_ = false;
-        grid_.reset();
-        searchField_.blur();
-        return true;
-    }
-    if (unlockingShopPurchases_) {
-        if (hovered) {
-            if (const auto locked = lockedCount(hovered->petalIndex, hovered->rarity); locked != 0)
-                unlockSelection_ = Profile::Stack{hovered->petalIndex, hovered->rarity, locked};
-        }
-        return true;
-    }
     if (ctx.pressed() && canOpenMythicUltra && mythicUltraEntry.contains(mouse)) {
         mythicUltraMaterials_ = mythicUltraCraftMaterials(profile, ctx.settings.craftBlacklist);
         mythicUltraRequest_ = ctx.net.prepareMythicUltraCraft(*mythicUltraMaterials_);

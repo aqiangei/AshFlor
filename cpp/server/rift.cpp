@@ -11,8 +11,8 @@ namespace flix {
 namespace {
 
 constexpr double kRiftMinute = 60000.0;
-constexpr double kRiftCooldownMin = 60.0;
-constexpr double kRiftCooldownMax = 120.0;
+constexpr double kRiftCooldownMin = 30.0;
+constexpr double kRiftCooldownMax = 60.0;
 constexpr char kRiftSchedule[] = "riftSchedule";
 constexpr char kRiftNextOpenAt[] = "nextOpenAtMillis";
 // Old saves predate this field. Require an integer millisecond timestamp

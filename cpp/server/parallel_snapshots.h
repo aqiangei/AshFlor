@@ -14,7 +14,7 @@ public:
         Entity viewer = NULL_ENTITY;
         ClientView* view = nullptr;
         Replicator::Frame frame;
-        std::vector<Entity> squad;
+        std::vector<Entity> alwaysVisible;
         ByteWriter output;
     };
     ParallelSnapshots(ServerWorkers& workers, unsigned limit);

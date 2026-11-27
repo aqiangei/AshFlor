@@ -4,9 +4,10 @@ test('stopped coordinator pauses bonuses durably, retries once, and refuses live
   const binary=process.env.SHARD_COORDINATOR_BIN;assert(binary);
   const home=fs.mkdtempSync(path.join(os.tmpdir(),'shard-maintenance-'));
   const base=path.join(home,'authority'),seed=path.join(home,'seed.json'),now=1700000000000;
+  const day=Math.floor((now+8*3600000)/86400000);
   const original={users:{alice:{id:'a',username:'alice'},bob:{id:'b',username:'bob'}},players:{
-    a:{totalXP:12,dailyDropBonus:{day:123,streak:4,multiplier:3,until:now+120000},inventory:{apex:{petal_rose:1}}},
-    b:{totalXP:44,dailyDropBonus:{day:122,streak:2,multiplier:2,until:now-1}}
+    a:{totalXP:12,dailyDropBonus:{day,streak:4,multiplier:3,until:now+120000},inventory:{apex:{petal_rose:1}}},
+    b:{totalXP:44,dailyDropBonus:{day:day-1,streak:2,multiplier:2,until:now-1}}
   }};
   const rpc=request=>JSON.parse(cp.execFileSync(binary,[base,seed],{input:JSON.stringify({id:'probe',node:'one',boot:'test',request})+'\n',encoding:'utf8'})).result;
   const pause=(id,time)=>cp.spawnSync(binary,[base,seed,'--pause-bonus',id,String(time)],{encoding:'utf8'});
@@ -17,7 +18,7 @@ test('stopped coordinator pauses bonuses durably, retries once, and refuses live
     assert.deepEqual(state.accounts.b.record,original.players.b);
     const saved=state.accounts.a.record;
     assert.equal(saved.dailyDropBonus.until,0);assert.equal(saved.dailyDropBonus.maintenancePause.remainingMillis,120000);
-    assert.equal(saved.dailyDropBonus.day,123);assert.equal(saved.dailyDropBonus.streak,4);assert.equal(saved.dailyDropBonus.multiplier,3);
+    assert.equal(saved.dailyDropBonus.day,day);assert.equal(saved.dailyDropBonus.streak,4);assert.equal(saved.dailyDropBonus.multiplier,3);
     assert.deepEqual(saved.inventory,original.players.a.inventory);assert.equal(saved.totalXP,12);
     assert.equal(pause('update1',now+600000).status,0);
     assert.deepEqual(rpc({op:'snapshot'}).state,state);

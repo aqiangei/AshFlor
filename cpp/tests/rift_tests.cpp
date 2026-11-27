@@ -7,6 +7,24 @@
 using namespace flix;
 using namespace flix::testsupport;
 
+TEST(rift_cooldown_uses_thirty_to_sixty_minutes_and_clamps_old_saves) {
+    constexpr std::int64_t now = 1'800'000'000'000;
+    constexpr std::int64_t minute = 60'000;
+    for (bool resume : {false, true}) {
+        Harness h("rift-cooldown", {}, dataDir(), 0);
+        CHECK(h.ready);
+        if (!h.ready) return;
+        auto& db = GameServerPeer::authorityDb(h.server);
+        db.setClock([] { return now; });
+        if (resume) db.rawTable("riftSchedule")["nextOpenAtMillis"] = double(now + 100 * minute);
+        h.step(1, {});
+        const auto delay = db.storedTable("riftSchedule")["nextOpenAtMillis"].asDouble() - now;
+        CHECK(delay >= 30 * minute);
+        CHECK(delay <= 60 * minute);
+        if (resume) CHECK_EQ(delay, 60 * minute);
+    }
+}
+
 TEST(rift_elimination_ends_the_round_and_champion_claims_all_rewards_once) {
     Harness h("rift-round", [](const std::string& path) {
         seedUser(path, "riftwinner", "password7");

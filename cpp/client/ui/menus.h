@@ -876,10 +876,12 @@ int slotBurstGrains(Rarity rarity);
 class HelPlinkoPanel {
 public:
     std::uint32_t displayedChips(const Profile&, Rarity, double now) const;
+    std::size_t chipsInPlay(double now) const;
+    std::uint64_t landedChips(std::size_t slot) const { return slots_[slot].count; }
     bool render(MenuContext&, bool interactive);
     static double pointScale(const Window&);
     static Rect bounds(const Window&);
-    void stop() { nextAutoDrop_.fill(-1.0); }
+    void stop() { autoEnabled_.fill(false); }
     bool takeCraftTab() { return std::exchange(craftTab_, false); }
 private:
     struct Request {
@@ -887,28 +889,27 @@ private:
         HelPlinkoAction action;
         Rarity rarity;
         double sentAt;
-        std::uint32_t balanceAfterSpend = 0;
     };
     struct FallingChip {
         std::uint16_t path;
         Rarity rarity;
         double startsAt;
-        std::uint32_t balanceAfterSpend;
+        bool landed = false;
+    };
+    struct ResultSlot {
+        std::uint64_t count = 0;
+        double lastLanding = -10.0;
     };
     std::string sessionToken_;
     std::uint32_t connectionGeneration_ = 0;
-    double nextRoundAt_ = 0.0;
     std::vector<Request> pending_;
     std::vector<FallingChip> falling_;
+    std::array<std::uint32_t, kPlinkoTiers.size()> confirmedBalances_{};
+    std::array<ResultSlot, kHelPlinkoPayout.size()> slots_{};
     std::string message_;
-    std::array<double, kPlinkoTiers.size()> nextAutoDrop_ = [] {
-        std::array<double, kPlinkoTiers.size()> times{};
-        times.fill(-1.0);
-        return times;
-    }();
+    std::array<bool, kPlinkoTiers.size()> autoEnabled_{};
     std::size_t autoStart_ = 0;
-    double latestLanding_ = -10.0;
-    int latestSlot_ = -1;
+    double nextAutoAt_ = 0.0;
     bool shopExpanded_ = false;
     std::size_t buySizeIndex_ = 0;
     bool craftTab_ = false;
@@ -969,8 +970,6 @@ private:
     int bulkTarget_ = 2;
     bool bulkArmed_ = false;
     bool editingBlacklist_ = false;
-    bool unlockingShopPurchases_ = false;
-    std::optional<Profile::Stack> unlockSelection_;
     std::optional<std::vector<Profile::Stack>> mythicUltraMaterials_;
     bool mythicUltraRefreshed_ = false;
     std::uint32_t mythicUltraRequest_ = 0;
