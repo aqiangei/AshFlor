@@ -485,8 +485,10 @@ bool WavePanel::render(MenuContext& ctx) {
     const Rect close = closeButtonRect(panel);
     const double x = panel.x + 16.0;
     const double y = panel.y;
-    const Rect start{x, y + 94.0, 100.0, 30.0};
-    const Rect leave{panel.right() - 116.0, y + 94.0, 100.0, 30.0};
+    const double buttonWidth = (panel.w - 48.0) / 3.0;
+    const Rect start{x, y + 94.0, buttonWidth, 30.0};
+    const Rect resume{start.right() + 8.0, start.y, buttonWidth, start.h};
+    const Rect leave{resume.right() + 8.0, start.y, buttonWidth, start.h};
     const Rect field{x, y + 140.0, panel.w - 135.0, 32.0};
     const Rect join{field.right() + 8.0, field.y, 94.0, field.h};
     const Vec2 mouse = ctx.mouse();
@@ -512,6 +514,10 @@ bool WavePanel::render(MenuContext& ctx) {
     const bool full = status.known && status.occupied >= kWaveRoomCount;
     if (!full && ctx.pressed() && start.contains(mouse)) {
         ctx.net.sendChat("/wave start");
+        return false;
+    }
+    if (!full && ctx.pressed() && resume.contains(mouse)) {
+        ctx.net.sendChat("/wave resume");
         return false;
     }
     if (ctx.pressed() && leave.contains(mouse)) {
@@ -540,9 +546,11 @@ bool WavePanel::render(MenuContext& ctx) {
     lamp(panel.x + panel.w * .46,
          !status.known ? "查询奖励中" : status.dailyCapReached ? "今日星星已达上限" : "今日还可获得星星",
          !status.known ? 0x9BA4AAu : status.dailyCapReached ? 0xFAD66Fu : 0x8EE26Au);
-    text(canvas, full ? "所有房间已占用，释放后可开房。" : "每间最多 4 人，开房 30 秒后开打。",
+    text(canvas, full ? "所有房间已占用，释放后可开房。" :
+         "最多 " + std::to_string(kWaveMaxPlayers) + " 人，开房 30 秒后开打。",
          x, y + 74.0, info);
     pillButton(canvas, start, "创建房间", full ? 0x767676u : kLeaderboardSkin.border);
+    pillButton(canvas, resume, "按进度开房", full ? 0x767676u : kLeaderboardSkin.border);
     pillButton(canvas, leave, "离开房间", kLeaderboardSkin.border);
     inputField(canvas, field, code_, "六位房号", typing, ctx.timeSeconds, &field_);
     pillButton(canvas, join, "加入", valid ? kLeaderboardSkin.border : 0x767676u);

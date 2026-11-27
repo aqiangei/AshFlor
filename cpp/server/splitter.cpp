@@ -237,8 +237,17 @@ bool GameServer::splitSession(Session& session) {
     left = safeHalf(left);
     right = safeHalf(right);
 
+    BurrowState sharedBurrow;
+    if (const auto* burrow = world_.tryGet<BurrowState>(session.entity);
+        burrow && burrow->active && clockMillis_ < burrow->untilMillis) {
+        sharedBurrow = *burrow;
+        sharedBurrow.overlappingTrainingDummy = NULL_ENTITY;
+    }
+
     const Entity clone = createPlayerBody(session, realm, right);
     if (clone == NULL_ENTITY) return false;
+    // Both halves inherit the same remaining time and predator rules.
+    if (sharedBurrow.active) world_.add<BurrowState>(clone, sharedBurrow);
     if (world_.has<WavePlayer>(session.entity)) world_.add<WavePlayer>(clone);
 
     // ONE FLOWER CUT IN TWO, not a second flower issued free. The clone

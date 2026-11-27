@@ -2257,7 +2257,7 @@ void SpawnSystem::rebuildZones(const ContentRegistry& content) {
     realmBiome_.fill(kInvalidIndex);
     prestigeJungleRealm_ = Realm::Arena;
     ordinaryJungleRealm_ = Realm::Arena;
-    prestigeSewersRealm_ = Realm::Arena;
+    prestigeSewersRealms_.fill(Realm::Arena);
     prestigeHelRealm_ = Realm::Arena;
     prestigeFactoryRealm_ = Realm::Arena;
     prestigeTwoFactoryRealm_ = Realm::Arena;
@@ -2279,7 +2279,8 @@ void SpawnSystem::rebuildZones(const ContentRegistry& content) {
                                  map.usesReferenceSpawnCurve();
         if (prestigeJungle) prestigeJungleRealm_ = map.realm();
         if (ordinaryJungle) ordinaryJungleRealm_ = map.realm();
-        if (prestigeSewers) prestigeSewersRealm_ = map.realm();
+        if (prestigeSewers && map.prestigeLevel() >= 1 && map.prestigeLevel() <= 2)
+            prestigeSewersRealms_[map.prestigeLevel() - 1] = map.realm();
         if (prestigeHel) prestigeHelRealm_ = map.realm();
         if (map.templateId() == "computer") {
             if (map.prestigeLevel() == 1) prestigeFactoryRealm_ = map.realm();
@@ -2502,7 +2503,7 @@ Rarity SpawnSystem::rollBossUpgrade(World& world, const SpawnZone& zone, double 
     // the first super after that one dies gets the roll.
     const auto rolls = [&](double readyMillis, Rarity tier) {
         return nowMillis >= readyMillis && !topBossTaken(world, tier, zone.realm) &&
-               bossRng_.chance(kBossUpgradeChance);
+               bossRng_.chance(tier == Rarity::Apex ? kHyperUpgradeChance : kBossUpgradeChance);
     };
     if (rolls(clock.apexReadyMillis, Rarity::Apex)) return Rarity::Apex;
     if (rolls(clock.uniqueReadyMillis, Rarity::Unique)) return Rarity::Unique;
@@ -3321,7 +3322,7 @@ bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentR
         if (slot == Slot::Killed) {
             const bool jungleDelay = (zone.realm == ordinaryJungleRealm_ || zone.realm == prestigeJungleRealm_) &&
                 !zone.singular && forcedTier < 0;
-            const bool sewersRefill = zone.realm == prestigeSewersRealm_ &&
+            const bool sewersRefill = authoredMap && authoredMap->prestige() && authoredMap->templateId() == "sewers" &&
                 zone.difficulty >= kPrestigeSewersBoxDifficulty && !zone.singular && forcedTier < 0;
             const bool prestigeHelRefill = zone.prestige && zone.realm == prestigeHelRealm_ &&
                 zone.difficulty >= kPrestigeHelUpperBand && !zone.singular && forcedTier < 0;
@@ -3667,16 +3668,19 @@ void SpawnSystem::promoteLatent(World& world, const Terrain& terrain,
     }
     constexpr std::array reserveMin{kJungleMinAwake, kJungleMinAwake, kPrestigeSewersMinAwake,
                                     kPrestigeHelMinAwake, kPrestigeHelMinAwake,
-                                    kPrestigeFactoryMinAwake, kPrestigeFactoryMinAwake};
-    const std::array reserveRealms{ordinaryJungleRealm_, prestigeJungleRealm_, prestigeSewersRealm_,
+                                    kPrestigeFactoryMinAwake, kPrestigeFactoryMinAwake, kPrestigeSewersMinAwake};
+    const std::array reserveRealms{ordinaryJungleRealm_, prestigeJungleRealm_, prestigeSewersRealms_[0],
                                   prestigeHelWakeRealms[0], prestigeHelWakeRealms[1],
-                                  prestigeFactoryRealm_, prestigeTwoFactoryRealm_};
+                                  prestigeFactoryRealm_, prestigeTwoFactoryRealm_, prestigeSewersRealms_[1]};
     std::array<int, reserveMin.size()> awake{};
     std::array<bool, reserveMin.size()> inView{};
     const auto prioritySlot = [&](const SpawnZone& zone) {
         if (zone.realm == ordinaryJungleRealm_) return 0;
         if (zone.realm == prestigeJungleRealm_) return 1;
-        if (zone.realm == prestigeSewersRealm_ && zone.difficulty >= kPrestigeSewersBoxDifficulty) return 2;
+        if (zone.prestige && zone.difficulty >= kPrestigeSewersBoxDifficulty) {
+            if (zone.realm == prestigeSewersRealms_[0]) return 2;
+            if (zone.realm == prestigeSewersRealms_[1]) return 7;
+        }
         if (zone.prestige && zone.difficulty >= kPrestigeHelUpperBand &&
             !zone.singular && zone.forceRarity < 0) {
             if (zone.realm == prestigeHelWakeRealms[0]) return 3;

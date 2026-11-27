@@ -701,6 +701,12 @@ bool ShopPanel::render(MenuContext& ctx) {
             // The field was already cleared when the code was sent; the stars
             // are the whole confirmation.
             spawnFallingStars(state, ctx.window.width());
+        } else {
+            state.modal = ShopState::Modal::Alert;
+            state.lines = wrapMessage(trEnZh(
+                "Purchased. Use Shop locks in the crafting menu to unlock these petals.",
+                "购买成功，花瓣已锁定。需要合成时，去合成面板点「解锁购物花瓣」。"),
+                kDialogLineSize, 260.0);
         }
     }
 

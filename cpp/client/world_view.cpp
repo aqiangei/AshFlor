@@ -299,8 +299,8 @@ bool WorldView::applySnapshot(ByteReader& reader, double receivedMillis, bool ke
     }
     if (selfMask & net::SelfWave) {
         wave.round = reader.u32();
-        wave.remainingMillis = reader.u16();
-        wave.durationMillis = reader.u16();
+        wave.remainingMillis = reader.u32();
+        wave.durationMillis = reader.u32();
         wave.theme = static_cast<net::WaveTheme>(reader.u8());
     }
 

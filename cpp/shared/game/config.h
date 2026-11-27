@@ -1148,6 +1148,7 @@ struct PetalConfig {
     /// topped up. Uncounted against the squad cap a plain egg has -- what
     /// limits them is `petManaCost` and the reload. The magic stick.
     double petLifetimeMillis = 0;
+    double petSummonIntervalMillis = 0;
     /// Mana one timed summon costs, before rarity: on the same doubling ladder
     /// as requiredMana. A summon that cannot be paid for is skipped until the
     /// next action; the petal itself still goes on the ring for free.
@@ -1407,7 +1408,11 @@ inline double baseRadiationRadius(const PetalConfig& config, Rarity rarity) {
                                 config.id == "arctic_plutonium" ? 200.0 :
                                 (config.id == "arctic_corium" || config.id=="void_corium") ? 150.0 :
                                 config.id == "void_lithium" ? 250.0 : 0.0;
-    return kRadiationRadiusScale * (config.radiation.radius + (config.id=="void_stardust"?12.5*ladderIndex(rarity):0.0) + highTierStep * std::max(0, ladderIndex(rarity) - 7));
+    const int tier = ladderIndex(rarity);
+    const double stardustGrowth = config.id == "void_stardust" ? 12.5 * tier : 0.0;
+    const double apexRadiusScale = rarity == Rarity::Ascendant ? 1.20 : 1.0;
+    return kRadiationRadiusScale * apexRadiusScale *
+           (config.radiation.radius + stardustGrowth + highTierStep * std::max(0, tier - 7));
 }
 
 // Original boostUpwards / passiveBoost curves, expressed in native movement
@@ -1779,8 +1784,10 @@ inline int summonSquadSize(int count, Rarity rarity) {
 /// Nominal brood size before local placement or the global pet cap.
 inline int configuredSummonCount(const PetalConfig& config, Rarity rarity,
                                  const SkillSet* skills, int slot) {
-    if (config.petLifetimeMillis > 0.0) return summonSquadSize(config.petCount, rarity);
-    const int brood = config.rarityOverrides[ladderIndex(rarity)].petCount.value_or(config.petCount);
+    const auto overrideCount = config.rarityOverrides[ladderIndex(rarity)].petCount;
+    if (config.petLifetimeMillis > 0.0)
+        return overrideCount.value_or(summonSquadSize(config.petCount, rarity));
+    const int brood = overrideCount.value_or(config.petCount);
     const int copies = summonUsesDuplicator(config)
         ? petalCopies(brood, skills, slot, petalTier(rarity), config.stackable)
         : brood;

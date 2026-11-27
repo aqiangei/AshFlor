@@ -954,6 +954,7 @@ TEST(a_mythic_kill_is_worth_stars_and_a_common_one_is_not) {
     CHECK_EQ(starsForKill(Rarity::Common), 0);
     CHECK_EQ(starsForKill(Rarity::Legendary), 0);
     CHECK_EQ(starsForKill(Rarity::Mythic), 1);
+    CHECK_EQ(starsForKill(Rarity::Unique), 150);
     CHECK_EQ(starsForKill(Rarity::Apex), 2000);
     CHECK_EQ(starsForKill(Rarity::Ascendant), 8000);
 }
@@ -1104,16 +1105,17 @@ TEST(killing_a_mob_credits_the_ledger_and_pays_its_stars) {
     if (!armed) return;
 
     const std::uint16_t mobIndex = world.get<MobType>(mob).configIndex;
-    // Mythic, so the kill is worth a star as well as a tally.
-    world.get<MobType>(mob).rarity = Rarity::Mythic;
+    // An Eternal kill awards the challenge bounty as well as the kill tally.
+    world.get<MobType>(mob).rarity = Rarity::Unique;
     // And unarmoured, because whatever this map happened to stock may be one
     // whose armour a starting ring cannot get through -- an ultra bee wears
     // 729, and the stock basic petal swings 10. This test is about the kill
     // ledger; armour has its own tests.
     if (world.has<Armor>(mob)) world.get<Armor>(mob).amount = 0.0;
 
+    const double starsBefore = client.profile().stars;
     const bool credited = h.stepUntil({&client}, [&] {
-        if (client.profile().killCount(mobIndex, Rarity::Mythic) > 0) return true;
+        if (client.profile().killCount(mobIndex, Rarity::Unique) > 0) return true;
         if (!world.isAlive(mob) || world.has<Dead>(mob)) return false;
         // Park the mob on the flower, one hit from death. The TypeScript
         // player pipeline resolves this body contact before moveEnemies(), so
@@ -1130,7 +1132,7 @@ TEST(killing_a_mob_credits_the_ledger_and_pays_its_stars) {
     }, 200);
     CHECK(credited);
     if (!credited) return;
-    CHECK_EQ(client.profile().stars, starsForKill(Rarity::Mythic) + kFirstLoginStars);
+    CHECK_EQ(client.profile().stars, starsBefore + 150);
 }
 
 // ---------------------------------------------------------------------------

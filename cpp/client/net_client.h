@@ -55,6 +55,8 @@ struct Profile {
         std::uint16_t petalIndex = 0;
         Rarity rarity = Rarity::Common;
         std::uint32_t count = 0;
+        std::uint32_t craftLocked = 0;
+        std::uint32_t craftable() const { return count - std::min(count, craftLocked); }
     };
     std::vector<Stack> inventory;
     std::unordered_map<std::uint16_t, unsigned> titanForgeCounts;
@@ -119,6 +121,13 @@ struct Profile {
     std::uint32_t stackCount(std::uint16_t petalIndex, Rarity rarity) const {
         for (const Stack& stack : inventory) {
             if (stack.petalIndex == petalIndex && stack.rarity == rarity) return stack.count;
+        }
+        return 0;
+    }
+
+    std::uint32_t craftableCount(std::uint16_t petalIndex, Rarity rarity) const {
+        for (const Stack& stack : inventory) {
+            if (stack.petalIndex == petalIndex && stack.rarity == rarity) return stack.craftable();
         }
         return 0;
     }
@@ -741,6 +750,9 @@ public:
     /// Hands one petal of this tier to the trader the body is standing at, for
     /// one coin of the same tier.
     void requestApexDraw(const std::array<std::uint16_t, kTraderApexDrawCost>& petals);
+    void setTraderAccess(const std::string& password);
+    enum class TraderAccess { Locked, Pending, Accepted, Refused };
+    TraderAccess traderAccess() const { return traderAccess_; }
     void requestTrade(std::uint16_t petalIndex, Rarity rarity);
     /// How long until the account may trade again, counted down on this
     /// client's clock from the last profile; 0 when it may now.
@@ -797,6 +809,7 @@ public:
     /// price is the server's to decide -- the slot says which card, not what
     /// it costs.
     void requestBuyPetal(std::uint16_t petalIndex, Rarity rarity, int offerSlot = -1, std::uint32_t quantity = 1);
+    void requestUnlockCraftStack(std::uint16_t petalIndex, Rarity rarity, std::uint32_t locked);
     /// Redeems a star code. The answer lands in shopOutcome().
     void requestRedeemCode(const std::string& code);
     /// Changes this session's account password. The answer lands in
@@ -977,6 +990,7 @@ public:
     /// then arrival() is the only honest position for it.
     bool selfPlaced() const { return view_.self().netId != 0; }
     const Profile& profile() const { return profile_; }
+    std::uint32_t connectionGeneration() const { return connectionGeneration_; }
     const std::string& sessionToken() const { return sessionToken_; }
     const std::vector<ChatLine>& chat() const { return chat_; }
     /// How many lines this transcript has ever taken, trimmed ones included.
@@ -1324,6 +1338,7 @@ private:
         int cols, rows;
     };
     std::unordered_map<Realm, CollisionSource> installedCollision_;
+    std::uint32_t connectionGeneration_ = 0;
     std::uint32_t helPlinkoRequest_ = 0;
     std::vector<HelPlinkoReply> helPlinkoReplies_;
     Vec2 realmArrival_;
@@ -1381,6 +1396,8 @@ private:
     /// When, on this client's steady clock, the oracle wait the last profile
     /// reported runs out.
     double oracleReadyAtMillis_ = 0;
+    TraderAccess traderAccess_ = TraderAccess::Locked;
+    std::uint32_t traderAccessRequest_ = 0;
     TradeOutcome tradeOutcome_;
     /// The same for the trader's wait.
     double traderReadyAtMillis_ = 0;

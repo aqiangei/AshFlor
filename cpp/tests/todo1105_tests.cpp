@@ -36,11 +36,11 @@ TEST(todo1106_new_talents_preserve_indices_costs_and_refund) {
     skills.set(SkillId::Prestige, 0);
     skills.set(SkillId::PetDamage, 9);
     CHECK(skills.prestigeUnlocked());
-    CHECK_EQ(skills.spent(), 331);
+    CHECK_EQ(skills.spent(), 256);
     CHECK_NEAR(skills.effectScale(SkillId::PetDamage), 2.5, 1e-12);
     CHECK_NEAR(skills.healthScale(SkillId::Summoner), 1.0, 1e-12);
     skillRefundTo(skills, SkillId::PetDamage, -1);
-    CHECK_EQ(skills.spent(), 175);
+    CHECK_EQ(skills.spent(), 100);
     CHECK_NEAR(skills.effectScale(SkillId::PetDamage), 1.0, 1e-12);
     skills.clear();
     CHECK(!skills.prestigeUnlocked());

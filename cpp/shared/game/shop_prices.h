@@ -33,7 +33,7 @@ inline constexpr ShopSuperPrice kShopSuperPrices[] = {
     {"arctic_lightsaber", 5500},
     {"arctic_nitro", 5500},
     {"arctic_nitrogen", 8000},
-    {"arctic_nuke", 45000},
+    {"arctic_nuke", 36000},
     {"arctic_nuke_egg", 45000},
     {"arctic_pinecone", 8000},
     {"arctic_plutonium", 22500},

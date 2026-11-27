@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <string_view>
 
 #include "shared/game/rarity.h"
@@ -44,7 +45,7 @@ enum class HyperTechnique {
     GlitchJam, GoldenRecovery, HornetShot, ScriptCast, LaserPulse,
     LeafRecovery, LightRecovery, MagicCactusReserve, MagicNeedleReserve, PentagonShove,
     PokerOdds, RamRecovery, RiceCleanup, RubberGround, RubyEcho,
-    SoilSettle, EvasionWake, TriangleStrike, WaspWeave,
+    SoilSettle, EvasionWake, TriangleStrike, WaspWeave, PowderRush,
 };
 
 struct HyperTechniqueInfo {
@@ -459,6 +460,9 @@ inline constexpr HyperTechniqueInfo kHyperTechniques[] = {
     {"uranium", HyperTechnique::WideRadiation,
      "Radiation reaches 25% farther at the same self-damage.",
      "辐射半径增加 25%，自伤规则相同。", 1.25},
+    {"void_powder", HyperTechnique::PowderRush,
+     "Hyper Powder increases its flat speed bonus by 25%.",
+     "超凡粉末的固定移速加成提高 25%。", 1.25},
     {"void_singularity", HyperTechnique::SingularityAnchor,
      "Hyper Singularity cuts monster gravity fields to 15% instead of 33%.",
      "超凡奇点将怪物引力场强度降到 15%（永恒为 33%）。", 0.15, false},
@@ -508,6 +512,13 @@ inline HyperTechnique hyperTechnique(std::string_view id, Rarity rarity, bool co
 
 inline double hyperAmount(const HyperTechniqueInfo* info, HyperTechnique technique, double fallback = 1.0) {
     return info && info->technique == technique ? info->amount : fallback;
+}
+
+inline double voidPowderFlatSpeed(Rarity rarity) {
+    constexpr std::array<double, kLadderRarityCount> speed{
+        25, 50, 100, 200, 400, 800, 1600, 3200, 6400, 12800};
+    return speed[ladderIndex(rarity)] *
+        hyperAmount(hyperTechniqueInfo("void_powder", rarity), HyperTechnique::PowderRush);
 }
 
 inline const char* hyperMysteryHint(HyperTechnique technique, bool chinese) {
@@ -627,6 +638,8 @@ inline const char* hyperMysteryHint(HyperTechnique technique, bool chinese) {
             return chinese ? "即使没掷出大奖，打野怪也有更高的底注。" : "Even a bad roll pays better against wild mobs.";
         case HyperTechnique::DustWake:
             return chinese ? "跑动起来，观察追兵穿过尘埃的一瞬。" : "Keep moving and watch what happens when pursuers cross the dust.";
+        case HyperTechnique::PowderRush:
+            return chinese ? "多装备一枚虚空粉末，试试叠加后的跑速。" : "Equip a second Void Powder to feel the stacked boost.";
         case HyperTechnique::GlassPhase:
             return chinese ? "把玻璃留在近处，看它穿过怪物时的节奏。" : "Keep the glass close and watch its rhythm as it passes through a mob.";
         case HyperTechnique::GlassPressure:

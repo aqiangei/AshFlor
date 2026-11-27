@@ -85,7 +85,7 @@ void OraclePanel::stage(const Profile& profile, std::uint16_t petalIndex, Rarity
     const int cost = oracleCraftCost(rarity);
     if (cost <= 0 ||
         (rarity == Rarity::PermanentHyper && !petalCraftsToApex(content(), petalIndex))) return;
-    if (profile.stackCount(petalIndex, rarity) < static_cast<std::uint32_t>(cost)) return;
+    if (profile.craftableCount(petalIndex, rarity) < static_cast<std::uint32_t>(cost)) return;
     // One upgrade, so a click REPLACES what was staged rather than adding to
     // it: there is only ever one price in the slot.
     stagedPetal_ = petalIndex;
@@ -225,7 +225,7 @@ bool OraclePanel::render(MenuContext& ctx) {
     if (phase_ != Phase::Pulsing && knownPetal(stagedPetal_)) {
         const int cost = oracleCraftCost(stagedRarity_);
         const int affordable =
-            cost > 0 ? static_cast<int>(profile.stackCount(stagedPetal_, stagedRarity_) /
+            cost > 0 ? static_cast<int>(profile.craftableCount(stagedPetal_, stagedRarity_) /
                                         static_cast<std::uint32_t>(cost))
                      : 0;
         if (affordable < crafts_) {
@@ -267,7 +267,7 @@ bool OraclePanel::render(MenuContext& ctx) {
         drawSlotButton(canvas, minus, "−", std::nullopt, minus.contains(mouse), false);
         drawSlotButton(canvas, plus, "+", std::nullopt, plus.contains(mouse), false);
         drawSlotButton(canvas, maximum, trEnZh("Max", "最大"), std::nullopt, maximum.contains(mouse), false);
-        const int limit = std::min(65535, static_cast<int>(profile.stackCount(stagedPetal_, stagedRarity_) /
+        const int limit = std::min(65535, static_cast<int>(profile.craftableCount(stagedPetal_, stagedRarity_) /
             static_cast<std::uint32_t>(oracleCraftCost(stagedRarity_))));
         if (ctx.pressed()) {
             if (minus.contains(mouse)) crafts_ = std::max(1, crafts_ - 1);

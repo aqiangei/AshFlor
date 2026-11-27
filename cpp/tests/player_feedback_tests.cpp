@@ -226,6 +226,12 @@ TEST(feedback_scarce_shop_petals_keep_their_authored_price_premium) {
     CHECK_NEAR(price,45000,1e-9);CHECK(price>shopPrice(basic,Rarity::Super)*6);
     CHECK(shopSellsRarity(Rarity::Unique));
     CHECK(shopPrice(mimic,Rarity::Ultra)>shopPrice(basic,Rarity::Ultra)*4);
+    const auto nuke = content().petalIndex("arctic_nuke");
+    const auto egg = content().petalIndex("arctic_nuke_egg");
+    CHECK_NEAR(shopPrice(nuke, Rarity::Super), 36000.0, 1e-9);
+    CHECK_NEAR(shopOfferPrice(nuke, Rarity::Super, 10), 32400.0, 1e-9);
+    CHECK_NEAR(shopPrice(nuke, Rarity::Unique), 540000.0, 1e-9);
+    CHECK_NEAR(shopPrice(egg, Rarity::Super), 45000.0, 1e-9);
 }
 TEST(feedback_talent_wiki_values_and_duplicator_eligibility) {
     SkillSet s;s.set(SkillId::Loadout,4);s.set(SkillId::Magnetism,0);CHECK_NEAR(s.magnetismBonus(),1000,1e-9);

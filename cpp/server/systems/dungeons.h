@@ -87,6 +87,7 @@ public:
         bool bonusHammer = false;
     };
     std::function<WaveAward(Entity, std::uint64_t, bool)> waveAward;
+    std::function<std::uint32_t(Entity)> waveBestCleared;
     std::function<void(Entity)> waveRevived;
 
     /// True when `realm` is one of the dungeon copies.
@@ -142,6 +143,7 @@ private:
         std::uint64_t number = 0;
         int size = 0;
         int queued = 0;
+        int largePartySize = 0;
         std::vector<Entity> enemies;
         std::array<Entity, kWaveMaxPlayers> participants{};
     };
@@ -152,6 +154,8 @@ private:
         std::vector<WaveRound> rounds;
         std::uint64_t round = 0;
         std::uint64_t cleared = 0;
+        bool resume = false;
+        bool largePartyStarted = false;
         double readyAtMillis = 0.0;
         double nextBatchMillis = 0.0;
         double cleanupUntilMillis = 0.0;
@@ -159,6 +163,7 @@ private:
     };
     std::array<WaveRoom, kWaveRoomCount> waveRooms_{};
     const WaveRoom* waveRoomFor(const World& world, Entity player) const;
+    std::uint64_t firstWave(const World& world, const WaveRoom& room) const;
     void runWave(WaveRoom& room, World& world, const Terrain& terrain, const ContentRegistry& content,
                  SpawnSystem& spawning, Rng& rng, double nowMillis, CommandBuffer& commands);
     void leaveWave(World& world, const WaveMember& member);

@@ -378,8 +378,15 @@ ClusterShape clusterShape(const SpriteCache* sprites, std::uint16_t petalIndex, 
     }
     // Zero (or an absent field) means "unscaled" rather than "invisible",
     // exactly as the world renderer's petalArtScale() reads it.
-    const double scale =
+    double scale =
         petalIndex < content().petalCount() ? content().petal(petalIndex).visualScale : 0.0;
+    // Magic variants with the standard world-art boost use their base card scale.
+    const auto base = content().magicSourceOf(petalIndex);
+    if (base != kInvalidIndex) {
+        const double configuredBaseScale = content().petal(base).visualScale;
+        const double baseCardScale = configuredBaseScale > 0.0 ? configuredBaseScale : 1.0;
+        if (std::abs(scale - baseCardScale * 2.5) < 1e-6) scale = configuredBaseScale;
+    }
     const double size = sizeStat > 0 ? sizeStat : 1.0;
     const double radius = kPetalIconSize * 0.5 * size;
     if (scale > 0 && scale != 1.0) {

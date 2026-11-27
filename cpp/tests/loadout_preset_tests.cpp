@@ -413,7 +413,12 @@ TEST(loadout_preserves_current_prestige_and_restores_saved_talents_when_affordab
     }
     Harness h("preset-prestige-budget", [](const std::string& path) {
         seedKeeper(path, [](PlayerRecord& record) {
-            record.talentPointBonus = 375;
+            for (int level = 1; level < 290; ++level) record.totalXp += xpForNextLevel(level);
+            // Leave exactly two ordinary points after buying both prestige tiers.
+            record.skills.set(SkillId::Reload, skillTierCount(SkillId::Reload) - 1);
+            record.skills.set(SkillId::Medic, skillTierCount(SkillId::Medic) - 1);
+            record.skills.set(SkillId::Luck, 0);
+            CHECK_EQ(record.talentPoints(), 302);
             record.setItemCount(Rarity::Common, bagKey("rose"), 1);
             record.setItemCount(Rarity::Common, bagKey("basic"), 1);
         });

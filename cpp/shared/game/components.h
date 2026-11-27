@@ -41,6 +41,7 @@ struct WaveEnemy {
     bool canDrop = true;
     std::uint64_t round = 0;
     bool rushing = false;
+    int lootSlots = 0;
 };
 struct MobTag {};
 struct GhostTag {};
@@ -757,6 +758,7 @@ struct PlayerModifiers {
     double jurassicAmuletFlatDamage = 0.0;
     double petMoveSpeedScale = 1.0;
     double summonDamageScale = 1.0;
+    double summonRadiusScale = 1.0;
     double fireResistance = 0.0;
     double spillRadiusScale = 1.0;
     double spillGrowthScale = 1.0;

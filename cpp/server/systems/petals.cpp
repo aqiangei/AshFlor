@@ -625,6 +625,7 @@ double actionIntervalMillis(const PetalConfig& config, const PetalStats& stats,
             ? 1000.0 : stats.reloadMillis;
         // Authored incubation is separate from shell recovery. Apply the
         // Reload talent without the general gameplay scale for broken petals.
+        if (config.petSummonIntervalMillis > 0.0) summonInterval = config.petSummonIntervalMillis;
         if (config.petSummonTiers) {
             if (const auto* tree = world.tryGet<PlayerSkillTree>(player))
                 summonInterval *= tree->skills.reloadScale();
@@ -679,7 +680,7 @@ void repairChromosomePetals(World& world, Entity owner, Realm realm,
         bool blocked = false;
     };
     const double maxRepair = chromosomeRepairPerPulse(rarity);
-    const double baseRepair = petalHealScale(rarity);
+    const double baseRepair = 1.5 * petalHealScale(rarity);
     std::array<SlotRepair, kLoadoutActiveSlots> repairs{};
     auto& slots = world.get<PetalSlotState>(owner).slots;
     const auto eligible = [&](Entity target) -> const PetalInstance* {
@@ -715,11 +716,12 @@ void repairChromosomePetals(World& world, Entity owner, Realm realm,
     for (std::size_t i = 0; i < repairs.size(); ++i) {
         auto& repair = repairs[i];
         if (repair.blocked || repair.missingHealth <= 0.0) continue;
-        // Keep the base repair available to fragile petals when the percentage cap is lower.
-        const double healthLimit = std::max(baseRepair * repair.pools,
-                                            kChromosomeRepairHealthCap * repair.maxHealth);
-        repair.amount = std::min({maxRepair, healthLimit, repair.missingHealth});
         auto& slot = slots[i];
+        const double fusionCount = std::max(1.0, slot.combinationStrength);
+        // The percentage cap already uses the fused petal's enlarged health.
+        const double healthLimit = std::max(baseRepair * repair.pools * fusionCount,
+                                            kChromosomeRepairHealthCap * repair.maxHealth);
+        repair.amount = std::min({maxRepair * fusionCount, healthLimit, repair.missingHealth});
         if (!slot.independent) {
             slot.poolHealth += repair.amount;
             // Preserve any damage dealt since the pool last synchronized.
@@ -2654,6 +2656,11 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
                     aggregate.modifiers.speedScale += (40.0 + tier * 7.5 + beyondSuper * 22.5) / kPlayerMaxSpeed;
                     aggregate.elementalShieldPerSecond += 2.5 * petalHealScale(equipped.rarity);
                 }
+                if (worn.id == "cucumber" && !slot.broken) {
+                    const int tier = ladderIndex(petalGameplayRarity(equipped.rarity));
+                    const double radiusScale = equipped.rarity == Rarity::Ascendant ? 0.76 : 0.97 - 0.021 * tier;
+                    aggregate.modifiers.summonRadiusScale *= radiusScale;
+                }
                 if (worn.id == "void_horn") {
                     const double bonus = .04 + .012 * ladderIndex(equipped.rarity);
                     aggregate.modifiers.summonDamageScale =
@@ -2673,6 +2680,8 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
                     aggregate.modifiers.petalHealthBonus = std::max(
                         aggregate.modifiers.petalHealthBonus, durability[ladderIndex(equipped.rarity)]);
                 }
+                if (worn.id == "void_powder")
+                    aggregate.modifiers.speedScale += voidPowderFlatSpeed(equipped.rarity) / kPlayerMaxSpeed;
                 if (worn.id == "void_fan") {
                     const double tier = ladderIndex(equipped.rarity);
                     const double resistance = std::min(.45, .01 + .006 * tier * tier);
@@ -2792,7 +2801,7 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
             flowerRadiusBonus += stats.flowerRadiusBonus;
             aggregate.modifiers.maxHealthScale *= mods.maxHealth;
             const auto& id = registry.petal(equipped.configIndex).id;
-            if (id == "mysterious_powder" || id == "void_powder")
+            if (id == "mysterious_powder")
                 powderBonus += mods.speed - 1.0;
             else aggregate.modifiers.speedScale *= mods.speed;
             aggregate.modifiers.damageScale *= mods.damage;
@@ -2953,11 +2962,15 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
             aggregate.modifiers.collisionDamageTakenScale =
                 std::min(aggregate.modifiers.collisionDamageTakenScale,
                          1.0 - stats.collisionResist);
-            // Bandage, worn and maximised like the disc: the longest Undead
-            // alone counts, and a second bandage is a spare.
-            if (stats.undeadMillis > aggregate.modifiers.undeadMillis) {
+            // Use the longest Undead window. At equal duration, prefer the
+            // higher tier so a spare cannot lower resistance to Void Scar.
+            const int bandageTier = petalTier(equipped.rarity);
+            if (stats.undeadMillis > 0.0 &&
+                (stats.undeadMillis > aggregate.modifiers.undeadMillis ||
+                 (stats.undeadMillis == aggregate.modifiers.undeadMillis &&
+                  bandageTier > aggregate.modifiers.undeadBandageTier))) {
                 aggregate.modifiers.undeadMillis = stats.undeadMillis;
-                aggregate.modifiers.undeadBandageTier = petalTier(equipped.rarity);
+                aggregate.modifiers.undeadBandageTier = bandageTier;
                 aggregate.modifiers.unrevivableMillis = stats.unrevivableMillis;
                 aggregate.modifiers.undeadBodyDamageScale = 1.0 - stats.undeadBodyDamageCut;
             }
@@ -6690,7 +6703,7 @@ void PetalSystem::summonTimedPets(World& world, const ContentRegistry& registry,
             room -= std::max(0, missing);
         }
     }
-    const int count = std::min(room, summonSquadSize(config.petCount, rarity));
+    const int count = std::min(room, configuredSummonCount(config, rarity, nullptr, slot));
     if (count <= 0) return;
     if (!canAffordMana(world, player, squads, manaCost)) {
         if (onTimedSummonManaShortage) onTimedSummonManaShortage(player);
@@ -6888,12 +6901,15 @@ int PetalSystem::summonPets(World& world, const ContentRegistry& registry, Entit
     const MobStats mob = registry.mobStats(mobIndex, statsRarity);
     // Smaller than the wild animal: sized on the old, smaller mob ladder
     // (kPetSizeScale) rather than the wild one, then on the reference's pet
-    // ramp -- the same size at common, a third of it by unique. Mass stays
+    // ramp, with a further 15% reduction at every tier. Mass stays
     // the tier's, exactly as a wild mob's does whatever body it rolled.
     const std::size_t tier = static_cast<std::size_t>(ladderIndex(clampRarity(rarityIndex(statsRarity))));
     const double crownSizeScale = crownSummon && slotState.rarity == Rarity::Ascendant ? 1.10 : 1.0;
-    const double petSizeScale = kPetSizeScale[tier] / kMobSizeScale[tier] *
-                                mobSizeRamp(statsRarity, kPetSizeScaleAtUnique) * crownSizeScale;
+    const auto* ownerModifiers = world.tryGet<PlayerModifiers>(player);
+    const double radiusScale = ownerModifiers ? ownerModifiers->summonRadiusScale : 1.0;
+    constexpr double summonedBodyScale = 0.85;
+    const double petSizeScale = summonedBodyScale * kPetSizeScale[tier] / kMobSizeScale[tier] *
+                                mobSizeRamp(statsRarity, kPetSizeScaleAtUnique) * crownSizeScale * radiusScale;
     const Transform* ownerAt = world.tryGet<Transform>(player);
     const Realm realm = ownerAt != nullptr ? ownerAt->realm : Realm::Overworld;
     // A centipede or a leech arrives whole, as a wild one does: the head and
@@ -6911,11 +6927,11 @@ int PetalSystem::summonPets(World& world, const ContentRegistry& registry, Entit
     const double searchReach = ownerRadius + (closeHatch ? 4.0 : 14.0) * maxRadius + 10.0;
     const bool mobileHatch = !chain && mob.ai != AiKind::Stationary && config.speed != 0.0;
     const bool ownerSummon = ownerAt && at == ownerAt->position && source &&
-        (source->petMobIndex == mobIndex || source->id == "magic_blood_sacrifice");
+        (source->petMobIndex == mobIndex || source->id == "magic_blood_sacrifice" || crownSummon);
     const bool canHatchAtOwner = !chain && ownerSummon;
     const bool checkNearbyHatchSpace = !closeHatch && ownerSummon &&
         (mobileHatch || (expiresAtMillis == 0.0 && petalIsEgg(*source)));
-    enum class HatchOccupant { Shell, Mobile, NewMobile, Fixed };
+    enum class HatchOccupant { Shell, Mobile, WildMobile, NewMobile, Fixed };
     struct HatchCircle { Vec2 at; double radius; HatchOccupant kind; };
     std::vector<HatchCircle> occupied;
     const auto collect=[&](const Transform& pos,const Body& body,HatchOccupant kind){
@@ -6937,7 +6953,11 @@ int PetalSystem::summonPets(World& world, const ContentRegistry& registry, Entit
         for (const Entity mobEntity : attractionCandidates_) {
             const auto* pos = world.tryGet<Transform>(mobEntity);
             const auto* body = world.tryGet<Body>(mobEntity);
-            if (pos && body && !world.has<Dead>(mobEntity)) collect(*pos, *body, occupantKind(mobEntity));
+            if (!pos || !body || world.has<Dead>(mobEntity)) continue;
+            auto kind = occupantKind(mobEntity);
+            if (kind == HatchOccupant::Mobile && !world.has<Pet>(mobEntity))
+                kind = HatchOccupant::WildMobile;
+            collect(*pos, *body, kind);
         }
     }
     Query<PetalInstance,Transform,Body> eggs{world};
@@ -6971,33 +6991,38 @@ int PetalSystem::summonPets(World& world, const ContentRegistry& registry, Entit
         bool placed = false;
         std::optional<Vec2> crowdedLanding;
         constexpr int kRingSeats = 16;
-        const auto crossesFixedBody = [&](Vec2 candidate) {
+        bool blockedByCrowd = false;
+        const auto crossesBlocker = [&](Vec2 candidate) {
             if (!mobileHatch || !canHatchAtOwner || closeHatch) return false;
             const Vec2 step = candidate - at;
             const double lengthSq = step.lengthSq();
             if (lengthSq <= 1e-8) return false;
             return std::any_of(occupied.begin(), occupied.end(), [&](const HatchCircle& other) {
-                if (other.kind != HatchOccupant::Fixed) return false;
+                if (other.kind != HatchOccupant::Fixed && other.kind != HatchOccupant::WildMobile)
+                    return false;
                 const Vec2 offset = other.at - at;
                 const double projection = (offset.x * step.x + offset.y * step.y) / lengthSq;
                 if (projection <= 0.0 || projection >= 1.0) return false;
                 const double clearance = other.radius + std::min(radius, kMobWallRadius);
-                return distanceSq(at + step * projection, other.at) < clearance * clearance;
+                if (distanceSq(at + step * projection, other.at) >= clearance * clearance) return false;
+                blockedByCrowd = true;
+                return true;
             });
         };
         const auto tryLanding = [&](Vec2 candidate) {
             if (terrain_ && (terrain_->blocked(candidate, realm) ||
                 terrain_->segmentBlocked(at, candidate, realm) ||
                 terrain_->resolveWall(candidate, radius, realm).collided)) return false;
+            if (crossesBlocker(candidate)) return false;
             bool overlapsMobile = false;
             for (const auto& circle : occupied) {
                 const double clearance = radius + circle.radius + 2.0;
                 if ((circle.at - candidate).lengthSq() >= clearance * clearance) continue;
-                if (crowdedLanding || !checkNearbyHatchSpace || chain || circle.kind != HatchOccupant::Mobile)
+                if (crowdedLanding || !checkNearbyHatchSpace || chain ||
+                    (circle.kind != HatchOccupant::Mobile && circle.kind != HatchOccupant::WildMobile))
                     return false;
                 overlapsMobile = true;
             }
-            if (crossesFixedBody(candidate)) return false;
             if (overlapsMobile) {
                 if (!crowdedLanding) crowdedLanding = candidate;
                 return false;
@@ -7019,10 +7044,10 @@ int PetalSystem::summonPets(World& world, const ContentRegistry& registry, Entit
                 }
             }
         }
-        if (!placed && !crowdedLanding && mobileHatch && canHatchAtOwner && !closeHatch &&
-            std::any_of(occupied.begin(), occupied.end(), [](const HatchCircle& circle) {
+        if (!placed && mobileHatch && canHatchAtOwner && !closeHatch &&
+            (blockedByCrowd || std::any_of(occupied.begin(), occupied.end(), [](const HatchCircle& circle) {
                 return circle.kind == HatchOccupant::Fixed;
-            })) {
+            }))) {
             // A large pet's combat radius can push the first formation ring
             // outside a crowd even when its movement hull fits at the wearer.
             // Fill the pocket before looking for a distant, full-body seat.
@@ -7037,7 +7062,7 @@ int PetalSystem::summonPets(World& world, const ContentRegistry& registry, Entit
                 }
                 return std::none_of(occupied.begin(), occupied.end(), [&](const HatchCircle& other) {
                     if (other.kind == HatchOccupant::Shell) return false;
-                    const double otherHull = other.kind == HatchOccupant::Fixed
+                    const double otherHull = other.kind == HatchOccupant::Fixed || other.kind == HatchOccupant::WildMobile
                         ? other.radius : std::min(other.radius, kMobWallRadius);
                     const double clearance = hull + otherHull + 2.0;
                     return distanceSq(candidate, other.at) < clearance * clearance;
@@ -7046,7 +7071,7 @@ int PetalSystem::summonPets(World& world, const ContentRegistry& registry, Entit
             for (double offset : {ownerRadius * 0.5, ownerRadius, ownerRadius * 1.5}) {
                 for (int seat = 0; seat < kRingSeats && !placed; ++seat) {
                     const Vec2 candidate = at + Vec2::fromAngle(start + kTau * seat / kRingSeats, offset);
-                    if (!fitsPocket(candidate)) continue;
+                    if (!fitsPocket(candidate) || crossesBlocker(candidate)) continue;
                     spawnAt = candidate;
                     placed = true;
                 }
@@ -7083,7 +7108,7 @@ int PetalSystem::summonPets(World& world, const ContentRegistry& registry, Entit
                 const double distance = ownerRadius + kMobWallRadius + 8 + 80 * (seat / kRingSeats);
                 const Vec2 candidate = at + Vec2::fromAngle(
                     startAngle + kTau * (seat % kRingSeats) / kRingSeats, distance);
-                if (crossesFixedBody(candidate)) continue;
+                if (crossesBlocker(candidate)) continue;
                 const auto wall = terrain_->resolveWall(candidate, kMobWallRadius, realm);
                 if (wall.collided || wall.unresolved || terrain_->blocked(candidate, realm) ||
                     terrain_->segmentBlocked(at, candidate, realm)) continue;
@@ -7093,7 +7118,7 @@ int PetalSystem::summonPets(World& world, const ContentRegistry& registry, Entit
                     const double hull = other.kind == HatchOccupant::Fixed ? radius : kMobWallRadius;
                     const double clearance = other.radius + hull + 2;
                     if ((other.at - candidate).lengthSq() >= clearance * clearance) continue;
-                    if (other.kind == HatchOccupant::Mobile) {
+                    if (other.kind == HatchOccupant::Mobile || other.kind == HatchOccupant::WildMobile) {
                         mobileOverlap = true;
                     } else {
                         blockedByOccupant = true;

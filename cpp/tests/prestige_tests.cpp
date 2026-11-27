@@ -1907,19 +1907,41 @@ TEST(wave_loot_pays_from_normal_tables_and_throttles_boss_tiers_independently) {
     world.add<PlayerTag>(player);
     world.add<Health>(player, Health{100.0, 100.0});
     world.add<Transform>(player, Transform{{2000.0, 2000.0}, 0.0});
-    const auto roll = [&](Rarity rarity, double now, std::optional<bool> waveCanDrop) {
+    const auto roll = [&](Rarity rarity, double now, std::optional<bool> waveCanDrop, int lootSlots = 0) {
         const Entity corpse = world.create();
         world.add<MobTag>(corpse);
         world.add<Transform>(corpse, Transform{{4000.0, 4000.0}, 0.0});
         world.add<MobType>(corpse, MobType{registry.mobIndex("beetle"), rarity, 1.0});
         world.add<Health>(corpse, Health{0.0, 1000.0});
         world.add<Bounty>(corpse).credit(player, 1000.0);
+        std::vector<Entity> otherPlayers;
+        if (lootSlots > 0) {
+            for (int i = 1; i < kWaveMaxPlayers; ++i) {
+                const Entity peer = world.create();
+                world.add<PlayerTag>(peer);
+                world.add<Health>(peer, Health{100.0, 100.0});
+                world.add<Transform>(peer, Transform{{2000.0, 2000.0}, 0.0});
+                world.get<Bounty>(corpse).credit(peer, 100.0 - i);
+                otherPlayers.push_back(peer);
+            }
+        }
         world.add<Dead>(corpse, Dead{player});
-        if (waveCanDrop) world.add<WaveEnemy>(corpse, WaveEnemy{*waveCanDrop});
+        if (waveCanDrop) world.add<WaveEnemy>(corpse, WaveEnemy{*waveCanDrop, 1, false, lootSlots});
         loot.run(world, grid, registry, rng, now, net::kTickSeconds, commands, events);
         commands.flush();
         const auto drops = Query<DropTag>{world}.collect();
-        for (const Entity drop : drops) world.destroy(drop);
+        std::set<Entity> recipients;
+        for (const Entity drop : drops) {
+            if (lootSlots > 0) {
+                for (const auto& claim : world.get<DropItem>(drop).eligible) recipients.insert(claim.body);
+            }
+            world.destroy(drop);
+        }
+        if (lootSlots > 0) {
+            CHECK_EQ(recipients.size(), static_cast<std::size_t>(lootSlots));
+            CHECK(recipients.count(player) != 0);
+        }
+        for (const Entity peer : otherPlayers) world.destroy(peer);
         world.destroy(corpse);
         return drops.size();
     };
@@ -1934,6 +1956,7 @@ TEST(wave_loot_pays_from_normal_tables_and_throttles_boss_tiers_independently) {
     CHECK(roll(Rarity::Unique, 361400.0, true) > 0);
     CHECK_EQ(roll(Rarity::Apex, 361500.0, true), std::size_t(0));
     CHECK(roll(Rarity::Apex, 721300.0, true) > 0);
+    CHECK(roll(Rarity::Unique, 721400.0, true, kWaveStandardPlayers) > 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -1979,9 +2002,12 @@ TEST(deep_prestige_sewers_grows_mostly_super_with_some_ultra) {
                 100.0 * ultra / samples);
 }
 
-TEST(prestige_is_one_root_node_costing_175) {
-    CHECK_EQ(skillTierCount(SkillId::Prestige), 1);
-    CHECK_EQ(skillTierCost(SkillId::Prestige, 0), 175);
+TEST(prestige_tiers_keep_a_shared_root_and_use_level_gates) {
+    CHECK_EQ(skillTierCount(SkillId::Prestige), 2);
+    CHECK_EQ(skillTierCost(SkillId::Prestige, 0), 100);
+    CHECK_EQ(skillTierCost(SkillId::Prestige, 1), 200);
+    CHECK_EQ(skillTierRequiredPlayerLevel(SkillId::Prestige, 0), 240);
+    CHECK_EQ(skillTierRequiredPlayerLevel(SkillId::Prestige, 1), 290);
     CHECK(skillGate(SkillId::Prestige) == nullptr);
     CHECK(skillFromKey("prestige") == SkillId::Prestige);
 
@@ -1990,9 +2016,9 @@ TEST(prestige_is_one_root_node_costing_175) {
     CHECK(skills.prerequisiteMet(SkillId::Prestige));
     skills.set(SkillId::Prestige, 0);
     CHECK(skills.prestigeUnlocked());
-    CHECK_EQ(skills.spent(), 175);
-    CHECK_EQ(availableTalentPoints(88, skills), 1);
-    CHECK_EQ(availableTalentPoints(113, skills), 51);
+    CHECK_EQ(skills.spent(), 100);
+    CHECK_EQ(availableTalentPoints(240, skills), 380);
+    CHECK_EQ(availableTalentPoints(290, skills), 480);
     // It multiplies nothing.
     CHECK_NEAR(skills.statScale(SkillId::Damage), 1.0, 1e-12);
     CHECK_NEAR(skills.reloadScale(), 1.0, 1e-12);
@@ -2320,20 +2346,22 @@ TEST(prestige_jungle_sewers_and_hel_wake_local_mobs_at_the_shared_ambient_limit)
     CHECK(nearby > 0);
     CHECK(spawner.census().mobs <= kMaxLiveMobs);
 
-    const Realm boxRealm = maps.realmOfId("prestige_sewers", found);
-    CHECK(found);
-    if (!found) return;
-    const Vec2 box = terrain.resolveCircle({21400.0, 4050.0}, kPlayerBaseRadius, boxRealm);
-    viewers.push_back({box, boxRealm});
-    tick(55'600.0);
-    int boxNearby = 0;
-    mobs.each([&](Entity, MobTag&, Transform& at, MobType&, AmbientMob&) {
-        if (at.realm == boxRealm && std::abs(at.position.x - box.x) <= 1400.0 &&
-            std::abs(at.position.y - box.y) <= 1000.0) ++boxNearby;
-    });
-    CHECK(boxNearby > 0);
-    CHECK(spawner.census().mobs <= kMaxLiveMobs);
-    std::printf("[sewers] %d mobs near the box at the ambient budget\n", boxNearby);
+    for (const char* id : {"prestige_sewers", "prestige_2_sewers"}) {
+        const Realm boxRealm = maps.realmOfId(id, found);
+        CHECK(found);
+        if (!found) continue;
+        const Vec2 box = terrain.resolveCircle({21400.0, 4050.0}, kPlayerBaseRadius, boxRealm);
+        viewers.push_back({box, boxRealm});
+        tick(55'600.0);
+        int boxNearby = 0;
+        mobs.each([&](Entity, MobTag&, Transform& at, MobType&, AmbientMob&) {
+            if (at.realm == boxRealm && std::abs(at.position.x - box.x) <= 1400.0 &&
+                std::abs(at.position.y - box.y) <= 1000.0) ++boxNearby;
+        });
+        CHECK(boxNearby > 0);
+        CHECK(spawner.census().mobs <= kMaxLiveMobs);
+        std::printf("[%s] %d mobs near the box at the ambient budget\n", id, boxNearby);
+    }
 
     const Realm helRealm = maps.realmOfId("prestige_hel", found);
     CHECK(found);
@@ -3030,30 +3058,30 @@ TEST(only_a_tree_with_prestige_joins_the_prestige_biome) {
     CHECK(realmOf(world, bodyNamed(world, "climber")) == Realm::Arena);
 }
 
-TEST(prestige_is_bought_with_175_points_and_not_on_the_maze_tree) {
+TEST(prestige_one_is_bought_for_100_points_at_level_240) {
     Harness h("prestige-buy",
               [](const std::string& path) {
                   seedUser(path, "rich", "password7");
                   seedUser(path, "poor", "password7");
-                  seedProgress(path, "rich", false, 88);
-                  seedProgress(path, "poor", false, 87);
+                  seedProgress(path, "rich", false, 240);
+                  seedProgress(path, "poor", false, 239);
               },
               dataDir(), 0);
     if (!h.ready) { CHECK(false); return; }
 
     NetClient poor;
     CHECK(logIn(h, poor, "poor"));
-    CHECK(awaitProfile(h, poor, [](const Profile& p) { return p.level == 87; }));
+    CHECK(awaitProfile(h, poor, [](const Profile& p) { return p.level == 239; }));
     poor.requestUpgradeSkill(SkillId::Prestige, 0);
-    CHECK(h.stepUntil({&poor}, [&] { return sawText(poor, "need 175"); }, 60));
+    CHECK(h.stepUntil({&poor}, [&] { return sawText(poor, "Requires player level 240"); }, 60));
     CHECK(!poor.profile().skills.prestigeUnlocked());
 
     NetClient rich;
     CHECK(logIn(h, rich, "rich"));
-    CHECK(awaitProfile(h, rich, [](const Profile& p) { return p.level == 88; }));
+    CHECK(awaitProfile(h, rich, [](const Profile& p) { return p.level == 240; }));
     rich.requestUpgradeSkill(SkillId::Prestige, 0);
     CHECK(awaitProfile(h, rich, [](const Profile& p) {
-        return p.skills.prestigeUnlocked() && p.talentPoints() == 1;
+        return p.skills.prestigeUnlocked() && p.talentPoints() == 380;
     }));
 
     // A reset hands the points back and the next join is an ordinary one.
@@ -3819,7 +3847,7 @@ TEST(wave_four_rooms_isolate_full_parties_rewards_and_cleanup) {
         commands.flush();
     };
     const Vec2 exterior = terrain.spawnPoint(Realm::Overworld);
-    std::array<Entity, 17> players;
+    std::array<Entity, kWaveRoomCount * kWaveMaxPlayers + 1> players;
     for (auto& e : players) {
         e = world.create();
         world.add<PlayerTag>(e);
@@ -3830,18 +3858,20 @@ TEST(wave_four_rooms_isolate_full_parties_rewards_and_cleanup) {
     }
     std::set<Realm> realms;
     std::set<std::string> codes;
+    std::string firstRoomCode;
     for (int room = 0; room < 4; ++room) {
-        const auto host = players[room * 4];
+        const auto host = players[room * kWaveMaxPlayers];
         const auto reply = dungeon.waveCommand(world, terrain, host, "start", rng, 1000.0);
         const auto firstDigit = reply.find_first_of("0123456789");
         CHECK(firstDigit != std::string::npos);
         if (firstDigit == std::string::npos) return;
         const auto code = reply.substr(firstDigit, 6);
+        if (room == 0) firstRoomCode = code;
         CHECK(codes.insert(code).second);
         const auto realm = world.get<Transform>(host).realm;
         CHECK(realms.insert(realm).second);
-        for (int seat = 1; seat < 4; ++seat) {
-            const auto guest = players[room * 4 + seat];
+        for (int seat = 1; seat < kWaveMaxPlayers; ++seat) {
+            const auto guest = players[room * kWaveMaxPlayers + seat];
             dungeon.waveCommand(world, terrain, guest, "join " + code, rng, 2000.0);
             CHECK(world.get<Transform>(guest).realm == realm);
         }
@@ -3853,7 +3883,8 @@ TEST(wave_four_rooms_isolate_full_parties_rewards_and_cleanup) {
               .find("均已占用") != std::string::npos);
     CHECK(!dungeon.inWave(world, players.back()));
     const auto firstRealm = world.get<Transform>(players[0]).realm;
-    const auto secondRealm = world.get<Transform>(players[4]).realm;
+    const auto secondHost = players[kWaveMaxPlayers];
+    const auto secondRealm = world.get<Transform>(secondHost).realm;
     std::vector<Entity> awarded;
     dungeon.waveAward = [&](Entity player, std::uint64_t, bool) -> DungeonSystem::WaveAward {
         awarded.push_back(player);
@@ -3870,12 +3901,16 @@ TEST(wave_four_rooms_isolate_full_parties_rewards_and_cleanup) {
     CHECK_EQ(awarded.size(), 1u);
     if (!awarded.empty()) CHECK(awarded.front() == players[0]);
     CHECK_EQ(dungeon.waveHudFor(world, players[0], 0.0).round, 2u);
-    CHECK_EQ(dungeon.waveHudFor(world, players[4], 0.0).round, 1u);
+    CHECK_EQ(dungeon.waveHudFor(world, secondHost, 0.0).round, 1u);
 
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 1; i < kWaveMaxPlayers; ++i) {
         dungeon.waveCommand(world, terrain, players[i], "leave", rng, 77000.0);
         CHECK(world.get<Transform>(players[i]).realm == Realm::Overworld);
     }
+    dungeon.waveCommand(world, terrain, players.back(), "join " + firstRoomCode, rng, 77000.0);
+    CHECK(!dungeon.inWave(world, players.back()));
+    dungeon.waveCommand(world, terrain, players.front(), "leave", rng, 77000.0);
+    CHECK(world.get<Transform>(players.front()).realm == Realm::Overworld);
     tick(77000.0);
     CHECK_EQ(dungeon.waveOccupancy(), 3u);
     const auto enemies = Query<WaveEnemy>{world}.collect();
@@ -3888,6 +3923,304 @@ TEST(wave_four_rooms_isolate_full_parties_rewards_and_cleanup) {
     dungeon.waveCommand(world, terrain, players.back(), "start", rng, 77100.0);
     CHECK_EQ(dungeon.waveOccupancy(), 4u);
     CHECK(world.get<Transform>(players.back()).realm == firstRealm);
+}
+
+TEST(wave_large_party_scales_boss_health_and_awards_all_qualified_members) {
+    World world;
+    Terrain terrain;
+    WorldMaps maps;
+    std::string error;
+    CHECK(maps.load(dataDir(), &terrain, error));
+    if (!error.empty()) return;
+    DungeonSystem dungeon;
+    dungeon.worldMaps = &maps;
+    SpawnSystem spawner;
+    spawner.worldMaps = &maps;
+    dungeon.moveToRealm = [&](Entity e, Realm realm, Vec2 position) {
+        world.get<Transform>(e) = Transform{position, 0.0, realm};
+    };
+    dungeon.waveBestCleared = [](Entity) { return 15u; };
+    CombatSystem combat;
+    CommandBuffer commands{world};
+    Rng rng{42u};
+    const auto tick = [&](double now) {
+        dungeon.run(world, terrain, shippedContent(), spawner, combat, rng, now, commands);
+        commands.flush();
+    };
+    const auto addPlayer = [&] {
+        const Entity player = world.create();
+        world.add<PlayerTag>(player);
+        world.add<Body>(player, Body{25.0, 1.0});
+        world.add<Health>(player, Health{100.0, 100.0});
+        world.add<Faction>(player, Faction{Team::Players, true});
+        world.add<Transform>(player, Transform{terrain.spawnPoint(Realm::Overworld), 0.0});
+        world.add<PlayerProgress>(player).level = 100;
+        return player;
+    };
+    const auto open = [&](int seats) {
+        std::vector<Entity> members{addPlayer()};
+        const auto reply = dungeon.waveCommand(world, terrain, members.front(), "resume", rng, 1000.0);
+        const auto pos = reply.find_first_of("0123456789");
+        CHECK(pos != std::string::npos);
+        if (pos == std::string::npos) return members;
+        const auto code = reply.substr(pos, 6);
+        while (static_cast<int>(members.size()) < seats) {
+            members.push_back(addPlayer());
+            dungeon.waveCommand(world, terrain, members.back(), "join " + code, rng, 2000.0);
+            CHECK(dungeon.inWave(world, members.back()));
+        }
+        return members;
+    };
+    const auto standard = open(kWaveStandardPlayers);
+    const auto large = open(kWaveMaxPlayers);
+    const auto memberRealm = world.get<Transform>(large.front()).realm;
+    std::set<Entity> paid;
+    dungeon.waveAward = [&](Entity player, std::uint64_t round, bool bonus) -> DungeonSystem::WaveAward {
+        CHECK_EQ(round, 5u);
+        CHECK(!bonus);
+        CHECK(paid.insert(player).second);
+        return {7500};
+    };
+    tick(31000.0);
+    CHECK_EQ(dungeon.waveHudFor(world, standard.front(), 31000.0).round, 5u);
+    CHECK_EQ(dungeon.waveHudFor(world, large.front(), 31000.0).round, 5u);
+    const auto enemies = Query<WaveEnemy>{world}.collect();
+    CHECK_EQ(enemies.size(), 2u);
+    if (enemies.size() != 2) return;
+    const auto boss = world.get<Transform>(enemies.front()).realm == memberRealm ? enemies.front() : enemies.back();
+    const auto control = boss == enemies.front() ? enemies.back() : enemies.front();
+    CHECK_EQ(world.get<WaveEnemy>(boss).lootSlots, kWaveStandardPlayers);
+    CHECK_EQ(world.get<WaveEnemy>(control).lootSlots, 0);
+    const double bossHealth = world.get<Health>(boss).max;
+    const double controlHealth = world.get<Health>(control).max;
+    CHECK(controlHealth > 0);
+    CHECK_NEAR(bossHealth / controlHealth, 2.5, 1e-9);
+    CHECK_NEAR(world.get<ContactDamage>(boss).amount, world.get<ContactDamage>(control).amount, 1e-9);
+    const auto beetle = shippedContent().mobIndex("beetle");
+    CHECK_NEAR(world.get<ContactDamage>(boss).amount,
+               shippedContent().mobStats(beetle, Rarity::Unique).damage, 1e-9);
+    for (const auto member : large) world.get<Bounty>(boss).credit(member, bossHealth / large.size());
+    world.add<Dead>(boss);
+    tick(31600.0);
+    CHECK(paid == std::set<Entity>(large.begin(), large.end()));
+}
+
+TEST(wave_batches_finish_within_twenty_seconds_in_four_full_rooms) {
+    World world;
+    Terrain terrain;
+    WorldMaps maps;
+    std::string error;
+    CHECK(maps.load(dataDir(), &terrain, error));
+    if (!error.empty()) return;
+    DungeonSystem dungeon;
+    dungeon.worldMaps = &maps;
+    SpawnSystem spawner;
+    spawner.worldMaps = &maps;
+    dungeon.moveToRealm = [&](Entity e, Realm realm, Vec2 position) {
+        world.get<Transform>(e) = Transform{position, 0.0, realm};
+    };
+    std::map<Entity, std::uint32_t> best;
+    dungeon.waveBestCleared = [&](Entity e) { return best.at(e); };
+    CombatSystem combat;
+    CommandBuffer commands{world};
+    Rng rng{42u};
+    const auto& registry = shippedContent();
+    const auto tick = [&](double now) {
+        dungeon.run(world, terrain, registry, spawner, combat, rng, now, commands);
+        commands.flush();
+    };
+    struct Trial {
+        std::uint32_t wave;
+        std::uint32_t duration;
+        std::size_t enemies;
+        Entity host = NULL_ENTITY;
+        Realm realm = Realm::Overworld;
+        double lastBatch = -1.0;
+    };
+    Trial trials[]{{1, 60000, 28}, {149, 149250, 44}, {167, 150000, 66}, {150, 150000, 1}};
+    for (auto& trial : trials) {
+        std::string code;
+        for (int i = 0; i < kWaveMaxPlayers; ++i) {
+            const Entity player = world.create();
+            world.add<PlayerTag>(player);
+            world.add<Body>(player, Body{25.0, 1.0});
+            world.add<Health>(player, Health{100.0, 100.0});
+            world.add<Faction>(player, Faction{Team::Players, true});
+            world.add<Transform>(player, Transform{terrain.spawnPoint(Realm::Overworld), 0.0});
+            world.add<PlayerProgress>(player).level = 400;
+            best.emplace(player, trial.wave == 1 ? 0u : trial.wave + 10);
+            if (i == 0) {
+                const auto reply = dungeon.waveCommand(world, terrain, player, "resume", rng, 1000.0);
+                const auto pos = reply.find_first_of("0123456789");
+                CHECK(pos != std::string::npos);
+                if (pos == std::string::npos) return;
+                code = reply.substr(pos, 6);
+                trial.host = player;
+                trial.realm = world.get<Transform>(player).realm;
+            } else {
+                dungeon.waveCommand(world, terrain, player, "join " + code, rng, 2000.0);
+            }
+            CHECK(dungeon.inWave(world, player));
+            world.get<Transform>(player).position = terrain.realmExtent(trial.realm) * 0.5 +
+                Vec2::fromAngle(kTau * i / kWaveMaxPlayers, 600.0);
+        }
+    }
+    constexpr double start = 31000.0;
+    for (double elapsed = 0.0; elapsed <= 20000.0; elapsed += 2000.0) {
+        tick(start + elapsed);
+        for (auto& trial : trials) {
+            const auto hud = dungeon.waveHudFor(world, trial.host, start + elapsed);
+            CHECK_EQ(hud.round, trial.wave);
+            CHECK_EQ(hud.durationMillis, trial.duration);
+            CHECK_EQ(hud.remainingMillis, trial.duration - static_cast<unsigned>(elapsed));
+            std::size_t spawned = 0;
+            Query<WaveEnemy, Transform>{world}.each([&](Entity, WaveEnemy&, Transform& at) {
+                if (at.realm == trial.realm) ++spawned;
+            });
+            CHECK(spawned <= trial.enemies);
+            if (spawned == trial.enemies && trial.lastBatch < 0.0) trial.lastBatch = elapsed;
+            if (elapsed == 20000.0)
+                std::printf("[wave] round %u: %zu/%zu spawned, final batch %.0f ms\n",
+                            trial.wave, spawned, trial.enemies, trial.lastBatch);
+        }
+    }
+    for (const auto& trial : trials) CHECK(trial.lastBatch >= 0.0);
+
+    // The 150th wave keeps its boss. Defeat it to enter the first mixed pack.
+    const auto killBoss = [&] {
+        auto enemies = Query<WaveEnemy, Transform>{world}.collect();
+        for (const Entity enemy : enemies) {
+            if (world.get<Transform>(enemy).realm == trials[3].realm) world.add<Dead>(enemy);
+        }
+    };
+    killBoss();
+    constexpr double nextWave = start + 21000.0;
+    for (double elapsed = 0.0; elapsed <= 20000.0; elapsed += 2000.0) tick(nextWave + elapsed);
+    CHECK_EQ(dungeon.waveHudFor(world, trials[3].host, nextWave + 20000.0).round, 151u);
+    int ultra = 0, super = 0;
+    Query<WaveEnemy, Transform, MobType>{world}.each([&](Entity, WaveEnemy& wave, Transform& at, MobType& mob) {
+        if (at.realm != trials[3].realm || wave.round != 151) return;
+        ultra += mob.rarity == Rarity::Ultra;
+        super += mob.rarity == Rarity::Super;
+    });
+    std::printf("[wave] round 151: %d Ultra, %d Super at 20000 ms\n", ultra, super);
+    CHECK_EQ(ultra, 22);
+    CHECK_EQ(super, 22);
+    tick(start + 149000.0);
+    CHECK_EQ(dungeon.waveHudFor(world, trials[2].host, start + 149000.0).remainingMillis, 1000u);
+}
+
+TEST(wave_resume_chat_loads_the_account_checkpoint_and_runs_the_selected_wave) {
+    Harness h("wave-resume-chat", [](const std::string& path) {
+        seedUser(path, "resumehost", "password7");
+        seedProgress(path, "resumehost", false, 100);
+        Database db;
+        std::string error;
+        if (!db.load(path, error)) { CHECK(false); return; }
+        const auto* account = db.findUser("resumehost");
+        if (!account) { CHECK(false); return; }
+        CHECK_EQ(db.awardWaveStars(account->id, nullptr, 40), 9000);
+        CHECK(db.save());
+    }, dataDir(), 0);
+    NetClient host;
+    if (!h.ready || !logIn(h, host, "resumehost") || !join(h, host, "resumehost", false)) {
+        CHECK(false);
+        return;
+    }
+    World& world = h.server.world();
+    const auto player = bodyNamed(world, "resumehost");
+    const auto stars = world.get<PlayerProgress>(player).stars;
+    host.sendChat("/wave resume");
+    CHECK(h.stepUntil({&host}, [&] { return world.has<WavePlayer>(player); }));
+    h.clock += 30000.0;
+    CHECK(h.stepUntil({&host}, [&] { return host.view().self().wave.round == 25; }, 80));
+    const auto enemies = Query<WaveEnemy>{world}.collect();
+    CHECK_EQ(enemies.size(), 1u);
+    CHECK_NEAR(world.get<PlayerProgress>(player).stars, stars, 1e-9);
+    if (enemies.size() != 1) return;
+    CHECK_EQ(world.get<WaveEnemy>(enemies.front()).round, 25u);
+    world.get<Bounty>(enemies.front()).credit(player, world.get<Health>(enemies.front()).max);
+    world.add<Dead>(enemies.front());
+    CHECK(h.stepUntil({&host}, [&] { return host.view().self().wave.round == 26; }, 80));
+    CHECK_NEAR(world.get<PlayerProgress>(player).stars, stars + 9000.0, 1e-9);
+}
+
+TEST(wave_resume_uses_the_party_checkpoint_without_awarding_skipped_waves) {
+    World world;
+    Terrain terrain;
+    WorldMaps maps;
+    std::string error;
+    CHECK(maps.load(dataDir(), &terrain, error));
+    if (!error.empty()) return;
+    DungeonSystem dungeon;
+    dungeon.worldMaps = &maps;
+    SpawnSystem spawner;
+    spawner.worldMaps = &maps;
+    dungeon.moveToRealm = [&](Entity e, Realm realm, Vec2 position) {
+        world.get<Transform>(e) = Transform{position, 0.0, realm};
+    };
+    CombatSystem combat;
+    CommandBuffer commands{world};
+    Rng rng{42u};
+    const auto tick = [&](double now) {
+        dungeon.run(world, terrain, shippedContent(), spawner, combat, rng, now, commands);
+        commands.flush();
+    };
+    const auto addPlayer = [&](int level) {
+        const Entity player = world.create();
+        world.add<PlayerTag>(player);
+        world.add<Body>(player, Body{25.0, 1.0});
+        world.add<Health>(player, Health{100.0, 100.0});
+        world.add<Faction>(player, Faction{Team::Players, true});
+        world.add<Transform>(player, Transform{terrain.spawnPoint(Realm::Overworld), 0.0});
+        world.add<PlayerProgress>(player).level = level;
+        return player;
+    };
+    const Entity host = addPlayer(240), guest = addPlayer(70), veteran = addPlayer(40),
+        newcomer = addPlayer(240), regular = addPlayer(240), late = addPlayer(240);
+    dungeon.waveBestCleared = [&](Entity p) { return p == guest ? 34u : p == newcomer ? 0u : 41u; };
+    const auto open = [&](Entity e, const char* action) {
+        const auto reply = dungeon.waveCommand(world, terrain, e, action, rng, 1000.0);
+        const auto code = reply.find_first_of("0123456789");
+        CHECK(code != std::string::npos);
+        return code == std::string::npos ? std::string{} : reply.substr(code, 6);
+    };
+    const auto party = open(host, "resume");
+    CHECK(dungeon.waveCommand(world, terrain, guest, "join " + party, rng, 3000.0).find("已进入") != std::string::npos);
+    open(veteran, "resume");
+    open(newcomer, "resume");
+    const auto normal = open(regular, "start");
+    CHECK(!dungeon.inWave(world, late));
+    dungeon.waveCommand(world, terrain, late, "join " + party, rng, 31000.0);
+    CHECK(!dungeon.inWave(world, late));
+    std::vector<std::uint64_t> rewards;
+    dungeon.waveAward = [&](Entity player, std::uint64_t round, bool) -> DungeonSystem::WaveAward {
+        CHECK_EQ(player, host);
+        rewards.push_back(round);
+        return {9000};
+    };
+    tick(31000.0);
+    CHECK_EQ(dungeon.waveHudFor(world, host, 31000.0).round, 24u);  // Weakest member limits 27 to 24.
+    CHECK_EQ(dungeon.waveHudFor(world, veteran, 31000.0).round, 20u);
+    CHECK_EQ(dungeon.waveHudFor(world, newcomer, 31000.0).round, 1u);
+    CHECK_EQ(dungeon.waveHudFor(world, regular, 31000.0).round, 1u);
+    CHECK(rewards.empty());
+    dungeon.waveCommand(world, terrain, late, "join " + party, rng, 31001.0);
+    CHECK(!dungeon.inWave(world, late));
+    dungeon.waveCommand(world, terrain, late, "join " + normal, rng, 31001.0);
+    CHECK(dungeon.inWave(world, late));
+    const auto realm = world.get<Transform>(host).realm;
+    for (double now = 31000.0; now < 76000.0 && rewards.empty(); now += 600.0) {
+        tick(now);
+        for (const Entity enemy : Query<WaveEnemy>{world}.collect()) {
+            if (world.get<Transform>(enemy).realm != realm || !isStanding(world, enemy)) continue;
+            world.get<Bounty>(enemy).credit(host, world.get<Health>(enemy).max);
+            world.add<Dead>(enemy);
+        }
+    }
+    CHECK_EQ(rewards.size(), 1u);
+    if (!rewards.empty()) CHECK_EQ(rewards.front(), 24u);
+    CHECK_EQ(dungeon.waveHudFor(world, host, 0.0).round, 25u);
 }
 
 TEST(wave_is_endless_bounded_spaced_and_rewards_participation) {
@@ -3934,8 +4267,9 @@ TEST(wave_is_endless_bounded_spaced_and_rewards_participation) {
     CHECK(firstDigit != std::string::npos);
     if (firstDigit == std::string::npos) return;
     const auto join = "join " + reply.substr(firstDigit, 6);
-    for (int i = 1; i < 5; ++i)
+    for (int i = 1; i < 4; ++i)
         dungeon.waveCommand(world, terrain, members[i], join, rng, 2000.0);
+    dungeon.waveCommand(world, terrain, members[4], join, rng, 31000.0);
     for (int i = 0; i < 4; ++i) CHECK(dungeon.inWave(world, members[i]));
     CHECK(!dungeon.inWave(world, members[4]));
     CHECK(!CombatSystem::canDamage(world, members[0], members[1]));
@@ -4097,14 +4431,14 @@ TEST(wave_is_endless_bounded_spaced_and_rewards_participation) {
     tick(now + 16000.0);
     const auto beforeCleanup = Query<WaveEnemy>{world}.collect();
     CHECK(beforeCleanup.size() > 4);
-    tick(now + 45000.0);
-    const auto cleanupHud = dungeon.waveHudFor(world, members[1], now + 45000.0);
+    tick(now + 60000.0);
+    const auto cleanupHud = dungeon.waveHudFor(world, members[1], now + 60000.0);
     CHECK_EQ(cleanupHud.round, 22u);
     CHECK_EQ(cleanupHud.remainingMillis, 0u);
     CHECK_EQ(Query<WaveEnemy>{world}.count(), beforeCleanup.size());
     for (const auto enemy : beforeCleanup) CHECK(world.get<WaveEnemy>(enemy).rushing);
-    tick(now + 60000.0);
-    CHECK_EQ(dungeon.waveHudFor(world, members[1], now + 60000.0).round, 23u);
+    tick(now + 75000.0);
+    CHECK_EQ(dungeon.waveHudFor(world, members[1], now + 75000.0).round, 23u);
     bool overlapped = false;
     for (const auto enemy : Query<WaveEnemy>{world}.collect()) {
         if (world.get<WaveEnemy>(enemy).round == 23) overlapped = true;
@@ -4144,6 +4478,7 @@ TEST(wave_stars_accumulate_per_wave_to_the_daily_cap_across_reloads) {
     legacy.stars = 150000.0;
     legacy.extra["waveStars"]["day"] = 100;
     legacy.extra["waveStars"]["earned"] = 150000;
+    CHECK_EQ(db.waveBestCleared("wave-account"), 0u);
     for (int wave = 0; wave < 6; ++wave)
         CHECK_EQ(db.awardWaveStars("wave-account"), 7500);
     CHECK_NEAR(db.progress("wave-account").stars, 195000.0, 1e-9);
@@ -4152,14 +4487,16 @@ TEST(wave_stars_accumulate_per_wave_to_the_daily_cap_across_reloads) {
     Database restarted;
     CHECK(restarted.load(path, error));
     restarted.setClock(waveStarNow);
+    CHECK_EQ(restarted.waveBestCleared("wave-account"), 1u);
     bool reachedDailyCap = false;
     CHECK(!restarted.waveDailyStarCapReached("wave-account"));
     CHECK_EQ(restarted.awardWaveStars("wave-account", &reachedDailyCap), 5000);
     CHECK(restarted.waveDailyStarCapReached("wave-account"));
     CHECK(!restarted.waveDailyStarCapReached("other-account"));
     CHECK(reachedDailyCap);
-    CHECK_EQ(restarted.awardWaveStars("wave-account", &reachedDailyCap), 0);
+    CHECK_EQ(restarted.awardWaveStars("wave-account", &reachedDailyCap, 26), 0);
     CHECK(reachedDailyCap);
+    CHECK_EQ(restarted.waveBestCleared("wave-account"), 26u);
     CHECK_NEAR(restarted.progress("wave-account").stars, 200000.0, 1e-9);
     CHECK_EQ(restarted.awardWaveStars("other-account"), 7500);
     CHECK_EQ(restarted.awardWaveStars("other-account", nullptr, 11), 8250);
@@ -4175,6 +4512,8 @@ TEST(wave_stars_accumulate_per_wave_to_the_daily_cap_across_reloads) {
     Database hammerReload;
     hammerReload.setClock(waveStarNow);
     CHECK(hammerReload.load(path, error));
+    CHECK_EQ(hammerReload.waveBestCleared("wave-account"), 26u);
+    CHECK_EQ(hammerReload.waveBestCleared("other-account"), 20u);
     CHECK(!hammerReload.awardWaveBonusHammer("wave-account"));
     waveStarClock += 86400000ll;
     CHECK(hammerReload.awardWaveBonusHammer("wave-account"));

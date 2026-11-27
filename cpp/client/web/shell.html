@@ -74,6 +74,8 @@
             transition:background-color .15s,transform .15s,box-shadow .15s;}
         #council-link {flex:1.15;min-width:0;}
         #serverNotice [data-live-status] {flex-direction:column;align-items:flex-start;gap:2px;}
+        #serverNotice a[data-server][aria-current="location"] {outline:3px solid #ffe29b;background:#36552b;}
+        #serverNotice a[data-server][aria-current="location"]::before {content:"当前服";font-weight:700;color:#fff2bb;margin-inline-end:.5em;}
         .server-live-status {display:block;margin-top:4px;font-size:13px;color:#d5eee3;}
         .server-live-status[data-quality="good"] {color:#baffad;}
         .server-live-status[data-quality="fair"] {color:#ffe5a1;}
@@ -985,6 +987,11 @@
   const defaultPort = location.protocol === 'https:' ? '443'
                     : location.protocol === 'http:' ? '80' : '3000';
   const port = query.get('port') || location.port || defaultPort;
+
+  const defaultWebPort = port === '80' || port === '443';
+  const currentServer = Array.from(serverNotice.querySelectorAll('[data-server]')).find(link =>
+    link.hostname === host && (link.port === port || (defaultWebPort && (!link.port || link.port === '67'))));
+  if (currentServer) currentServer.setAttribute('aria-current', 'location');
 
   const args = ['--data', 'data', '--host', host, '--port', port];
   // Credentials only from the URL (?user=&password=) for scripted captures.

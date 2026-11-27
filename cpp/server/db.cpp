@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstring>
 #include <dirent.h>
+#include <limits>
 #include <string_view>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -539,8 +540,30 @@ int PlayerRecord::itemCount(Rarity rarity, const std::string& itemType) const {
     return stackCount(bucket[itemType]);
 }
 
+int PlayerRecord::craftLockedCount(Rarity rarity, const std::string& itemType) const {
+    const auto& locked = extra["craftLocks"][rarityName(rarity)][itemType];
+    return std::min(stackCount(locked), itemCount(rarity, itemType));
+}
+
+void PlayerRecord::setCraftLockedCount(Rarity rarity, const std::string& itemType, int count) {
+    const std::string tier = rarityName(rarity);
+    count = std::min(count, itemCount(rarity, itemType));
+    if (count > 0) {
+        extra["craftLocks"][tier][itemType] = count;
+    } else if (extra.contains("craftLocks")) {
+        auto& locks = extra["craftLocks"];
+        if (locks.contains(tier)) {
+            auto& bucket = locks[tier];
+            bucket.erase(itemType);
+            if (bucket.size() == 0) locks.erase(tier);
+        }
+        if (locks.size() == 0) extra.erase("craftLocks");
+    }
+}
+
 void PlayerRecord::setItemCount(Rarity rarity, const std::string& itemType, int count) {
     const std::string tier = rarityName(rarity);
+    const int locked = craftLockedCount(rarity, itemType);
     if (count <= 0) {
         if (!inventory.contains(tier)) return;
         Json& bucket = inventory[tier];
@@ -549,10 +572,12 @@ void PlayerRecord::setItemCount(Rarity rarity, const std::string& itemType, int 
         // An empty tier is dropped so the file does not accumulate rubble from
         // every petal a player has ever crafted away.
         if (bucket.size() == 0) inventory.erase(tier);
+        if (locked > 0) setCraftLockedCount(rarity, itemType, 0);
         return;
     }
     // operator[] promotes a missing or non-object tier into an object.
     inventory[tier][itemType] = count;
+    if (locked > count) setCraftLockedCount(rarity, itemType, count);
 }
 
 void PlayerRecord::addItem(Rarity rarity, const std::string& itemType, int delta) {
@@ -2528,11 +2553,25 @@ bool Database::waveDailyStarCapReached(const std::string& userId) const {
         ledger["earned"].asInt() >= kWaveDailyStarCap;
 }
 
+std::uint32_t Database::waveBestCleared(const std::string& userId) const {
+    const auto* record = findProgress(userId);
+    if (!record) return 0;
+    const double best = record->extra["waveBestCleared"].asDouble();
+    return best > 0.0 && best <= std::numeric_limits<std::uint32_t>::max() && std::floor(best) == best
+        ? static_cast<std::uint32_t>(best) : 0;
+}
+
 int Database::awardWaveStars(const std::string& userId, bool* reachedDailyCap, std::uint64_t round) {
     const int starsForRound = round >= 20 ? 9000 : round >= 11 ? 8250 : 7500;
     if (reachedDailyCap) *reachedDailyCap = false;
     const std::int64_t today = nowMillis() / 86400000;
     PlayerRecord& record = progress(userId);
+    // A qualified clear counts as progress even after reaching the star cap.
+    const auto best = std::min<std::uint64_t>(round, std::numeric_limits<std::uint32_t>::max());
+    if (best > waveBestCleared(userId)) {
+        record.extra["waveBestCleared"] = static_cast<double>(best);
+        markDirty();
+    }
     const Json& prior = std::as_const(record.extra)["waveStars"];
     const auto lastDay = static_cast<std::int64_t>(prior["day"].asDouble(-1.0));
     if (lastDay > today) return 0;

@@ -908,8 +908,12 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     if (stats.passiveManaDrain > 0) special("每秒法力消耗：", "Mana drain per second: ", stats.passiveManaDrain);
     if (!petalSharesFlowerDamage(config) && stats.modifiers.maxHealth != 1.0)
         special("最大生命：", "Max health: ", (stats.modifiers.maxHealth - 1.0) * 100.0, "%");
-    if (stats.modifiers.speed != 1.0)
+    if (config.id == "void_powder") {
+        const double speed = stats.modifiers.speed * (1.0 + voidPowderFlatSpeed(rarity) / kPlayerMaxSpeed);
+        special("单枚移速加成：+", "Speed bonus with one equipped: +", (speed - 1.0) * 100.0, "%", "%.1f");
+    } else if (stats.modifiers.speed != 1.0) {
         special("移速变化：", "Movement speed: ", (stats.modifiers.speed - 1.0) * 100.0, "%");
+    }
     if (stats.modifiers.playerRadius != 1.0)
         special("花朵半径变化：", "Flower radius: ", (stats.modifiers.playerRadius - 1.0) * 100.0, "%");
     if (stats.modifiers.rotationSpeed != 1.0) {
@@ -967,6 +971,8 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         if(apex && petalIsEgg(config))lines.push_back({chinese?"H护甲：己方召唤物受到不高于蛋稀有度的野怪体伤时，单次最多损失35%最大生命；不抵挡玩家、毒素或技能。":"H escort armour: wild body hits up to the egg tier deal at most 35% of summon max health per hit; no protection from players, poison or abilities.",12.0});
         if(config.id=="egg"||config.id=="beetle_egg")lines.push_back({chinese?"蛋壳不造成接触伤害；蛋壳破碎不会收回已孵化召唤物。":"The shell deals no contact damage; breaking it does not recall hatched pets.",12.0});
         if (config.petLifetimeMillis > 0) special("召唤持续：", "Summon lifetime: ", config.petLifetimeMillis / 1000.0, "s");
+        if (config.petSummonIntervalMillis > 0.0)
+            special("召唤间隔：", "Summon interval: ", config.petSummonIntervalMillis / 1000.0, "s");
         if (config.petSummonTiers || config.id == "egg" || config.id == "beetle_egg") {
             const double authoredDelay = config.petSummonTiers ? baseReloadMillis.value_or(stats.reloadMillis) : 1000.0;
             const double incubation = authoredDelay * (config.petSummonTiers ? skills.reloadScale() : 1.0);
@@ -1035,6 +1041,10 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     if (config.id == "bandage") {
         lines.push_back({chinese ? "随机腐化会阻止并终止续命。装备腐化时，只有 Apex 腐化可保持续命。单独受到光环影响仍可续命。" :
                                    "Random corruption prevents and ends Undead. Apex Corruption is the only Corruption petal compatible with Bandage. The aura alone allows Bandage.",12.0});
+        if (isHyperPetal(rarity)) {
+            lines.push_back({chinese ? "同档或更高档的虚空伤疤命中时，剩余续命时间缩短 25%，每次续命最多一次。"
+                                     : "A Void Scar of the same tier or higher cuts the remaining Undead time by 25% once per Undead window.", 12.0});
+        }
     }
     if ((config.id == "sawblade" && ladderRarity(rarity) >= Rarity::Unique) ||
         (config.id == "rock" && isHyperPetal(rarity))) {
@@ -1530,6 +1540,7 @@ struct InventoryPanel::LayoutCache {
     const WorldMaps* dropMapSource = nullptr;
     std::vector<const MapData*> dropMaps;
     std::vector<Profile::Stack> stacks;
+    std::array<std::uint64_t, kRarityCount> inventoryTotals{};
     std::string search;
     double width = -1;
     bool stacked = false;
@@ -1549,6 +1560,11 @@ struct InventoryPanel::LayoutCache {
 
         grid = buildGrid(profile, nextWidth, nextStacked, sortByCount, trimmed(lowerCase(nextSearch)), nextDrops);
         stacks = profile.inventory;
+        inventoryTotals.fill(0);
+        for (const auto& stack : stacks) {
+            const auto tier = rarityIndex(stack.rarity);
+            if (tier < kRarityCount) inventoryTotals[tier] += stack.count;
+        }
         width = nextWidth;
         stacked = nextStacked;
         search = nextSearch;
@@ -1878,7 +1894,14 @@ bool InventoryPanel::render(MenuContext& ctx) {
         text(canvas, trEnZh("No matching petals", "没有符合条件的花瓣"), centre, view.y + 26.0, hint);
     }
 
-    scroll_.contentHeight = grid.contentHeight;
+    constexpr int summaryColumns = 2;
+    constexpr double summaryRowHeight = 20.0;
+    constexpr double summaryTopPad = 16.0;
+    constexpr double summaryHeadingHeight = 24.0;
+    const bool showSummary = !ctx.net.isSkinAdmin();
+    const double summaryHeight = summaryTopPad + summaryHeadingHeight +
+        ((kRarityCount + summaryColumns - 1) / summaryColumns) * summaryRowHeight;
+    scroll_.contentHeight = grid.contentHeight + (showSummary ? summaryHeight : 0.0);
     scroll_.viewHeight = visibleH;
     const double maxScroll = scroll_.maxOffset();
     const Rect track = thumbTrack(panel, view.y, visibleH);
@@ -2036,9 +2059,30 @@ bool InventoryPanel::render(MenuContext& ctx) {
 #endif
         paintTile(canvas, rect);
     }
+    const double summaryY = originY + grid.contentHeight + summaryTopPad;
+    if (showSummary && summaryY < viewBottom) {
+        TextStyle heading;
+        heading.size = 14.0;
+        heading.align = Align::Centre;
+        heading.baseline = Baseline::Middle;
+        text(canvas, trEnZh("Bag totals by rarity", "背包各品质总数"), centre, summaryY + 9.0, heading);
+        TextStyle count;
+        count.size = 12.0;
+        count.align = Align::Centre;
+        count.baseline = Baseline::Middle;
+        const double columnWidth = (gridRight - gridLeft) / summaryColumns;
+        for (int tier = 0; tier < kRarityCount; ++tier) {
+            const auto rarity = static_cast<Rarity>(tier);
+            const std::string label = std::string(rarityTr(rarity)) + " × " +
+                std::to_string(layout_->inventoryTotals[tier]);
+            const double x = gridLeft + (tier % summaryColumns + 0.5) * columnWidth;
+            const double y = summaryY + summaryHeadingHeight + (tier / summaryColumns + 0.5) * summaryRowHeight;
+            text(canvas, label, x, y, count);
+        }
+    }
     canvas.restore();
 
-    scrollThumb(canvas, panel, view.y, visibleH, grid.contentHeight, scroll_.offset);
+    scrollThumb(canvas, panel, view.y, visibleH, scroll_.contentHeight, scroll_.offset);
 
     // --- tooltip -----------------------------------------------------------
     // Anchored to the CELL rather than the cursor. Mouse: after the dwell, and

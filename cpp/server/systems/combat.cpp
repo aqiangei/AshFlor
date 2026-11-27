@@ -716,6 +716,13 @@ bool CombatSystem::canDamage(const World& world, Entity source, Entity victim) {
     }
     if (victim == NULL_ENTITY || source == victim) return false;
 
+    // The projectile collision already charges the dummy's body damage to the shot.
+    // Dummy contact must not destroy the shot before that collision can record the hit.
+    if (world.has<Projectile>(victim) && world.has<NpcTag>(source) &&
+        isTrainingDummy(world, source) && creditedPlayer(world, victim) != NULL_ENTITY) {
+        return false;
+    }
+
     // Resolving BOTH sides to the player behind them covers every self-harm
     // pair at once -- petal vs own flower, pet vs own petal, shot vs the pet
     // that fired it -- without a rule per pair.

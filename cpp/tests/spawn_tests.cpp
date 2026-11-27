@@ -2,6 +2,7 @@
 
 #include "server_harness.h"
 #include "shared/game/prestige.h"
+#include "client/ui/gallery_map_mobs.h"
 #include "shared/game/map_elements.h"
 
 #include <set>
@@ -686,6 +687,47 @@ using flix::testsupport::twoMapDataDir;
 void seedAdminAccount(const std::string& path) { seedUser(path, "boss", "password7", true); }
 
 } // namespace
+
+TEST(waterspout_is_present_in_the_ocean_spawn_and_gallery_distribution) {
+    Harness h("waterspout-ocean");
+    CHECK(h.ready);
+    if (!h.ready) return;
+    bool found = false;
+    const auto realm = h.server.worldMaps().realmOfId("ocean", found);
+    CHECK(found);
+    const auto* ocean = h.server.worldMaps().forRealm(realm);
+    if (!found || !ocean) return;
+
+    const auto count = std::count_if(ocean->elements().begin(), ocean->elements().end(), [](const auto& band) {
+        return std::any_of(band.mobDistribution.begin(), band.mobDistribution.end(), [](const auto& row) {
+            return row.name == "waterspout" && row.weight > 0.0;
+        });
+    });
+    CHECK_EQ(count, 36);
+    const auto waterspout = content().mobIndex("waterspout");
+    const auto galleryMobs = mapMobIndices(*ocean);
+    CHECK(std::find(galleryMobs.begin(), galleryMobs.end(), waterspout) != galleryMobs.end());
+    const auto& choices = h.server.worldMaps().spawnChoices();
+    const auto oceanDoor = std::find_if(choices.begin(), choices.end(), [&](const auto& choice) {
+        return choice.realm == realm;
+    });
+    CHECK(oceanDoor != choices.end());
+    if (oceanDoor == choices.end()) return;
+
+    NetClient client;
+    CHECK(loginNew(h, client, "vortexwatch", "password7"));
+    client.joinGame(1600, 900, oceanDoor->id);
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; }));
+    World& world = h.server.world();
+    CHECK(h.stepUntil({&client}, [&] {
+        bool sawWaterspout = false;
+        Query<MobTag, MobType, Transform>{world}.each(
+            [&](Entity, MobTag&, MobType& mob, Transform& at) {
+                if (mob.configIndex == waterspout && at.realm == realm) sawWaterspout = true;
+            });
+        return sawWaterspout;
+    }, 900));
+}
 
 TEST(a_chosen_spawn_point_is_honoured_and_survives_a_respawn) {
     const std::string dir = twoMapDataDir("choice");

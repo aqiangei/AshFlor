@@ -102,7 +102,7 @@ inline constexpr std::array<std::array<int, 10>, kSkillCount> kSkillCosts = {{
     {{1, 2, 3, 5, 8, 12, 18, 25, 26, 30}},     // reference Damage
     {{1, 2, 3, 5, 8, 12, 18, 25, 26, 30}},     // reference Absorption
     {{4, 8, 14}},                              // movement speed
-    {{175, 200}},                                  // unlock the prestige worlds
+    {{100, 200}},                                  // unlock the prestige worlds
     {{2, 3, 5, 8, 12, 16, 20, 25, 30, 35}},   // pet damage
     {{2, 4, 6, 8, 10, 14, 18, 22, 26}}, // mana regeneration
     {{4, 8, 14}}, // fluid reach
@@ -126,11 +126,11 @@ inline constexpr std::array<double, 3> kCorruptReloadScale = {1.04, 1.08, 1.12};
 inline constexpr std::array<double, 3> kCorruptReachBonus = {20.0, 40.0, 60.0};
 inline constexpr std::array<double, 5> kSpillRateTalentScale = {1.06, 1.12, 1.18, 1.24, 1.30};
 inline constexpr std::array<double, 2> kSecondaryReloadTalentScale = {1.075, 1.15};
-inline constexpr std::array<double, 2> kElementalPowerTalentScale = {1.075, 1.15};
+inline constexpr std::array<double, 2> kElementalPowerTalentScale = {1.15, 1.30};
 inline constexpr std::array<double, 4> kExplosionReachTalentBonus = {75.0, 150.0, 225.0, 300.0};
-inline constexpr std::array<double, 5> kRadiationReachTalentScale = {1.05, 1.10, 1.15, 1.20, 1.25};
-inline constexpr std::array<double, 3> kRadiationPowerTalentScale = {1.05, 1.10, 1.15};
-inline constexpr std::array<double, 3> kFluidReachTalentScale = {1.10, 1.20, 1.30};
+inline constexpr std::array<double, 5> kRadiationReachTalentScale = {1.20, 1.40, 1.60, 1.80, 2.00};
+inline constexpr std::array<double, 3> kRadiationPowerTalentScale = {1.15, 1.30, 1.50};
+inline constexpr std::array<double, 3> kFluidReachTalentScale = {1.30, 1.65, 2.00};
 inline constexpr std::array<double, 9> kManaRegenTalentScale = {1.08, 1.16, 1.25, 1.35, 1.45, 1.56, 1.68, 1.82, 2.0};
 inline constexpr std::array<double, 9> kManaCapTalentScale = {1.12, 1.25, 1.40, 1.55, 1.72, 1.90, 2.10, 2.35, 2.60};
 // zorr's Speed talent is +20% a level over six; our three tiers are its
@@ -149,6 +149,13 @@ inline int skillTierCost(SkillId id, int tier) {
 inline int skillTierCount(SkillId id) {
     const std::size_t i = static_cast<std::size_t>(id);
     return i < kSkillCount ? kSkillTiers[i] : 0;
+}
+
+inline constexpr int skillTierRequiredPlayerLevel(SkillId id, int tier) {
+    if (id != SkillId::Prestige) return 0;
+    if (tier == 0) return 240;
+    if (tier == 1) return 290;
+    return 0;
 }
 
 // Child → parent requirement (florrclone `requires`).

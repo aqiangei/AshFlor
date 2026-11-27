@@ -198,6 +198,56 @@ TEST(equipping_a_splitter_cuts_the_flower_along_the_petals_line) {
     CHECK(world.get<Loadout>(original).slots[0].broken);
 }
 
+TEST(splitting_underground_keeps_both_halves_underground_until_the_same_deadline) {
+    Harness h("splitter-burrow", {}, testsupport::dataDir(), 0);
+    CHECK(h.ready);
+    if (!h.ready) return;
+
+    NetClient client;
+    constexpr auto name = "burrower";
+    if (!loginNew(h, client, name, "hunter2!")) { CHECK(false); return; }
+    client.joinGame(1280, 720, {}, name);
+    if (!h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; })) {
+        CHECK(false);
+        return;
+    }
+
+    World& world = h.server.world();
+    const Entity original = soleBody(world, name);
+    if (original == NULL_ENTITY) { CHECK(false); return; }
+
+    const auto predator = content().mobIndex("desert_centipede");
+    const auto surface = content().mobIndex("ladybug");
+    const double deadline = GameServerPeer::practiceClock(h.server) + 8000.0;
+    auto& state = world.add<BurrowState>(original, BurrowState{deadline, true});
+    state.predatorIndices.front() = predator;
+
+    if (!equipSplitter(h, client, name, content().petalIndex(kSplitterPetalId))) {
+        CHECK(false);
+        return;
+    }
+    if (!h.stepUntil({&client}, [&] { return bodiesNamed(world, name).size() == 2; }, 5)) {
+        CHECK(false);
+        return;
+    }
+    const auto halves = bodiesNamed(world, name);
+    const Entity surfaceMob = world.create();
+    world.add<MobType>(surfaceMob, MobType{surface, Rarity::Common});
+    const Entity undergroundMob = world.create();
+    world.add<MobType>(undergroundMob, MobType{predator, Rarity::Common});
+    for (Entity half : halves) {
+        const auto* burrow = world.tryGet<BurrowState>(half);
+        CHECK(burrow && burrow->active);
+        if (burrow) CHECK_NEAR(burrow->untilMillis, deadline, 1e-8);
+        CHECK(!canNoticeBurrowed(world, surfaceMob, half));
+        CHECK(canNoticeBurrowed(world, undergroundMob, half));
+    }
+    CHECK(h.stepUntil({&client}, [&] {
+        return GameServerPeer::practiceClock(h.server) >= deadline;
+    }, 200));
+    for (Entity half : halves) CHECK(canNoticeBurrowed(world, surfaceMob, half));
+}
+
 TEST(a_split_flowers_two_halves_are_one_persons) {
     Harness h("splitter-one-person", {}, flix::testsupport::dataDir(), 0);
     if (!h.ready) { CHECK(false); return; }

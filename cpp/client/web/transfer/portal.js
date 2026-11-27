@@ -97,6 +97,10 @@
   }
 
   function showTransfer() {
+    const confirmation = transfer.elements.confirmPassword;
+    confirmation.disabled = Boolean(pending);
+    confirmation.closest('label').hidden = Boolean(pending);
+    if (pending) confirmation.value = '';
     login.hidden = true;
     transfer.hidden = false;
     if (pending) {
@@ -173,6 +177,13 @@
     event.preventDefault();
     const button=transfer.querySelector('button');
     if (button.disabled) return;
+    const confirmation = transfer.elements.confirmPassword;
+    if (!pending && (!confirmation.value || confirmation.value !== transfer.elements.password.value)) {
+      status.textContent = '两次输入的目标服新密码不一致，请重新确认。';
+      confirmation.focus();
+      confirmation.select();
+      return;
+    }
     button.disabled=true;
     try {
       if (!pending) {
@@ -220,6 +231,7 @@
       status.textContent='未收到结果，请使用首次设置的目标服密码重试。';
     } finally {
       transfer.elements.password.value='';
+      confirmation.value='';
       button.disabled=false;
     }
   });
