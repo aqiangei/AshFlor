@@ -176,9 +176,13 @@ inline constexpr std::array<double, kLadderRarityCount> kMobHealthScale = [] {
 inline constexpr std::array<double, kLadderRarityCount> kMobDamageScale = {
     1.0, 3.0, 9.0, 27.0, 81.0, 243.0, 729.0, 2187.0, 6561.0, 78732.0,
 };
-// Wild H bodies used a 12x Eternal jump. Contact now uses 6x; projectile,
-// poison and other ability ladders retain their existing authored strength.
-inline constexpr double mobContactScale(Rarity rarity) { return (rarity == Rarity::Apex || rarity == Rarity::Ascendant) ? 0.5 : 1.0; }
+// Only body contact is softened at Eternal and Hyper. Apex remains a larger
+// step in contact danger without raising its hit damage or health.
+inline constexpr double mobContactScale(Rarity rarity) {
+    if (rarity == Rarity::Unique) return 0.85;
+    if (rarity == Rarity::Apex) return 0.425;
+    return rarity == Rarity::Ascendant ? 0.5 : 1.0;
+}
 
 /// Mob armour per tier: a flat amount subtracted from every DIRECT hit.
 ///

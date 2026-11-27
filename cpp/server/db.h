@@ -60,6 +60,12 @@ struct StoredItem {
     /// damage/size overrides, the per-instance arrays for clumped petals.
     Json extra = Json::object();
 
+    bool craftLocked() const { return extra["craftLocked"].asBool(); }
+    void setCraftLocked(bool locked) {
+        if (locked) extra["craftLocked"] = true;
+        else extra.erase("craftLocked");
+    }
+
     static StoredItem fromJson(const Json& value);
     Json toJson() const;
 };
@@ -115,6 +121,11 @@ struct PlayerRecord {
     Json extra = Json::object();
 
     int itemCount(Rarity rarity, const std::string& itemType) const;
+    int craftLockedCount(Rarity rarity, const std::string& itemType) const;
+    int craftableCount(Rarity rarity, const std::string& itemType) const {
+        return itemCount(rarity, itemType) - craftLockedCount(rarity, itemType);
+    }
+    void setCraftLockedCount(Rarity rarity, const std::string& itemType, int count);
     void setItemCount(Rarity rarity, const std::string& itemType, int count);
     /// Adds `delta` (may be negative). Counts clamp at zero and an entry that
     /// reaches zero is erased, so the inventory does not accumulate rubble.
@@ -718,6 +729,7 @@ public:
     DailyStreakResult processDailyStreak(const std::string& userId);
     int awardWaveStars(const std::string& userId, bool* reachedDailyCap = nullptr,
                        std::uint64_t round = 1);
+    std::uint32_t waveBestCleared(const std::string& userId) const;
     bool waveDailyStarCapReached(const std::string& userId) const;
     bool awardWaveBonusHammer(const std::string& userId);
     /// Every userId with a progress record, in stored order. Read with

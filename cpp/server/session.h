@@ -41,6 +41,7 @@ enum class SessionStage : std::uint8_t {
 };
 
 struct Session {
+    bool traderAuthorized = false;
     net::ConnectionId connection = 0;
     SessionStage stage = SessionStage::Greeting;
     double homeBonusPauseAt = 0.0; // Monotonic deadline while on the title screen.

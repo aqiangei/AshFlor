@@ -10,6 +10,7 @@
 
 #include <utime.h>
 
+#include <algorithm>
 #include <cmath>
 #include <ctime>
 #include <string>
@@ -481,10 +482,21 @@ TEST(spawn_places_a_mob_and_killall_clears_it) {
         return count;
     };
 
-    const int before = liveMobs();
+    const auto bee = content().mobIndex("bee");
+    const auto rareBees = [&] {
+        std::vector<Entity> result;
+        Query<MobType>{h.server.world()}.each([&](Entity entity, MobType& mob) {
+            if (mob.configIndex == bee && mob.rarity == Rarity::Rare) result.push_back(entity);
+        });
+        return result;
+    };
+    const auto before = rareBees();
     CHECK(say(h, client, "/admin spawn bee rare 3 stack"));
     CHECK(sawText(client, "rare bee"));
-    CHECK(liveMobs() > before);
+    const auto after = rareBees();
+    CHECK_EQ(std::count_if(after.begin(), after.end(), [&](Entity entity) {
+        return std::find(before.begin(), before.end(), entity) == before.end();
+    }), 3);
 
     CHECK(say(h, client, "/admin killall"));
     // The destroy runs through the command buffer, so it lands on the tick

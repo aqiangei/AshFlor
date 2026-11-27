@@ -4432,7 +4432,7 @@ TEST(a_pet_is_smaller_than_the_wild_mob_of_its_tier) {
         const std::size_t tier = static_cast<std::size_t>(ladderIndex(rarity));
         const double wild = content.mobStats(critter, rarity).radius;
         const double old = wild * kPetSizeScale[tier] / kMobSizeScale[tier];
-        const double expected = old * mobSizeRamp(rarity, 1.0 / 3.0);
+        const double expected = 0.85 * old * mobSizeRamp(rarity, 1.0 / 3.0);
         if (rarity != Rarity::Common) { CHECK(expected < wild); }
         Query<Pet> pets{rig.world};
         for (const Entity pet : pets.collect()) {
@@ -6036,15 +6036,20 @@ TEST(a_run_of_mimics_copies_the_first_real_petal_each_at_its_own_tier) {
     }
 }
 
-TEST(sawblade_reloads_in_one_second_after_breaking_and_hits_harder_from_eternal) {
+TEST(sawblade_reloads_faster_after_breaking_and_hits_harder_from_eternal) {
     const auto& registry = testsupport::shippedContent();
     const auto sawblade = registry.petalIndex("sawblade");
     for (int tier = 0; tier < kLadderRarityCount; ++tier) {
         const auto rarity = static_cast<Rarity>(tier);
-        CHECK_NEAR(registry.petalStats(sawblade, rarity).reloadMillis, 2000.0, 1e-9);
+        CHECK_NEAR(registry.petalStats(sawblade, rarity).reloadMillis, 1400.0, 1e-9);
     }
-    constexpr double combatReloadMillis = 1000.0;
-    for (const auto rarity : {Rarity::Super, Rarity::Unique, Rarity::Apex, Rarity::PermanentHyper}) {
+    constexpr double combatReloadMillis = 700.0;
+    const std::pair<Rarity, double> damageByTier[] = {
+        {Rarity::Super, 87480.0}, {Rarity::Unique, 442868.0},
+        {Rarity::Apex, 1328604.0}, {Rarity::PermanentHyper, 1328604.0},
+        {Rarity::Ascendant, 2922928.8}
+    };
+    for (const auto& [rarity, expectedDamage] : damageByTier) {
         Rig rig(registry);
         rig.equip(0, "sawblade", rarity);
         rig.settleEquips();
@@ -6052,12 +6057,9 @@ TEST(sawblade_reloads_in_one_second_after_breaking_and_hits_harder_from_eternal)
         CHECK_EQ(petals.size(), std::size_t(1));
         if (petals.empty()) continue;
         const double contactDamage = rig.world.get<ContactDamage>(petals.front()).amount;
-        if (rarity == Rarity::Super) {
-            CHECK_NEAR(contactDamage, 87480.0, 1e-6);
-        } else {
-            const double expected = rarity == Rarity::Unique ? 442868.0 : 885736.0;
+        CHECK_NEAR(contactDamage, expectedDamage, 1e-6);
+        if (rarity != Rarity::Super) {
             CHECK(contactDamage > registry.petalStats(registry.petalIndex("magic_peas"), rarity).lightningDamagePerHit);
-            CHECK_NEAR(contactDamage, expected, 1e-6);
         }
         rig.damage(petals.front(), rig.healthOf(petals.front()));
         const double brokenAt = rig.now + net::kTickMillis;
@@ -7161,6 +7163,61 @@ TEST(large_black_hole_egg_hatches_in_a_corridor_crowded_by_moving_crabs) {
                 CHECK(!rig.terrain.segmentBlocked(owner, at.position, at.realm));
                 CHECK(!rig.terrain.resolveWall(at.position, kMobWallRadius, at.realm).collided);
             });
+    }
+}
+
+TEST(water_stick_hatches_graded_waterspouts_on_its_own_clock) {
+    const auto& registry = testsupport::shippedContent();
+    const auto waterspout = registry.mobIndex("waterspout");
+    for (const auto& [tier, count] : std::array<std::pair<Rarity, std::size_t>, 3>{{
+             {Rarity::Common, 4}, {Rarity::Super, 4}, {Rarity::Ascendant, 6}}}) {
+        Rig rig(registry);
+        rig.equip(0, "water_stick", tier);
+        rig.tick(6 * net::kTicksPerSecond);
+        CHECK_EQ(rig.petCount(), std::size_t(0));
+        CHECK(rig.tickUntil([&] { return rig.petCount() == count; }, 100));
+        const double first = rig.now;
+        Query<Pet, MobType>{rig.world}.each([&](Entity, Pet& pet, MobType& mob) {
+            CHECK_EQ(pet.owner, rig.player);
+            CHECK_EQ(mob.configIndex, waterspout);
+            CHECK(mob.rarity == petalGameplayRarity(tier));
+            CHECK_NEAR(pet.expiresAtMillis - first, 6000.0, net::kTickMillis);
+        });
+        CHECK(rig.tickUntil([&] { return rig.petCount() == 0; }, 7 * net::kTicksPerSecond));
+        CHECK_NEAR(rig.now - first, 6000.0, net::kTickMillis * 1.5);
+        CHECK(rig.tickUntil([&] { return rig.petCount() == count; }, 2 * net::kTicksPerSecond));
+        CHECK_NEAR(rig.now - first, 7000.0, net::kTickMillis * 1.5);
+    }
+}
+
+TEST(cucumber_stacks_radius_reduction_without_changing_combat_stats) {
+    const auto& registry = testsupport::shippedContent();
+    for (const auto& [tier, scale] : std::array<std::pair<Rarity, double>, 4>{{
+             {Rarity::Common, 0.97}, {Rarity::Super, 0.823},
+             {Rarity::PermanentHyper, 0.781}, {Rarity::Ascendant, 0.76}}}) {
+        Rig control(registry);
+        Rig cucumber(registry);
+        cucumber.equip(1, "cucumber", tier);
+        const bool doubleApex = tier == Rarity::Ascendant;
+        cucumber.equip(2, "cucumber", doubleApex ? tier : Rarity::Common);
+        cucumber.equip(kLoadoutActiveSlots, "cucumber", Rarity::Ascendant);
+        const double stackedScale = scale * (doubleApex ? scale : 0.97);
+        for (Rig* rig : {&control, &cucumber}) {
+            rig->equip(0, "beetle_egg", tier);
+            CHECK(rig->tickUntil([&] { return rig->petCount() > 0; }, 800));
+        }
+        const auto original = Query<Pet>{control.world}.collect();
+        const auto smaller = Query<Pet>{cucumber.world}.collect();
+        CHECK_EQ(original.size(), smaller.size());
+        for (std::size_t i = 0; i < std::min(original.size(), smaller.size()); ++i) {
+            const Entity before = original[i];
+            const Entity after = smaller[i];
+            CHECK_NEAR(cucumber.world.get<Body>(after).radius,
+                       control.world.get<Body>(before).radius * stackedScale, 1e-8);
+            CHECK_NEAR(cucumber.healthOf(after), control.healthOf(before), 1e-8);
+            CHECK_NEAR(cucumber.world.get<ContactDamage>(after).amount,
+                       control.world.get<ContactDamage>(before).amount, 1e-8);
+        }
     }
 }
 
@@ -9292,6 +9349,32 @@ TEST(egg_hatches_inside_a_ring_of_blockers_using_the_open_owner_pocket) {
     CHECK(rig.tickUntil([&] { return rig.petCount() == 3; }, 1500));
     Query<Pet, Transform, Body>{rig.world}.each([&](Entity, Pet&, Transform& at, Body& body) {
         std::printf("crowd-ring hatch distance=%.3f radius=%.3f\n", distance(owner, at.position), body.radius);
+        CHECK(distance(owner, at.position) < 54.0);
+        CHECK(!rig.terrain.resolveWall(at.position, kMobWallRadius, at.realm).collided);
+    });
+    CombatSystem combat;
+    ricochetCombatTick(rig, combat);
+    CHECK(std::any_of(blockers.begin(), blockers.end(), [&](Entity blocker) {
+        const auto& hp = rig.world.get<Health>(blocker);
+        return hp.current < hp.max;
+    }));
+}
+
+TEST(egg_hatches_inside_a_ring_of_moving_mobs_and_hits_the_crowd) {
+    Rig rig(testsupport::shippedContent());
+    rig.useHatchTerrain = true;
+    const Vec2 owner{10.5 * kTileSize, 10.5 * kTileSize};
+    rig.world.get<Transform>(rig.player).position = owner;
+    std::vector<Entity> blockers;
+    for (int i = 0; i < 16; ++i) {
+        const Entity blocker = addMob(rig, owner + Vec2::fromAngle(i * kTau / 16.0, 84.0), "crab");
+        rig.world.add<Motion>(blocker);
+        rig.world.get<Body>(blocker).radius = 30.0;
+        blockers.push_back(blocker);
+    }
+    rig.equip(0, "beetle_egg", Rarity::Ascendant);
+    CHECK(rig.tickUntil([&] { return rig.petCount() == 3; }, 1500));
+    Query<Pet, Transform>{rig.world}.each([&](Entity, Pet&, Transform& at) {
         CHECK(distance(owner, at.position) < 54.0);
         CHECK(!rig.terrain.resolveWall(at.position, kMobWallRadius, at.realm).collided);
     });

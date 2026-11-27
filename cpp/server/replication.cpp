@@ -793,8 +793,8 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
     }
     if (selfMask & net::SelfWave) {
         out.u32(self.wave.round);
-        out.u16(self.wave.remainingMillis);
-        out.u16(self.wave.durationMillis);
+        out.u32(self.wave.remainingMillis);
+        out.u32(self.wave.durationMillis);
         out.u8(static_cast<std::uint8_t>(self.wave.theme));
     }
     view.self = self;

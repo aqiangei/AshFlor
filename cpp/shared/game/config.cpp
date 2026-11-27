@@ -1529,6 +1529,7 @@ PetalConfig parsePetal(Ctx& ctx, const std::string& id, const Json& src,
         else ctx.warn("petSummonTiers must contain one ladder tier per egg tier");
     }
     p.petLifetimeMillis = ctx.range(src, "petLifetimeMs", 0.0, 0.0, kMaxDurationMillis);
+    p.petSummonIntervalMillis = ctx.range(src, "petSummonIntervalMs", 0.0, 0.0, kMaxDurationMillis);
     p.petManaCost = ctx.range(src, "petManaCost", 0.0, 0.0, kMaxBaseStat);
 
     p.slowFactor = ctx.range(src, "slowFactor", 1.0, 0.0, 1.0);

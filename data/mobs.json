@@ -346,7 +346,7 @@
       0.6667,
       1.3333
     ],
-    "visual_scale": 0.94,
+    "visual_scale": 1.0,
     "speed": 0,
     "cooldown": 2000,
     "xp": {
@@ -1134,6 +1134,7 @@
     "health": 40,
     "damage": 5,
     "size": 1.2,
+    "visual_scale": 0.9,
     "speed": 0.48,
     "cooldown": 0,
     "xp": {
@@ -1166,6 +1167,7 @@
     "health": 40,
     "damage": 5,
     "size": 1.2,
+    "visual_scale": 0.9,
     "speed": 0.48,
     "cooldown": 0,
     "xp": {
@@ -1372,6 +1374,7 @@
     "health": 60,
     "damage": 15,
     "size": 0.8333,
+    "visual_scale": 0.92,
     "speed": 1.05,
     "chase_speed": 1.05,
     "cooldown": 2000,
@@ -6633,5 +6636,44 @@
         }
       ]
     }
+  },
+  "waterspout": {
+    "name": "Waterspout",
+    "description": "A roving ocean vortex that sprays a fan of water shots.",
+    "health": 75,
+    "damage": 20,
+    "size": 1.48,
+    "speed": 0.18,
+    "chase_speed": 0.36,
+    "cooldown": 2600,
+    "xp": {
+      "common": 2,
+      "uncommon": 8,
+      "rare": 35,
+      "epic": 300,
+      "legendary": 1500,
+      "mythic": 40000,
+      "ultra": 200000,
+      "super": 1600000,
+      "unique": 8000000
+    },
+    "color": "#38adc5",
+    "ai_type": "hostile",
+    "range": 450,
+    "groups": {
+      "ocean": 0.2
+    },
+    "hideRotation": true,
+    "noEggDrop": true,
+    "petDamageScale": 0.55,
+    "petHealthScale": 0.65,
+    "projectile": {
+      "count": 3,
+      "distance": 450,
+      "petalType": "waterspout_spray",
+      "speed": 380,
+      "spreadAngle": 0.25
+    },
+    "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\" width=\"64\" height=\"64\"><path d=\"M13 17C25 3 48 8 53 19c5 12-12 17-26 20-8 2-10 7-2 11 5 2 11 2 17 0-8 10-25 9-31-1-6-10 3-16 15-20 10-3 19-5 17-10-3-6-18-7-30-2Z\" fill=\"#38adc5\" stroke=\"#125777\" stroke-width=\"3\" stroke-linejoin=\"round\"/><path d=\"M15 21c6-5 17-7 23-3m-8 27c7-2 14-6 17-9\" fill=\"none\" stroke=\"#c3f6ff\" stroke-width=\"3\" stroke-linecap=\"round\"/><circle cx=\"51\" cy=\"43\" r=\"3\" fill=\"#68d8ee\"/><circle cx=\"7\" cy=\"31\" r=\"3\" fill=\"#68d8ee\"/></svg>"
   }
 }

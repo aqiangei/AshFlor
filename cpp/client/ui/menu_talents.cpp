@@ -444,6 +444,8 @@ std::vector<TipRow> description(SkillId skill, int tier) {
             row({{cn ? "提升宠物体伤及发射物伤害，不增加数量或攻速。" : "Boosts pet contact and projectile damage, without more pets or faster attacks."}});
             break;
         case SkillId::Prestige:
+            row({{cn ? "角色等级要求 " : "Player level required "},
+                 {std::to_string(skillTierRequiredPlayerLevel(skill, tier)), kStatDamage}});
             row({{tier == 1 ? (cn ? "解锁二级声望：普通怪物提高两个稀有度，最高永恒。" : "Unlock Prestige II: ordinary enemies rise two rarities, up to Eternal.")
                             : (cn ? "解锁声望地图：常规升阶提高一档，最高超级。" : "Unlock Prestige worlds: ordinary promotion raises mobs one tier, up to Super.")}});
             if (tier == 0) {
@@ -863,7 +865,8 @@ bool TalentsPanel::render(MenuContext& ctx) {
         return skillPurchaseCost(skills, node.skill, node.tier);
     };
     const auto affordable = [&](const Node& node) {
-        return !owned(node) && costOf(node) <= points;
+        return !owned(node) && costOf(node) <= points &&
+               profile.level >= skillTierRequiredPlayerLevel(node.skill, node.tier);
     };
 
     // Exactly one node answers the cursor: the last drawn, which is the one
@@ -1046,7 +1049,7 @@ bool TalentsPanel::render(MenuContext& ctx) {
         if (!visible(node)) continue;
         const bool isOwned = owned(node);
         const int cost = isOwned ? 0 : costOf(node);
-        const bool canBuy = !isOwned && cost <= points;
+        const bool canBuy = affordable(node);
         const std::uint32_t own = tierColor(node.skill, node.tier);
         std::uint32_t fill = kLockedFill;
         std::uint32_t rim = kLockedRim;

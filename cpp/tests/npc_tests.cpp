@@ -1437,6 +1437,7 @@ TEST(a_trade_is_one_petal_for_one_coin_of_the_same_tier) {
 
     NetClient client;
     CHECK(joinAs(h, client, "merchant"));
+    client.setTraderAccess("password7");
     h.step(3, {&client});
     CHECK(awaitProfile(h, client, [&](const Profile& p) {
         return p.stackCount(rose, Rarity::Epic) == 3u;
@@ -1480,6 +1481,7 @@ TEST(the_trader_refuses_what_it_does_not_take_and_a_refusal_starts_no_wait) {
 
     NetClient client;
     CHECK(joinAs(h, client, "merchant"));
+    client.setTraderAccess("password7");
     h.step(3, {&client});
     CHECK(awaitProfile(h, client, [&](const Profile& p) {
         return p.stackCount(coin, Rarity::Rare) == 2u && p.stackCount(basic, Rarity::Common) > 0u;
@@ -1553,6 +1555,7 @@ TEST(the_trader_refuses_a_contested_hyper_for_a_coin) {
 
     NetClient client;
     CHECK(joinAs(h, client, "merchant"));
+    client.setTraderAccess("password7");
     CHECK(awaitProfile(h, client, [&](const Profile& p) {
         return p.stackCount(rose, Rarity::Apex) == 1u &&
                p.stackCount(hammer, Rarity::Apex) == 1u &&
@@ -1603,6 +1606,7 @@ TEST(the_trader_accepts_five_mixed_apex_petals_during_the_daily_coin_cooldown) {
     const auto coin = content().petalIndex(kTraderCoinPetal);
     NetClient client;
     CHECK(joinAs(h, client, "merchant"));
+    client.setTraderAccess("password7");
     TradeOutcome outcome;
     standBeside(h, client, "trader");
     client.requestTrade(aztec, Rarity::Ascendant);
@@ -1620,16 +1624,6 @@ TEST(the_trader_accepts_five_mixed_apex_petals_during_the_daily_coin_cooldown) {
     client.requestTrade(coin, Rarity::Ascendant);
     CHECK(awaitTrade(h, client, outcome));
     CHECK(!outcome.success);
-    standBeside(h, client, "trader");
-    const auto chip = content().petalIndex("poker_chip");
-    CHECK(chip != kInvalidIndex);
-    client.requestApexDraw({rose, rose, rose, rose, chip});
-    CHECK(awaitTrade(h, client, outcome));
-    CHECK(!outcome.success);
-    CHECK(awaitProfile(h, client, [&](const Profile& p) {
-        return p.stackCount(chip, Rarity::Ascendant) == 5u &&
-               p.stackCount(rose, Rarity::Ascendant) == 4u;
-    }));
     standBeside(h, client, "trader");
     client.requestApexDraw({rose, rose, rose, rose, rose});
     CHECK(awaitTrade(h, client, outcome));
@@ -1650,6 +1644,15 @@ TEST(the_trader_accepts_five_mixed_apex_petals_during_the_daily_coin_cooldown) {
     client.requestApexDraw({leaf, leaf, leaf, leaf, leaf});
     CHECK(awaitTrade(h, client, outcome));
     CHECK(outcome.success);
+    standBeside(h, client, "trader");
+    const auto chip = content().petalIndex("poker_chip");
+    CHECK(chip != kInvalidIndex);
+    client.requestApexDraw({chip, chip, chip, chip, chip});
+    CHECK(awaitTrade(h, client, outcome));
+    CHECK(outcome.success);
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stackCount(chip, Rarity::Ascendant) == 0u;
+    }));
     h.step(3, {&client});
     char apexColor[8];
     std::snprintf(apexColor, sizeof apexColor, "#%06x", rarityColor(Rarity::Ascendant));
@@ -1658,7 +1661,54 @@ TEST(the_trader_accepts_five_mixed_apex_petals_during_the_daily_coin_cooldown) {
                message.text.find("<b style=\"color: #00ff00;\">@merchant</b>") != std::string::npos &&
                message.text.find("[<b style=\"color: yellow;\">") != std::string::npos &&
                message.text.find("沙漠商人处用 5 片 Apex 花瓣换到了") != std::string::npos;
-    }), 2);
+    }), 3);
+    removeDataDir(dir);
+}
+
+TEST(the_trader_accepts_apex_coins_alone_and_with_chips_for_random_petals) {
+    const std::string dir = traderWorld("trader-coin-draw");
+    Harness h("trader-coin-draw", [](const std::string& path) {
+        seedAccount(path, "merchant");
+        seedStack(path, "merchant", "petal_coin", Rarity::Ascendant, 6);
+        seedStack(path, "merchant", "petal_poker_chip", Rarity::Ascendant, 4);
+    }, dir, 0);
+    if (!h.ready) { CHECK(false); removeDataDir(dir); return; }
+    const auto coin = content().petalIndex(kTraderCoinPetal);
+    const auto chip = content().petalIndex("poker_chip");
+    constexpr auto tier = Rarity::Ascendant;
+    NetClient client;
+    CHECK(joinAs(h, client, "merchant"));
+    const auto rejected = [&] {
+        standBeside(h, client, "trader");
+        client.requestApexDraw({coin, coin, coin, coin, coin});
+        TradeOutcome denied;
+        CHECK(awaitTrade(h, client, denied));
+        CHECK(!denied.success);
+        CHECK_EQ(client.profile().stackCount(coin, tier), 6u);
+    };
+    rejected();
+    client.setTraderAccess("wrong-password");
+    rejected();
+    client.setTraderAccess("password7");
+    CHECK(h.stepUntil({&client}, [&] { return client.traderAccess() == NetClient::TraderAccess::Accepted; }));
+    client.setTraderAccess({});
+    rejected();
+    client.setTraderAccess("password7");
+    TradeOutcome outcome;
+    standBeside(h, client, "trader");
+    client.requestApexDraw({coin, coin, coin, coin, coin});
+    CHECK(awaitTrade(h, client, outcome));
+    CHECK(outcome.success && outcome.rarity == tier && outcome.receivedIndex != coin);
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stackCount(coin, tier) == 1u && p.stackCount(outcome.receivedIndex, tier) == 1u;
+    }));
+    standBeside(h, client, "trader");
+    client.requestApexDraw({coin, chip, chip, chip, chip});
+    CHECK(awaitTrade(h, client, outcome));
+    CHECK(outcome.success && outcome.rarity == tier && outcome.receivedIndex != coin);
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stackCount(coin, tier) == 0u && p.stackCount(chip, tier) == 0u;
+    }));
     removeDataDir(dir);
 }
 
@@ -1674,6 +1724,7 @@ TEST(the_trader_returns_a_permanent_hyper_coin_for_a_permanent_hyper_petal) {
     const auto coin = content().petalIndex(kTraderCoinPetal);
     NetClient client;
     CHECK(joinAs(h, client, "merchant"));
+    client.setTraderAccess("password7");
     CHECK(awaitProfile(h, client, [&](const Profile& p) { return p.stackCount(rose, tier) == 2u; }));
     Profile onlyPermanent;
     onlyPermanent.inventory.push_back({rose, tier, 2});
@@ -1687,6 +1738,36 @@ TEST(the_trader_returns_a_permanent_hyper_coin_for_a_permanent_hyper_petal) {
     CHECK_EQ(outcome.receivedIndex, coin);
     CHECK(awaitProfile(h, client, [&](const Profile& p) {
         return p.stackCount(rose, tier) == 1u && p.stackCount(coin, tier) == 1u;
+    }));
+    CHECK(client.traderCooldownRemainingMillis() > 0.0);
+    removeDataDir(dir);
+}
+TEST(the_trader_returns_a_permanent_hyper_coin_for_a_permanent_hyper_chip) {
+    const std::string dir = traderWorld("trader-permanent-chip");
+    Harness h("trader-permanent-chip", [](const std::string& path) {
+        seedAccount(path, "merchant");
+        seedStack(path, "merchant", "petal_poker_chip", Rarity::PermanentHyper, 2);
+    }, dir, 0);
+    if (!h.ready) { CHECK(false); removeDataDir(dir); return; }
+    constexpr Rarity tier = Rarity::PermanentHyper;
+    const auto chip = content().petalIndex("poker_chip");
+    const auto coin = content().petalIndex(kTraderCoinPetal);
+    NetClient client;
+    CHECK(joinAs(h, client, "merchant"));
+    client.setTraderAccess("password7");
+    CHECK(awaitProfile(h, client, [&](const Profile& p) { return p.stackCount(chip, tier) == 2u; }));
+    Profile onlyPermanent;
+    onlyPermanent.inventory.push_back({chip, tier, 2});
+    CHECK_EQ(SlotGrid::rows(onlyPermanent, SlotGridTiers::Trader), 1u);
+    CHECK_EQ(slotCardWidth(SlotGridTiers::Trader), slotCardColumnsWidth(kLadderRarityCount + 2));
+    standBeside(h, client, "trader");
+    client.requestTrade(chip, tier);
+    TradeOutcome outcome;
+    CHECK(awaitTrade(h, client, outcome));
+    CHECK(outcome.success && outcome.rarity == tier);
+    CHECK_EQ(outcome.receivedIndex, coin);
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stackCount(chip, tier) == 1u && p.stackCount(coin, tier) == 1u;
     }));
     CHECK(client.traderCooldownRemainingMillis() > 0.0);
     removeDataDir(dir);
@@ -1722,6 +1803,7 @@ TEST(the_trader_serves_only_a_flower_standing_at_it) {
     if (player == NULL_ENTITY || trader == NULL_ENTITY) { CHECK(false); removeDataDir(dir); return; }
     const double radius = world.get<Body>(trader).radius;
 
+    client.setTraderAccess("password7");
     // Just past the reach and its slack, from the trader's skin, wherever it
     // has cruised to: refused...
     Vec2 at = world.get<Transform>(trader).position;
@@ -1758,6 +1840,7 @@ TEST(the_trader_grants_one_trade_a_day_kept_across_a_relog) {
     {
         NetClient client;
         CHECK(joinAs(h, client, "merchant"));
+        client.setTraderAccess("password7");
         h.step(3, {&client});
         TradeOutcome outcome;
         standBeside(h, client, "trader");
@@ -1778,6 +1861,12 @@ TEST(the_trader_grants_one_trade_a_day_kept_across_a_relog) {
     // A new connection is the same account, and the wait came with it.
     NetClient client;
     CHECK(joinAs(h, client, "merchant"));
+    standBeside(h, client, "trader");
+    TradeOutcome locked;
+    client.requestTrade(rose, Rarity::Common);
+    CHECK(awaitTrade(h, client, locked));
+    CHECK(!locked.success && locked.reason == "请先输入账户密码。");
+    client.setTraderAccess("password7");
     h.step(3, {&client});
     CHECK(client.traderCooldownRemainingMillis() > kTraderCooldownMillis - 60000.0);
     CHECK_EQ(client.profile().stackCount(rose, Rarity::Common), 4u);

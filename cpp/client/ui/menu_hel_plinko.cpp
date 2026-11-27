@@ -16,7 +16,7 @@ using namespace ui;
 namespace {
 constexpr PanelSkin kPlinkoSkin{0x713930, 0x4B2526, 0xAD6C56};
 constexpr double kAutoInterval = 0.35;
-constexpr std::size_t kMaxOnBoard = 20;
+constexpr double kLandingSeconds = 0.22;
 
 
 const char* refusal(HelPlinkoStatus status) {
@@ -73,6 +73,20 @@ Rect HelPlinkoPanel::bounds(const Window& window) {
             w / scale, h / scale};
 }
 
+std::uint32_t HelPlinkoPanel::displayedChips(const Profile& profile, Rarity tier, double now) const {
+    // The server settles the wager immediately. Hold the displayed balance at
+    // its post-debit value until this round's result appears on the board.
+    for (const auto& request : pending_) {
+        if (request.action == HelPlinkoAction::Drop && request.rarity == tier)
+            return request.balanceAfterSpend;
+    }
+    for (const auto& ball : falling_) {
+        if (ball.rarity == tier && now < ball.startsAt + kHelPlinkoDropSeconds)
+            return ball.balanceAfterSpend;
+    }
+    return profile.stackCount(content().petalIndex(kPlinkoChipPetal), tier);
+}
+
 bool HelPlinkoPanel::render(MenuContext& ctx, bool interactive) {
     Canvas& canvas = ctx.canvas;
     const double scale = pointScale(ctx.window);
@@ -86,6 +100,12 @@ bool HelPlinkoPanel::render(MenuContext& ctx, bool interactive) {
     const auto over = [&](Rect rect) { return rect.contains(point); };
     const auto clicked = [&](Rect rect) { return ctx.released() && over(rect); };
     const double now = ctx.timeSeconds;
+    if (sessionToken_ != ctx.net.sessionToken() || connectionGeneration_ != ctx.net.connectionGeneration()) {
+        *this = HelPlinkoPanel{};
+        sessionToken_ = ctx.net.sessionToken();
+        connectionGeneration_ = ctx.net.connectionGeneration();
+    }
+    const double firstLeg = kHelPlinkoDropSeconds / (kHelPlinkoRows + 1);
     const auto chip = content().petalIndex(kPlinkoChipPetal);
     const auto stopForRequest = [&](const Request& request) {
         if (request.action != HelPlinkoAction::Drop) return;
@@ -104,7 +124,7 @@ bool HelPlinkoPanel::render(MenuContext& ctx, bool interactive) {
             message_ = refusal(status);
             stopForRequest(request);
         } else if (request.action == HelPlinkoAction::Drop) {
-            falling_.push_back({reply.path, request.rarity, now});
+            falling_.push_back({reply.path, request.rarity, std::max(request.sentAt, now - firstLeg), request.balanceAfterSpend});
         } else if (plinkoBuyCount(request.action) > 0) {
             message_ = std::string(trEnZh("Purchased ×", "筹码已买入 ×")) + std::to_string(plinkoBuyCount(request.action));
         } else if (request.action == HelPlinkoAction::Exchange) {
@@ -114,7 +134,8 @@ bool HelPlinkoPanel::render(MenuContext& ctx, bool interactive) {
     const auto expired = std::remove_if(pending_.begin(), pending_.end(), [&](const Request& request) {
         if (now - request.sentAt <= 6.0) return false;
         stopForRequest(request);
-        return true;
+        // A slow response can still settle. Keep its chip reserved until then.
+        return request.action != HelPlinkoAction::Drop;
     });
     if (expired != pending_.end()) {
         pending_.erase(expired, pending_.end());
@@ -124,24 +145,23 @@ bool HelPlinkoPanel::render(MenuContext& ctx, bool interactive) {
         const double landing = chipInBoard.startsAt + kHelPlinkoDropSeconds;
         if (landing > now || landing <= latestLanding_) continue;
         latestLanding_ = landing;
+        nextRoundAt_ = now + kLandingSeconds;
         latestSlot_ = helPlinkoSlot(chipInBoard.path);
         message_ = std::string(trEnZh("Chips returned: ", "返还筹码：")) +
                    std::to_string(kHelPlinkoPayout[latestSlot_]);
     }
     falling_.erase(std::remove_if(falling_.begin(), falling_.end(), [&](const FallingChip& chipInBoard) {
-        return now - chipInBoard.startsAt > kHelPlinkoDropSeconds + 0.22;
+        return now - chipInBoard.startsAt > kHelPlinkoDropSeconds + kLandingSeconds;
     }), falling_.end());
 
+    const auto boardReady = [&] { return pending_.empty() && falling_.empty() && now >= nextRoundAt_; };
     const auto canDrop = [&](Rarity tier) {
-        const auto held = ctx.net.profile().stackCount(chip, tier);
-        const auto inTransit = std::count_if(pending_.begin(), pending_.end(), [&](const Request& request) {
-            return request.rarity == tier && request.action == HelPlinkoAction::Drop;
-        });
-        return interactive && chip != kInvalidIndex && held > static_cast<unsigned>(inTransit) &&
-               pending_.size() + falling_.size() < kMaxOnBoard;
+        return interactive && chip != kInvalidIndex && displayedChips(ctx.net.profile(), tier, now) > 0 &&
+               boardReady();
     };
     const auto send = [&](HelPlinkoAction action, Rarity tier) {
-        pending_.push_back({ctx.net.requestHelPlinko(action, tier), action, tier, now});
+        const auto remaining = action == HelPlinkoAction::Drop ? displayedChips(ctx.net.profile(), tier, now) - 1 : 0;
+        pending_.push_back({ctx.net.requestHelPlinko(action, tier), action, tier, now, remaining});
     };
 
     panelCard(canvas, r, kPlinkoSkin);
@@ -190,6 +210,28 @@ bool HelPlinkoPanel::render(MenuContext& ctx, bool interactive) {
         return true;
     }
 
+    const auto chipCard = [&](std::size_t i) {
+        return Rect{controlsX + i * (width + cardGap), controlsY, width, cardHeight};
+    };
+    for (std::size_t i = 0; i < kPlinkoTiers.size(); ++i) {
+        if (clicked(chipCard(i)) && canDrop(kPlinkoTiers[i]))
+            send(HelPlinkoAction::Drop, kPlinkoTiers[i]);
+    }
+    const std::size_t first = autoStart_;
+    for (std::size_t index = 0; index < kPlinkoTiers.size(); ++index) {
+        const std::size_t i = (first + index) % kPlinkoTiers.size();
+        auto& nextDrop = nextAutoDrop_[i];
+        if (ctx.released() || nextDrop < 0.0 || now < nextDrop) continue;
+        const auto tier = kPlinkoTiers[i];
+        if (canDrop(tier)) {
+            send(HelPlinkoAction::Drop, tier);
+            nextDrop = now + kAutoInterval;
+            autoStart_ = (i + 1) % kPlinkoTiers.size();
+        } else if (boardReady() && displayedChips(ctx.net.profile(), tier, now) == 0) {
+            nextDrop = -1.0;
+        }
+    }
+
     fillQuadRound(canvas, board, 8.0, 0x512B2B);
     const double middle = board.x + board.w * 0.5;
     const double slotMargin = 4.0;
@@ -225,7 +267,7 @@ bool HelPlinkoPanel::render(MenuContext& ctx, bool interactive) {
     canvas.rect(static_cast<float>(board.x), static_cast<float>(board.y),
                 static_cast<float>(board.w), static_cast<float>(board.h));
     canvas.clip();
-    for (const auto& chipInBoard : falling_) {
+    const auto drawFalling = [&](const FallingChip& chipInBoard) {
         const double elapsed = std::max(0.0, now - chipInBoard.startsAt);
         const double progress = clamp(elapsed / kHelPlinkoDropSeconds, 0.0, 1.0);
         const double travel = progress * (kHelPlinkoRows + 1);
@@ -273,6 +315,11 @@ bool HelPlinkoPanel::render(MenuContext& ctx, bool interactive) {
         const double settle = std::max(0.0, elapsed - kHelPlinkoDropSeconds);
         drawChip(canvas, {middle + offset + drift, y - 1.2 * std::sin(kPi * settle / 0.22)},
                  radius, (offset + drift) / radius * 0.95, impact * 0.09, chipInBoard.rarity);
+    };
+    for (const auto& ball : falling_) drawFalling(ball);
+    for (const auto& request : pending_) {
+        if (request.action == HelPlinkoAction::Drop)
+            drawFalling({0, request.rarity, std::max(request.sentAt, now - firstLeg), request.balanceAfterSpend});
     }
     canvas.restore();
 
@@ -287,8 +334,8 @@ bool HelPlinkoPanel::render(MenuContext& ctx, bool interactive) {
         "C", "U", "R", "E", "L", "M", "U", "S", "E", "PH", "Apex"};
     for (std::size_t i = 0; i < kPlinkoTiers.size(); ++i) {
         const auto tier = kPlinkoTiers[i];
-        const Rect card{controlsX + i * (width + cardGap), controlsY, width, cardHeight};
-        const auto stack = ctx.net.profile().stackCount(chip, tier);
+        const Rect card = chipCard(i);
+        const auto stack = displayedChips(ctx.net.profile(), tier, now);
         const auto hue = rarityColor(tier);
         const bool canPlay = canDrop(tier);
         const double exposure = stack > 0 ? 0.84 : 0.56;
@@ -313,7 +360,7 @@ bool HelPlinkoPanel::render(MenuContext& ctx, bool interactive) {
         canvas.rotate(static_cast<float>(kPi / 12.0));
         text(canvas, quantity, 0, 0, badge);
         canvas.restore();
-        if (canPlay && clicked(card)) send(HelPlinkoAction::Drop, tier);
+
 
         const Rect autoHit{card.x, card.bottom() + autoGap, card.w, autoHitHeight};
         const Rect autoFace{autoHit.x, autoHit.y, autoHit.w, autoFaceHeight};
@@ -359,27 +406,10 @@ bool HelPlinkoPanel::render(MenuContext& ctx, bool interactive) {
             style.textSize = 12.0;
             style.outlineWidth = 2.0;
             style.shrinkToFit = true;
-            style.enabled = interactive && !anyAuto && pending_.empty();
+            style.enabled = interactive && !anyAuto && boardReady();
             button(canvas, shop, shopLabels[i], over(shop), false, style);
             if (!toggled && style.enabled && clicked(shop))
                 send(i == 2 ? HelPlinkoAction::Exchange : buyAction, tier);
-        }
-    }
-    const std::size_t first = autoStart_;
-    for (std::size_t index = 0; index < kPlinkoTiers.size(); ++index) {
-        const std::size_t i = (first + index) % kPlinkoTiers.size();
-        auto& nextDrop = nextAutoDrop_[i];
-        if (nextDrop < 0.0 || now < nextDrop) continue;
-        const auto tier = kPlinkoTiers[i];
-        if (canDrop(tier)) {
-            send(HelPlinkoAction::Drop, tier);
-            nextDrop = now + kAutoInterval;
-            autoStart_ = (i + 1) % kPlinkoTiers.size();
-        } else if (ctx.net.profile().stackCount(chip, tier) == 0) {
-            const auto awaitingResult = [&](const Request& request) {
-                return request.action == HelPlinkoAction::Drop && request.rarity == tier;
-            };
-            if (std::none_of(pending_.begin(), pending_.end(), awaitingResult)) nextDrop = -1.0;
         }
     }
     return true;

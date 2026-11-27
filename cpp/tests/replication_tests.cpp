@@ -240,9 +240,11 @@ TEST(wave_hud_replicates_lobby_theme_and_exit) {
     CHECK_EQ(client.self().wave.durationMillis, 30000u);
     client.interpolate(1100, 0.1);
     CHECK_NEAR(client.self().waveRemainingMillis, 28400.0, 1e-6);
-    fixture.wave = {7, 44000, 45000, net::WaveTheme::Bubble};
+    fixture.wave = {167, 140000, 150000, net::WaveTheme::Bubble};
     fixture.tick(client, 2, 1150);
-    CHECK_EQ(client.self().wave.round, 7u);
+    CHECK_EQ(client.self().wave.round, 167u);
+    CHECK_EQ(client.self().wave.durationMillis, 150000u);
+    CHECK_NEAR(client.self().waveRemainingMillis, 140000.0, 1e-6);
     CHECK(client.self().wave.theme == net::WaveTheme::Bubble);
     fixture.wave = {};
     fixture.tick(client, 3, 1200);

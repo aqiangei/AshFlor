@@ -5121,6 +5121,6 @@ TEST(blueberry_shot_lightning_talent_scales_actual_hit) {
         const auto shot = spawnShot(a, {1000, 1000}, {100, 0}, registry.petalStats(registry.petalIndex("magic_peas"), Rarity::Common).lightningDamagePerHit, 500.0, player, player);
         a.world.get<Projectile>(shot).petalConfigIndex = registry.petalIndex("magic_peas");
         a.step(0.0, registry);
-        CHECK_NEAR(1000.0 - a.health(mob), level < 0 ? 90.0 : level == 0 ? 96.75 : 103.5, 1e-7);
+        CHECK_NEAR(1000.0 - a.health(mob), level < 0 ? 90.0 : level == 0 ? 103.5 : 117.0, 1e-7);
     }
 }

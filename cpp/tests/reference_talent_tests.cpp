@@ -292,7 +292,10 @@ TEST(radiation_talents_serialize_purchase_and_refund_every_rank) {
                 return p.skills.level(id) == tier;
             }));
             CHECK_EQ(client.profile().talentPoints(), startPoints - alreadySpent - expected[tier]);
-            CHECK_NEAR(client.profile().skills.effectScale(id), 1.0 + (tier + 1) * 0.05, 1e-12);
+            constexpr std::array<double, 5> reachScales{1.20, 1.40, 1.60, 1.80, 2.00};
+            constexpr std::array<double, 3> powerScales{1.15, 1.30, 1.50};
+            CHECK_NEAR(client.profile().skills.effectScale(id),
+                       id == SkillId::RadiationReach ? reachScales[tier] : powerScales[tier], 1e-12);
         }
         alreadySpent += expected[skillTierCount(id) - 1];
     }

@@ -1014,7 +1014,7 @@ TEST(blueberry_tooltip_shows_lightning_talent_on_each_projectile) {
         skills.set(SkillId::LightningPower, level);
         const auto lines = ui::petalTooltipLines(index, Rarity::Common, skills, 1.0);
         const std::string expected = std::string("Projectile damage per berry: ") +
-            (level < 0 ? "90" : level == 0 ? "96.75" : "103.5");
+            (level < 0 ? "90" : level == 0 ? "103.5" : "117");
         CHECK(std::any_of(lines.begin(), lines.end(), [&](const auto& line){return line.text == expected;}));
     }
     ui::setLanguage(lang);

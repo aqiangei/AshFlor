@@ -282,6 +282,16 @@ TEST(all_imported_mob_tables_link_without_obsolete_generated_eggs){
     CHECK_EQ(imported,77); // Current imported definitions and corrected body aliases
 }
 
+TEST(waterspout_drops_all_five_ocean_petals_without_dropping_its_ammo) {
+    for (const auto tier : {Rarity::Common, Rarity::Super, Rarity::Ascendant}) {
+        const auto drops = kills("waterspout", tier, 300);
+        for (const auto* id : {"bubble", "wind", "bubble_bomb", "cucumber", "water_stick"})
+            CHECK(total(drops, id) > 0);
+        CHECK_EQ(total(drops, "waterspout_spray"), 0);
+        CHECK_EQ(total(kills("jellyfish", tier, 100), "cucumber"), 0);
+    }
+}
+
 TEST(arctic_stick_drops_from_snowman_and_snow_stick_drops_from_snowstorm) {
     const auto snowman = kills("arctic_snowman", Rarity::Common, 20);
     const auto snowstorm = kills("arctic_snowstorm", Rarity::Common, 20);

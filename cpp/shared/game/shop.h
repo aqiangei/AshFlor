@@ -231,7 +231,7 @@ inline int starsForKill(Rarity mobRarity) {
         case Rarity::Mythic: return 1;
         case Rarity::Ultra:  return 5;
         case Rarity::Super:  return 25;
-        case Rarity::Unique: return 100;
+        case Rarity::Unique: return 150;
         case Rarity::Apex: return 2000;
         case Rarity::Ascendant: return 8000;
         default: return 0;

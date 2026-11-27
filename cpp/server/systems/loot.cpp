@@ -900,6 +900,9 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
         // corpse swapped into that row may be standing on another map.
         const std::uint16_t mobIndex = type->configIndex;
         const Rarity mobRarity = apexKill ? Rarity::Apex : type->rarity;
+        const int standardSlots = lootSlotsForRarity(mobRarity);
+        const int lootSlots = wave && wave->lootSlots > 0 ? std::min(standardSlots, wave->lootSlots)
+                                                         : standardSlots;
         const Vec2 at = transform->position;
         const Realm realm = transform->realm;
         const bool guardedScatter = terrain && protectDropScatter && protectDropScatter(realm);
@@ -938,7 +941,7 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
             std::stable_sort(ranked_.begin(), ranked_.end(), [](const auto& a, const auto& b) {
                 return a.damage > b.damage;
             });
-            selectLootRecipients(ranked_, lootSlotsForRarity(mobRarity), squads, eligible_,
+            selectLootRecipients(ranked_, lootSlots, squads, eligible_,
                                  damageFloor);
         }
 
@@ -1044,7 +1047,7 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
             }
             std::vector<Entity> rewardEligible;
             if (!apexKill && !rewardPool.empty()) {
-                selectLootRecipients(ranked_, lootSlotsForRarity(mobRarity), squads, rewardEligible,
+                selectLootRecipients(ranked_, lootSlots, squads, rewardEligible,
                                      personalDamageFloor);
                 addInheritedClaims(rewardEligible);
             }

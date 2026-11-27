@@ -2109,7 +2109,7 @@ TEST(egg_pet_attacks_same_tier_mob_at_its_edge) {
         sim.world.add<Pet>(pet, Pet{owner, 0});
         sim.world.get<Faction>(pet).team = Team::Players;
         const auto t = static_cast<std::size_t>(ladderIndex(tier));
-        sim.world.get<Body>(pet).radius *= kPetSizeScale[t] / kMobSizeScale[t] *
+        sim.world.get<Body>(pet).radius *= 0.85 * kPetSizeScale[t] / kMobSizeScale[t] *
             mobSizeRamp(tier, kPetSizeScaleAtUnique);
         sim.world.get<Health>(pet) = Health{1e15, 1e15};
         sim.world.get<Health>(mob) = Health{1e15, 1e15};
@@ -4171,6 +4171,45 @@ TEST(a_mob_without_a_web_block_lays_nothing) {
 // ---------------------------------------------------------------------------
 // Dropped projectiles
 // ---------------------------------------------------------------------------
+
+TEST(waterspout_fires_a_water_fan_as_a_wild_and_summoned_mob) {
+    CHECK(contentReady());
+    const auto ammo = content().petalIndex("waterspout_spray");
+    for (const bool summoned : {false, true}) {
+        Sim sim;
+        const Entity storm = sim.spawnMob("waterspout", kOrigin);
+        Entity target = NULL_ENTITY;
+        Entity credit = storm;
+        Team team = Team::Hostiles;
+        if (summoned) {
+            credit = sim.spawnPlayer(kOrigin - Vec2{100.0, 0.0});
+            sim.world.add<Pet>(storm, Pet{credit});
+            team = Team::Players;
+            sim.world.get<Faction>(storm) = Faction{team, false};
+            target = sim.spawnMob("soldier_ant", kOrigin + Vec2{180.0, 0.0});
+        } else {
+            target = sim.spawnPlayer(kOrigin + Vec2{180.0, 0.0});
+        }
+        const auto shot = fireAndCatch(sim);
+        CHECK(shot != NULL_ENTITY);
+        if (shot == NULL_ENTITY) continue;
+        CHECK_EQ(shotCount(sim), 3);
+        Query<Projectile, Motion, Faction>{sim.world}.each(
+            [&](Entity, Projectile& projectile, Motion& motion, Faction& faction) {
+                CHECK_EQ(projectile.owner, storm);
+                CHECK_EQ(projectile.creditTo, credit);
+                CHECK_EQ(projectile.petalConfigIndex, ammo);
+                CHECK(projectile.damage > 0.0);
+                CHECK(motion.velocity.x > 0.0);
+                CHECK(faction.team == team);
+            });
+        CombatSystem combat;
+        const auto& projectile = sim.world.get<Projectile>(shot);
+        const double previous = sim.world.get<Health>(target).current;
+        combat.applyDamage(sim.world, target, shot, projectile.damage, sim.now);
+        CHECK(sim.world.get<Health>(target).current < previous);
+    }
+}
 
 TEST(a_bumble_bee_drops_still_pollen_at_its_tail_once_a_second) {
     CHECK(contentReady());

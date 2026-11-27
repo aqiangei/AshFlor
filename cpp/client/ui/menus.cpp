@@ -960,6 +960,7 @@ bool ClientSettings::save(const std::string& path) const {
 void MenuSystem::toggle(MenuId id) {
     // Opening a second menu closes the first. They share an anchor, so two at
     // once would be one menu with another hidden behind it.
+    if (traderPanelActive_) traderPanelClosed_ = true;
     const bool opening = open_ != id;
     open_ = opening ? id : MenuId::None;
     drag_.clear();
@@ -1004,6 +1005,7 @@ void MenuSystem::toggle(MenuId id) {
 }
 
 void MenuSystem::close() {
+    if (traderPanelActive_) traderPanelClosed_ = true;
     open_ = MenuId::None;
     drag_.clear();
 }
@@ -3397,6 +3399,14 @@ void MenuSystem::render(Canvas& canvas, Window& window, NetClient& net, const Sp
                         const OverlayFn& overStripUnderBar) {
     loadoutTooltipRect_ = {};
     crafting_.update(net, timeSeconds);
+    const bool atTrader = open_ == MenuId::Crafting && !helPlinkoOpen_ &&
+                          nearbyNpc_ == NpcService::Trader && inGame_;
+    if (traderPanelClosed_ || (traderPanelActive_ && !atTrader)) {
+        if (net.traderAccess() != NetClient::TraderAccess::Locked) net.setTraderAccess({});
+        trader_.reset();
+    }
+    traderPanelClosed_ = false;
+    traderPanelActive_ = atTrader;
     const bool enterDungeon=pendingDungeonEntry_;pendingDungeonEntry_=false;
     wantsText_ = false;
     dungeonEntryRect_ = Rect{};

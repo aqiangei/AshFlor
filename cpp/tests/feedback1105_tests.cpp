@@ -102,7 +102,8 @@ TEST(mechanics1105_hyper_mob_contact_and_egg_guard_do_not_protect_against_spells
     for(const auto rarity:{Rarity::Super,Rarity::Unique,Rarity::Apex}) {
         const auto e=spawns.spawnMob(w,terrain,c,mobIndex,rarity,{5000,5000},Realm::Overworld,1000,rng);
         CHECK(e!=NULL_ENTITY);if(e==NULL_ENTITY)continue;
-        CHECK_NEAR(w.get<ContactDamage>(e).amount,c.mobStats(mobIndex,rarity).damage*(rarity==Rarity::Apex?.5:1),1e-5);
+        const double expectedScale = rarity == Rarity::Super ? 1.0 : (rarity == Rarity::Unique ? 0.85 : 0.425);
+        CHECK_NEAR(w.get<ContactDamage>(e).amount, c.mobStats(mobIndex,rarity).damage * expectedScale, 1e-5);
     }
     const auto owner=w.create();w.add<PlayerTag>(owner);w.add<Loadout>(owner);
     w.get<Loadout>(owner).slots[0].configIndex=c.petalIndex("egg");w.get<Loadout>(owner).slots[0].rarity=Rarity::Apex;

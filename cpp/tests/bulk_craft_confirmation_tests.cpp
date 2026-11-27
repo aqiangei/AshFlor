@@ -380,3 +380,99 @@ TEST(apex_bulk_craft_confirmation_only_spends_eligible_permanent_hyper_inventory
         return updated.stackCount(rose, Rarity::Common) < batchSize;
     }));
 }
+
+TEST(plinko_holds_the_board_and_badge_until_the_chip_lands) {
+    Harness server("plinko-badge", [](const std::string& path) {
+        seedUser(path, "plinko", "Fixture42!");
+        seedStack(path, "plinko", "petal_poker_chip", Rarity::Common, 1);
+        seedStack(path, "plinko", "petal_poker_chip", Rarity::Uncommon, 3);
+    }, dataDir(), 0);
+    CHECK(server.ready);
+    if (!server.ready) return;
+    NetClient client;
+    if (!loginAs(server, client, "plinko", "Fixture42!")) { CHECK(false); return; }
+    Window window;
+    std::string error;
+    if (!window.open(1000, 760, "Plinko", error, false)) { CHECK(false); return; }
+    CHECK(ui::Fonts::init(dataDir(), error));
+    SpriteCache sprites;
+    WorldRenderer renderer;
+    DragState drag;
+    ClientSettings settings;
+    HelPlinkoPanel panel;
+    const auto bounds = panel.bounds(window);
+    MenuContext ctx{window.canvas(), window, client, sprites, renderer, settings, drag,
+                    1.0, .016, bounds};
+    auto frame = [&] {
+        CHECK(window.pump());
+        ctx.timeSeconds += .016;
+        CHECK(panel.render(ctx, true));
+    };
+    const auto scale = panel.pointScale(window);
+    const auto click = [&](int column, bool automatic) {
+        const double w = bounds.w * scale, h = bounds.h * scale;
+        const double gap = w < 420 ? 2 : 4;
+        const double card = (w - 20 - 10 * gap) / 11;
+        const double height = std::clamp(card, 34.0, 51.0);
+        const double x = bounds.x + (10 + card / 2 + column * (card + gap)) / scale;
+        const double y = bounds.y + (h - 10 - (automatic ? 17 : 37 + height / 2)) / scale;
+        SDL_Event motion{};
+        motion.type = SDL_MOUSEMOTION;
+        motion.motion.x = std::lround(x * window.uiScaleMultiplier());
+        motion.motion.y = std::lround(y * window.uiScaleMultiplier());
+        CHECK(SDL_PushEvent(&motion) == 1);
+        for (auto type : {SDL_MOUSEBUTTONDOWN, SDL_MOUSEBUTTONUP}) {
+            SDL_Event button{};
+            button.type = type;
+            button.button.button = SDL_BUTTON_LEFT;
+            button.button.x = motion.motion.x;
+            button.button.y = motion.motion.y;
+            CHECK(SDL_PushEvent(&button) == 1);
+            frame();
+        }
+    };
+    const auto dropBytes = [&] {
+        std::uint32_t received = 0, sent = 0;
+        std::vector<NetClient::WireEvent> messages;
+        client.takeWireStats(received, sent, messages, 512);
+        for (const auto& event : messages) {
+            if (!event.incoming && std::string(event.name) == "helPlinko") return event.bytes;
+        }
+        return std::uint32_t{0};
+    };
+    constexpr unsigned oneDropBytes = 4 + 1 + 4 + 1 + 1; // frame, opcode, request ID, action, tier
+    frame();
+    CHECK_EQ(panel.displayedChips(client.profile(), Rarity::Common, ctx.timeSeconds), 1u);
+    click(0, false);
+    CHECK_EQ(panel.displayedChips(client.profile(), Rarity::Common, ctx.timeSeconds), 0u);
+    click(0, false);
+    click(1, true);
+    frame();
+    CHECK_EQ(dropBytes(), oneDropBytes);
+    server.step(10, {&client});
+    frame();
+    click(1, false);
+    ctx.timeSeconds += 3;
+    frame();
+    CHECK_EQ(panel.displayedChips(client.profile(), Rarity::Common, ctx.timeSeconds), 0u);
+    CHECK_EQ(dropBytes(), 0u);
+    // An early inventory snapshot must not leak a winning (or losing) result.
+    const auto chip = content().petalIndex(kPlinkoChipPetal);
+    for (const auto returned : {0u, 1u, 20u}) {
+        Profile settled;
+        settled.inventory.push_back({chip, Rarity::Common, returned});
+        CHECK_EQ(panel.displayedChips(settled, Rarity::Common, ctx.timeSeconds), 0u);
+        CHECK_EQ(panel.displayedChips(settled, Rarity::Common, ctx.timeSeconds + 4), returned);
+    }
+    ctx.timeSeconds += 4;
+    frame();
+    CHECK_EQ(panel.displayedChips(client.profile(), Rarity::Common, ctx.timeSeconds),
+             client.profile().stackCount(chip, Rarity::Common));
+    CHECK_EQ(dropBytes(), 0u);
+    ctx.timeSeconds += .3;
+    frame();
+    CHECK_EQ(dropBytes(), oneDropBytes);
+    CHECK_EQ(panel.displayedChips(client.profile(), Rarity::Uncommon, ctx.timeSeconds), 2u);
+    click(1, false);
+    CHECK_EQ(dropBytes(), 0u);
+}

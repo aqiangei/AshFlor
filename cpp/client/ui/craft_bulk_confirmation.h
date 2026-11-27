@@ -13,12 +13,12 @@ inline std::vector<Profile::Stack> mythicUltraCraftMaterials(
     const Profile& profile, const std::vector<std::string>& excluded) {
     std::vector<Profile::Stack> materials;
     for (const auto& stack : profile.inventory) {
-        if ((stack.rarity != Rarity::Mythic && stack.rarity != Rarity::Ultra) || stack.count < 5 ||
+        if ((stack.rarity != Rarity::Mythic && stack.rarity != Rarity::Ultra) || stack.craftable() < 5 ||
             stack.petalIndex >= content().petalCount()) continue;
         const auto& petal = content().petal(stack.petalIndex);
         if (petal.id == "timed_mjolnir" || !petalComesAt(petal, stack.rarity) ||
             std::find(excluded.begin(), excluded.end(), petal.id) != excluded.end()) continue;
-        materials.push_back(stack);
+        materials.push_back({stack.petalIndex, stack.rarity, stack.craftable()});
     }
     // A refreshed Profile may present identical stacks in a different order.
     std::sort(materials.begin(), materials.end(), [](const auto& a, const auto& b) {

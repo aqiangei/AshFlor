@@ -21,12 +21,13 @@
 #include <cstdint>
 #include <string>
 
+#include "client/ui/draw.h"
+#include "client/ui/text_input.h"
 #include "client/ui/item_tile.h"
 #include "client/ui/menu_theme.h"
 #include "client/ui/menus.h"
 #include "shared/game/config.h"
 #include "shared/game/npc.h"
-#include "shared/game/hel_plinko.h"
 
 namespace flix {
 
@@ -49,8 +50,7 @@ constexpr double kTradeConfirmDelay = 0.35;
 
 bool tradable(std::uint16_t petalIndex) {
     if (!knownPetal(petalIndex)) return false;
-    const auto& petal = content().petal(petalIndex);
-    return petal.tradable && petal.id != kPlinkoChipPetal;
+    return content().petal(petalIndex).tradable;
 }
 
 std::uint32_t tileKey(std::uint16_t petalIndex, Rarity rarity) {
@@ -66,6 +66,8 @@ Vec2 TradePanel::size(const Profile& profile) {
 }
 
 void TradePanel::reset() {
+    password_.clear();
+    passwordField_.blur();
     ingredients_.clear();
     drawMode_ = true;
     grid_.reset();
@@ -146,6 +148,36 @@ bool TradePanel::render(MenuContext& ctx) {
         drawSlotCard(canvas, ctx.bounds, kTraderSkin, trEnZh("Trader", "商人"),
                      trEnZh("Trade", "兑换"), mouse);
     const Rect panel = card.panel;
+    if (ctx.net.traderAccess() != NetClient::TraderAccess::Accepted) {
+        if (ctx.pressed() && card.close.contains(mouse)) return false;
+        if (!profile.hasPassword) {
+            drawSlotLine(canvas, card, trEnZh("Set an account password to trade.", "请先在账户菜单设置密码。"));
+            return true;
+        }
+        const Rect field{panel.x + (panel.w - 200) / 2, card.slot.y, 200, 32};
+        if (ctx.pressed() && field.contains(mouse)) passwordField_.focusAtEnd(password_, now);
+        if (passwordField_.focused) {
+            ctx.wantsText = true;
+            TextEditOptions options;
+            options.maxBytes = 72;
+            options.copyable = false;
+            editText(ctx.window, password_, passwordField_, now, options);
+        }
+        inputField(canvas, field, password_, trEnZh("Account password", "账户密码"),
+                   passwordField_.focused, now, &passwordField_, true);
+        const bool pending = ctx.net.traderAccess() == NetClient::TraderAccess::Pending;
+        drawSlotLine(canvas, card, ctx.net.traderAccess() == NetClient::TraderAccess::Refused
+            ? trEnZh("Verification failed. Try again.", "验证失败，请重试。")
+            : trEnZh("Verify once to trade in this visit.", "本次交易请先验证账户密码。"));
+        drawSlotButton(canvas, card.button, trEnZh("Verify", "验证"), 0xa57836, card.button.contains(mouse), false);
+        if (!pending && !password_.empty() && ((ctx.pressed() && card.button.contains(mouse)) ||
+            (passwordField_.focused && ctx.window.keyPressed(Key::Enter)))) {
+            ctx.net.setTraderAccess(password_);
+            password_.clear();
+            passwordField_.blur();
+        }
+        return true;
+    }
 
     if (phase_ == Phase::Idle) {
         const Rect mode{panel.x + 14, card.close.y, 120, card.close.h};
@@ -191,7 +223,7 @@ bool TradePanel::render(MenuContext& ctx) {
             [&](std::uint16_t index, Rarity rarity, std::uint32_t owned) {
                 SlotCell cell;
                 cell.count = owned - (rarity == tier ? std::min(owned, selected(index)) : 0);
-                cell.greyed = rarity != tier || !tradable(index) || index == coinIndex ||
+                cell.greyed = rarity != tier || (index != coinIndex && !tradable(index)) ||
                     content().petal(index).isAdminPetal || !petalCraftsToApex(content(), index) ||
                     cell.count == 0 || ingredients_.size() == kTraderApexDrawCost;
                 if (cell.count > 1) cell.badge = "x" + stackCountText(cell.count);

@@ -821,7 +821,11 @@ bool GalleryPanel::render(MenuContext& ctx) {
 
     const Rect searchRect{panel.x + kPad, panel.y + kSearchTop,
                           std::max(0.0, panel.w - 2.0 * kPad), kSearchHeight};
-    if (editSlotSearch(ctx, searchRect, dropSearch_, dropSearchField_)) scroll_.offset = 0.0;
+    const auto* placeholder = garbageCatalog_
+        ? trEnZh("Search petals", "查找花瓣")
+        : trEnZh("Search mobs or drops", "查找生物或掉落物");
+    if (editSlotSearch(ctx, searchRect, dropSearch_, dropSearchField_, placeholder))
+        scroll_.offset = 0.0;
     const std::string query = trimmed(lowerCase(dropSearch_));
     const bool searching = !query.empty();
     const int equippedOrbTier = galleryOrbTier(profile);
@@ -913,8 +917,12 @@ bool GalleryPanel::render(MenuContext& ctx) {
     cells.reserve(content().mobCount() * kTierColumns);
     double y = kContentTop;
     const auto showMob = [&](std::uint16_t mobIndex) {
-        return (!hideNpcs_ || !content().mob(mobIndex).npc.present) &&
-               (!searching || mobTiers[mobIndex] != 0);
+        const auto& mob = content().mob(mobIndex);
+        if (hideNpcs_ && mob.npc.present) return false;
+        if (!searching || mobTiers[mobIndex] != 0) return true;
+        return lowerCase(mob.id).find(query) != std::string::npos ||
+               lowerCase(mob.name).find(query) != std::string::npos ||
+               lowerCase(mobNameTr(mob.id, mob.name.c_str())).find(query) != std::string::npos;
     };
     const auto addRow = [&](std::uint16_t mobIndex) {
         if (!showMob(mobIndex)) return;
@@ -964,7 +972,8 @@ bool GalleryPanel::render(MenuContext& ctx) {
         for (const auto mob : mobRows().order) addRow(mob);
     }
     if (searching && !garbageCatalog_ && cells.empty()) {
-        labels.push_back({y + kRowLabelHeight * 0.5, trEnZh("No matching drops", "没有匹配的掉落物"), false});
+        labels.push_back({y + kRowLabelHeight * 0.5,
+                          trEnZh("No matching mobs or drops", "没有匹配的生物或掉落物"), false});
         y += kRowLabelHeight;
     }
     // The trailing row gap counts: the reference measures from the first row's

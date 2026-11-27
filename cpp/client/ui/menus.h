@@ -875,6 +875,7 @@ int slotBurstGrains(Rarity rarity);
 /// its middle. See menu_crafting.cpp.
 class HelPlinkoPanel {
 public:
+    std::uint32_t displayedChips(const Profile&, Rarity, double now) const;
     bool render(MenuContext&, bool interactive);
     static double pointScale(const Window&);
     static Rect bounds(const Window&);
@@ -886,12 +887,17 @@ private:
         HelPlinkoAction action;
         Rarity rarity;
         double sentAt;
+        std::uint32_t balanceAfterSpend = 0;
     };
     struct FallingChip {
         std::uint16_t path;
         Rarity rarity;
         double startsAt;
+        std::uint32_t balanceAfterSpend;
     };
+    std::string sessionToken_;
+    std::uint32_t connectionGeneration_ = 0;
+    double nextRoundAt_ = 0.0;
     std::vector<Request> pending_;
     std::vector<FallingChip> falling_;
     std::string message_;
@@ -963,6 +969,8 @@ private:
     int bulkTarget_ = 2;
     bool bulkArmed_ = false;
     bool editingBlacklist_ = false;
+    bool unlockingShopPurchases_ = false;
+    std::optional<Profile::Stack> unlockSelection_;
     std::optional<std::vector<Profile::Stack>> mythicUltraMaterials_;
     bool mythicUltraRefreshed_ = false;
     std::uint32_t mythicUltraRequest_ = 0;
@@ -1209,6 +1217,8 @@ private:
 
     SlotGrid grid_;
     SlotMotion motion_;
+    ui::TextFieldState passwordField_;
+    std::string password_;
     bool drawMode_ = true;
     std::vector<std::uint16_t> ingredients_;
     /// The petal in the slot for a coin sale.
@@ -2232,6 +2242,8 @@ private:
     bool absorbMode_ = false;
     OraclePanel oracle_;
     TradePanel trader_;
+    bool traderPanelActive_ = false;
+    bool traderPanelClosed_ = false;
     TitanPanel titan_;
     AssemblerPanel assembler_;
     TalentsPanel talents_;

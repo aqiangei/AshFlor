@@ -411,9 +411,10 @@ inline constexpr int kEternalPopulationTarget = 9;
 inline constexpr int kPrestigeEternalPopulationTarget = 2;
 inline constexpr int kHyperPopulationTarget = 3;
 inline constexpr int kNaturalApexPopulationTarget = 3;
-inline constexpr double kNaturalApexChance = 0.10;
+inline constexpr double kNaturalApexChance = 0.15;
 // Natural Apex and the shared Hyper spawn budget use the biome's Apex clock.
 inline constexpr double kApexSpawnCooldownMillis = 20.0 * 60.0 * 1000.0;
+inline constexpr double kHyperUpgradeChance = 0.15;
 inline constexpr double kBossUpgradeChance = 0.10;
 
 /// The sacrifice (petalIsSacrifice): what a flower that dies wearing one
@@ -1188,7 +1189,7 @@ private:
     std::array<bool, kMaxRealms> livePlacementRealms_{};
     Realm prestigeJungleRealm_ = Realm::Arena; // No world-map candidate can match until loaded.
     Realm ordinaryJungleRealm_ = Realm::Arena;
-    Realm prestigeSewersRealm_ = Realm::Arena;
+    std::array<Realm, 2> prestigeSewersRealms_{Realm::Arena, Realm::Arena};
     Realm prestigeHelRealm_ = Realm::Arena;
     Realm prestigeFactoryRealm_ = Realm::Arena;
     Realm prestigeTwoFactoryRealm_ = Realm::Arena;

@@ -78,6 +78,8 @@ const char* clientMessageName(std::uint8_t id) {
         case net::ClientMessage::SetPetalPrivacy:     return "setPetalPrivacy";
         case net::ClientMessage::BulkCraftMythicUltra: return "bulkCraftMythicUltra";
         case net::ClientMessage::HelPlinko: return "helPlinko";
+        case net::ClientMessage::TraderAccess: return "traderAccess";
+        case net::ClientMessage::UnlockCraftStack: return "unlockCraftStack";
         case net::ClientMessage::LoadLoadoutPreset:   return "loadLoadoutPreset";
         case net::ClientMessage::Trade:               return "trade";
         case net::ClientMessage::AdminDb:             return "adminDb";
@@ -132,6 +134,7 @@ const char* serverMessageName(std::uint8_t id) {
         case net::ServerMessage::OracleShopForecast:  return "oracleShopForecast";
         case net::ServerMessage::SessionReplaced:     return "sessionReplaced";
         case net::ServerMessage::ChatHistory:         return "chatHistory";
+        case net::ServerMessage::TraderAccess:        return "traderAccess";
         case net::ServerMessage::TradeResult:         return "tradeResult";
         case net::ServerMessage::AdminDb:             return "adminDb";
         case net::ServerMessage::AdminDashboard:      return "adminDashboard";
@@ -175,6 +178,8 @@ bool NetClient::connect(const std::string& host, std::uint16_t port) {
 }
 
 void NetClient::disconnect() {
+    traderAccess_ = TraderAccess::Locked;
+    ++traderAccessRequest_;
     riftOpen_ = false;
     dialer_.disconnect();
     status_ = Status::Offline;
@@ -255,6 +260,7 @@ void NetClient::send(ByteWriter& w) {
 // -- outgoing ---------------------------------------------------------------
 
 void NetClient::onConnect(net::Connection&) {
+    ++connectionGeneration_;
     status_ = Status::Handshaking;
     // The handshake goes out unprompted: the server answers with Welcome, and
     // until then nothing else this client sends will be accepted.
@@ -369,6 +375,8 @@ void NetClient::forgetAccount() {
     oracleOutcome_ = OracleOutcome{};
     oracleShopForecast_.reset();
     oracleReadyAtMillis_ = 0;
+    traderAccess_ = TraderAccess::Locked;
+    ++traderAccessRequest_;
     tradeOutcome_ = TradeOutcome{};
     traderReadyAtMillis_ = 0;
     titanForgeOutcome_ = TitanForgeOutcome{};
@@ -635,6 +643,15 @@ double NetClient::oracleCooldownRemainingMillis() const {
     return std::max(0.0, oracleReadyAtMillis_ - renderClockMillis());
 }
 
+void NetClient::setTraderAccess(const std::string& password) {
+    traderAccess_ = password.empty() ? TraderAccess::Locked : TraderAccess::Pending;
+    ByteWriter w;
+    beginMessage(w, net::ClientMessage::TraderAccess);
+    w.u32(++traderAccessRequest_);
+    w.str(password);
+    send(w);
+}
+
 void NetClient::requestTrade(std::uint16_t petalIndex, Rarity rarity) {
     ByteWriter w;
     beginMessage(w, net::ClientMessage::Trade);
@@ -756,6 +773,16 @@ void NetClient::requestBuyPetal(std::uint16_t petalIndex, Rarity rarity, int off
     w.u8(offerSlot >= 0 && offerSlot < net::kNoShopOffer ? static_cast<std::uint8_t>(offerSlot)
                                                          : net::kNoShopOffer);
     w.u32(quantity);
+    send(w);
+}
+
+void NetClient::requestUnlockCraftStack(std::uint16_t petalIndex, Rarity rarity, std::uint32_t locked) {
+    ByteWriter w;
+    beginMessage(w, net::ClientMessage::UnlockCraftStack);
+    w.u16(petalIndex);
+    w.u8(static_cast<std::uint8_t>(rarity));
+    w.u32(locked);
+    w.u32(profile_.revision);
     send(w);
 }
 
@@ -1337,7 +1364,7 @@ void NetClient::sendProfileCheck() {
     // count edited in place since is exactly what the server is asked about.
     net::ProfileDigest digest;
     for (const Profile::Stack& stack : profile_.inventory) {
-        digest.stack(stack.petalIndex, static_cast<std::uint8_t>(stack.rarity), stack.count);
+        digest.stack(stack.petalIndex, static_cast<std::uint8_t>(stack.rarity), stack.count, stack.craftLocked);
     }
     for (std::size_t i = 0; i < profile_.loadout.size(); ++i) {
         const Profile::Slot& slot = profile_.loadout[i];
@@ -1530,6 +1557,13 @@ void NetClient::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ServerMessage::SetUsernameResult: handleSetUsernameResult(reader); break;
         case net::ServerMessage::OracleResult:  handleOracleResult(reader); break;
         case net::ServerMessage::OracleShopForecast: handleOracleShopForecast(reader); break;
+        case net::ServerMessage::TraderAccess: {
+            const auto request = reader.u32();
+            const bool accepted = reader.boolean();
+            if (reader.ok() && request == traderAccessRequest_)
+                traderAccess_ = accepted ? TraderAccess::Accepted : TraderAccess::Refused;
+            break;
+        }
         case net::ServerMessage::TradeResult:   handleTradeResult(reader); break;
         case net::ServerMessage::TitanForgeResult: handleTitanForgeResult(reader); break;
         case net::ServerMessage::AssembleResult: handleAssembleResult(reader); break;
@@ -1600,6 +1634,8 @@ void NetClient::handleWelcome(ByteReader& reader) {
 }
 
 void NetClient::handleAuthResult(ByteReader& reader) {
+    traderAccess_ = TraderAccess::Locked;
+    ++traderAccessRequest_;
     const auto result = static_cast<net::AuthStatus>(reader.u8());
     const std::string token = reader.str();
     const std::string username = reader.str();
@@ -1689,6 +1725,7 @@ void NetClient::handleProfile(ByteReader& reader) {
         stack.petalIndex = reader.u16();
         stack.rarity = clampRarity(reader.u8());
         stack.count = reader.u32();
+        stack.craftLocked = std::min(stack.count, reader.u32());
         next.inventory.push_back(stack);
     }
 

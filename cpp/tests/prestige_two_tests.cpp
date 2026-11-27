@@ -123,10 +123,18 @@ TEST(prestige_two_is_bought_on_top_of_the_first_tier) {
     Harness h("prestige-two-buy",
               [](const std::string& path) {
                   seedUser(path, "veteran", "password7");
-                  seedPrestigeTier(path, "veteran", 1, 240);
+                  seedPrestigeTier(path, "veteran", 1, 290);
+                  seedUser(path, "almost", "password7");
+                  seedPrestigeTier(path, "almost", 1, 289);
               },
               dataDir(), 0);
     if (!h.ready) { CHECK(false); return; }
+    NetClient almost;
+    CHECK(signIn(h, almost, "almost"));
+    almost.requestUpgradeSkill(SkillId::Prestige, 1);
+    CHECK(h.stepUntil({&almost}, [&] { return sawText(almost, "Requires player level 290"); }));
+    CHECK_EQ(almost.profile().skills.level(SkillId::Prestige), 0);
+
     NetClient veteran;
     CHECK(signIn(h, veteran, "veteran"));
     CHECK(awaitProfile(h, veteran, [](const Profile& p) { return p.skills.prestigeUnlocked(); }));

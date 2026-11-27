@@ -101,7 +101,7 @@ TEST(zorr_completion_all_content_is_finite_and_imported_hyper_caps_hold) {
    }
   }
  }
- CHECK_EQ(imported,219);
+ CHECK_EQ(imported,220);
  std::printf("  %zu petals x %d rarities finite; %d imported items meet Eternal/Hyper caps\n",c.petalCount(),kRarityCount,imported);
 }
 TEST(zorr_completion_ring_is_linked_to_angels_drop_table) {

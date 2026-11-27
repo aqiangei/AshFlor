@@ -165,7 +165,8 @@ Entity NpcSystem::spawnNpc(World& world, const Terrain& terrain, const ContentRe
     const bool fighter = config.npc.wearsPetals();
     if (team != Team::Players || fighter) {
         const bool trainingDummy = config.id == "target_dummy" || config.id == "test_dummy";
-        const double damage = trainingDummy ? stats.damage * mobContactScale(ladderRarity(rarity)) : stats.damage;
+        const auto contactRarity = rarity == Rarity::Ascendant ? rarity : ladderRarity(rarity);
+        const double damage = trainingDummy ? stats.damage * mobContactScale(contactRarity) : stats.damage;
         world.add<ContactDamage>(e, ContactDamage{damage, kMobHitIntervalMillis});
     }
     // The ring itself is the petal system's: a loadout, one slot a petal, and

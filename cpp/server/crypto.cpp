@@ -6,6 +6,10 @@
 #include <ctime>
 #include <string>
 
+#if defined(__EMSCRIPTEN__)
+#include <emscripten.h>
+#endif
+
 namespace flix::crypto {
 namespace {
 
@@ -687,8 +691,6 @@ bool constantTimeEquals(const std::string& a, const std::string& b) {
 }
 
 #if defined(__EMSCRIPTEN__)
-#include <emscripten.h>
-
 namespace {
 
 /// Node's crypto.scryptSync with the same defaults florrclone/accounts.js used
